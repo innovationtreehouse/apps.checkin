@@ -147,10 +147,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {
-        name: 'page /my-programs/expense-approvals',
-        client: page('/my-programs/expense-approvals'),
+        name: 'page /programs-i-lead/expense-approvals',
+        client: page('/programs-i-lead/expense-approvals'),
         token: 'expense-approver',
-        // FINANCE and BOARD approve from Expense Ops, not My Programs.
+        // FINANCE and BOARD approve from Expense Ops, not Programs I Lead.
         differsFor: ['board', 'finance'],
     },
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },

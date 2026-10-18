@@ -74,7 +74,7 @@ describe("AppFrame", () => {
     expect(screen.getByText("Revenue Ops").closest("a")).toHaveAttribute("href", "/finance-ops/payment-plan");
   });
 
-  it("shows Shop Ops for a certifier without admin flags, and My Programs when leading a program", () => {
+  it("shows Shop Ops for a certifier without admin flags, and Programs I Lead when leading a program", () => {
     setSession({ id: 2, toolStatuses: [{ level: "MAY_CERTIFY_OTHERS" }] });
     mockedUseTodoCounts.mockReturnValue({
       member: { household: [], programs: [], programsAwaitingFinance: 0 },
@@ -87,7 +87,7 @@ describe("AppFrame", () => {
     renderFrame();
 
     expect(screen.getByText("Shop Ops")).toBeInTheDocument();
-    expect(screen.getByText("My Programs")).toBeInTheDocument();
+    expect(screen.getByText("Programs I Lead")).toBeInTheDocument();
     expect(screen.queryByText("Facility Ops")).not.toBeInTheDocument();
   });
 

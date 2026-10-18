@@ -59,7 +59,7 @@ import { ATTENDANCE, COMMUNICATION, INDEX, MY_HOUSEHOLD, PROGRAMS } from '@/lib/
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
 import { MY_RECEIPTS } from '@/lib/nav/sections/myReceipts';
-import { MY_PROGRAMS } from '@/lib/nav/sections/myPrograms';
+import { PROGRAMS_I_LEAD } from '@/lib/nav/sections/programsILead';
 import { SHOP_OPS } from '@/lib/nav/sections/shopOps';
 import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { FACILITY_OPS } from '@/lib/nav/sections/facilityOps';
@@ -87,7 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { section: SAFETY, icon: <IconShieldCheck size={18} /> },
   { section: MY_ACTIVITIES, icon: <IconActivity size={18} /> },
   { section: MY_RECEIPTS, icon: <IconReceipt size={18} /> },
-  { section: MY_PROGRAMS, icon: <IconUsersGroup size={18} /> },
+  { section: PROGRAMS_I_LEAD, icon: <IconUsersGroup size={18} /> },
   { section: ATTENDANCE, icon: <IconClipboardList size={18} /> },
   { section: PROGRAMS, icon: <IconCalendarEvent size={18} /> },
   { section: COMMUNICATION, icon: <IconMail size={18} /> },

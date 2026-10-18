@@ -2,5 +2,5 @@
 import { ExpenseList } from "@checkin/expense/pages/expenses";
 
 export default function Page() {
-  return <ExpenseList detailBase="/my-programs/expense-approvals" defaultView="owner_approval" />;
+  return <ExpenseList detailBase="/programs-i-lead/expense-approvals" defaultView="owner_approval" />;
 }

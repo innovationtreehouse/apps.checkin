@@ -12,18 +12,18 @@ import { useConflicts } from "@/hooks/useConflicts";
 import { leadPendingCount } from "@/components/navBadges";
 import type { SectionLink } from "@/lib/nav/types";
 import { visibleLinks } from "@/lib/nav/gates";
-import { MY_PROGRAMS } from "@/lib/nav/sections/myPrograms";
+import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { TabBadge } from "@/components/ui/CountBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 /**
- * Program-leader "My Programs" chrome: section title + subtabs (Attendance inbox /
+ * Program-leader "Programs I Lead" chrome: section title + subtabs (Attendance inbox /
  * Conflicts) for program lead mentors, plus library tabs for whoever they admit
  * (Expense approvals: leads and program treasurers). Lead status rides in on the
  * todo-counts payload the nav already fetches — no new session field. Matches the
  * program-ops layout's route-driven Tabs pattern.
  */
-export default function MyProgramsLayout({ children }: { children: React.ReactNode }) {
+export default function ProgramsILeadLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const pathname = usePathname();
@@ -32,7 +32,7 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
   const { conflicts } = useConflicts(authed);
   // Attendance/Conflicts are lead-only; Expense approvals also admits a program
   // treasurer who leads no program.
-  const links = visibleLinks(MY_PROGRAMS, session?.user, counts);
+  const links = visibleLinks(PROGRAMS_I_LEAD, session?.user, counts);
   const admitted = links.length > 0;
 
   useEffect(() => {
@@ -56,13 +56,13 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
   const pending = leadPendingCount(counts);
   const conflictCount = conflicts?.length ?? 0;
   const tabBadge = ({ href, badge }: SectionLink): React.ReactNode => {
-    if (href === "/my-programs/attendance") return pending > 0 ? <CountBadge intent="action">{pending}</CountBadge> : undefined;
-    if (href === "/my-programs/conflicts") return conflictCount > 0 ? <CountBadge intent="alert">{conflictCount}</CountBadge> : undefined;
+    if (href === "/programs-i-lead/attendance") return pending > 0 ? <CountBadge intent="action">{pending}</CountBadge> : undefined;
+    if (href === "/programs-i-lead/conflicts") return conflictCount > 0 ? <CountBadge intent="alert">{conflictCount}</CountBadge> : undefined;
     return <TabBadge badge={badge?.(counts) ?? null} />;
   };
   const subtitle: Record<string, string> = {
-    "/my-programs/attendance": "Manage Attendance for Programs you lead",
-    "/my-programs/conflicts": "Resolve Duplicate or overlapping check-ins for your programs",
+    "/programs-i-lead/attendance": "Manage Attendance for Programs you lead",
+    "/programs-i-lead/conflicts": "Resolve Duplicate or overlapping check-ins for your programs",
   };
 
   return (

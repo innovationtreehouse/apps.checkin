@@ -1,6 +1,6 @@
 /**
  * Nav descriptors for the expense screens (#1272 §7). The library declares them; the host
- * places them. `EXPENSE_TABS` are the host-level tabs (Expense Ops and My Programs);
+ * places them. `EXPENSE_TABS` are the host-level tabs (Expense Ops and Programs I Lead);
  * `EXPENSE_SUB_NAV` is the in-page navigation between FINANCE/Board screens under /expense.
  */
 
@@ -14,7 +14,7 @@ export interface ExpenseNavLink {
 export const EXPENSE_TABS = {
   expenses: { name: "Expenses", href: "/expense", icon: "🧾" },
   settings: { name: "Settings", href: "/expense/settings", icon: "⚙️" },
-  approvals: { name: "Expense approvals", href: "/my-programs/expense-approvals", icon: "✍️" },
+  approvals: { name: "Expense approvals", href: "/programs-i-lead/expense-approvals", icon: "✍️" },
 } as const satisfies Record<string, ExpenseNavLink>;
 
 export const EXPENSE_SUB_NAV: readonly ExpenseNavLink[] = [

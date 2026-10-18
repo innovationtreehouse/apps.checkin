@@ -37,7 +37,7 @@ describe("AppFrame library nav slots", () => {
     expect(hrefOf("Expense Ops")).toBe("/expense");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
     expect(hrefOf("My Receipts")).toBe("/receipts");
-    expect(screen.queryByText("My Programs")).not.toBeInTheDocument();
+    expect(screen.queryByText("Programs I Lead")).not.toBeInTheDocument();
   });
 
   it("FINANCE-only: Revenue Ops lands on Income (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
@@ -48,11 +48,11 @@ describe("AppFrame library nav slots", () => {
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });
 
-  it("program lead: My Programs and Inventory, no Ops sections", () => {
+  it("program lead: Programs I Lead and Inventory, no Ops sections", () => {
     setSession({ id: 3, programsLed: [9], ageBand: "adult", isActiveOrgMember: true });
     mockedUseTodoCounts.mockReturnValue(counts({ lead: { programs: [{ id: 9, name: "P", totalEnrolled: 0, pending: [], upcoming: [] }] } }));
     renderFrame();
-    expect(hrefOf("My Programs")).toBe("/my-programs");
+    expect(hrefOf("Programs I Lead")).toBe("/programs-i-lead");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
     expect(screen.queryByText("Expense Ops")).not.toBeInTheDocument();
@@ -102,7 +102,7 @@ describe("AppFrame library nav slots", () => {
   it("plain member: none of the library entries", () => {
     setSession({ id: 5 });
     renderFrame();
-    for (const label of ["Inventory", "Revenue Ops", "Expense Ops", "My Receipts", "My Programs"]) {
+    for (const label of ["Inventory", "Revenue Ops", "Expense Ops", "My Receipts", "Programs I Lead"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });

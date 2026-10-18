@@ -13,7 +13,7 @@ interface BucketGift {
   lines: BucketGiftLine[];
 }
 
-/** /my-programs/in-kind-gifts — accepted gifts of goods in the buckets the viewer approves: what was given, its value and date. */
+/** /programs-i-lead/in-kind-gifts — accepted gifts of goods in the buckets the viewer approves: what was given, its value and date. */
 export default function InKindByBucketPage() {
   const gifts = useLoad<BucketGift[]>("/in-kind/by-bucket");
 

@@ -36,7 +36,7 @@ export default function ExpensesPage() {
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Expense Ops and the approver's My Programs tab.
+ * same list serves Expense Ops and the approver's Programs I Lead tab.
  */
 export function ExpenseList({ detailBase, defaultView, subNav = false }: { detailBase: string; defaultView: string; subNav?: boolean }) {
   const [view, setView] = useState(defaultView);

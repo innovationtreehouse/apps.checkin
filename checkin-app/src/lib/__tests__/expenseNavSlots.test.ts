@@ -1,6 +1,6 @@
 import { visibleLinks } from "@/lib/nav/gates";
 import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
-import { MY_PROGRAMS } from "@/lib/nav/sections/myPrograms";
+import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
@@ -55,19 +55,19 @@ describe("Expense Ops tabs", () => {
   });
 });
 
-describe("My Programs library tabs", () => {
+describe("Programs I Lead library tabs", () => {
   it("shows to a program lead and not to FINANCE or a plain member", () => {
-    expect(names(visibleLinks(MY_PROGRAMS, lead, released))).toEqual(["Expense approvals", "In-kind gifts"]);
-    expect(visibleLinks(MY_PROGRAMS, finance, released)).toEqual([]);
-    expect(visibleLinks(MY_PROGRAMS, member, released)).toEqual([]);
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, released))).toEqual(["Expense approvals", "In-kind gifts"]);
+    expect(visibleLinks(PROGRAMS_I_LEAD, finance, released)).toEqual([]);
+    expect(visibleLinks(PROGRAMS_I_LEAD, member, released)).toEqual([]);
   });
 
   it("hides Expense approvals from a program lead until expense is released", () => {
-    expect(names(visibleLinks(MY_PROGRAMS, lead, unreleased))).toEqual(["In-kind gifts"]);
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, unreleased))).toEqual(["In-kind gifts"]);
   });
 
   it("badges with lines awaiting the viewer's sign-off", () => {
-    const approvals = MY_PROGRAMS.links.find((l) => l.href === "/my-programs/expense-approvals");
+    const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
     expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
       count: 2,
       color: "treehouseGreen",

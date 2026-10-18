@@ -1,5 +1,5 @@
 /**
- * Expense's nav pill counts (#1272): Expense Ops (holds, open flags), the My Programs
+ * Expense's nav pill counts (#1272): Expense Ops (holds, open flags), the Programs I Lead
  * "Expense approvals" tab (lines awaiting the viewer's sign-off), and `approver` (1 when
  * the viewer approves any program bucket: its leader or a treasurer). Server only.
  */

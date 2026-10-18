@@ -32,5 +32,5 @@ export const DONATIONS_TAB = { name: "Donations", href: "/donations", icon: "�
 /** The no-receipt in-kind gift screen, placed under the host's Inventory section. */
 export const IN_KIND_TAB = { name: "In-kind gifts", href: "/inventory/in-kind", icon: "🎁" } as const;
 
-/** Accepted gifts of goods in the viewer's buckets, placed under the host's My Programs section. */
-export const BUCKET_GIFTS_TAB = { name: "In-kind gifts", href: "/my-programs/in-kind-gifts", icon: "🎁" } as const;
+/** Accepted gifts of goods in the viewer's buckets, placed under the host's Programs I Lead section. */
+export const BUCKET_GIFTS_TAB = { name: "In-kind gifts", href: "/programs-i-lead/in-kind-gifts", icon: "🎁" } as const;
