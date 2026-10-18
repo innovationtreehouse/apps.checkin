@@ -15,9 +15,13 @@
  *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
  *   nothing.
  * - owners: checkin's budget-owner buckets.
+ * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
+ *   set. Unbound or unreachable, no item can be assigned to a bucket.
  * - otherLaneClaims: deposits bulk donation holds, kept out of income's matching.
  * - alerts: a drain that stops at a cap emails finance (the board when no one
- *   holds FINANCE), so the payouts it left waiting reach a person.
+ *   holds FINANCE), so the payouts it left waiting reach a person. A bucket
+ *   that becomes unusable emails finance once, so the payouts it holds reach a
+ *   person.
  */
 import {
   configureIncome,
@@ -29,6 +33,7 @@ import {
   type MirrorPayout,
   type OwnerDirectory,
   type PayoutMirror,
+  type QbClassSource,
   type QbDepositSource,
 } from "@checkin/income";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
@@ -88,7 +93,17 @@ const alerts: IncomeAlerts = {
       "Income cap alert failed:",
     );
   },
+  async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
+    const [{ notifyFinanceAlert }, { escapeHtml }] = await Promise.all([import("@/lib/emailRecipients"), import("@/lib/email-templates/base")]);
+    const name = escapeHtml(bucketName ?? `#${budgetOwnerId}`);
+    await notifyFinanceAlert(
+      "Income: a budget-owner bucket can't take sales",
+      `<p>The budget-owner bucket ${name} ${escapeHtml(issue)}. ${itemCount} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. <a href="${config.baseUrl()}/income/items">Open income items</a></p>`,
+      "Income bucket alert failed:",
+    );
+  },
 };
+
 
 /** Loaded on first use, so binding at boot pulls in no AWS SDK. */
 async function quickBooks() {
@@ -106,6 +121,17 @@ function depositSource(): QbDepositSource | undefined {
   };
 }
 
+function classSource(): QbClassSource | undefined {
+  if (!process.env.QBO_REALM_ID) return undefined;
+  return {
+    async activeClassIds() {
+      const qb = await quickBooks();
+      if (!qb) throw new Error("QuickBooks is off");
+      return (await qb.classes()).filter((c) => c.Active !== false).map((c) => c.Id);
+    },
+  };
+}
+
 async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
   return (await import("@checkin/bulk-donation")).donationClaimedDepositIds(orgId);
 }
@@ -118,6 +144,7 @@ export function configureRuntime(): void {
     deposits: depositSource(),
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
     owners,
+    classes: classSource(),
     alerts,
     otherLaneClaims: { claimedDepositIds: donationClaimedDepositIds },
   });

@@ -30,7 +30,7 @@ const WRITES: Array<[string, string, unknown?]> = [
 ];
 
 type ReconRow = { id: number; payoutGid: string; status: string; kind: string | null; reason?: string | null };
-type ItemRow = { variantId: string; budgetOwnerId: number | null; budgetOwnerName: string | null };
+type ItemRow = { variantId: string; decision: string; budgetOwnerId: number | null; budgetOwnerName: string | null };
 type ExclusionRow = { id: number; qbTxnId: string; reason: string };
 
 const send = (s: Session | null, method: string, path: string, body?: unknown) =>
@@ -108,16 +108,18 @@ describe("income — finance journey", () => {
     // Candidates need QuickBooks, which the flow stack has not connected.
     expect((await api(f, `/api/income/reconciliation/${seeded.id}/candidates`)).status).toBe(503);
 
-    // Item categories: an unknown bucket is refused; the seed's first bucket (Facility) maps.
+    // Item categories: an unknown bucket is refused, as is the seed's first bucket (Facility),
+    // which has no QuickBooks Class; general income maps.
     const variant = String(stamp);
     expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: 999999 })).status).toBe(422);
     expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: "1" })).status).toBe(400);
     expect((await send(f, "PUT", "/api/income/items/not-a-variant/category", { budgetOwnerId: 1 })).status).toBe(400);
-    const mapped = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: 1 });
+    expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: 1 })).status).toBe(422);
+    const mapped = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null });
     expect(mapped.status).toBe(200);
-    expect(mapped.json).toMatchObject({ variantId: variant, budgetOwnerId: 1 });
+    expect(mapped.json).toMatchObject({ variantId: variant, budgetOwnerId: null });
     const items = await api<ItemRow[]>(f, "/api/income/items");
-    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ budgetOwnerId: 1, budgetOwnerName: "Facility" });
+    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ decision: "general", budgetOwnerId: null, budgetOwnerName: null });
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(200);
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(404);
 

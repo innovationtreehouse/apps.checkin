@@ -201,8 +201,9 @@ Income checks each Shopify payout against the deposits in QuickBooks.
 
 - The app never changes or deletes anything already in QuickBooks.  [Decision — deliberate limit]
 
-- Sales are booked to the program or fund they belong to. Sales that finance
-  hasn't assigned are booked as general Treehouse income.  [Decision]
+- Sales are booked to the program or fund they belong to. Sales are booked as
+  general Treehouse income only where finance chose that for the item. A payout
+  with a sale of an item finance has not decided on waits until finance does.  [Decision]
 
 - A payout or deposit that changes after it was matched goes back to finance.
   The app never matches it again on its own.  [Decision]

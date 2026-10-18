@@ -23,6 +23,11 @@ export const RECON_KIND = {
   POST_FAILED: "POST_FAILED",
   /** Larger than the org's per-run cents cap: never auto-created; finance retries it. */
   OVER_CAP: "OVER_CAP",
+  /**
+   * Held: a sale's item is undecided, or its bucket is unusable. Never becomes NO_DEPOSIT;
+   * each drain retries it and books it once finance closes the gap.
+   */
+  NEEDS_MAPPING: "NEEDS_MAPPING",
 } as const;
 export type ReconKind = (typeof RECON_KIND)[keyof typeof RECON_KIND];
 
@@ -254,6 +259,13 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
         // A failed or over-cap create stays parked until a deposit turns up or finance retries.
         if (row?.kind === RECON_KIND.POST_FAILED || row?.kind === RECON_KIND.OVER_CAP) continue;
+        // A held payout is outside the window's clock; it tracks the payout's net while it waits.
+        if (row?.kind === RECON_KIND.NEEDS_MAPPING) {
+          if (row.payoutNetCents === fact.netCents) continue;
+          const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { payoutNetCents: fact.netCents } });
+          await audit(tx, orgId, "reconciliation.needs_mapping", row, saved, { userId: null, reason: "payout_amount" });
+          continue;
+        }
         const windowElapsed = today > addDays(fact.payoutDate, window);
 
         // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox. An
