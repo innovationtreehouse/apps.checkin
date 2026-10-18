@@ -7,7 +7,7 @@ import { getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
-import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS } from "./manualInKindService";
+import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
 import { ServiceError } from "@checkin/component-kit";
 
 export type InKindSource = "receipt" | "manual";
@@ -19,6 +19,7 @@ export const InKindDecisionInputSchema = z.object({
   lineValues: z
     .array(z.object({ lineId: z.number().int().positive(), valueCents: z.number().int().nonnegative().max(MAX_IN_KIND_LINE_VALUE_CENTS) }))
     .max(MAX_IN_KIND_LINES)
+    .refine((values) => values.reduce((sum, v) => sum + v.valueCents, 0) <= MAX_IN_KIND_TOTAL_CENTS, { message: "The gift's total is over the limit" })
     .optional(),
   /** The decider's attestation that they are outside the donor's household; the app cannot check it. */
   confirmOutsideDonorHousehold: z.literal(true),
@@ -160,38 +161,60 @@ function warningValueCents(g: Gift): number {
 /** The uploader of a receipt gift or the recorder of one without; nobody in their household decides it. */
 const partyOf = (g: Gift): number | null => g.uploadedByUserId ?? g.recordedByUserId;
 
-interface Roles {
+interface SurnameCheck {
+  personId: number;
+  lastName: string;
+}
+
+/** Everything the conflict rule and the warnings read, fetched once for any number of gifts. */
+interface Lookups {
   finance: number[];
   board: number[];
+  households: Map<number, number[]>;
+  surnames: Map<string, boolean>;
+  largeValueCents: number;
 }
 
-async function readRoles(): Promise<Roles> {
-  const dir = getInKindDirectory();
-  const [finance, board] = await Promise.all([dir.financeHolders(), dir.boardMembers()]);
-  return { finance, board };
-}
+const surnameKey = (c: SurnameCheck) => `${c.personId}:${c.lastName}`;
 
-async function conflictFacts(g: Gift, callerId: number, roles: Roles) {
+/** The caller's household, and the uploader's or recorder's, each against the donor's surname. */
+function surnameChecks(g: Gift, callerId: number): SurnameCheck[] {
+  const lastName = g.donorLastName;
+  if (!lastName) return [];
   const party = partyOf(g);
-  const conflicted = new Set(party === null ? [] : [party, ...(await getInKindDirectory().householdOf([party]))]);
+  return [{ personId: callerId, lastName }, ...(party === null ? [] : [{ personId: party, lastName }])];
+}
+
+async function readLookups(gifts: Gift[], callerId: number): Promise<Lookups> {
+  const dir = getInKindDirectory();
+  const parties = [...new Set(gifts.map(partyOf).filter((p): p is number => p !== null))];
+  const checks = [...new Map(gifts.flatMap((g) => surnameChecks(g, callerId)).map((c) => [surnameKey(c), c])).values()];
+  const [finance, board, households, matches, largeValueCents] = await Promise.all([
+    dir.financeHolders(),
+    dir.boardMembers(),
+    parties.length === 0 ? new Map<number, number[]>() : dir.householdsOf(parties),
+    checks.length === 0 ? [] : dir.householdsSharingSurname(checks),
+    dir.largeValueCents(),
+  ]);
+  return { finance, board, households, surnames: new Map(checks.map((c, i) => [surnameKey(c), matches[i] === true])), largeValueCents };
+}
+
+function conflictFacts(g: Gift, callerId: number, lk: Lookups) {
+  const party = partyOf(g);
+  const conflicted = new Set(party === null ? [] : [party, ...(lk.households.get(party) ?? [])]);
   const callerConflicted = conflicted.has(callerId);
-  const allFinanceConflicted = roles.finance.every((id) => conflicted.has(id));
-  const mayDecide = !callerConflicted && (roles.finance.includes(callerId) || (allFinanceConflicted && roles.board.includes(callerId)));
+  const allFinanceConflicted = lk.finance.every((id) => conflicted.has(id));
+  const mayDecide = !callerConflicted && (lk.finance.includes(callerId) || (allFinanceConflicted && lk.board.includes(callerId)));
   return { callerConflicted, allFinanceConflicted, mayDecide };
 }
 
-async function warnings(g: Gift, callerId: number, largeValueCents: number) {
-  const dir = getInKindDirectory();
-  const party = partyOf(g);
-  const lastName = g.donorLastName;
-  const [surnameMatch, donorIsRecorder] = await Promise.all([
-    lastName ? dir.householdSharesSurname(callerId, lastName) : false,
-    lastName && party !== null ? dir.householdSharesSurname(party, lastName) : false,
-  ]);
+function warnings(g: Gift, callerId: number, lk: Lookups) {
+  const [caller, party] = [callerId, partyOf(g)];
+  const matches = (personId: number | null) => !!g.donorLastName && personId !== null && lk.surnames.get(surnameKey({ personId, lastName: g.donorLastName })) === true;
   return {
-    warnDonorSurnameMatch: surnameMatch,
-    warnDonorIsRecorder: donorIsRecorder,
-    warnLargeValue: warningValueCents(g) >= largeValueCents,
+    warnDonorSurnameMatch: matches(caller),
+    warnDonorIsRecorder: matches(party),
+    warnLargeValue: warningValueCents(g) >= lk.largeValueCents,
     warnDonorReplaced: g.donorReplacedAt !== null,
   };
 }
@@ -242,21 +265,19 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
  * still being uploaded and is left out.
  */
 async function listQueue(orgId: string, callerId: number) {
-  const [receipts, manuals, buckets, bookings, roles, largeValueCents] = await Promise.all([
-    findReceipts(db, { orgId }),
-    findManuals(db, { orgId }),
-    readBuckets(),
-    readBookings(db, orgId),
-    readRoles(),
-    getInKindDirectory().largeValueCents(),
-  ]);
-  const gifts = [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)];
-  const items = await Promise.all(
-    gifts.map(async (g) => {
+  const [receipts, manuals, buckets, bookings] = await Promise.all([findReceipts(db, { orgId }), findManuals(db, { orgId }), readBuckets(), readBookings(db, orgId)]);
+  const waiting = [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)]
+    .map((g) => {
       const sides = bookings.get(bookingKey(g.source, g.id)) ?? [];
-      const waits = waitingOn(g, buckets, sides);
-      if (waits.length === 0) return null;
-      const [conflict, warn] = await Promise.all([conflictFacts(g, callerId, roles), warnings(g, callerId, largeValueCents)]);
+      return { g, sides, waits: waitingOn(g, buckets, sides) };
+    })
+    .filter((w) => w.waits.length > 0);
+  // ponytail: every waiting gift in one list; paging arrives with the drain (step 4).
+  const lk = await readLookups(waiting.map((w) => w.g), callerId);
+  return waiting
+    .map(({ g, sides, waits }) => {
+      const conflict = conflictFacts(g, callerId, lk);
+      const warn = warnings(g, callerId, lk);
       const bucket = g.budgetOwnerId === null ? undefined : buckets.get(g.budgetOwnerId);
       return {
         id: g.id,
@@ -289,10 +310,7 @@ async function listQueue(orgId: string, callerId: number) {
         allFinanceConflicted: conflict.allFinanceConflicted,
         lines: g.lines,
       };
-    }),
-  );
-  return items
-    .filter((i): i is NonNullable<typeof i> => i !== null)
+    })
     .sort((a, b) => (a.moneyReceivedAt?.getTime() ?? 0) - (b.moneyReceivedAt?.getTime() ?? 0));
 }
 
@@ -367,7 +385,8 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
     const blocked = notDecidable(gift);
     if (blocked) throw new ServiceError(409, blocked);
 
-    const conflict = await conflictFacts(gift, callerId, await readRoles());
+    const lk = await readLookups([gift], callerId);
+    const conflict = conflictFacts(gift, callerId, lk);
     if (!conflict.mayDecide) {
       throw new ServiceError(
         403,
@@ -418,7 +437,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       bucketAssignedAt: decided.bucketAssignedAt ?? null,
       lines,
     };
-    const warn = await warnings(result, callerId, await getInKindDirectory().largeValueCents());
+    const warn = warnings(result, callerId, lk);
     await recordEvent(tx, {
       orgId,
       ...entity(gift),

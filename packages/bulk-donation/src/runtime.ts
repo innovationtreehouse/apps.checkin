@@ -29,8 +29,8 @@ const INERT_INVENTORY: InventoryApply = {
 const INERT_IN_KIND: InKindDirectory = {
   financeHolders: async () => [],
   boardMembers: async () => [],
-  householdOf: async (ids) => ids,
-  householdSharesSurname: async () => false,
+  householdsOf: async (ids) => new Map(ids.map((id) => [id, [id]])),
+  householdsSharingSurname: async (checks) => checks.map(() => false),
   bucketsApprovedBy: async () => [],
   largeValueCents: async () => 50_000,
 };

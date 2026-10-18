@@ -5,32 +5,10 @@ import { resolveActorHouseholdId } from "@/lib/conflictOfInterest";
 import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { forbidden } from "@/security/handler";
+import { surname } from "@/lib/bulkDonation/donorSurname";
 
 export const OWN_HOUSEHOLD_DONOR_MESSAGE =
   "You cannot record a gift from yourself or your own household. Someone outside your household must record it.";
-
-const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
-
-/** The last word of a name that is not a generational suffix, lowercased with accents removed; "" when it has none. */
-export function surname(name: string): string {
-  const words = name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
-  return words.filter((w) => !SUFFIXES.has(w)).at(-1) ?? "";
-}
-
-/**
- * Whether anyone live in this person's household, the person included, has the
- * donor's surname. A person with no household is compared on their own name.
- */
-export async function householdSharesSurname(db: DbClient, personId: number, lastName: string): Promise<boolean> {
-  const donorSurname = surname(lastName);
-  if (!donorSurname) return false;
-  const householdId = await resolveActorHouseholdId(db, personId);
-  const people = await db.person.findMany({
-    where: householdId === null ? { id: personId } : { householdId, ...LIVE_PERSON },
-    select: { name: true },
-  });
-  return people.some((p) => surname(p.name) === donorSurname);
-}
 
 /**
  * Throws 403 when the donor may be the recorder or someone in the recorder's

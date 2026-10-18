@@ -92,10 +92,10 @@ export interface OtherLaneClaims {
 export interface InKindDirectory {
   financeHolders(): Promise<number[]>;
   boardMembers(): Promise<number[]>;
-  /** Everyone in the given people's households, the people themselves included. */
-  householdOf(personIds: number[]): Promise<number[]>;
-  /** Whether anyone in this person's household, the person included, shares the given surname. */
-  householdSharesSurname(personId: number, lastName: string): Promise<boolean>;
+  /** Each person's household member ids, the person included, read in one batch. */
+  householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
+  /** For each check, whether anyone in the person's household, the person included, has that surname; one batch. */
+  householdsSharingSurname(checks: { personId: number; lastName: string }[]): Promise<boolean[]>;
   /** The buckets whose approvers (program leader and treasurers) include this person. */
   bucketsApprovedBy(personId: number): Promise<number[]>;
   /** The expense library's large-spend amount; a gift valued at or over it warns its decider. */

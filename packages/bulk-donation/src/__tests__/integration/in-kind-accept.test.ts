@@ -9,7 +9,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";
 import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt } from "../../inKind";
-import { inKindAcceptService, type InKindDecisionInput } from "../../services/inKindAcceptService";
+import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import type { InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
@@ -32,14 +32,22 @@ const BUCKETS: OwnerInfo[] = [
 let buckets: OwnerInfo[];
 let finance: number[];
 let largeValueCents: number;
+let householdCalls = 0;
+let surnameCalls = 0;
 const HOUSEHOLDS: Record<number, number[]> = { [UPLOADER]: [UPLOADER, FINANCE_IN_UPLOADER_HOUSEHOLD], [RECORDER]: [RECORDER] };
 
 function configure(principalId = RECORDER) {
   const inKind: InKindDirectory = {
     financeHolders: async () => finance,
     boardMembers: async () => [BOARD],
-    householdOf: async (ids) => [...new Set(ids.flatMap((id) => HOUSEHOLDS[id] ?? [id]))],
-    householdSharesSurname: async (personId, lastName) => personId === FINANCE && lastName === "Doe",
+    householdsOf: async (ids) => {
+      householdCalls++;
+      return new Map(ids.map((id) => [id, HOUSEHOLDS[id] ?? [id]]));
+    },
+    householdsSharingSurname: async (checks) => {
+      surnameCalls++;
+      return checks.map(({ personId, lastName }) => personId === FINANCE && lastName === "Doe");
+    },
     bucketsApprovedBy: async (personId) => (personId === 40 ? [1] : []),
     largeValueCents: async () => largeValueCents,
   };
@@ -254,6 +262,27 @@ describeDb("warnings", () => {
     largeValueCents = 4000;
     await manualGift();
     expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
+  });
+});
+
+describeDb("listQueue lookups", () => {
+  it("reads households and surnames once for the whole queue, not once per gift", async () => {
+    await receiptGift();
+    await manualGift();
+    await manualGift();
+    configure();
+    householdCalls = 0;
+    surnameCalls = 0;
+    expect(await queueFor(FINANCE)).toHaveLength(3);
+    expect([householdCalls, surnameCalls]).toEqual([1, 1]);
+  });
+});
+
+describeDb("accepting: the total cap", () => {
+  it("refuses line values whose total is over $1,000,000", () => {
+    const lineValues = [1, 2].map((lineId) => ({ lineId, valueCents: 60_000_000 }));
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues }).success).toBe(false);
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues: lineValues.slice(0, 1) }).success).toBe(true);
   });
 });
 

@@ -22,7 +22,6 @@ jest.mock("@checkin/local-inventory", () => ({ isProvisionalGtin13: (g: string) 
 const signoff = {
   financeHolders: jest.fn(),
   boardMembers: jest.fn(),
-  householdOf: jest.fn(),
   bucketsApprovedBy: jest.fn(),
 };
 jest.mock("@/lib/expense/configure", () => ({ signoff }));
@@ -86,15 +85,13 @@ describe("bulk-donation wiring", () => {
     ]);
   });
 
-  it("binds the in-kind accept step to the expense sign-off directory and its capital-equipment amount", async () => {
+  it("binds the in-kind accept step's roles and buckets to the expense sign-off directory and its capital-equipment amount", async () => {
     const { inKind } = await config();
     signoff.financeHolders.mockResolvedValue([10]);
-    signoff.householdOf.mockResolvedValue([11]);
     signoff.bucketsApprovedBy.mockResolvedValue([4]);
     getExpenseSettings.mockResolvedValue({ capitalEquipmentUnitCents: 50_000 });
 
     await expect(inKind!.financeHolders()).resolves.toEqual([10]);
-    await expect(inKind!.householdOf([7])).resolves.toEqual([7, 11]);
     await expect(inKind!.bucketsApprovedBy(3)).resolves.toEqual([4]);
     await expect(inKind!.largeValueCents()).resolves.toBe(50_000);
     expect(getExpenseSettings).toHaveBeenCalledWith(ORG.id);
