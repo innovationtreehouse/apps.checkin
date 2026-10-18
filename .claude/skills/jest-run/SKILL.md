@@ -5,6 +5,10 @@ description: Safe way to run jest / npm test in the checkin-app repo. Use whenev
 
 # Running jest safely in checkin-app
 
+**Start with `npm run test:affected` from the repo root.** It runs only the tests your diff
+touches, with no database or Docker; the full suites are CI's. See "Local testing for
+agents" in `AGENTS.md`. The rest of this skill is for when you must run jest by hand.
+
 Run all commands from `checkin-app/`. A `.claude/hooks/jest-guard.sh` PreToolUse hook
 hard-blocks the three catastrophic shapes (background test, tail/head pipe, hand-rolled
 `--testPathIgnorePatterns`). Everything below is the part the hook leaves to judgment.

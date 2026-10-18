@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Local per-area test runner (docs/in-design/PER_LIBRARY_TESTING.md).
+// Local per-area test runner (docs/ops/per-library-testing.md).
 // Maps the files changed against a base ref to areas and runs only the light
 // tiers for those areas, serially: tsc, eslint, vitest unit (no DB container),
 // and the related checkin jest unit tests. Heavier tiers are opt-in and scoped
@@ -14,46 +14,47 @@ import { join, relative } from 'node:path';
 const root = join(import.meta.dirname, '..');
 const app = join(root, 'checkin-app');
 
-// Each library's package and the checkin paths that wire it in. `key` names its
-// security tests (src/security/__tests__/<key>-*.test.ts, tests/security/<key>Admission.test.ts).
-const LIBRARIES = [
-  {
-    key: 'catalog', pkg: 'packages/global-catalog', flows: ['flow-tests/catalog.flow.test.ts'],
-    checkin: ['src/lib/catalog/', 'src/lib/catalogNav.ts', 'src/app/catalog/', 'src/app/api/catalog/',
+// The libraries and their packages come from checkin-app/libraries.json. This
+// table adds what that list does not hold: `key` names the library's security
+// tests (src/security/__tests__/<key>-*.test.ts, tests/security/<key>Admission.test.ts),
+// `checkin` the paths that wire it in, `flows` its flow tests.
+const WIRING = {
+  catalog: {
+    key: 'catalog', flows: ['flow-tests/catalog.flow.test.ts'],
+    checkin: ['src/lib/catalog/', 'src/lib/nav/sections/inventory.ts', 'src/app/catalog/', 'src/app/api/catalog/',
       'src/security/registry/catalog.ts', 'src/security/catalogSyntheticClassifications.ts'],
   },
-  {
-    key: 'inventory', pkg: 'packages/local-inventory', flows: ['flow-tests/local-inventory.flow.test.ts'],
+  local_inventory: {
+    key: 'inventory', flows: ['flow-tests/local-inventory.flow.test.ts'],
     checkin: ['src/lib/localInventory/', 'src/app/inventory/', 'src/app/api/inventory/',
       'src/security/registry/inventory.ts', 'src/security/inventorySyntheticClassifications.ts'],
   },
-  {
-    key: 'income', pkg: 'packages/income', flows: ['flow-tests/income.flow.test.ts'],
+  income: {
+    key: 'income', flows: ['flow-tests/income.flow.test.ts'],
     checkin: ['src/lib/income/', 'src/app/income/', 'src/app/api/income/',
       'src/security/registry/income.ts', 'src/security/incomeSyntheticClassifications.ts'],
   },
-  {
-    key: 'expense', pkg: 'packages/expense', flows: ['flow-tests/expense.flow.test.ts'],
+  expense: {
+    key: 'expense', flows: ['flow-tests/expense.flow.test.ts'],
     checkin: ['src/lib/expense/', 'src/app/expense/', 'src/app/api/expense/',
       'src/security/registry/expense.ts', 'src/security/expenseSyntheticClassifications.ts'],
   },
-  {
-    key: 'receipt', pkg: 'packages/receipt',
-    flows: ['flow-tests/receipt.flow.test.ts', 'flow-tests/receipt-pipeline.flow.test.ts'],
+  receipt: {
+    key: 'receipt', flows: ['flow-tests/receipt.flow.test.ts', 'flow-tests/receipt-pipeline.flow.test.ts'],
     checkin: ['src/lib/receipt/', 'src/app/receipts/', 'src/app/api/receipts/',
       'src/security/registry/receipt.ts', 'src/security/receiptSyntheticClassifications.ts'],
   },
-  {
-    key: 'workflow', pkg: 'packages/workflow-mapping', flows: ['flow-tests/workflow-mapping.flow.test.ts'],
+  workflow_mapping: {
+    key: 'workflow', flows: ['flow-tests/workflow-mapping.flow.test.ts'],
     checkin: ['src/lib/workflowMapping/', 'src/app/api/workflow-mapping/',
       'src/security/registry/workflow.ts', 'src/security/workflowSyntheticClassifications.ts'],
   },
-  {
-    key: 'donation', pkg: 'packages/bulk-donation', flows: ['flow-tests/bulk-donation.flow.test.ts'],
+  bulk_donation: {
+    key: 'donation', flows: ['flow-tests/bulk-donation.flow.test.ts'],
     checkin: ['src/lib/bulkDonation/', 'src/app/donations/', 'src/app/api/donations/',
       'src/security/registry/donation.ts', 'src/security/donationSyntheticClassifications.ts'],
   },
-];
+};
 
 // Checkin paths whose change runs the whole security tier.
 const SECURITY = [/^src\/security\//, /^src\/middleware\.ts$/, /^prisma\/schema\.prisma$/, /^tests\/security\//];
@@ -116,6 +117,12 @@ const workspaces = rootPkg.workspaces.flatMap((glob) => {
   };
 });
 const byDir = new Map(workspaces.map((w) => [w.dir, w]));
+const LIBRARIES = JSON.parse(readFileSync(join(app, 'libraries.json'), 'utf8')).map(({ name, package: pkgName }) => {
+  const wiring = WIRING[name];
+  const pkg = workspaces.find((w) => w.name === pkgName)?.dir;
+  if (!wiring || !pkg) die(`libraries.json entry "${name}" (${pkgName}) has no ${wiring ? 'workspace' : 'WIRING entry in scripts/test-affected.mjs'}.`);
+  return { ...wiring, pkg };
+});
 // A dev dependency reaches only its direct consumer's tests; a runtime
 // dependency also reaches that consumer's own consumers.
 const consumersOf = (name, seen = new Set()) => {
@@ -233,7 +240,7 @@ if (opts.db) {
   if (integ.length > INTEGRATION_CAP && !opts.wide) {
     refused = [refused, `${integ.length} related integration files exceed the local cap of ${INTEGRATION_CAP}; CI runs them. Re-run with --wide to run them anyway.`].filter(Boolean).join(' ');
   } else if (integ.length) {
-    if (!process.env.DATABASE_URL) die('--db needs DATABASE_URL pointing at a running Postgres (the integration tier clones a template DB from it).');
+    if (!process.env.DATABASE_URL && !opts.dry) die('--db needs DATABASE_URL pointing at a running Postgres (the integration tier clones a template DB from it).');
     add(`jest integration (${integ.length} files)`, 'npm', ['run', 'test:integration', '--', '--forceExit', '--runTestsByPath', ...integ], app);
   }
 }
