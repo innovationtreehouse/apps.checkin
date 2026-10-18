@@ -116,7 +116,7 @@ jobs:
 
   # Migration COUNT is deliberately ungated here — no CI job blocks a release
   # on how many new migrations it carries. The team manages coalescing
-  # manually per release (docs/MIGRATION_COALESCE_FLOW.md is still the
+  # manually per release (docs/ops/MIGRATION_COALESCE_FLOW.md is still the
   # playbook and its script still works); this used to be enforced by a
   # blocking release-time job (removed) plus an advisory PR-time check (also
   # removed) — both judged a per-release human call, not CI's, after the old

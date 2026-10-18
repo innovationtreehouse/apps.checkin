@@ -18,7 +18,7 @@ export { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_B
  * acknowledgement (`sendScholarshipAck`, ungated). Board decisions (program
  * approve/deny, membership approve) are communicated manually by the
  * Scholarship Review Team, not by an automated status email — see
- * docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5.
+ * docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5.
  */
 
 type AckSettings = {

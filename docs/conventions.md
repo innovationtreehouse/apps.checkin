@@ -223,7 +223,7 @@ another copy of the class and the caller sees a 500.
 ## The dictionary's word is the code's word
 
 - **Identifiers, comments and prose use the canonical term** from
-  `checkin-app/docs/VOCABULARY.md`. No `minor`, no loose `dependent`, no bare
+  `docs/VOCABULARY.md`. No `minor`, no loose `dependent`, no bare
   `member`, in identifiers or in comments. `child` is allowed: it names a
   relationship (offspring), and `youth` names the under-18 age.
 

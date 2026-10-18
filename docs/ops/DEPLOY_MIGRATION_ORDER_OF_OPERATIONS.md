@@ -28,7 +28,7 @@ Additive changes — nullable columns, new tables, backfills, new indexes — ma
 Before anything is removed or tightened, grep for every consumer of the old shape, including the surfaces `tsc` can't see:
 - Shell scripts with raw SQL (`checkin-app/scripts/*.sh` — PR #917's own cutover sweep missed `full_reset_and_dev_init.sh`'s raw `INSERT INTO "HouseholdLead"`, which would have aborted the dev-reset script mid-run post-drop).
 - Audit-log `tableName` string literals (`"HouseholdLead"` at the review's finding #6 — these don't get renamed by a schema change, they're just strings).
-- `checkin-app/docs/VOCABULARY.md` and any other doc asserting a model exists.
+- `docs/VOCABULARY.md` and any other doc asserting a model exists.
 - Seed files (`prisma/seed.ts`).
 
 ### 3. Contract last — in a separate, later release

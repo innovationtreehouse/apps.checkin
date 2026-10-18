@@ -8,7 +8,7 @@
 # open them. Library databases are handled by 10-library-dbs.sh.
 # Postgres runs this only on a fresh data volume. It is idempotent: on an
 # existing volume run it once by hand before pointing DATABASE_URL at
-# checkin_dml (see checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md).
+# checkin_dml (see docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md).
 set -eu
 if [ -z "${CHECKIN_DML_DB_PASSWORD:-}" ]; then
   echo "05-checkin-roles: CHECKIN_DML_DB_PASSWORD must be set" >&2

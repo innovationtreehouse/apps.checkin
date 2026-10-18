@@ -284,5 +284,5 @@ remove or reach out. Nothing sends when both lists are empty.
 
 - `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
   that per-checkout discount codes stand in for until checkout identity is solved.
-- `docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
+- `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
   convention this design's legacy-variant transition follows.

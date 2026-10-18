@@ -5,7 +5,7 @@
  * LIVE contract: single-pool product creation + the locked compare-and-set stock writer,
  * exercised through the app's real lib functions against the real dev store.
  * These are the exact call sequences the capacity model (#930,
- * docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md) depends on.
+ * docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md) depends on.
  */
 // The lib's failure path reports through prisma + email — keep the live suite
 // DB- and mail-free (a live failure should fail the test, not email the board).

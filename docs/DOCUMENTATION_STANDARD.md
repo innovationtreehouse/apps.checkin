@@ -27,7 +27,8 @@ domain rules — and gives everything else a shorter life.
 | `docs/conventions.md` | How we build, independent of any domain | Long-lived |
 | `docs/ops/` | How to run, deploy, test, and mock things; and states left by a data load, each with an exit condition | Long-lived; cleanup entries deleted as they close |
 | `docs/security/` | Security policy and boundary rules | Long-lived |
-| `checkin-app/docs/generated/` | Machine-derived artifacts, drift-tested | Regenerated, never hand-edited |
+| `docs/architecture/` | Standing architecture references: how a part of the system is shaped | Long-lived; edited when the shape changes |
+| `docs/generated/` | Machine-derived artifacts, drift-tested | Regenerated, never hand-edited |
 | `docs/backlog/` | Journey inventory and gap tracking | Long-lived |
 | `docs/in-design/` | Proposals and designs being worked right now | **Deleted at merge** |
 
@@ -72,7 +73,7 @@ Decisions the board or operations have made about how things work, and
 invariants that later work must not violate.
 
 **Not:** implementation mechanism, state-machine structure (already generated and
-drift-tested under `checkin-app/docs/generated/`), rollout sequencing, or
+drift-tested under `docs/generated/`), rollout sequencing, or
 anything a reader could derive by reading the code.
 
 ### 3.2 Three sections, in this order
@@ -130,7 +131,7 @@ that affects price or access, the interface gating on the same rule the server
 enforces — true, load-bearing, and containing no domain content. A reviewer
 checking a membership change should not read past them.
 
-**A term's meaning** goes in `checkin-app/docs/VOCABULARY.md`, the dictionary.
+**A term's meaning** goes in `docs/VOCABULARY.md`, the dictionary.
 Where a term is also a constraint (two deep, member family, youth, the tool
 levels), both the dictionary and the register keep a complete statement: the
 dictionary the definition with its constraint, the register the rule. **A change
