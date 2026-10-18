@@ -43,9 +43,10 @@ async function advanceCursor(eventId: number): Promise<void> {
 }
 
 /**
- * Point lines still carrying a provisional GTIN at the catalog's real item, on editable receipts
- * only. Not a late edit when a leg applied: inventory and expense resolve the same provisional
- * from their own S5 consumers, and the donation leg records no lines, so nothing needs a hand fix.
+ * Point lines still provisional on this GTIN at the catalog's real item, on editable receipts
+ * only. A line the manager has since linked or marked not-inventory keeps that decision. Not a
+ * late edit when a leg applied: inventory and expense resolve the same provisional from their own
+ * S5 consumers, and the donation leg records no lines, so nothing needs a hand fix.
  */
 async function remapProvisional(
   orgId: string,
@@ -53,14 +54,19 @@ async function remapProvisional(
 ): Promise<void> {
   const lines = await db.receivedReceiptLineStatus.findMany({
     where: {
+      recognitionStatus: "provisional",
       provisionalItemGtin13: ev.provisionalGtin13,
       receivedReceipt: { orgId, ...EDITABLE_RECEIPT_WHERE },
-      NOT: { recognitionStatus: "recognized", assignedGtin13: ev.realGtin13 },
     },
   });
   for (const line of lines) {
     const { count } = await db.receivedReceiptLineStatus.updateMany({
-      where: { id: line.id, receivedReceipt: EDITABLE_RECEIPT_WHERE },
+      where: {
+        id: line.id,
+        recognitionStatus: "provisional",
+        provisionalItemGtin13: ev.provisionalGtin13,
+        receivedReceipt: EDITABLE_RECEIPT_WHERE,
+      },
       data: {
         recognitionStatus: "recognized",
         assignedGtin13: ev.realGtin13,
