@@ -895,7 +895,8 @@ describe('Program Participants API Integration Tests', () => {
             it("still lets the program leader remove another family's paid place", async () => {
                 const res = await removeAs({ id: boardNonLeadId }, commonId);
                 expect(res.status).toBe(200);
-                expect(await placeOf(commonId)).toBeNull();
+                // A paid place defaults to a withdrawal, which keeps the row.
+                expect((await placeOf(commonId))?.status).toBe('WITHDRAWN');
             });
         });
 
