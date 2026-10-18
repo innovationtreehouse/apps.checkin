@@ -1,4 +1,4 @@
-import { adjustProgramInventory, changeProgramStock, healProgramStock, programStockTiming, resetTokenCache, setProgramInventory, SHOPIFY_INVENTORY_API_VERSION } from '../shopify';
+import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, resetTokenCache, setProgramInventory, settleUnconfirmedStock, SHOPIFY_INVENTORY_API_VERSION } from '../shopify';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
@@ -26,9 +26,7 @@ jest.mock('../prisma', () => {
         }
         return true;
     };
-    return {
-        __esModule: true,
-        default: {
+    const db = {
             __state: mockState,
             program: {
                 update: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
@@ -42,11 +40,17 @@ jest.mock('../prisma', () => {
                     return { count: 1 };
                 }),
                 findUnique: jest.fn(async () => (mockState.row ? { ...mockState.row } : null)),
+                findUniqueOrThrow: jest.fn(async () => ({ ...mockState.row })),
                 findMany: jest.fn(async () => (mockState.row ? [{ ...mockState.row, shopifyVariantId: '67890' }] : [])),
+                count: jest.fn(async () => (mockState.row ? 1 : 0)),
             },
             person: { findMany: jest.fn(async () => [{ email: 'admin@test.com' }]) },
-        },
+            integrationErrorLog: { findMany: jest.fn(async () => []) },
+            auditLog: { create: jest.fn() },
+            $transaction: jest.fn(),
     };
+    db.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(db));
+    return { __esModule: true, default: db };
 });
 
 const db = prisma as unknown as { __state: { row: Record<string, unknown> | null }; person: { findMany: jest.Mock } };
@@ -101,8 +105,8 @@ function shopify(replies: Partial<Record<Op, Reply[]>>) {
 function setRow(over: Record<string, unknown> = {}) {
     db.__state.row = {
         id: 42, shopifyStockCarry: 0, shopifyStockPendingWrite: null, shopifyStockPushNeededAt: null,
-        shopifyStockLeaseUntil: null, shopifyStockLeaseToken: null, shopifyStockUnconfirmed: 0,
-        startAt: new Date('2099-01-01'), offSaleAt: null, saleEndedAt: null, ...over,
+        shopifyStockLeaseUntil: null, shopifyStockLeaseToken: null, shopifyStockUnconfirmed: 0, shopifyStockParked: null,
+        name: 'Robotics', startAt: new Date('2099-01-01'), offSaleAt: null, saleEndedAt: null, ...over,
     };
 }
 /** The bookkeeping left on the program after the call. */
@@ -111,12 +115,13 @@ function after() {
     return {
         carry: r.shopifyStockCarry,
         unconfirmed: r.shopifyStockUnconfirmed,
+        parked: r.shopifyStockParked ? (JSON.parse(r.shopifyStockParked as string) as { key: string; delta: number }[]).map((w) => [w.key, w.delta]) : [],
         pending: r.shopifyStockPendingWrite ? JSON.parse(r.shopifyStockPendingWrite as string) : null,
         flagged: r.shopifyStockPushNeededAt instanceof Date,
         leased: r.shopifyStockLeaseToken !== null,
     };
 }
-const clean = { carry: 0, unconfirmed: 0, pending: null, flagged: false, leased: false };
+const clean = { carry: 0, unconfirmed: 0, parked: [], pending: null, flagged: false, leased: false };
 const emailed = (text: string) => expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining(text));
 const pendingWrite = (over: Record<string, unknown> = {}) => JSON.stringify({
     key: 'program-42-comp-old', reason: 'comp', delta: -1, owedPart: -1, inventoryItemId: ITEM, locationId: LOC,
@@ -241,7 +246,7 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(await adjustProgramInventory(program, 1, 'hold-release')).toBe(false);
 
         expect(s.calls[0].op).toBe('ProgramStockRead'); // the old key was never resent
-        expect(after()).toEqual({ ...clean, unconfirmed: -1, flagged: true });
+        expect(after()).toEqual({ ...clean, parked: [['program-42-comp-old', -1]], flagged: true });
         emailed('could not say whether it landed');
     });
 
@@ -512,6 +517,57 @@ describe('healProgramStock (daily reconcile-shopify)', () => {
 
         expect(s.adjusts()[0].variables.idempotencyKey).toBe('program-42-comp-old');
         expect(s.adjusts()[1].variables.input!.changes[0]).toMatchObject({ delta: 1 });
+        expect(after()).toEqual(clean);
+    });
+});
+
+describe('parked (unconfirmed) stock writes', () => {
+    const DAY_AGO = () => new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+
+    /** Park the pending write on the row: a push finds it past its key's lifetime. */
+    async function park(pending: string) {
+        db.__state.row!.shopifyStockPendingWrite = pending;
+        shopify({});
+        await healProgramStock();
+    }
+
+    it('a single parked write is listed and settled on its own, as before', async () => {
+        await park(pendingWrite({ sentAt: DAY_AGO() }));
+        shopify({ ProgramStockRead: [readReply(3)] });
+
+        expect(await listUnconfirmedStock()).toEqual([expect.objectContaining({ programId: 42, unconfirmed: -1, shopifyAvailable: 3 })]);
+        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        expect(after()).toMatchObject({ carry: 0, unconfirmed: 0, parked: [] });
+    });
+
+    it('two parked writes of opposite sign stay separate and are settled one by one (F5)', async () => {
+        // A comp's −1 and its withdrawal's +1 each stay unsettled a day.
+        await park(pendingWrite({ key: 'program-42-comp-a', delta: -1, owedPart: -1, sentAt: DAY_AGO() }));
+        await park(pendingWrite({ key: 'program-42-comp-b', delta: 1, owedPart: 1, sentAt: DAY_AGO() }));
+        expect(after().parked).toEqual([['program-42-comp-a', -1], ['program-42-comp-b', 1]]);
+
+        shopify({ ProgramStockRead: [readReply(3)] });
+        expect((await listUnconfirmedStock()).map((r) => r.unconfirmed)).toEqual([-1, 1]);
+
+        // The board finds the −1 landed and the +1 did not: one seat is owed back.
+        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        db.__state.row!.shopifyVariantId = null; // nothing to nudge
+        expect(await settleUnconfirmedStock(42, 1, 'notLanded', 9)).toEqual({ carry: 1 });
+        expect(after()).toMatchObject({ carry: 1, parked: [] });
+    });
+
+    it('a re-arm sets the store from scratch, which resolves parked writes: a later "not landed" is refused (F7)', async () => {
+        // A withdrawn hold's +1 never landed and was parked.
+        await park(pendingWrite({ key: 'program-42-release', delta: 1, owedPart: 1, sentAt: DAY_AGO() }));
+        expect(after().parked).toEqual([['program-42-release', 1]]);
+
+        // The board reopens: 4 seats free, the store shows 3 (the +1 is not there).
+        const s = shopify({ ProgramStockRead: [readReply(3)], ProgramStockAdjust: [adjustOk] });
+        expect(await setProgramInventory(program, async () => 4, 're-arm')).toBe(true);
+        expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: 1 });
+        expect(after()).toEqual(clean);
+
+        expect(await settleUnconfirmedStock(42, 1, 'notLanded', 9)).toEqual({ refused: 'stale' });
         expect(after()).toEqual(clean);
     });
 });
