@@ -44,16 +44,11 @@ jobs:
       # Authenticate the image pulls. Anonymous ECR Public is rate-limited per
       # shared-runner IP; authenticated is per-account. OIDC means GitHub + AWS
       # issue short-lived tokens each run — nothing to rotate manually.
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       # Pull is now authenticated; --wait then only blocks on the healthchecks
       # (start_period in the compose file covers npm ci + seed).

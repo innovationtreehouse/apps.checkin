@@ -147,7 +147,7 @@ jobs:
           # schema (a new checkin model can collide with a library's). Package
           # lint reads the root eslint.config.mjs; its plugins resolve through
           # package-lock.json, already listed.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|\.github/workflows/ci\.yml$|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -339,35 +339,20 @@ jobs:
         with:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Log in to Amazon ECR Public
         if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       # The DB runs as a step, not a service container: services start before
       # any step, so their pull can't use the ECR Public login above.
       - name: Start Postgres
         if: needs.changes.outputs.app == 'true'
-        run: |
-          bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:15
-          docker run -d --name postgres -p 5432:5432 \
-            -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=checkmein_test \
-            public.ecr.aws/docker/library/postgres:15
-          # Probe over TCP: the image's first-start init server listens only on
-          # the unix socket, so a TCP answer means the post-init restart is done.
-          for _ in $(seq 1 30); do
-            pg_isready -q -h localhost -p 5432 && exit 0
-            sleep 2
-          done
-          docker logs postgres; exit 1
+        uses: ./.github/actions/start-postgres
+        with:
+          db: checkmein_test
 
       - name: Setup Node.js
         if: needs.changes.outputs.app == 'true'
@@ -692,18 +677,12 @@ jobs:
           npm run check:library-boundaries
           bash scripts/test-check-library-boundaries.sh
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Log in to Amazon ECR Public
         if: needs.changes.outputs.packages == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        if: needs.changes.outputs.packages == 'true'
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       # Same image as pg-test-harness' DEFAULT_PG_IMAGE; testcontainers reuses
       # the local copy, so this pull is the one that gets retried.
@@ -808,18 +787,12 @@ jobs:
 
       # Authenticate the base-image and smoke-step pulls. Anonymous ECR Public
       # is rate-limited per shared-runner IP; authenticated is per-account.
-      - name: Configure AWS credentials (OIDC)
+      - name: Log in to Amazon ECR Public
         if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       - name: Pull base image
         if: needs.changes.outputs.app == 'true'
