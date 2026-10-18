@@ -387,13 +387,13 @@ allowed to close over time.
   time it was read and never loses one.
 
 - **The finances are eventually consistent.** Income and spending take time to
-  reach QuickBooks in full. They wait on people, because each entry is reviewed,
+  reach the books in full. They wait on people, because each entry is reviewed,
   matched and signed off by the people the expense rules require, and on the app,
   which works at its own pace, on its own schedule and within its own safety
   limits.
 
 - **The books are complete once everything is matched, not the moment money
-  moves.** An entry still waiting to reach QuickBooks is late, not lost; waiting
+  moves.** An entry still waiting to reach the books is late, not lost; waiting
   is the normal state, not a fault. Catching up never applies anything twice
   (see *Apply once*).
 

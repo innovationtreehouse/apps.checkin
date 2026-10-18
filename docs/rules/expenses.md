@@ -45,8 +45,8 @@ Income and donation rules are in `revenue.md`.
 ### Budget buckets
 
 - A budget bucket is an accounting bucket, not a person. Finance creates,
-  renames and archives buckets and maps each to a QuickBooks Class. Archiving
-  keeps the row, because finance records point at it.
+  renames and archives buckets and maps each to a class in the accounting
+  system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
 - A program bucket's approvers are the program's leader and its treasurers,

@@ -251,10 +251,10 @@ Procedure below is built on them.
   open application. The word "archive" is reserved for archiving a household.  [Decision —
   *Principle: decisions are reversible*]
 
-- A refund made in Shopify is recorded by the board ("Record refund"), with a
-  reason, by someone outside the household. A paid application waiting on its
-  background check returns to awaiting payment, check untouched; a paid blocked
-  application stays blocked.  [Decision]
+- A refund made in the online store is recorded by the board ("Record refund"),
+  with a reason, by someone outside the household. A paid application waiting on
+  its background check returns to awaiting payment, check untouched; a paid
+  blocked application stays blocked.  [Decision]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the

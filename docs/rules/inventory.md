@@ -120,9 +120,9 @@ How the pieces are built is described in
   birth, address) breaks this and needs its own tier decision; it must not
   default to public. `[Decision — *Principle: least privilege*]`
 
-- Anyone holding any person role, or a Google-verified account on the org
-  domain, may read the catalog with no membership needed; so may a program
-  leader, program volunteer or Volunteer Family member, youth included, but only
+- Anyone holding any person role, or an account on the org domain verified by
+  the outside sign-in service, may read the catalog with no membership needed;
+  so may a program leader, program volunteer or Volunteer Family member, youth included, but only
   while their household membership is ACTIVE. This is the shared catalog
   audience. It is decided from the signed-in session only, never from an email
   address, so a volunteer designation by itself admits no one. Only inventory
