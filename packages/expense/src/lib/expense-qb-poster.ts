@@ -244,7 +244,7 @@ export type PostOptions = {
  * recorded. With no takeover date configured nothing is posted.
  *
  * Claim, call, settle: the payload, sign-off seats and line approvals are re-read under the row lock
- * (a hold waits and raises QB_POST_HELD) and the row is
+ * (a hold waits, and on a closed expense raises QB_POST_HELD) and the row is
  * claimed (POSTING); the QuickBooks call runs outside any transaction; the outcome is settled in a
  * new one only if the claim is still ours.
  */
@@ -299,8 +299,10 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
-      // An outboxed expense is closed and takes no further sign-off or decision, so finance clears the hold.
-      await raiseFlag(expenseId, "QB_POST_HELD", held, tx);
+      // A closed expense takes no further sign-off or decision, so only finance can clear its hold.
+      // Raised once: a drain run does not reopen a flag finance checked off.
+      const flagged = await tx.expenseFlag.count({ where: { expenseId, kind: "QB_POST_HELD" } });
+      if (current.state === "qb_complete" && flagged === 0) await raiseFlag(expenseId, "QB_POST_HELD", `closed but not posted: ${held}`, tx);
       return "waiting";
     }
 
