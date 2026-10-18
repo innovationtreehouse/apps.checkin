@@ -653,6 +653,24 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
     expect(qbo.posts).toHaveLength(0);
     expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+    expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { kind: true, audience: true } })).toEqual([
+      { kind: "QB_POST_HELD", audience: "FINANCE" },
+    ]);
+  });
+
+  it.each(["rejected", "exception_raised", "pending"])("a line approval that turns %s after the outbox holds the post", async (status) => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await seedApproval(id, lines[0], { ownerId: 7, status: "approved" });
+    const late = await seedApproval(id, lines[1], { ownerId: 100, status: "finance_assigned" });
+    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).kind).toBe("QB_POST_HELD");
+
+    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status: "finance_assigned" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
   });
 
   it("an unknown reimbursee holds the post", async () => {

@@ -307,6 +307,8 @@ async function qbPayloadFor(expense: Expense, resolved: ResolvedItem[], lineItem
 // All domain writes (holds, allocations, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
+// The sign-off holds are re-read under the expense lock, so a seat void or a
+// not-Everyday mark either lands first and holds the expense, or finds it closed.
 
 async function commitQbProcessing(
   orgId: string,
@@ -317,10 +319,14 @@ async function commitQbProcessing(
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
   payload: QbExpenseEvent,
-): Promise<void> {
+): Promise<boolean> {
   const resolvedLineItemIds = resolved.map((r) => r.id);
 
-  await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
+    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) return false;
+
     if (resolvedLineItemIds.length > 0) {
       await tx.expenseHold.updateMany({
         where: {
@@ -355,6 +361,7 @@ async function commitQbProcessing(
       actor: SYSTEM_ACTOR,
       action: "qb_event_emitted",
     });
+    return true;
   });
 }
 
@@ -401,7 +408,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   if (existing) return;
 
   // An unknown reimbursee or a line with an unfilled sign-off seat holds the expense out of the
-  // outbox; setting the reimbursee or the last sign-off drains it.
+  // outbox; setting the reimbursee or the last sign-off drains it. The outbox commit re-checks under the lock.
   if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
@@ -473,12 +480,13 @@ async function processExpenseForQb(
   const { payload, taxAlloc, shippingAlloc, discountAlloc } = await qbPayloadFor(expense, resolved, lineItems);
 
   try {
-    await commitQbProcessing(
+    const committed = await commitQbProcessing(
       orgId, expenseId,
       lineItems, resolved,
       taxAlloc, shippingAlloc, discountAlloc,
       payload,
     );
+    if (!committed) return;
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore

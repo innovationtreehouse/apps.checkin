@@ -243,7 +243,8 @@ export type PostOptions = {
  * flagged QB_OVER_CAP. At MAX_CREATES_PER_DAY the expense waits for the next UTC day, nothing
  * recorded. With no takeover date configured nothing is posted.
  *
- * Claim, call, settle: the payload and sign-off seats are re-read under the row lock and the row is
+ * Claim, call, settle: the payload, sign-off seats and line approvals are re-read under the row lock
+ * (a hold waits and raises QB_POST_HELD) and the row is
  * claimed (POSTING); the QuickBooks call runs outside any transaction; the outcome is settled in a
  * new one only if the claim is still ours.
  */
@@ -278,14 +279,28 @@ export async function postExpenseToQb(
 
 type Claimed = { claim: Claim; write: TxnWrite; lineAccounts: Map<number, string> };
 
+/** Line approvals that let an expense post. */
+const POSTABLE_APPROVALS = ["approved", "finance_assigned"];
+
+/** Why an expense may not post: an unknown reimbursee, an unfilled seat or Board authorization, or a line not approved. */
+async function postingHold(tx: Db, e: Expense): Promise<string | null> {
+  if (reimburseeUnknown(e)) return "the reimbursee is unknown";
+  if ((await unsignedLines(tx, e)).size > 0) return "a line is missing a sign-off seat or the Board authorization";
+  const unapproved = await tx.lineItemOwnerApproval.count({ where: { expenseId: e.id, status: { notIn: POSTABLE_APPROVALS } } });
+  return unapproved > 0 ? "a line is not approved: it is pending, under exception, or rejected" : null;
+}
+
 async function claimForPost(orgId: string, expenseId: string, posting: ExpensePosting, opts: PostOptions): Promise<PostOutcome | Claimed> {
   return withPostable(orgId, expenseId, async (tx, locked): Promise<PostOutcome | Claimed> => {
     // A stale claim is a post that died mid-call; it settles as a retry of a failed post.
     const current = locked.qbMatchState === POSTING ? { ...locked, qbMatchState: "POST_FAILED" } : locked;
     const event = await tx.expenseEvent.findFirst({ where: { orgId, expenseId } });
     if (!event) return "waiting";
-    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
-      logWarn("qb_post_unsigned", { expenseId, orgId });
+    const held = await postingHold(tx, current);
+    if (held) {
+      logWarn("qb_post_held", { expenseId, orgId });
+      // An outboxed expense is closed and takes no further sign-off or decision, so finance clears the hold.
+      await raiseFlag(expenseId, "QB_POST_HELD", held, tx);
       return "waiting";
     }
 
