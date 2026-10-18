@@ -86,7 +86,7 @@ const session: SessionCallback = authOptions.callbacks!.session!;
 
 // Minimal args the callback ignores on the refresh path (no google/persona provider).
 function callRefresh(token: Record<string, unknown>) {
-    return jwt({ token, account: null, profile: undefined } as unknown as Parameters<JwtCallback>[0]);
+    return jwt({ token: { email: 'p@example.com', ...token }, account: null, profile: undefined } as unknown as Parameters<JwtCallback>[0]);
 }
 
 function dbParticipant(overrides: Record<string, unknown> = {}) {
@@ -144,6 +144,22 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
             expect.objectContaining({ where: { id: 7, mergedIntoId: null } }),
         );
         expect(result).toEqual({});
+    });
+
+    it('email changed since sign-in ⇒ returns an empty token', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ email: 'new@example.com' }));
+
+        const result = await callRefresh({ id: 7, email: 'p@example.com', isBoardMember: true });
+
+        expect(result).toEqual({});
+    });
+
+    it('same email in different case ⇒ session kept', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+
+        const result = (await callRefresh({ id: 7, email: 'P@Example.com' })) as Record<string, unknown>;
+
+        expect(result.id).toBe(7);
     });
 
     it('DENIED membership ⇒ denied=true and every role flag forced false', async () => {
