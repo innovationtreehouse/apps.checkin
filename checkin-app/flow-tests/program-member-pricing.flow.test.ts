@@ -38,6 +38,8 @@ describe("flow: program purchase with member pricing", () => {
                 leadMentorId: lead.personaId,
                 startAt: "2026-01-01",
                 endAt: "2026-12-31",
+                // These dates cross the 1 September boundary, so the Board states the year.
+                appliesToYear: 2026,
                 memberPrice: "40",
                 nonMemberPrice: "50",
                 maxParticipants: 10,

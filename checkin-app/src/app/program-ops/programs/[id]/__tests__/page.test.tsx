@@ -696,4 +696,52 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "← Back to Programs" }));
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs");
   });
+
+  describe("membership year", () => {
+    // jsdom lacks scrollIntoView, which Mantine's Select/Combobox calls on open.
+    beforeAll(() => {
+      window.HTMLElement.prototype.scrollIntoView = jest.fn();
+    });
+    // Crosses 1 September 2026; one ACTIVE (paid) place in programData.
+    const crossingProgram = { ...programData, startAt: "2026-06-01T00:00:00.000Z", endAt: "2026-10-01T00:00:00.000Z", appliesToYear: 2025 };
+    const setup = () => {
+      setSession({ id: 1, isBoardMember: true });
+      return routedFetch([
+        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
+        { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
+      ]);
+    };
+    const patched = (fetchMock: jest.Mock) => fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+
+    it("asks before saving a changed year on a program with paid places, naming how many", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+      renderPage();
+      fireEvent.click(await screen.findByDisplayValue("2025-2026"));
+      fireEvent.click(screen.getByText("2026-2027", { selector: '[role="option"] span' }));
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 paid place was"));
+      expect(patched(fetchMock)).toHaveLength(0);
+
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(JSON.parse(String((patched(fetchMock)[0][1] as RequestInit).body)).appliesToYear).toBe(2026);
+      confirm.mockRestore();
+    });
+
+    it("saves an unchanged year without asking", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm");
+      renderPage();
+      await screen.findByDisplayValue("2025-2026");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(confirm).not.toHaveBeenCalled();
+      confirm.mockRestore();
+    });
+  });
 });

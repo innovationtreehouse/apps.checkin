@@ -14,11 +14,14 @@ import { isProgramCheckoutBroken } from '@/lib/programCheckout';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ProgramYearField, formYearsTouched, useMembershipYearBoundary } from '../../ProgramYearField';
+import { membershipYearLabel } from '@/lib/programYear';
 export type ProgramDetail = {
   id: number;
   name: string;
-  startAt: string | null;
-  endAt: string | null;
+  startAt: string;
+  endAt: string;
+  appliesToYear: number | null;
   offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;
@@ -81,6 +84,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   // Form States
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [appliesToYear, setAppliesToYear] = useState<number | null>(null);
   const [offSaleAt, setOffSaleAt] = useState("");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
@@ -115,8 +119,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
-        setStartAt(data.startAt ? data.startAt.split('T')[0] : "");
-        setEndAt(data.endAt ? data.endAt.split('T')[0] : "");
+        setStartAt(data.startAt.split('T')[0]);
+        setEndAt(data.endAt.split('T')[0]);
+        setAppliesToYear(data.appliesToYear);
         setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
         setMinAge(data.minAge !== null ? String(data.minAge) : "");
         setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
@@ -159,8 +164,18 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     return data.people || [];
   }, []);
 
+  const canStateYear = !!sessionUser?.isBoardMember;
+  const years = formYearsTouched(useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember)), startAt, endAt);
+  const crossing = years.length > 1;
+
   const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
+    const statesYear = canStateYear && crossing;
+    const paidPlaces = program?.participants.filter((p) => p.status === 'ACTIVE').length ?? 0;
+    if (statesYear && program?.appliesToYear != null && appliesToYear != null && appliesToYear !== program.appliesToYear && paidPlaces > 0
+      && !window.confirm(`${paidPlaces} paid place${paidPlaces === 1 ? ' was' : 's were'} priced against ${membershipYearLabel(program.appliesToYear)}. Changing the membership year to ${membershipYearLabel(appliesToYear)} does not reprice them; the Board settles any difference with those families. Save anyway?`)) {
+      return;
+    }
     setSaving(true);
     setSaveError("");
     try {
@@ -170,6 +185,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
+          ...(statesYear && { appliesToYear }),
           // Sent only when edited, so an untouched date keeps following the start date.
           ...(offSaleAt !== (program?.offSaleAt?.split('T')[0] ?? "") && { offSaleAt: offSaleAt || null }),
           minAge: minAge ? parseInt(minAge) : null,
@@ -428,6 +444,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   <NumberInput label="Maximum Age (Optional)" value={maxAge} onChange={v => setMaxAge(String(v))} min={0} max={25} placeholder="e.g. 18" />
                 </SimpleGrid>
 
+                <ProgramYearField years={years} value={appliesToYear} onChange={setAppliesToYear} canEdit={canStateYear} />
+
                 <div>
                   <NumberInput label="Max Participants (Optional)" value={maxParticipants} onChange={v => setMaxParticipants(String(v))} min={1} placeholder="Leave blank for unlimited" description="Sets the inventory limit on Shopify. Leave blank for unlimited enrollment." />
                   {(memberPrice || nonMemberPrice) && !maxParticipants && (
@@ -460,7 +478,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   checked={announceOnOpen}
                   onChange={e => setAnnounceOnOpen(e.currentTarget.checked)}
                   label="Announce to members when enrollment opens"
-                  description="Off by default. When on, reaching Upcoming + Open emails members whose membership covers this program's dates (once)."
+                  description="Off by default. When on, reaching Upcoming + Open emails members whose membership covers this program's membership year (once)."
                 />
 
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>

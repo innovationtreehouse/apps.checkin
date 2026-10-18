@@ -73,6 +73,9 @@ jest.mock('@/lib/prisma', () => {
     auditLog: {
       create: jest.fn(),
     },
+    boardSettings: {
+      findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2000-09-01T00:00:00Z') }),
+    },
     appSettings: {
       // Event creation reads the org timezone via getAppSettings().
       upsert: jest.fn().mockResolvedValue({ id: 1, timezone: 'America/Chicago', locale: 'en-US' }),
@@ -117,7 +120,7 @@ describe('Full Program Signup Integration Flow', () => {
             body: JSON.stringify({
                 name: 'Integration Test Program',
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
+                endAt: '2026-06-30',
                 memberPrice: 50,
                 nonMemberPrice: 100,
                 leadMentorId: mentorId,

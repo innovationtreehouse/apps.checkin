@@ -39,3 +39,26 @@ export function memberYearStarts(boundary: Date, now: Date = new Date()): { curr
 export function birthCutoff(asOf: Date, years = 18): Date {
     return new Date(Date.UTC(asOf.getUTCFullYear() - years, asOf.getUTCMonth(), asOf.getUTCDate()));
 }
+
+/** The membership year a date falls in, named by the year its opening boundary is in. */
+export function membershipYearOf(boundary: Date, date: Date): number {
+    const year = date.getUTCFullYear();
+    const opens = Date.UTC(year, boundary.getUTCMonth(), boundary.getUTCDate());
+    return date.getTime() >= opens ? year : year - 1;
+}
+
+/** A membership year's name: 2026 → "2026-2027". */
+export function membershipYearLabel(year: number): string {
+    return `${year}-${year + 1}`;
+}
+
+/**
+ * The membership years a program's dates touch, earliest first. An end date on
+ * the boundary counts in the year that boundary closes, because coverage of a
+ * year reaches its closing boundary inclusively.
+ */
+export function programYearsTouched(boundary: Date, startAt: Date, endAt: Date): number[] {
+    const first = membershipYearOf(boundary, startAt);
+    const last = Math.max(first, membershipYearOf(boundary, new Date(endAt.getTime() - 1)));
+    return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+}
