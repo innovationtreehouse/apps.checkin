@@ -148,6 +148,24 @@ def route_selftest():
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    global gh
+    real, calls = gh, []
+    def fake(out):
+        def stub(*args):
+            calls.append(args)
+            if isinstance(out, Exception):
+                raise out
+            return out
+        return stub
+    try:
+        gh = fake("")
+        assert first_round("1", "o/r") and calls[-1][-1] == f'.[] | select(.user.login == "{BOT}") | .id'
+        gh = fake("123\n")
+        assert not first_round("1", "o/r")
+        gh = fake(subprocess.CalledProcessError(1, "gh"))
+        assert not first_round("1", "o/r")
+    finally:
+        gh = real
     print("route selftest ok")
 
 
