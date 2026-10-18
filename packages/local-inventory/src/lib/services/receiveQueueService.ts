@@ -37,17 +37,24 @@ export function createReceiveQueueService({
 
         // A provisional GTIN since resolved by the global catalog receives under its real GTIN,
         // unless a unit conflict on it is still open: then it joins the provisional stock that
-        // the conflict's resolution settles. The pair lock orders this against that resolution.
-        const provisional = await tx.inventoryProvisionalItem.findFirst({
-          where: { orgId, provisionalGtin13: item.gtin13 },
-        });
+        // the conflict's resolution settles. The provisional is re-read under the pair lock, so
+        // a merge or resolution in flight commits first; it resolves at most once, so this ends.
+        // ponytail: a re-lock after a resolution in flight takes the real row out of GTIN order; Postgres aborts one side on deadlock.
+        const findProvisional = () =>
+          tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: item.gtin13 } });
+        let provisional = await findProvisional();
+        let locked: string | null | undefined;
+        while (locked !== (provisional?.resolvedToGtin13 ?? null)) {
+          locked = provisional?.resolvedToGtin13 ?? null;
+          await lockOrgItemPair(tx, orgId, item.gtin13, locked ?? item.gtin13);
+          provisional = await findProvisional();
+        }
         let gtin13 = item.gtin13;
-        if (provisional?.resolvedToGtin13) {
-          await lockOrgItemPair(tx, orgId, item.gtin13, provisional.resolvedToGtin13);
+        if (locked) {
           const openConflict = await tx.inventoryMergeConflict.findFirst({
             where: { orgId, provisionalGtin13: item.gtin13, status: "pending" },
           });
-          if (!openConflict) gtin13 = provisional.resolvedToGtin13;
+          if (!openConflict) gtin13 = locked;
         }
         await applyQtyChangeIn(tx, orgId, gtin13, item.quantity, {
           userId,

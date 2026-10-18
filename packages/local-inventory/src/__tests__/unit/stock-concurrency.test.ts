@@ -40,11 +40,11 @@ function services() {
   };
 }
 
-/** Resolves once some backend in this database is waiting on a lock. */
-async function someoneBlocked(): Promise<void> {
+/** Resolves once at least `count` backends in this database are waiting on a lock. */
+async function someoneBlocked(count = 1): Promise<void> {
   for (let i = 0; i < 200; i++) {
     const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n > 0n) return;
+    if (n >= BigInt(count)) return;
     await new Promise((r) => setTimeout(r, 25));
   }
   throw new Error("no backend blocked on a lock");
@@ -246,5 +246,35 @@ describeDb("merge after a concurrent resolution", () => {
 
     expect(await qty(PROVISIONAL)).toBe(6);
     expect(await qty(REAL)).toBe(6);
+  });
+
+  it("a fulfil racing a rename merge receives under the real GTIN and leaves no provisional row", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "o-1", lineItemId: 1 },
+    });
+
+    // Hold the provisional row so the merge queues on it first, then the fulfil behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${TEST_ORG_ID} AND gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 13, 1);
+    await someoneBlocked(1);
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, merge, fulfil]);
+
+    expect(await qty(REAL)).toBe(8);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 });
