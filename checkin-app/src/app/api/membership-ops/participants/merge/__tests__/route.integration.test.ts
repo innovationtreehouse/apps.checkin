@@ -206,6 +206,23 @@ describe("Merge Participants API", () => {
         expect(merged?.email).toBe("merge@example.com");
     });
 
+    it("refuses with 409 when the merged-away record changes household between the pre-check and the transaction", async () => {
+        const movedTo = await makeHousehold("Merge Test Moved Household");
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: movedTo } });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(409);
+            expect((await res.json()).error).toContain("changed household");
+        } finally {
+            spy.mockRestore();
+        }
+        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+    });
+
     it("waits on a deny holding the merged-away household's membership row, then refuses", async () => {
         const otherHh = await makeHousehold("Merge Test Deny In Flight Household", "NONE");
         await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
