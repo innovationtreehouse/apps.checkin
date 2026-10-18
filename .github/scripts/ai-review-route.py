@@ -78,7 +78,8 @@ def jev(state, questions):
     body = json.dumps({"model": JEV, "state": state, "questions": questions}).encode()
     req = urllib.request.Request("https://openrouter.ai/api/v1/systemone", data=body, headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    # Full-context states can push Jev into long-context mode; give it room before the fallbacks kick in.
+    with urllib.request.urlopen(req, timeout=600) as r:
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
