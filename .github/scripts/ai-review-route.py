@@ -29,8 +29,9 @@ LADDER = [
      "Dollars a review, roughly double the high tier, and reserved for the rare case. Only when a missed bug would mean lost money, leaked personal data or a broken production deploy, AND the logic is subtle enough that the high tier would likely miss it. Choose this almost never.", ""),
 ]
 # Escalation bars: move to a rung only when P(this rung or higher) clears its bar.
-# Odds 1:1, 4:1, 39:1, so reaching Opus takes about ten times the concern of Argon.
-BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
+# Odds 1:1, 9:1, 39:1. Tuned with MID_PROFILES so ~60% of reviews run on the free rung
+# (Jev decision log 10-16..10-17: 60% free, 18% mid, 22% high).
+BARS = {"free": 0.0, "mid": 0.5, "high": 0.9, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
@@ -39,6 +40,8 @@ COMPLETE_THRESHOLD = 0.2
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
+# The mid rung is kept only for these; any other mid pick runs on the free rung.
+MID_PROFILES = HIGH_PROFILES | {"money"}
 DIFF_BYTES = 200_000  # over ~32 KB Jev uses its slower long-context mode
 INSTRUCTIONS_MAX = 16_000  # the action's custom_instructions limit, in UTF-8 bytes
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -121,6 +124,22 @@ def pick(probs, rungs):
         if sum(probs.get(r, 0) for r in rungs[i:]) >= BARS[name]:
             chosen = name
     return chosen
+
+
+def free_unless_risky(tier, profiles):
+    """Send a mid pick to the free rung unless a risky profile applies."""
+    return "free" if tier == "mid" and not MID_PROFILES & set(profiles) else tier
+
+
+def route_selftest():
+    assert free_unless_risky("mid", ["rules-docs"]) == "free"
+    assert free_unless_risky("mid", ["money"]) == "mid"
+    assert free_unless_risky("mid", ["migrations", "rules-docs"]) == "mid"
+    assert free_unless_risky("high", []) == "high"
+    assert free_unless_risky("free", ["money"]) == "free"
+    assert pick({"free": 0.05, "mid": 0.1, "high": 0.85}, ORDER) == "mid"
+    assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
+    print("route selftest ok")
 
 
 def rung_choice(rungs):
@@ -228,7 +247,7 @@ def route():
                          "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
                          "criteria": rung_choice(ORDER)}})["reviewer"]
         tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
-        tier = pick(a["probabilities"], ORDER)
+        tier = free_unless_risky(pick(a["probabilities"], ORDER), chosen)
         t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
     except Exception as e:
         print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
@@ -418,6 +437,9 @@ def recommend():
 if __name__ == "__main__":
     if sys.argv[1:] == ["scrub"]:
         scrub()
+        sys.exit(0)
+    if sys.argv[1:] == ["route-selftest"]:
+        route_selftest()
         sys.exit(0)
     if sys.argv[1:] == ["scrub-selftest"]:
         scrub_selftest()
