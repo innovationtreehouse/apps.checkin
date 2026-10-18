@@ -175,7 +175,7 @@ export const mailQueueService = {
     return db.$transaction((tx) => addIgnored(tx, actor, receipt.fileHash, reason, "receipt", receiptId));
   },
 
-  /** Remove an entry; intake reads that file again from its next run. Audited like an add. */
+  /** Remove an entry; intake reads that file in mail it has not yet skipped. Audited like an add. */
   async removeIgnored(id: number) {
     const actor = await requireActor();
     const orgId = (await getOrg()).id;

@@ -107,7 +107,7 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
   );
 }
 
-/** The ignore list: files mail intake skips. Removing one lets intake read that file again from its next run. */
+/** The ignore list: files mail intake skips. Removing one lets intake read that file in mail it has not yet skipped. */
 function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () => void }) {
   if (entries.length === 0) return null;
   const remove = async (id: number) => {
@@ -116,7 +116,7 @@ function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () 
   return (
     <Stack mt="xl">
       <Title order={4}>Ignored files</Title>
-      <Text c="dimmed">Mail intake skips these exact files. Removing one applies from the next run.</Text>
+      <Text c="dimmed">Mail intake skips these exact files. Removing one applies to mail not yet skipped.</Text>
       <Table>
         <Table.Thead>
           <Table.Tr><Table.Th>Reason</Table.Th><Table.Th>File</Table.Th><Table.Th>Added</Table.Th><Table.Th /></Table.Tr>
