@@ -4,7 +4,7 @@
 exists (`shopify.ts` creates only Products/Variants and consumes `orders/paid`).
 The **interim** mechanism shipped instead (#930): single-pool capacity +
 per-enrollee server-minted single-use discount codes (`createShopifySingleVariantProgram`,
-`mintMemberDiscountCode`; see `docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
+`mintMemberDiscountCode`; see `checkin-app/docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
 which is exactly option (d) below, the narrow stopgap. Segment-gated automatic
 discounts remain the intended **end-state**. The current wiring (one variant per
 program at the non-member price, `buildMembershipCheckoutUrl`, the #739
@@ -13,7 +13,7 @@ constraint that makes the feature hard, the options, and the open questions.
 
 **Addresses:** #270 (member-segment allowlist for program pricing), #278
 (volunteer discount honor-system). **Related:** #739 (the variant-*presence*
-guard this simplifies), `SHOPIFY_DEV_STORE_WEBHOOK.md` (dev-store + mock reused).
+guard this simplifies), `docs/ops/shopify-dev-store.md` (dev-store + mock reused).
 
 ## The central design constraint (code-independent, the crux)
 
@@ -101,5 +101,5 @@ pricing change (lowest risk, fully reversible).
 - **The mock cannot model this feature** — the in-process Shopify mock self-fires
   a synthesized `orders/paid` and never touches Shopify's real checkout/discount
   engine, which is exactly where the identity-at-checkout question lives. Promote real-dev-store
-  checkout testing (currently valuable-but-not-blocking in `SHOPIFY_DEV_STORE_WEBHOOK.md`)
+  checkout testing (currently valuable-but-not-blocking in `docs/ops/shopify-dev-store.md`)
   to **required** before phase 2 — the one place the mock's zero-infra runs out.

@@ -67,11 +67,11 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `1256_ATTENDANCE_CORRECTION_SURFACE.md` | Retire | in flight, #2275 |
 | `975-LEGACY_VARIANT_CONTRACT.md` | Retire | in flight, sibling session |
 | `1441_PROGRAM_DATES.md` | Retire | in flight, #2262 |
-| `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
-| `SHOPIFY_DEV_STORE_WEBHOOK.md` | Ops reference; move to `docs/ops/shopify-dev-store.md`, keeping the §2, §4 and §6 numbering that code cites | todo, PR 1 |
-| `SHOPIFY_MEMBER_SEGMENT_PRICING.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
+| `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | done, PR 1 |
+| `SHOPIFY_DEV_STORE_WEBHOOK.md` | Ops reference; move to `docs/ops/shopify-dev-store.md`, keeping the §2, §4 and §6 numbering that code cites | done, PR 1 |
+| `SHOPIFY_MEMBER_SEGMENT_PRICING.md` | Not built; move to `docs/in-design/` | done, PR 1 |
 | `UNFINISHED.md` | Follow-up ledger behind issue #1322; each non-sensitive open item becomes an issue, then the file is deleted (Q5) | todo, PR 5 |
-| `resilient-load-swr.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
+| `resilient-load-swr.md` | Not built; move to `docs/in-design/` | done, PR 1 |
 | `UNIFIED_SIGNUP.md` (not on `main`) | Open PR #1370 adds it here; if it goes ahead it belongs in `docs/in-design/` | open PR, its author's call |
 
 ### 3.3 Outside the folders

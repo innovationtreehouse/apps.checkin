@@ -4,7 +4,7 @@
 /**
  * Integration tests for POST /api/dev/shopify/orders-paid — the dev-only mock
  * that synthesizes an orders/paid payload and self-fires it at the REAL inbound
- * webhook (see docs/designs/SHOPIFY_DEV_STORE_WEBHOOK.md §6). Covers the gate
+ * webhook (see docs/ops/shopify-dev-store.md §6). Covers the gate
  * fuses (mock-active, session, validation) plus an end-to-end happy path that
  * proves the mock actually drives activate() via the real webhook handler —
  * not just a mocked 200.

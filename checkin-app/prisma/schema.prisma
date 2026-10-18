@@ -752,7 +752,7 @@ model BoardSettings {
   qboProductionRealmId       String?
 }
 
-/// Board-edited override of one email's copy (docs/designs/1333-EMAIL_TEMPLATES.md).
+/// Board-edited override of one email's copy (docs/in-design/1333-EMAIL_TEMPLATES.md).
 /// A missing row means the email sends its code default.
 model EmailTemplate {
   /// Stable email-type key, e.g. `membership.congrats`. @sensitivity:public

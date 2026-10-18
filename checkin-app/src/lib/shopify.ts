@@ -1382,7 +1382,7 @@ export async function setProgramProductOffSale(
  * sell at the base/non-member price; an ACTIVE org member gets this code
  * appended to their cart link (`?discount=<code>`) to bring the price down to
  * the member rate. Interim mechanism —
- * docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md's segment-gated automatic
+ * docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md's segment-gated automatic
  * discount (its §5) is the planned upgrade once checkout identity is solved;
  * this mints one real Shopify object per checkout in the meantime.
  *
