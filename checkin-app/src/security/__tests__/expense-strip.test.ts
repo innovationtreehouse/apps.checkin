@@ -158,6 +158,16 @@ describe('expense stripper', () => {
         expect(strip('ExpenseReimburseeView', reimbursee, FINANCE_VIEW)).toEqual(reimbursee);
     });
 
+    it('a donated capital line reaches FINANCE whole and drops any donor field', () => {
+        const line = {
+            id: 1, orgId: 'treehouse', giftSource: 'IN_KIND', giftId: 3, giftLineId: 4, description: 'Table saw',
+            quantity: 1, costCents: 250000, acquisitionDate: '2026-10-01', budgetOwnerId: 5, isCapital: true,
+            depreciationYears: 7, reviewedByUserId: 9, reviewedAt: '2026-10-18',
+        };
+        expect(strip('DonatedCapitalLineView', { ...line, donorName: 'Pat Doe', donorEmail: 'pat@example.com' }, FINANCE_VIEW)).toEqual(line);
+        expect(strip('DonatedCapitalLineView', line, ['public'])).toEqual({});
+    });
+
     it('a public-only view sees nothing, settings included', () => {
         const settings = { orgId: 'treehouse', boardReviewTotalCents: 200000, noteInLieuLimitCents: 5000 };
         expect(strip('ExpenseOrgSettings', settings, ['public'])).toEqual({});

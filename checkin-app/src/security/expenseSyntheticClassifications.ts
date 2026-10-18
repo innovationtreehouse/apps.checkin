@@ -70,6 +70,24 @@ export const classifications = {
     personId: "pii",
     name: "pii",
   },
+  // A donated gift line in capital review: the gift's value and finance's
+  // decision. Carries no donor field.
+  DonatedCapitalLineView: {
+    id: "internal",
+    orgId: "internal",
+    giftSource: "internal",
+    giftId: "internal",
+    giftLineId: "internal",
+    description: "internal",
+    quantity: "internal",
+    costCents: "internal",
+    acquisitionDate: "internal",
+    budgetOwnerId: "internal",
+    isCapital: "internal",
+    depreciationYears: "internal",
+    reviewedByUserId: "internal",
+    reviewedAt: "internal",
+  },
 } as const;
 
 export const relations = {

@@ -95,6 +95,10 @@ defineRoute({ endpoint: 'PUT /api/expense/qb-accounts/[id]', authorize: 'finance
 defineRoute({ endpoint: 'DELETE /api/expense/qb-accounts/[id]', authorize: 'finance', envelope: null, orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/ownership-map', authorize: 'finance', envelope: null, returns: ['PartOwnerMap'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'finance', envelope: null, returns: ['ExpenseCapitalSeedResult'], orderedView: FINANCE_VIEW });
+// Capital review of donated equipment: gift lines at or over the capital
+// thresholds, and finance's decision on each. No donor field is returned.
+defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/expense/donated-capital/[id]/review', authorize: 'finance', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_VIEW });
 // QuickBooks matching per expense: the expense's candidates, and pick one.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
