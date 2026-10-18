@@ -149,7 +149,7 @@ describe('catalog database down', () => {
     // The catalog client is a lazy global singleton: clear it so the next read builds one
     // against a database that does not exist.
     beforeAll(() => {
-        globalThis.__gcPrisma = undefined;
+        delete (globalThis as Record<string, unknown>).__gcPrisma;
         process.env.CATALOG_DATABASE_URL = withDb(base, `${DB}_missing`);
     });
 

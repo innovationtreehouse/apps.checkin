@@ -2,6 +2,7 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
+import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
@@ -214,9 +215,6 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): MailFile[] {
   return body ? [{ declaredType: "text/plain", size: body.body?.size ?? 0, read: read(body) }] : [];
 }
 
-const isUniqueViolation = (err: unknown) =>
-  typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
-
 const isStatus = (err: unknown, code: number) => err instanceof ServiceError && err.statusCode === code;
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
@@ -338,7 +336,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
-        if (!isUniqueViolation(err)) throw err;
+        if (!isUniqueConstraintError(err)) throw err;
         counts.skipped++;
       }
     }
