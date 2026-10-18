@@ -60,7 +60,7 @@ Rules (the no-bare-member rule above applies throughout):
 | **Treehouse Volunteer** | umbrella: a BG-checked, board-approved adult who volunteers — **program-optional** (a bookkeeper is one, with no program) | — | "volunteer" |
 | **Volunteer Family** | a Member Family with **no youth/student enrolled**, whose adults volunteer → **reduced membership fee** | `OrgMembership.isVolunteer` (rate) + `VolunteerDesignation` (email pre-auth) — **one concept** | "Volunteer-only family" |
 | **Program Volunteer** | a Treehouse Volunteer assigned to a **specific program** | `ProgramVolunteer` (`isCore` → **Core Volunteer**) | "Volunteer" / "Core Volunteer" |
-| **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance | "Volunteers/Adults" |
+| **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance, by age, not enrollment | "Volunteers/Adults" |
 
 Program roles (all Treehouse Volunteers):
 
@@ -97,7 +97,7 @@ Rules:
 - **Canonical top label = "Tool Certifier"** *(retire "Shop Certifier")*.
 - **`instructor` is tool-only** — "program instructor" is banned.
 - **Enum rank ≠ declaration order** — real rank is `BASIC < CERTIFIED < DOF < INSTRUCTOR < MAY_CERTIFY_OTHERS`; make it explicit in the enum *(pending)*.
-- **Tool Certifier is per-tool** — who may grant which level is in [../../docs/rules/tools-certification.md](../../docs/rules/tools-certification.md).
+- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools. The rules are in [../../docs/rules/tools-certification.md](../../docs/rules/tools-certification.md).
 
 ## Money
 
