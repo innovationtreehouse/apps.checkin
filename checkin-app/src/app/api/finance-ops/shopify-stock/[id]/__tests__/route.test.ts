@@ -41,10 +41,9 @@ jest.mock('@/lib/prisma', () => {
                 return { count: 1 };
             }),
             findUniqueOrThrow: jest.fn(async () => ({ ...state.row })),
-            findMany: jest.fn(async () => (state.row && state.row.shopifyStockUnconfirmed !== 0 ? [{ ...state.row }] : [])),
+            findMany: jest.fn(async () => (state.row && (state.row.shopifyStockUnconfirmed !== 0 || state.row.shopifyStockParked) ? [{ ...state.row }] : [])),
             count: jest.fn(async ({ where }: { where: Row }) => (state.row && state.row.id === where.id ? 1 : 0)),
         },
-        integrationErrorLog: { findMany: jest.fn() },
         auditLog: { create: jest.fn() },
         $transaction: jest.fn(),
     };
@@ -55,7 +54,6 @@ jest.mock('@/lib/prisma', () => {
 const db = prisma as unknown as {
     __state: { row: Record<string, unknown> | null };
     auditLog: { create: jest.Mock };
-    integrationErrorLog: { findMany: jest.Mock };
 };
 const mockSession = getServerSession as jest.Mock;
 const BOARD = { user: { id: 9, isBoardMember: true } };
@@ -74,13 +72,9 @@ beforeEach(() => {
     jest.clearAllMocks();
     db.__state.row = {
         id: 42, name: 'Robotics', shopifyVariantId: '67890',
-        shopifyStockUnconfirmed: -2, shopifyStockCarry: 1,
+        shopifyStockUnconfirmed: -2, shopifyStockParked: null, shopifyStockCarry: 1,
         shopifyStockLeaseUntil: null, shopifyStockLeaseToken: null,
     };
-    db.integrationErrorLog.findMany.mockResolvedValue([
-        { timestamp: new Date('2026-10-13T10:00:00Z'), context: { programId: 42 } },
-        { timestamp: new Date('2026-10-01T10:00:00Z'), context: { programId: 42 } },
-    ]);
     fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('no network in tests'));
     mockSession.mockResolvedValue(BOARD);
 });
@@ -105,13 +99,26 @@ describe('access', () => {
     });
 });
 
-it('GET lists the program with its amount, carry and latest unconfirmed time', async () => {
+it('GET lists an amount the previous release parked as one row with no time', async () => {
     const res = await GET(new Request('http://localhost/api/finance-ops/shopify-stock') as unknown as NextRequest);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{
         programId: 42, programName: 'Robotics', unconfirmed: -2, carry: 1,
-        unconfirmedSince: '2026-10-13T10:00:00.000Z', shopifyAvailable: null,
+        unconfirmedSince: null, shopifyAvailable: null,
     }]);
+});
+
+it('GET lists each parked write as its own row, with when it was parked', async () => {
+    db.__state.row!.shopifyStockUnconfirmed = 0;
+    db.__state.row!.shopifyStockParked = JSON.stringify([
+        { key: 'k-a', delta: -1, parkedAt: '2026-10-12T10:00:00.000Z' },
+        { key: 'k-b', delta: 1, parkedAt: '2026-10-13T10:00:00.000Z' },
+    ]);
+    const res = await GET(new Request('http://localhost/api/finance-ops/shopify-stock') as unknown as NextRequest);
+    expect((await res.json()).map((r: { unconfirmed: number; unconfirmedSince: string }) => [r.unconfirmed, r.unconfirmedSince])).toEqual([
+        [-1, '2026-10-12T10:00:00.000Z'],
+        [1, '2026-10-13T10:00:00.000Z'],
+    ]);
 });
 
 it('"Shopify has it" clears the amount, audits it, releases the lease and calls no Shopify', async () => {

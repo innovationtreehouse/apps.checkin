@@ -562,7 +562,7 @@ describe('parked (unconfirmed) stock writes', () => {
         expect(after().parked).toEqual([['program-42-release', 1]]);
 
         // The board reopens: 4 seats free, the store shows 3 (the +1 is not there).
-        const s = shopify({ ProgramStockRead: [readReply(3)], ProgramStockAdjust: [adjustOk] });
+        const s = shopify({ ProgramStockRead: [readReply(3), readReply(4)], ProgramStockAdjust: [adjustOk] });
         expect(await setProgramInventory(program, async () => 4, 're-arm')).toBe(true);
         expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: 1 });
         expect(after()).toEqual(clean);
