@@ -34,7 +34,8 @@ export type ResolveAction =
   | { action: "match"; depositId: string; reason?: string }
   | { action: "dismiss"; reason: string }
   | { action: "retry" }
-  | { action: "book" };
+  | { action: "book" }
+  | { action: "clear_note"; reason: string };
 
 async function openRow(orgId: string, id: number) {
   const row = await db.payoutReconciliation.findUnique({ where: { id } });
@@ -86,7 +87,8 @@ async function ownEntryFirst(orgId: string, id: number, actor: Actor) {
           kind: null,
           resolution: RECON_RESOLUTION.AUTO,
           origin: RECON_ORIGIN.CREATED,
-          reason: note,
+          qbNote: note,
+          postClaimedAt: null,
           depositId: d.id,
           depositTxnDate: d.txnDate,
           depositTotalCents: d.totalCents,
@@ -168,6 +170,33 @@ export const reconciliationService = {
     return db.payoutReconciliation.count({ where: { orgId, status } });
   },
 
+  /** Finance's queue: every OPEN payout, and any other payout the app left a note on. */
+  listQueue(orgId: string) {
+    return db.payoutReconciliation.findMany({
+      where: { orgId, OR: [{ status: RECON_STATUS.OPEN }, { qbNote: { not: null } }] },
+      orderBy: [{ payoutDate: "desc" }, { id: "desc" }],
+    });
+  },
+
+  countQueue(orgId: string) {
+    return db.payoutReconciliation.count({ where: { orgId, OR: [{ status: RECON_STATUS.OPEN }, { qbNote: { not: null } }] } });
+  },
+
+  /** Finance answers the app's note on a payout without changing anything else; the reason is audited. */
+  async clearNote(orgId: string, id: number, reason: string, actor: Actor) {
+    const why = reason.trim();
+    if (!why) throw new ServiceError(400, "A reason is required");
+    await openRow(orgId, id);
+    return db.$transaction(async (tx) => {
+      await lockReconciliation(tx, orgId, true);
+      const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+      if (!current.qbNote) throw new ServiceError(409, "The payout has no note to clear");
+      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: null } });
+      await audit(tx, orgId, "reconciliation.note_cleared", current, saved, { ...actor, reason: why });
+      return saved;
+    });
+  },
+
   async candidates(orgId: string, id: number) {
     const row = await openRow(orgId, id);
     return unclaimed(db, orgId, await windowDeposits(row.payoutDate));
@@ -199,6 +228,8 @@ export const reconciliationService = {
             resolution: RECON_RESOLUTION.MANUAL,
             origin: deposit.appKey === incomeKey(current.payoutGid) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
+            qbNote: null,
+            postClaimedAt: null,
             depositId: deposit.id,
             depositTxnDate: deposit.txnDate,
             depositTotalCents: deposit.totalCents,
@@ -232,6 +263,8 @@ export const reconciliationService = {
           kind: null,
           resolution: RECON_RESOLUTION.DISMISSED,
           reason: why,
+          qbNote: null,
+          postClaimedAt: null,
           resolvedByUserId: actor.userId,
           resolvedAt: new Date(),
         },
@@ -319,6 +352,8 @@ export const reconciliationService = {
         return reconciliationService.retry(orgId, id, actor);
       case "book":
         return reconciliationService.book(orgId, id, actor);
+      case "clear_note":
+        return reconciliationService.clearNote(orgId, id, req.reason, actor);
     }
   },
 };

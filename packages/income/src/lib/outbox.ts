@@ -1,5 +1,5 @@
 import { appKeyOf, findOrCreate, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
-import { db } from "../db";
+import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
 import { getIncomeConfig, incomeRuntime, isoDay, type IncomePosting } from "../runtime";
@@ -213,6 +213,7 @@ function holdingData(d: QbDeposit, origin: string): Partial<PayoutReconciliation
     resolution: RECON_RESOLUTION.AUTO,
     origin,
     reason: null,
+    qbNote: null,
     depositId: d.id,
     depositTxnDate: d.txnDate,
     depositTotalCents: d.totalCents,
@@ -275,9 +276,14 @@ export async function postPayout(
     if (!(await lockReconciliation(tx, orgId, wait))) return null;
     const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
     if (!postable(current) || isClaimed(current, claimedAt.getTime())) return { row: current, attempted: undefined };
+    // Finance acting on the payout answers any note it carried.
     const claimed = await tx.payoutReconciliation.update({
       where: { id },
-      data: { postClaimedAt: claimedAt, qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? claimedAt },
+      data: {
+        postClaimedAt: claimedAt,
+        qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? claimedAt,
+        ...(actor.userId !== null && { qbNote: null }),
+      },
     });
     return { row: claimed, attempted: current.qbCreateAttemptedAt };
   });
@@ -327,14 +333,14 @@ export async function postPayout(
     if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window` };
   }
 
-  return db.$transaction(async (tx) => {
+  const settleIn = () => db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM payout_reconciliations WHERE id = ${id} FOR UPDATE`;
     const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
     if (current.postClaimedAt?.getTime() !== claimedAt.getTime()) {
       // Another post took the payout over; a deposit this one created is now finance's to void or link.
       if (result.kind !== "created") return { outcome: "waiting" as const, row: current };
       const note = `app entry ${result.id} may need voiding: its post lost the payout to another`;
-      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { reason: note } });
+      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: note } });
       await audit(tx, orgId, "reconciliation.lost_claim", current, saved, { ...actor, reason: note });
       return { outcome: "failed" as const, row: saved };
     }
@@ -345,7 +351,7 @@ export async function postPayout(
       return { outcome, row: saved };
     };
     const toQueue = (kind: string, note: string | null) =>
-      settle("queued", "reconciliation.opened", { status: RECON_STATUS.OPEN, kind, reason: note }, note ?? undefined);
+      settle("queued", "reconciliation.opened", { status: RECON_STATUS.OPEN, kind, reason: null, qbNote: note }, note ?? undefined);
 
     switch (result.kind) {
       case "created":
@@ -355,6 +361,7 @@ export async function postPayout(
           resolution: RECON_RESOLUTION.AUTO,
           origin: RECON_ORIGIN.CREATED,
           reason: null,
+          qbNote: null,
           depositId: result.id,
           depositTxnDate: write?.fields.txnDate ?? null,
           depositTotalCents: current.payoutNetCents,
@@ -381,6 +388,17 @@ export async function postPayout(
         return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: null }, result.error);
     }
   });
+
+  try {
+    return await settleIn();
+  } catch (e) {
+    // Another payout settled onto the same deposit first: finance decides, nothing more is booked.
+    const depositId = result.kind === "own" ? result.deposit.id : result.kind === "found" || result.kind === "created" ? result.id : null;
+    if (!isUniqueConstraintError(e) || depositId === null) throw e;
+    const holder = await db.payoutReconciliation.findUnique({ where: { orgId_depositId: { orgId, depositId } }, select: { id: true } });
+    result = { kind: "conflict", note: `deposit ${depositId} is already held by payout ${holder?.id ?? "unknown"}` };
+    return settleIn();
+  }
 }
 
 /** Park a payout larger than the per-run cents cap for finance; it is never auto-created. */
@@ -529,9 +547,9 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
     const row = key ? byKey.get(key) : undefined;
     if (!row || row.depositId === e.Id || isClaimed(row, now.getTime())) continue;
     const note = `app entry ${e.Id} is not linked; void or link it`;
-    if (row.reason === note) continue;
+    if (row.qbNote === note) continue;
     await db.$transaction(async (tx) => {
-      const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { reason: note } });
+      const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { qbNote: note } });
       await audit(tx, orgId, "reconciliation.orphan_entry", row, saved, { userId: null, reason: note });
     });
     flagged++;

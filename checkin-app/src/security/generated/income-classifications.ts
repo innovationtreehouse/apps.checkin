@@ -22,6 +22,7 @@ export const classifications = {
         updatedAt: 'internal',
         postClaimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
     },
     IncomeItemCategory: {
         id: 'public',

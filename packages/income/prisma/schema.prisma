@@ -63,6 +63,9 @@ model PayoutReconciliation {
   /// The first post attempt's claim time; never moved once set.
   /// @sensitivity:internal
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
+  /// @sensitivity:internal
+  qbNote              String?   @map("qb_note")
 
   @@unique([orgId, payoutGid])
   @@unique([orgId, depositId])

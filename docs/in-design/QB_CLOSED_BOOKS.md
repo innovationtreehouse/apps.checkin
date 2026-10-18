@@ -494,8 +494,8 @@ this split.
 
 Only PR 1 changes the security boundary. The new columns and
 `DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours. Income's
-reconciliation routes return whole `PayoutReconciliation` rows, so its claim and
-create-attempt columns reach finance and the board as internal fields, under the
+reconciliation routes return whole `PayoutReconciliation` rows, so its claim,
+create-attempt and `qbNote` columns reach finance and the board as internal fields, under the
 existing registry entries; the settings route selects only the caps. The income
 and donation "book" actions ride on routes whose role and response types stay as
 registered.

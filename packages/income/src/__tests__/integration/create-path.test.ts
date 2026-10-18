@@ -42,8 +42,10 @@ class FakeQbo {
   closeDateFails = false;
   /** When QuickBooks created each deposit, by Id. */
   createdAt = new Map<string, number>();
-  /** Runs inside a create, before QuickBooks answers. */
+  /** Runs inside a create, before QuickBooks applies it. */
   onCreate: (() => Promise<void>) | null = null;
+  /** Runs on each dated deposit read, before QuickBooks answers. */
+  onWindowRead: (() => Promise<void>) | null = null;
   /** Keys whose create is refused while every other create succeeds. */
   rejectKeys = new Set<string>();
   private nextId = 1000;
@@ -63,6 +65,7 @@ class FakeQbo {
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
       if (!m) throw new Error(`unexpected query ${url.search}`);
+      await this.onWindowRead?.();
       const list = this.deposits.filter((d) => d.TxnDate >= m[1] && d.TxnDate <= m[2]);
       return json({ QueryResponse: list.length ? { Deposit: list } : {} });
     }
@@ -70,11 +73,11 @@ class FakeQbo {
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
     if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     if (this.mode === "reject" || this.rejectKeys.has(url.searchParams.get("requestid") ?? "")) return json({ Fault: { Error: [{ code: "6000" }] } }, 400);
+    await this.onCreate?.();
     const Id = String(this.nextId++);
     const cents = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0);
     this.deposits.push({ Id, TxnDate: body.TxnDate, TotalAmt: cents / 100, DepositToAccountRef: body.DepositToAccountRef, PrivateNote: body.PrivateNote });
     this.createdAt.set(Id, Date.now());
-    await this.onCreate?.();
     if (this.mode === "accept-then-drop") throw new Error("socket hang up");
     return json({ Deposit: { Id } });
   };
@@ -167,7 +170,7 @@ describeDb("drainIncomeOutbox — switch-on and the open period", () => {
   it("the first connected drain reconciles, then switches on; a payout it already held goes to finance at once", async () => {
     const p = payout(2, "2026-06-28", 500);
     expect(await drain()).toMatchObject({ post: { posted: 0, queued: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null, reason: null });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null, qbNote: null });
     expect(qbo.posts).toHaveLength(0);
     const { qbPostingOnAt } = await db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId: ORG_A } });
     expect(qbPostingOnAt).toEqual(NOW);
@@ -247,7 +250,7 @@ describeDb("drainIncomeOutbox — closed books", () => {
     const onDay = payout(3, "2026-06-30", 400);
 
     expect(await drain()).toMatchObject({ post: { posted: 1, queued: 1 } });
-    expect(await rowFor(before)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+    expect(await rowFor(before)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
     expect(await rowFor(onDay)).toMatchObject({ status: "POSTED" });
   });
 
@@ -257,8 +260,8 @@ describeDb("drainIncomeOutbox — closed books", () => {
     const p = payout(2, "2026-06-28", 500);
 
     await drain();
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
-    expect(await resolve(p, { action: "book" })).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
+    expect(await resolve(p, { action: "book" })).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -277,7 +280,7 @@ describeDb("drainIncomeOutbox — closed books", () => {
     qbo.mode = "closed";
 
     expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, queued: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
   });
 
   it("an unreadable closing date creates nothing; matching still runs", async () => {
@@ -359,7 +362,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "ok";
 
     expect(await resolve(p, { action: "retry" })).toMatchObject({
-      status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", reason: `app entry ${own} is held by payout ${other.id}`,
+      status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: `app entry ${own} is held by payout ${other.id}`,
     });
     expect(qbo.posts).toHaveLength(1);
   });
@@ -371,7 +374,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "ok";
     for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
 
-    expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", reason: expect.stringContaining("may already have booked") });
+    expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: expect.stringContaining("may already have booked") });
     expect(qbo.posts).toHaveLength(1);
   });
 
@@ -381,8 +384,61 @@ describeDb("postPayout — claim, lookup and settle", () => {
 
     expect(await drain()).toMatchObject({ post: { failed: 1, posted: 0 } });
     const created = qbo.deposits.at(-1)?.Id;
-    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null, reason: `app entry ${created} may need voiding: its post lost the payout to another` });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null, qbNote: `app entry ${created} may need voiding: its post lost the payout to another` });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.lost_claim" } })).toBe(1);
+  });
+
+  it("finance's dismiss takes over a stalled post; its late create leaves a note that keeps the payout in the queue", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    qbo.mode = "ok";
+    qbo.onCreate = async () => {
+      // The post has stalled past its claim when finance dismisses.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11 * 60_000 });
+      try {
+        await resolve(p, { action: "dismiss", reason: "booked by hand" });
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+
+    await resolve(p, { action: "retry" });
+    const created = qbo.deposits.at(-1)?.Id;
+    expect(await rowFor(p)).toMatchObject({
+      status: "RESOLVED", resolution: "DISMISSED", reason: "booked by hand", depositId: null,
+      qbNote: `app entry ${created} may need voiding: its post lost the payout to another`,
+    });
+    expect((await reconciliationService.listQueue(ORG_A)).map((r) => r.payoutGid)).toEqual([p]);
+    expect(await reconciliationService.countQueue(ORG_A)).toBe(1);
+
+    await expect(resolve(p, { action: "clear_note", reason: " " })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(p, { action: "clear_note", reason: "voided in QuickBooks" })).toMatchObject({ status: "RESOLVED", qbNote: null });
+    expect(await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.note_cleared" } })).toMatchObject({ reason: "voided in QuickBooks", actorUserId: 9 });
+    expect(await reconciliationService.countQueue(ORG_A)).toBe(0);
+    await expect(resolve(p, { action: "clear_note", reason: "again" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a deposit another payout settles onto first goes to finance with a note, never throws", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    qbo.mode = "ok";
+    qbo.hand("H2", "2026-06-28", 500);
+    let reads = 0;
+    let other = 0;
+    // The second dated read is the post's own, after findOrCreate matched H2 and before it settles.
+    qbo.onWindowRead = async () => {
+      if (++reads !== 2) return;
+      other = (await db.payoutReconciliation.create({
+        data: { orgId: ORG_A, payoutGid: gid(9), payoutDate: "2026-06-28", payoutNetCents: 500, status: "RESOLVED", depositId: "H2" },
+      })).id;
+    };
+
+    expect(await resolve(p, { action: "retry" })).toMatchObject({
+      status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, postClaimedAt: null, qbNote: `deposit H2 is already held by payout ${other}`,
+    });
+    expect(qbo.posts).toHaveLength(1);
   });
 
   it("finance's dismiss on an attempted payout links the app's own deposit instead", async () => {
@@ -395,7 +451,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "ok";
 
     const row = await resolve(p, { action: "dismiss", reason: "booked elsewhere" });
-    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: own.Id, resolution: "AUTO", reason: expect.stringContaining("not applied") });
+    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: own.Id, resolution: "AUTO", qbNote: expect.stringContaining("not applied") });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.dismissed" } })).toBe(0);
   });
 
@@ -431,8 +487,8 @@ describeDb("runIncomeOrphanSweep", () => {
     });
 
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ status: "ran", read: 2, flagged: 1, full: false });
-    expect(await rowFor(stray)).toMatchObject({ reason: `app entry ${strayEntry} is not linked; void or link it` });
-    expect((await rowFor(linked)).reason).toBeNull();
+    expect(await rowFor(stray)).toMatchObject({ qbNote: `app entry ${strayEntry} is not linked; void or link it` });
+    expect((await rowFor(linked)).qbNote).toBeNull();
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
     expect(sweepAlerts).toHaveLength(0);
   });
@@ -776,7 +832,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await general();
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
     await drain(new Date("2026-06-30T13:00:00Z"));
-    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: null });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: null });
     expect(qbo.posts).toHaveLength(0);
   });
 
