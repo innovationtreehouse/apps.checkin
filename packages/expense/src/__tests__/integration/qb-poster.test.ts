@@ -656,6 +656,10 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { kind: true, audience: true, detail: true } })).toEqual([
       { kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted: a line is missing a sign-off seat or the Board authorization" },
     ]);
+
+    await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
+    expect(await drainExpenseOutbox()).toMatchObject({ waiting: 1 });
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).checkedOffAt).not.toBeNull();
   });
 
   it("a hold on an expense not yet closed waits without a flag", async () => {
