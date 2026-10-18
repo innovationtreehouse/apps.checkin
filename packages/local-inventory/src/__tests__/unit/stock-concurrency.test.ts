@@ -277,4 +277,21 @@ describeDb("merge after a concurrent resolution", () => {
     expect(await qty(REAL)).toBe(8);
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
+
+  it("a merge into a real row holding none carries the provisional count with no factor check", async () => {
+    const { provisional } = services();
+    await provisionalItem(2);
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 0 },
+      ],
+    });
+
+    await provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 17, 1);
+
+    expect(await qty(REAL)).toBe(4);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+    expect(await db.inventoryMergeConflict.count()).toBe(0);
+  });
 });

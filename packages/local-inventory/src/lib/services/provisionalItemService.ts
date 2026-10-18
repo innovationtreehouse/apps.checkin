@@ -59,10 +59,11 @@ export function createProvisionalItemService({
       });
       if (claimed.count === 0) return;
 
-      if (!existingRow) {
-        // The real row is unlocked because it does not exist yet, so a first receipt on the
-        // real GTIN can insert it concurrently. Upserting on the (orgId, gtin13) index folds
-        // that receipt into the same row instead of colliding with it.
+      // The org holds none of the real item, so the provisional's received count carries over
+      // with no factor check. A missing real row is unlocked, so a first receipt on the real
+      // GTIN can insert it concurrently; upserting on the (orgId, gtin13) index folds that
+      // receipt into the same row instead of colliding with it.
+      if (!existingRow || existingRow.existingQuantity === 0) {
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
         let realQty = provisionalQty;
         if (provisionalRow) {
