@@ -15,13 +15,22 @@ import type { ProvisionalItemStatus, MergeConflictStatus } from "../db/schema";
  * Lock both org-item rows (in GTIN order, so two lockers never deadlock on each other) and
  * read them under the lock, so a concurrent stock add waits for this transaction to commit.
  */
-async function lockOrgItemPair(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string, realGtin13: string) {
+export async function lockOrgItemPair(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string, realGtin13: string) {
   await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${orgId} AND gtin13 IN (${provisionalGtin13}, ${realGtin13}) ORDER BY gtin13 FOR UPDATE`;
   const [provisionalRow, existingRow] = await Promise.all([
     tx.orgItem.findFirst({ where: { orgId, gtin13: provisionalGtin13 } }),
     tx.orgItem.findFirst({ where: { orgId, gtin13: realGtin13 } }),
   ]);
   return { provisionalRow, existingRow };
+}
+
+/**
+ * Lock the provisional's own row and read it under the lock. Merges and fulfils take it before
+ * the org-item pair, so they serialize even when neither GTIN has an org-item row yet.
+ */
+export async function lockProvisional(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string) {
+  await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${orgId} AND provisional_gtin13 = ${provisionalGtin13} FOR UPDATE`;
+  return tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13 } });
 }
 
 export function createProvisionalItemService({
@@ -50,17 +59,21 @@ export function createProvisionalItemService({
   ): Promise<void> {
     const now = new Date();
     await db.$transaction(async (tx) => {
+      await lockProvisional(tx, orgId, provisionalGtin13);
       const { provisionalRow, existingRow } = await lockOrgItemPair(tx, orgId, provisionalGtin13, realGtin13);
-      const markResolved = () =>
-        tx.inventoryProvisionalItem.update({
-          where: { id: provisionalId },
-          data: { status: finalStatus, resolvedToGtin13: realGtin13, reviewedAt: now },
-        });
+      // The caller read the status outside this transaction; a concurrent merge that already
+      // resolved the provisional wins, and this one does nothing.
+      const claimed = await tx.inventoryProvisionalItem.updateMany({
+        where: { id: provisionalId, status: "pending" },
+        data: { status: finalStatus, resolvedToGtin13: realGtin13, reviewedAt: now },
+      });
+      if (claimed.count === 0) return;
 
-      if (!existingRow) {
-        // The real row is unlocked because it does not exist yet, so a first receipt on the
-        // real GTIN can insert it concurrently. Upserting on the (orgId, gtin13) index folds
-        // that receipt into the same row instead of colliding with it.
+      // The org holds none of the real item, so the provisional's received count carries over
+      // with no factor check. A missing real row is unlocked, so a first receipt on the real
+      // GTIN can insert it concurrently; upserting on the (orgId, gtin13) index folds that
+      // receipt into the same row instead of colliding with it.
+      if (!existingRow || existingRow.existingQuantity === 0) {
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
         let realQty = provisionalQty;
         if (provisionalRow) {
@@ -76,7 +89,6 @@ export function createProvisionalItemService({
           }));
           await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
         }
-        await markResolved();
         await tx.inventoryLog.create({
           data: realQty === provisionalQty
             ? {
@@ -105,7 +117,6 @@ export function createProvisionalItemService({
       // corrupt stock. Park the decision for a human instead.
       if (provisionalConversionFactor !== existingConversionFactor) {
         const conflictType = "uom_mismatch";
-        await markResolved();
         await tx.inventoryMergeConflict.upsert({
           where: { sourceEventId },
           create: {
@@ -135,7 +146,6 @@ export function createProvisionalItemService({
       if (provisionalRow) {
         await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
       }
-      await markResolved();
       await tx.inventoryLog.create({
         data: {
           orgId, userId: null, changedAt: now, changeType: "automatic",

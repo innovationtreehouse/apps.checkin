@@ -1,6 +1,7 @@
 import type { Db } from "../db/index";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
 import { applyQtyChangeIn } from "./inventoryService";
+import { lockOrgItemPair, lockProvisional } from "./provisionalItemService";
 import { ServiceError } from "@checkin/component-kit";
 
 export function createReceiveQueueService({
@@ -34,11 +35,19 @@ export function createReceiveQueueService({
         if (claimed.count === 0) await notOpen(id, orgId);
         const item = await tx.receiveQueue.findUniqueOrThrow({ where: { id } });
 
-        // A provisional GTIN since resolved by the global catalog receives under its real GTIN.
-        const provisional = await tx.inventoryProvisionalItem.findFirst({
-          where: { orgId, provisionalGtin13: item.gtin13 },
-        });
-        await applyQtyChangeIn(tx, orgId, provisional?.resolvedToGtin13 ?? item.gtin13, item.quantity, {
+        // A provisional GTIN since resolved by the global catalog receives under its real GTIN,
+        // unless a unit conflict on it is still open: then it joins the provisional stock that
+        // the conflict's resolution settles. The locks order this against a merge or resolution.
+        const provisional = await lockProvisional(tx, orgId, item.gtin13);
+        let gtin13 = item.gtin13;
+        if (provisional?.resolvedToGtin13) {
+          await lockOrgItemPair(tx, orgId, item.gtin13, provisional.resolvedToGtin13);
+          const openConflict = await tx.inventoryMergeConflict.findFirst({
+            where: { orgId, provisionalGtin13: item.gtin13, status: "pending" },
+          });
+          if (!openConflict) gtin13 = provisional.resolvedToGtin13;
+        }
+        await applyQtyChangeIn(tx, orgId, gtin13, item.quantity, {
           userId,
           changeType: "received",
           receiptId: item.receiptId,

@@ -40,11 +40,11 @@ function services() {
   };
 }
 
-/** Resolves once some backend in this database is waiting on a lock. */
-async function someoneBlocked(): Promise<void> {
+/** Resolves once at least `count` backends in this database are waiting on a lock. */
+async function someoneBlocked(count = 1): Promise<void> {
   for (let i = 0; i < 200; i++) {
     const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n > 0n) return;
+    if (n >= BigInt(count)) return;
     await new Promise((r) => setTimeout(r, 25));
   }
   throw new Error("no backend blocked on a lock");
@@ -175,5 +175,152 @@ describeDb("reconcile-on-create conversion factor", () => {
       conflictType: "uom_mismatch", provisionalConversionFactor: 1, existingConversionFactor: 6, sourceEventId: 77,
     });
     expect(await qty(REAL)).toBe(12);
+  });
+});
+
+describeDb("merge after a concurrent resolution", () => {
+  const provisionalItem = (conversionFactor: number) =>
+    db.inventoryProvisionalItem.create({
+      data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, name: "Widget", usageBehavior: "Unknown", conversionFactor },
+    });
+
+  it("a merge that read the status before a reconcile renamed the provisional does nothing", async () => {
+    const { provisional: reconcile } = services();
+    await provisionalItem(2);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 } });
+
+    // The call-out reads the provisional as pending, then waits while the reconcile renames it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let read!: () => void;
+    const statusRead = new Promise<void>((r) => (read = r));
+    const repo = createProvisionalItemRepository(db);
+    const stale = createProvisionalItemService({
+      provisionalRepo: {
+        ...repo,
+        findByGtin: async (orgId, gtin13) => {
+          const row = await repo.findByGtin(orgId, gtin13);
+          read();
+          await gate;
+          return row;
+        },
+      },
+      resolutionRepo: createProvisionalResolutionRepository(db),
+      inventoryRepo: createInventoryRepository(db),
+      db,
+    });
+    const callOut = stale.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 5, 1);
+    await statusRead;
+    await reconcile.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 5, 1);
+    release();
+    await callOut;
+
+    expect(await qty(REAL)).toBe(4);
+    expect(await db.inventoryMergeConflict.count()).toBe(0);
+    expect(await db.provisionalItemLog.count()).toBe(1);
+  });
+
+  it("a queued provisional line with an open unit conflict lands on the provisional GTIN", async () => {
+    const { queue } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(2)).id },
+      data: { status: "mapped_to_existing", resolvedToGtin13: REAL },
+    });
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 6 },
+      ],
+    });
+    await db.inventoryMergeConflict.create({
+      data: {
+        orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch",
+        provisionalConversionFactor: 2, existingConversionFactor: 1, sourceEventId: 11,
+      },
+    });
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 1, conversionFactor: 2, receiptId: "d-1", lineItemId: 1 },
+    });
+
+    await queue.fulfill(line.id, TEST_ORG_ID, 1);
+
+    expect(await qty(PROVISIONAL)).toBe(6);
+    expect(await qty(REAL)).toBe(6);
+  });
+
+  it("a fulfil racing a rename merge receives under the real GTIN and leaves no provisional row", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "o-1", lineItemId: 1 },
+    });
+
+    // Hold the provisional row so the merge queues on it first, then the fulfil behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${TEST_ORG_ID} AND gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 13, 1);
+    await someoneBlocked(1);
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, merge, fulfil]);
+
+    expect(await qty(REAL)).toBe(8);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
+  it("a merge into a real row holding none carries the provisional count with no factor check", async () => {
+    const { provisional } = services();
+    await provisionalItem(2);
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 0 },
+      ],
+    });
+
+    await provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 17, 1);
+
+    expect(await qty(REAL)).toBe(4);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+    expect(await db.inventoryMergeConflict.count()).toBe(0);
+  });
+
+  it("a fulfil racing an approve of a provisional with no stock row receives under the real GTIN", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "a-1", lineItemId: 1 },
+    });
+
+    // Hold the provisional's row so the approve queues on it first, then the fulfil behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 21, 1);
+    await someoneBlocked(1);
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, approve, fulfil]);
+
+    expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 });
