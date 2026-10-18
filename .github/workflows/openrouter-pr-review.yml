@@ -65,7 +65,7 @@ jobs:
       - id: review
         if: always()
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@a3b84780b18b90ad5acb6db104dcba81d01d5761 # TEST: argon budget repro
+        uses: innovationtreehouse/openrouter-pr-review-action@c594fcc6b20d51ae4741dffeeb8a1b8264d055b1 # TEST: argon budget fix
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: google/gemini-4-argon
@@ -97,7 +97,7 @@ jobs:
       - id: rerun
         if: false && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@a3b84780b18b90ad5acb6db104dcba81d01d5761 # TEST: argon budget repro
+        uses: innovationtreehouse/openrouter-pr-review-action@c594fcc6b20d51ae4741dffeeb8a1b8264d055b1 # TEST: argon budget fix
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
