@@ -235,6 +235,38 @@ describe("Merge Participants API", () => {
         expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
     });
 
+    it("takes an application row before the household row, so a payment holding the application does not deadlock it", async () => {
+        const otherHh = await makeHousehold("Merge Test Payment In Flight Household", "NONE");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: otherHh } });
+        const process = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", zohoSignerPersonId: pMergeId },
+        });
+        createdProcessIds.push(process.id);
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let lockHeld!: () => void;
+        const locked = new Promise<void>((r) => (lockHeld = r));
+        // Stands in for settle(): the application row, then the household row.
+        const payment = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
+            lockHeld();
+            await released;
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
+        }, { timeout: 20_000 });
+        await locked;
+
+        let finished = false;
+        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(finished).toBe(false);
+        release();
+        await expect(payment).resolves.toBeUndefined();
+
+        expect((await merge).status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } })).zohoSignerPersonId).toBe(pKeepId);
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {
