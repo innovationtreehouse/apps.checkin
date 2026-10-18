@@ -1,18 +1,34 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { isReceiptReviewerClient, receiptAreaLinks } from "@/lib/receiptNav";
-import { canSubmitReceipts } from "@/lib/volunteer";
+import { linkAllowed } from "@/lib/nav/gates";
+import type { NavSection, NavUser } from "@/lib/nav/types";
+import { MY_RECEIPTS } from "@/lib/nav/sections/myReceipts";
+import { RECEIPT_REVIEW } from "@/lib/nav/sections/receiptReview";
 
+const allowedLinks = (section: NavSection, user: NavUser | undefined) =>
+  section.links.filter((l) => linkAllowed(section, l, user, null));
+
+/**
+ * /receipts hosts two sections: My Receipts (the list, upload and a receipt's
+ * detail) and Receipt Review. The tab strip is the section the page belongs to;
+ * a receipt's detail page shows Receipt Review to a reviewer who cannot submit.
+ */
 export default function ReceiptsLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const authorized = canSubmitReceipts(session?.user) || isReceiptReviewerClient(session?.user);
+  const pathname = usePathname();
+  const user = session?.user;
+  const mine = allowedLinks(MY_RECEIPTS, user);
+  const review = allowedLinks(RECEIPT_REVIEW, user);
+  const authorized = mine.length > 0 || review.length > 0;
+  const onReviewPage = RECEIPT_REVIEW.links.some((l) => pathname === l.href || pathname.startsWith(`${l.href}/`));
+  const links = (onReviewPage && review.length > 0) || mine.length === 0 ? review : mine;
 
   useEffect(() => {
     if (status === "unauthenticated" || (status === "authenticated" && !authorized)) router.push("/");
@@ -33,7 +49,7 @@ export default function ReceiptsLayout({ children }: { children: React.ReactNode
 
   return (
     <PageContainer>
-      <SectionTabs links={receiptAreaLinks(session?.user)} mb="md" />
+      <SectionTabs links={links} mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

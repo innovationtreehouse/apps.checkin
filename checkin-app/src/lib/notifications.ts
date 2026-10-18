@@ -97,10 +97,10 @@ export async function sendNotification(userId: number, eventType: NotificationEv
  * has fired. Best-effort: fire-and-forget from the helper.
  */
 export async function notifyNewProgramAnnounced(
-    program: { name: string; endAt: Date },
+    program: { name: string; endAt: Date; appliesToYear: number | null },
 ): Promise<void> {
     try {
-        const coverageDate = programCoverageDate(program);
+        const coverageDate = await programCoverageDate(program);
 
         // Narrow to LIVE persons with an address in an ACTIVE-membership household
         // (canonical ACTIVE_ORG_MEMBER_PERSON_WHERE). Class-1 person.findMany with

@@ -6,7 +6,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageLoader } from "@/components/ui/PageLoader";
 
@@ -27,7 +27,7 @@ const seats = (n: number) => `${n > 0 ? '+' : ''}${n} seat${Math.abs(n) === 1 ? 
 
 export default function UnconfirmedShopifyStockPage() {
   const { formatDateTime } = useOrgTime();
-  const { ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
+  const { ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");

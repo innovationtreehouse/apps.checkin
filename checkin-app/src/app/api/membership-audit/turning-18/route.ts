@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 import { birthCutoff, memberYearStarts } from "@/lib/programYear";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export const GET = handler('GET /api/membership-audit/turning-18', async () => {
             dateOfBirth: true,
             household: { select: { id: true, name: true } },
             programParticipants: {
-                where: { program: { phase: { not: "FINISHED" } } },
+                where: { program: { phase: { not: "FINISHED" } }, ...ENROLLED_PARTICIPANT },
                 select: { program: { select: { id: true, name: true } } },
             },
         },

@@ -18,6 +18,10 @@
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
  *
+ * ReceiptIgnoredFileView — one entry of the mailbox ignore list: a file's hash,
+ * finance's free-text reason, the adding person's id and when. All `internal`
+ * (owner ruling 2026-10-16): a hash fingerprints a file without holding it.
+ *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -86,6 +90,14 @@ export const classifications = {
   },
   ReceiptPushResult: {
     pushed: "internal",
+  },
+  ReceiptIgnoredFileView: {
+    id: "internal",
+    orgId: "internal",
+    fileHash: "internal",
+    reason: "internal",
+    addedByUserId: "internal",
+    createdAt: "internal",
   },
 } as const;
 

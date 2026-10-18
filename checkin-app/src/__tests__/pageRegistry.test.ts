@@ -1,7 +1,8 @@
 import { readdirSync } from 'fs';
 import { join } from 'path';
 import { PAGES, REGISTRY_EXCLUDED } from '@/components/pageRegistry';
-import { FACILITY_NAV_LINKS } from '@/lib/facilityNav';
+import { FACILITY_OPS } from '@/lib/nav/sections/facilityOps';
+import { linkGate } from '@/lib/nav/gates';
 import { LIBRARY_KEYS } from '@/lib/libraryRelease';
 
 // Walk src/app for every page.tsx and turn it into its route path, skipping
@@ -52,26 +53,26 @@ describe('Facility Ops directory agrees with the section gates', () => {
   const ops = { isOperations: true };
   const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
 
-  it.each(FACILITY_NAV_LINKS)('$href is listed to operations iff its page admits them', ({ href, roles }) => {
-    expect(entryFor(href).visible(ops, true, null)).toBe(roles.includes('isOperations'));
+  it.each(FACILITY_OPS.links)('$href is listed to operations iff its tab admits them', ({ href }) => {
+    expect(entryFor(href).visible(ops, null)).toBe(linkGate(FACILITY_OPS, href)(ops, null));
   });
 
   it('lists the /facility-ops index to operations (it redirects into their first visible tab)', () => {
-    expect(entryFor('/facility-ops').visible(ops, true, null)).toBe(true);
+    expect(entryFor('/facility-ops').visible(ops, null)).toBe(true);
   });
 
   it('still shows every Facility Ops entry to a board member', () => {
     const board = { isBoardMember: true };
     for (const p of PAGES.filter((p) => p.section === 'Facility Ops')) {
-      expect(p.visible(board, true, null)).toBe(true);
+      expect(p.visible(board, null)).toBe(true);
     }
   });
 
   // Q15: keyholders review unsynced scans; operations stay at aggregate only.
   it('lists /system-status/unsynced-scans to keyholders and not to operations', () => {
     const entry = entryFor('/system-status/unsynced-scans');
-    expect(entry.visible({ isKeyholder: true }, true, null)).toBe(true);
-    expect(entry.visible({ isOperations: true }, true, null)).toBe(false);
+    expect(entry.visible({ isKeyholder: true }, null)).toBe(true);
+    expect(entry.visible({ isOperations: true }, null)).toBe(false);
   });
 });
 
@@ -83,19 +84,19 @@ describe('Membership Ops directory agrees with the section gates', () => {
   const ops = { isOperations: true };
 
   it('lists Review to a background-check reviewer', () => {
-    expect(entryFor('/membership-ops/review').visible(reviewer, true, null)).toBe(true);
+    expect(entryFor('/membership-ops/review').visible(reviewer, null)).toBe(true);
   });
 
   it('does not list the admin-only tabs to a reviewer', () => {
     for (const href of ['/membership-ops/applications', '/membership-ops/roles', '/membership-ops/households']) {
-      expect(entryFor(href).visible(reviewer, true, null)).toBe(false);
+      expect(entryFor(href).visible(reviewer, null)).toBe(false);
     }
   });
 
   it('lists Participants (only) to operations', () => {
-    expect(entryFor('/membership-ops/participants').visible(ops, true, null)).toBe(true);
-    expect(entryFor('/membership-ops/review').visible(ops, true, null)).toBe(false);
-    expect(entryFor('/membership-ops/roles').visible(ops, true, null)).toBe(false);
+    expect(entryFor('/membership-ops/participants').visible(ops, null)).toBe(true);
+    expect(entryFor('/membership-ops/review').visible(ops, null)).toBe(false);
+    expect(entryFor('/membership-ops/roles').visible(ops, null)).toBe(false);
   });
 });
 
@@ -104,13 +105,13 @@ describe('Shop Ops directory agrees with the section gates', () => {
   const certifier = { toolStatuses: [{ level: 'MAY_CERTIFY_OTHERS' }] };
 
   it('hides Create from a certifier who is neither sysadmin nor board (gate is admin)', () => {
-    expect(entryFor('/shop-ops/create').visible(certifier, true, null)).toBe(false);
-    expect(entryFor('/shop-ops/create').visible({ isBoardMember: true }, true, null)).toBe(true);
+    expect(entryFor('/shop-ops/create').visible(certifier, null)).toBe(false);
+    expect(entryFor('/shop-ops/create').visible({ isBoardMember: true }, null)).toBe(true);
   });
 
   it('still lists Manage and the hub to a certifier', () => {
-    expect(entryFor('/shop-ops/manage').visible(certifier, true, null)).toBe(true);
-    expect(entryFor('/shop-ops').visible(certifier, true, null)).toBe(true);
+    expect(entryFor('/shop-ops/manage').visible(certifier, null)).toBe(true);
+    expect(entryFor('/shop-ops').visible(certifier, null)).toBe(true);
   });
 });
 
@@ -127,12 +128,12 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
 
   it('lists no Inventory entries to an adult with no role or volunteer input', () => {
     expect(inventoryEntries.length).toBeGreaterThan(0);
-    for (const entry of inventoryEntries) expect(entry.visible({ ageBand: 'adult' }, true, counts)).toBe(false);
+    for (const entry of inventoryEntries) expect(entry.visible({ ageBand: 'adult' }, counts)).toBe(false);
   });
 
   it('lists the Inventory entries to an active youth program volunteer', () => {
     const youthVolunteer = { ageBand: 'youth' as const, isProgramVolunteer: true, isActiveOrgMember: true };
-    for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, true, counts)).toBe(true);
+    for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, counts)).toBe(true);
   });
 });
 
@@ -150,9 +151,9 @@ describe('Receipt mail queue is listed to FINANCE only', () => {
 
   it('lists /receipts/mail to finance and not to board or sysadmin', () => {
     const entry = entryFor('/receipts/mail');
-    expect(entry.visible({ isFinance: true }, true, counts)).toBe(true);
-    expect(entry.visible({ isBoardMember: true }, true, counts)).toBe(false);
-    expect(entry.visible({ isSysadmin: true }, true, counts)).toBe(false);
-    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, true, counts)).toBe(true);
+    expect(entry.visible({ isFinance: true }, counts)).toBe(true);
+    expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
+    expect(entry.visible({ isSysadmin: true }, counts)).toBe(false);
+    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, counts)).toBe(true);
   });
 });

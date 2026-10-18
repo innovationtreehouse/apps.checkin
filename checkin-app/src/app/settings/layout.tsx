@@ -5,13 +5,7 @@ import { useSession } from "next-auth/react";
 import { useEffect } from "react";
 import { Center, Loader, Stack, Text } from "@mantine/core";
 import { PageContainer } from "@/components/ui/PageContainer";
-import type { BusinessRole } from "@/types/auth";
-import { SETTINGS_SECTION_ROLES } from "@/lib/settingsNav";
-
-type SettingsUser = Partial<Record<BusinessRole, boolean>>;
-
-const admitsSettings = (u: SettingsUser | undefined): boolean =>
-  SETTINGS_SECTION_ROLES.some((r) => u?.[r] === true);
+import { SETTINGS } from "@/lib/nav/sections/settings";
 
 // Settings is isSysadmin/board/operations. Gate here since these pages were moved out of
 // /admin: the membership settings page self-gates nothing and relied on the admin layout.
@@ -27,8 +21,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     if (status === "unauthenticated") {
       router.push("/");
     } else if (status === "authenticated") {
-      const user = session?.user as SettingsUser;
-      if (!admitsSettings(user)) router.push("/");
+      if (!SETTINGS.visible(session?.user, null)) router.push("/");
     }
   }, [status, session, router]);
 
@@ -43,8 +36,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     );
   }
 
-  const user = session?.user as SettingsUser;
-  if (!session || !admitsSettings(user)) {
+  if (!session || !SETTINGS.visible(session.user, null)) {
     return null;
   }
 

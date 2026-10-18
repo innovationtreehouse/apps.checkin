@@ -6,7 +6,7 @@ import {
 } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ReceivedReceipt } from "../db/schema";
-import { ports } from "../runtime";
+import { getOrg, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
 
@@ -81,6 +81,39 @@ export async function executePushAndSettle(
       data: { applyClaimedAt: null },
     });
   }
+}
+
+/** Most stuck receipts one sweep pushes; the rest wait for the next run. */
+export const STUCK_APPLY_SWEEP_CAP = 50;
+
+/**
+ * Cron backstop for receipts left `applying` with no live push: a request that died before or
+ * during its push, or an inventory stamp that was lost. Pushes each unclaimed or stale-claimed
+ * receipt oldest first, up to the cap, through the same lease as every other caller. Leaves
+ * `apply_failed` alone; that needs a person. Returns counts only.
+ */
+export async function sweepStuckApplying(): Promise<{ resolved: number; failed: number; applying: number; skipped: number; errored: number }> {
+  const rows = await db.receivedReceipt.findMany({
+    where: {
+      orgId: (await getOrg()).id,
+      state: "applying",
+      OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(Date.now() - APPLY_CLAIM_TTL_MS) } }],
+    },
+    select: { id: true, orgId: true, receiptJson: true },
+    orderBy: { id: "asc" },
+    take: STUCK_APPLY_SWEEP_CAP,
+  });
+  const counts = { resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0 };
+  for (const row of rows) {
+    // One receipt's database error must not stop the rest of the sweep.
+    const result = await executePushAndSettle(row.id, row).catch(() => "errored" as const);
+    if (result === "errored") counts.errored++;
+    else if (!result) counts.skipped++;
+    else if (result.state === "resolved") counts.resolved++;
+    else if (result.state === "apply_failed") counts.failed++;
+    else counts.applying++;
+  }
+  return counts;
 }
 
 async function pushAndSettle(

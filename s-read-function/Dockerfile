@@ -35,6 +35,7 @@ COPY monitoring-relay-function/package.json monitoring-relay-function/
 COPY monitoring-watchdog-function/package.json monitoring-watchdog-function/
 COPY packages/money/package.json packages/money/
 COPY packages/monitoring-db/package.json packages/monitoring-db/
+COPY packages/pg-kit/package.json packages/pg-kit/
 COPY packages/pg-test-harness/package.json packages/pg-test-harness/
 COPY packages/s-ingest-core/package.json packages/s-ingest-core/
 COPY packages/telemetry/package.json packages/telemetry/

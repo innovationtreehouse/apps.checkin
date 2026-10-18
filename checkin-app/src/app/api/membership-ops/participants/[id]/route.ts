@@ -8,6 +8,7 @@ import { apiError, apiJson } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
+import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 
 /**
  * Whether a check dated `date` covers the coming membership year — the per-lead
@@ -126,15 +127,25 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.isDeclaredAdult = false;
         }
 
-        const [updatedParticipant] = await prisma.$transaction([
-            prisma.person.update({
+        // A linked Google account signs in as whoever holds it, so a changed address
+        // ends every existing link; the next sign-in must come from the new address.
+        const emailChanged = body.email !== undefined
+            && normalizeEmail(body.email ?? "") !== normalizeEmail(prior.email ?? "");
+        if (emailChanged) {
+            updateData.emailVerified = null;
+            updateData.googleId = null;
+        }
+
+        const updatedParticipant = await prisma.$transaction(async (tx) => {
+            const unlinked = emailChanged ? (await tx.account.deleteMany({ where: { userId: id } })).count : 0;
+            const updated = await tx.person.update({
                 where: { id },
                 data: updateData,
                 include: {
                     household: true
                 }
-            }),
-            prisma.auditLog.create({
+            });
+            await tx.auditLog.create({
                 data: {
                     actorId: auth.user.id,
                     action: "EDIT",
@@ -143,8 +154,21 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                     oldData: prior,
                     newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
                 },
-            }),
-        ]);
+            });
+            if (unlinked > 0) {
+                await tx.auditLog.create({
+                    data: {
+                        actorId: auth.user.id,
+                        action: "DELETE",
+                        tableName: "Account",
+                        affectedEntityId: id,
+                        oldData: { linkedAccounts: unlinked },
+                        newData: { reason: "email changed" },
+                    },
+                });
+            }
+            return updated;
+        });
         // Name, DOB/adult and keyholder fields all feed the live roster.
         invalidateAttendanceCache();
 

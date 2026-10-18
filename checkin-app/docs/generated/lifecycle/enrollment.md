@@ -40,12 +40,13 @@ A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, n
 | PENDING_HELD | — | — | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | UNENROLLED |
 | PENDING_HELD_DENIED | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — | UNENROLLED | — |
 | ACTIVE | — | UNENROLLED | UNENROLLED | — | — | — | — | — | — | — | — | — | — | — |
+| WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Reachability
 
 - **Initial:** UNENROLLED
 - **Reachable (6):** ACTIVE, PENDING_HELD, PENDING_HELD_DENIED, PENDING_HOLD_FAILED, PENDING_UNPAID, UNENROLLED
-- **Terminal (no outbound edge):** (none)
+- **Terminal (no outbound edge):** WITHDRAWN
 - **Accepting (designated resting states):** ACTIVE
 - **Dead-ends (reachable terminal, not accepting):** (none)
-- **Unreachable (declared but no legal path from ∅):** (none)
+- **Unreachable (declared but no legal path from ∅):** WITHDRAWN

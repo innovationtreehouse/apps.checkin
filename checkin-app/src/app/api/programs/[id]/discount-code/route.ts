@@ -59,7 +59,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     // A settled membership fee doesn't necessarily cover the program's WHOLE run — a
     // not-yet-renewed household is valid only through the upcoming membership-year
     // boundary, so a program ending after that boundary must charge full price.
-    const covers = await isMembershipFeeSettledThrough(auth.user.id, programCoverageDate(program));
+    const covers = await isMembershipFeeSettledThrough(auth.user.id, await programCoverageDate(program));
     if (!covers) return NextResponse.json({ code: null, reason: "membership_ends_before_program" });
 
     const amountOffCents = program.nonOrgMemberPriceCents - program.orgMemberPriceCents;

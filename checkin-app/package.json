@@ -37,6 +37,7 @@
     "@checkin/income": "*",
     "@checkin/local-inventory": "*",
     "@checkin/money": "*",
+    "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/utils": "*",
     "@checkin/receipt": "*",

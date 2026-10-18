@@ -6,7 +6,7 @@ import { adjustProgramInventory } from "@/lib/shopify";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import { raisePaymentException, type PaymentExceptionKind } from "./exceptions";
+import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isReversed } from "./orderStatus";
 import { AMOUNT_TOLERANCE_CENTS, usesVolunteerCodeUnentitled } from "./membership";
 
@@ -44,10 +44,13 @@ export async function raiseReversalByOrderId(
     restocked: RestockedLine[] = [],
     refundId: string | null = null,
 ): Promise<boolean> {
+    await recordReversal(orderLegacyId, kind);
     let matched = false;
-    const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true } });
+    const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
     if (proc) {
-        await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, processId: proc.id });
+        // Paid and still waiting on its check: it must not activate, so the Board hears now.
+        const waiting = !!proc.paidAt && (proc.status === "PENDING_BG_CLEARANCE" || proc.status === "PENDING_BG_REVIEW");
+        await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, processId: proc.id, ...(waiting ? { severity: "CRITICAL" as const } : {}) });
         matched = true;
     }
     const enrolls = await prisma.programParticipant.findMany({
@@ -187,7 +190,7 @@ export async function reconcileReversals(): Promise<number> {
     // stays out — a refund on a paid-while-blocked application is the expected fix.
     const procs = await prisma.orgMembershipProcess.findMany({
         where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ["ACTIVE", "PENDING_BG_CLEARANCE"] } },
-        select: { id: true, shopifyOrderId: true, orgMembershipId: true },
+        select: { id: true, shopifyOrderId: true, orgMembershipId: true, status: true },
     });
     const enrolls = await prisma.programParticipant.findMany({
         where: { shopifyOrderId: { not: null }, status: "ACTIVE" },
@@ -238,7 +241,10 @@ export async function reconcileReversals(): Promise<number> {
             kind = "DISCOUNT_UNAUTHORIZED";
         }
         if (kind) {
-            await raisePaymentException(kind, { shopifyOrderId: proc.shopifyOrderId, processId: proc.id });
+            const reversed = kind !== "AMOUNT_MISMATCH" && kind !== "DISCOUNT_UNAUTHORIZED";
+            if (reversed) await recordReversal(proc.shopifyOrderId!, kind);
+            const waiting = reversed && proc.status === "PENDING_BG_CLEARANCE";
+            await raisePaymentException(kind, { shopifyOrderId: proc.shopifyOrderId, processId: proc.id, ...(waiting ? { severity: "CRITICAL" as const } : {}) });
             raised++;
         }
     }

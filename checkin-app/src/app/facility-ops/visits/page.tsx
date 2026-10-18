@@ -5,7 +5,7 @@ import { Alert, Button, Group, Modal, Select, Stack, Table, Text, TextInput, Too
 import { useDisclosure } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconDeviceLaptop, IconLock, IconRobot, IconScan, IconSelector, IconUserCheck } from '@tabler/icons-react';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FACILITY_RECORD_ROLES } from '@/lib/facilityNav';
+import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';

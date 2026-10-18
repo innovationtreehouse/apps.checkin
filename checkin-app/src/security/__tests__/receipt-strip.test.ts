@@ -11,6 +11,7 @@
  *      money and ids and strips them; the finance view (pii + internal) sees them.
  *   3. ReceiptView (the flattened Receipt + ReceiptDetail row) tiers every field
  *      exactly as the generated models do.
+ *   4. An ignore-list entry reaches FINANCE whole and never carries file bytes.
  */
 import '@/security/registry';
 import { stripValue } from '@/security/stripper';
@@ -149,5 +150,12 @@ describe('ReceiptView tiering', () => {
         const { uploadedByUserId, ...line } = receiptSynthetic.classifications.ReceiptLineView;
         expect(uploadedByUserId).toBe('internal');
         expect(line).toEqual(receiptGenerated.classifications.ReceiptLineItem);
+    });
+});
+
+describe('ReceiptIgnoredFileView', () => {
+    it('FINANCE gets every field; file bytes and unknown fields are dropped', () => {
+        const entry = { id: 1, orgId: 'treehouse', fileHash: 'ab12', reason: 'newsletter logo', addedByUserId: 7, createdAt: '2026-10-17' };
+        expect(stripValue('ReceiptIgnoredFileView', { ...entry, fileBlob: BYTES, senderAddress: 'x' }, FINANCE_VIEW, ctx())).toEqual(entry);
     });
 });

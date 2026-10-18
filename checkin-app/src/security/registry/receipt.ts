@@ -60,6 +60,12 @@ defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', en
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
+// Mailbox ignore list: FINANCE only, kept beside the mail queue. A held mail
+// item joins it through the discard route above (`ignoreFile: true`).
+defineRoute({ endpoint: 'POST /api/receipts/[id]/ignore-file', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/ignored-files', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'DELETE /api/receipts/ignored-files/[id]', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
+
 // Files: the only way receipt bytes leave. Naming each field here
 // makes it file-only, so the JSON stripper drops it on every route. Headers are
 // fixed by fileHandler per content type: images inline under a CSP sandbox, PDF
