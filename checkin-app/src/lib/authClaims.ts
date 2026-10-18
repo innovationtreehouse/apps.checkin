@@ -23,7 +23,7 @@ export type ClaimSourceParticipant = {
     programsLed?: { id: number }[];
     // Any ProgramVolunteer row on an unfinished program makes this person a Program Volunteer; one is enough.
     programVolunteers?: unknown[];
-    household?: { orgMembership?: { status: OrgMembershipStatus; isVolunteer?: boolean } | null } | null;
+    household?: { orgMembership?: { status: OrgMembershipStatus; isVolunteerFamily?: boolean } | null } | null;
     // ops-stg access gate escape hatch — a plain Person column, NOT one of the
     // PersonRole-backed flags above (sysadmin-settable only; see lib/roles.ts).
     canAccessStaging: boolean;
@@ -57,6 +57,6 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     token.canAccessStaging = denied ? false : p.canAccessStaging;
     // Treehouse Volunteer inputs (lib/volunteer.ts), forced false on DENIED.
     token.isProgramVolunteer = !denied && (p.programVolunteers?.length ?? 0) > 0;
-    token.isVolunteerFamily = !denied && p.household?.orgMembership?.isVolunteer === true;
+    token.isVolunteerFamily = !denied && p.household?.orgMembership?.isVolunteerFamily === true;
     token.isActiveOrgMember = !denied && personRecordIsActiveOrgMember(p);
 }

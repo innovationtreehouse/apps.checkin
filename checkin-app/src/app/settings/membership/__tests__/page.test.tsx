@@ -15,7 +15,7 @@ const SETTINGS = {
   orgMembershipYearBoundary: "2025-09-01T00:00:00.000Z",
   orgMembershipVariantId: "123456",
   orgMembershipProductUrl: "https://test-store.myshopify.com/products/annual-membership",
-  volunteerDiscountCode: "VOLUNTEER",
+  volunteerFamilyDiscountCode: "VOLUNTEER",
   bgRecheckMonths: 24,
   scholarshipDenialGraceDays: 14,
 };

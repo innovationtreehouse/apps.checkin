@@ -120,7 +120,7 @@ const membershipRow = {
     isPaymentPlanRequested: true,
     stageEnteredAt: '2026-01-15T00:00:00.000Z',
     orgMembership: {
-        id: 1, isVolunteer: false,
+        id: 1, isVolunteerFamily: false,
         household: {
             id: 1, name: 'The Members',
             householdMembers: [{ id: 3, name: 'Lead Parent', email: 'lead@x.test' }],

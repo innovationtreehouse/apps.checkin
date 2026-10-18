@@ -7,6 +7,7 @@ import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { logBackendError } from "@/lib/logger";
 import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
+import { specTrace } from "@/lib/specTrace";
 import type { ScanOutcome } from "@/lib/attendance/scan";
 
 /** The last recorded keyholder's kiosk leave, audited like a web leave; the kiosk
@@ -284,6 +285,7 @@ async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; 
         WHERE v.id = old.id
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
                   v."departedAt", v."departedVia"::text AS "departedVia"`;
+    specTrace("CloseExecuted", { closeId: close.id, closedAt: close.closedAt.getTime(), via: close.via, swept: changes.map(c => c.personId) });
     const actor = close.closedById != null ? personActor(close.closedById) : systemActor("system:facility-close");
     await logCloseDepartures(db, close.id, actor, changes, close.via);
 }

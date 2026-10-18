@@ -272,7 +272,7 @@ describe('jwt() callback — absolute session lifetime', () => {
 describe('jwt() callback — Treehouse Volunteer inputs', () => {
     it('loads one ProgramVolunteer row on an unfinished program and stamps the volunteer inputs', async () => {
         mockFindUnique.mockResolvedValue({
-            ...dbParticipant({ household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }),
+            ...dbParticipant({ household: { orgMembership: { status: 'ACTIVE', isVolunteerFamily: true } } }),
             programVolunteers: [{ programId: 4 }],
         });
         const token = await callRefresh({ id: 7 });

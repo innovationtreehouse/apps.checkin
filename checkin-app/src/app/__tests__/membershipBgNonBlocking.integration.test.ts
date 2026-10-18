@@ -97,7 +97,7 @@ async function wipe() {
 const linkSignIn = (personId: number) =>
     prisma.account.create({ data: { userId: personId, type: 'oauth', provider: 'google', providerAccountId: `${TAG}-${personId}` } });
 
-const isVolunteerOf = async (id: number) => (await prisma.orgMembership.findUnique({ where: { id } }))?.isVolunteer;
+const isVolunteerOf = async (id: number) => (await prisma.orgMembership.findUnique({ where: { id } }))?.isVolunteerFamily;
 
 /**
  * Turn the fresh-check shortcut on. It needs BOTH halves of the policy — a recheck

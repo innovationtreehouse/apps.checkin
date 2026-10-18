@@ -3,7 +3,7 @@
  *
  * Designating an address that belongs to a sign-in-verified person already in the
  * app shows the Board that person's household, and only the Board's explicit
- * confirm sets the household's OrgMembership.isVolunteer (audited). Any other
+ * confirm sets the household's OrgMembership.isVolunteerFamily (audited). Any other
  * address is stored as a designation (the membership fee preload). Every response lists
  * every person on file with the address.
  */
@@ -39,7 +39,7 @@ const createDesignation = prisma.volunteerDesignation.create as jest.Mock;
 const findPeople = prisma.person.findMany as jest.Mock;
 
 const BOARD = 7;
-const person = (email: string, householdId: number, orgMembership: { id: number; isVolunteer: boolean } | null, signedIn = true) => ({
+const person = (email: string, householdId: number, orgMembership: { id: number; isVolunteerFamily: boolean } | null, signedIn = true) => ({
     name: "Pat Example",
     email,
     _count: { accounts: signedIn ? 1 : 0 },
@@ -62,24 +62,24 @@ beforeEach(() => {
 });
 
 describe("POST volunteer-designations — existing person", () => {
-    beforeEach(() => findPeople.mockResolvedValue([person("pat.example@gmail.com", 20, { id: 30, isVolunteer: false })]));
+    beforeEach(() => findPeople.mockResolvedValue([person("pat.example@gmail.com", 20, { id: 30, isVolunteerFamily: false })]));
 
     it("shows the canonical match and writes nothing without a confirm", async () => {
         const res = await post({ email: "PatExample+x@googlemail.com" });
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({
             requiresConfirmation: true,
-            match: { personName: "Pat Example", householdId: 20, householdName: "Example Household", isVolunteer: false },
-            matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example Household", hasMembership: true, isVolunteer: false, signInVerified: true }],
+            match: { personName: "Pat Example", householdId: 20, householdName: "Example Household", isVolunteerFamily: false },
+            matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example Household", hasMembership: true, isVolunteerFamily: false, signInVerified: true }],
         });
         expect(tx.orgMembership.update).not.toHaveBeenCalled();
         expect(createDesignation).not.toHaveBeenCalled();
     });
 
-    it("sets the household's isVolunteer on confirm, audited, and stores no designation", async () => {
+    it("sets the household's isVolunteerFamily on confirm, audited, and stores no designation", async () => {
         const res = await post({ email: "patexample@gmail.com", confirmHouseholdId: 20 });
         expect(res.status).toBe(200);
-        expect(tx.orgMembership.update).toHaveBeenCalledWith({ where: { id: 30 }, data: { isVolunteer: true } });
+        expect(tx.orgMembership.update).toHaveBeenCalledWith({ where: { id: 30 }, data: { isVolunteerFamily: true } });
         expect(tx.auditLog.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 actorId: BOARD,
@@ -87,8 +87,8 @@ describe("POST volunteer-designations — existing person", () => {
                 tableName: "OrgMembership",
                 affectedEntityId: 30,
                 secondaryAffectedEntity: 20,
-                oldData: { isVolunteer: false },
-                newData: { isVolunteer: true },
+                oldData: { isVolunteerFamily: false },
+                newData: { isVolunteerFamily: true },
             }),
         });
         expect(createDesignation).not.toHaveBeenCalled();
@@ -103,8 +103,8 @@ describe("POST volunteer-designations — existing person", () => {
 
     it("refuses an address that matches people in more than one household", async () => {
         findPeople.mockResolvedValue([
-            person("pat.example@gmail.com", 20, { id: 30, isVolunteer: false }),
-            person("patexample@gmail.com", 22, { id: 32, isVolunteer: false }),
+            person("pat.example@gmail.com", 20, { id: 30, isVolunteerFamily: false }),
+            person("patexample@gmail.com", 22, { id: 32, isVolunteerFamily: false }),
         ]);
         const res = await post({ email: "patexample@gmail.com", confirmHouseholdId: 20 });
         expect(res.status).toBe(409);
@@ -115,8 +115,8 @@ describe("POST volunteer-designations — existing person", () => {
 
     it("confirms only the signed-in holder's household and lists the other holder", async () => {
         findPeople.mockResolvedValue([
-            person("patexample@gmail.com", 22, { id: 32, isVolunteer: false }, false),
-            person("pat.example@gmail.com", 20, { id: 30, isVolunteer: false }),
+            person("patexample@gmail.com", 22, { id: 32, isVolunteerFamily: false }, false),
+            person("pat.example@gmail.com", 20, { id: 30, isVolunteerFamily: false }),
         ]);
         const res = await post({ email: "patexample@gmail.com" });
         const body = await res.json();
@@ -137,7 +137,7 @@ describe("POST volunteer-designations — no household membership to set", () =>
     });
 
     it("stores a designation, never confirming, when the only holder has not signed in", async () => {
-        findPeople.mockResolvedValue([person("pat@example.com", 20, { id: 30, isVolunteer: false }, false)]);
+        findPeople.mockResolvedValue([person("pat@example.com", 20, { id: 30, isVolunteerFamily: false }, false)]);
         const res = await post({ email: "pat@example.com", confirmHouseholdId: 20 });
         expect(res.status).toBe(201);
         expect((await res.json()).matches).toEqual([expect.objectContaining({ householdId: 20, hasMembership: true, signInVerified: false })]);

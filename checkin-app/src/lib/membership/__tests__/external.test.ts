@@ -27,7 +27,7 @@ jest.mock('@/lib/prisma', () => ({
 
 jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
-    applyVolunteerStatus: jest.fn().mockResolvedValue(undefined),
+    applyVolunteerFamilyStatus: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('@/lib/config', () => {
@@ -69,7 +69,7 @@ const { zohoSign } = require('@/lib/membership/contract/zohoProvider');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { loadAgreementPdf, stampWatermark, AgreementUnavailableError } = require('@/lib/membership/contract/agreementDocument');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { notifyReviewers, applyVolunteerStatus } = require('@/lib/membership/review');
+const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 
 // resetAllMocks, NOT clearAllMocks: clear wipes recorded calls but KEEPS
 // implementations, so a `mockResolvedValue` set in one test silently answers every
@@ -83,7 +83,7 @@ beforeEach(() => {
     jest.resetAllMocks();
     prisma.boardSettings.findUnique.mockResolvedValue(null); // signingMockActive: no dev override
     notifyReviewers.mockResolvedValue(undefined);
-    applyVolunteerStatus.mockResolvedValue(undefined);
+    applyVolunteerFamilyStatus.mockResolvedValue(undefined);
     config.zohoAvailable.mockReturnValue(true);
     config.zohoMockActive.mockReturnValue(true);
     config.isProd.mockReturnValue(false);
@@ -251,7 +251,7 @@ describe('advanceExternalIfComplete', () => {
         const result = await advanceExternalIfComplete(20);
 
         // Allowlist matched now — the membership fee is read at PENDING_PAYMENT, before clearance.
-        expect(applyVolunteerStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
+        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
         expect(notifyReviewers).toHaveBeenCalledTimes(1); // check not yet cleared → review still needed
         expect(result).toEqual(advanced);
@@ -266,7 +266,7 @@ describe('advanceExternalIfComplete', () => {
 
         await advanceExternalIfComplete(20);
 
-        expect(applyVolunteerStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
+        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(notifyReviewers).not.toHaveBeenCalled();
     });
 
@@ -278,7 +278,7 @@ describe('advanceExternalIfComplete', () => {
 
         await advanceExternalIfComplete(20);
 
-        expect(applyVolunteerStatus).not.toHaveBeenCalled();
+        expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
         expect(notifyReviewers).not.toHaveBeenCalled();
     });
@@ -289,7 +289,7 @@ describe('advanceExternalIfComplete', () => {
         await advanceExternalIfComplete(20);
 
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
-        expect(applyVolunteerStatus).not.toHaveBeenCalled();
+        expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
     it('RENEWAL: the contract gate applies too — an unsigned renewal does not advance on consent alone', async () => {
@@ -300,7 +300,7 @@ describe('advanceExternalIfComplete', () => {
         await advanceExternalIfComplete(20);
 
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
-        expect(applyVolunteerStatus).not.toHaveBeenCalled();
+        expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
         expect(notifyReviewers).not.toHaveBeenCalled();
     });
 });

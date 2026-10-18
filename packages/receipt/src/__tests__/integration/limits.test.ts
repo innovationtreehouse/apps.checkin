@@ -7,6 +7,8 @@ import { ALICE, BOB, actAs, clearAll, configure, manualDetails, okOcr, recording
 
 const LOOSE: ReceiptLimits = {
   uploadsPerPersonPerDay: 100,
+  mailUploadsPerPersonPerDay: 100,
+  mailUploadsPerRaisedPersonPerDay: 100,
   uploadBytesPerPersonPerDay: 10 * 1024 * 1024,
   uploadBytesPerDay: 10 * 1024 * 1024,
   ocrCallsPerPersonPerDay: 100,
