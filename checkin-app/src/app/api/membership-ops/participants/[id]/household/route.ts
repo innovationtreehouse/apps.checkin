@@ -14,6 +14,9 @@ import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/
 class MergedPersonError extends Error {}
 const MERGED_PERSON_MESSAGE = "This person has been merged into another record and cannot be moved.";
 
+/** The person changed household between the pre-check and the write. */
+class StaleSourceHouseholdError extends Error {}
+
 /** The source or destination household is DENIED. */
 class DeniedHouseholdMoveError extends Error {
     constructor(public readonly householdId: number, public readonly personId: number) {
@@ -98,16 +101,19 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 data: { name: `${participant.name || 'User'}'s Household` },
             })).id;
 
-            // Conditional on the person still being live, so a merge that lands after the
-            // pre-check can't have its tombstone moved.
+            // Conditional on the person still being live and still in the household locked
+            // above, so a merge or another move that lands after the pre-check is refused.
             const { count } = await tx.person.updateMany({
-                where: { id: participantId, ...LIVE_PERSON },
+                where: { id: participantId, householdId: participant.householdId, ...LIVE_PERSON },
                 data: {
                     householdId: targetHouseholdId,
                     ...(participant.householdId !== targetHouseholdId ? { isHouseholdLead: false } : {}),
                 },
             });
-            if (count !== 1) throw new MergedPersonError();
+            if (count !== 1) {
+                const now = await tx.person.findUnique({ where: { id: participantId }, select: { mergedIntoId: true } });
+                throw now?.mergedIntoId != null ? new MergedPersonError() : new StaleSourceHouseholdError();
+            }
             const updated = await tx.person.findUniqueOrThrow({ where: { id: participantId }, include: { household: true } });
 
             if (!createNew) return { updatedParticipant: updated, targetHouseholdId };
@@ -139,6 +145,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
     } catch (error) {
         if (error instanceof MergedPersonError) {
             return apiError(MERGED_PERSON_MESSAGE, 409);
+        }
+        if (error instanceof StaleSourceHouseholdError) {
+            return apiError("This person was moved to another household while you were working. Reload and try again.", 409);
         }
         if (error instanceof DeniedHouseholdMoveError) {
             await raiseDeniedHouseholdActivity({ householdId: error.householdId, personId: error.personId, what: "household reassign refused" });

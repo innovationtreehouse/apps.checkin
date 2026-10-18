@@ -26,6 +26,13 @@ import {
 /** Thrown when the tombstone CAS loses the race (concurrent/repeat merge). */
 export class AlreadyMergedError extends Error {}
 
+/** Thrown when a subject refusal that passed in prepareMerge applies under the lock. */
+export class MergeRefusedError extends Error {
+    constructor(public readonly refusal: MergeRefusal) {
+        super(refusal.error);
+    }
+}
+
 export type MergePlan = {
     keep: KeepSubject;
     merge: MergeSubject;
@@ -140,6 +147,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
     await prisma.$transaction(async (tx) => {
         await lockAndRecheckKeeper(tx, keepId);
+        await recheckSubjects(tx, keepId, mergeId, actor);
         await clearTombstoneIdentity(tx, mergeId, keepId);
         await applyKeeperChoices(tx, keepId, plan.keeperUpdate);
 
@@ -183,6 +191,17 @@ async function lockAndRecheckKeeper(tx: TxClient, keepId: number): Promise<void>
     await lockBoardRoles(tx);
     const [keeper] = await tx.$queryRaw<{ mergedIntoId: number | null }[]>`SELECT "mergedIntoId" FROM "Person" WHERE id = ${keepId} FOR UPDATE`;
     if (!keeper || keeper.mergedIntoId !== null) throw new AlreadyMergedError();
+}
+
+/**
+ * Re-run the subject refusals on a live read. A deny takes the BOARD lock, so
+ * a household denied after prepareMerge is seen here and refuses the merge.
+ */
+async function recheckSubjects(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null): Promise<void> {
+    const keep = await tx.person.findUniqueOrThrow({ where: { id: keepId }, include: KEEP_INCLUDE });
+    const merge = await tx.person.findUniqueOrThrow({ where: { id: mergeId }, include: MERGE_INCLUDE });
+    const refusal = subjectRefusal(keep, merge, actor);
+    if (refusal) throw new MergeRefusedError(refusal);
 }
 
 /**

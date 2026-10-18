@@ -186,6 +186,26 @@ describe("Merge Participants API", () => {
         expect(merged?.mergedIntoId).toBeNull();
     });
 
+    it("refuses with 400 when the merged-away record's household is denied between the pre-check and the transaction", async () => {
+        const otherHh = await makeHousehold("Merge Test Later Denied Household");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.orgMembership.upsert({ where: { householdId: otherHh }, create: { householdId: otherHh, status: "DENIED" }, update: {} });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toContain("DENIED");
+        } finally {
+            spy.mockRestore();
+        }
+        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true, email: true } });
+        expect(merged?.mergedIntoId).toBeNull();
+        expect(merged?.email).toBe("merge@example.com");
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {
