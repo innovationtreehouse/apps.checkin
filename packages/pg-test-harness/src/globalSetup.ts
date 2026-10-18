@@ -9,6 +9,7 @@
  *
  * If Docker is unreachable, this does NOT throw: it warns and provides `undefined`, and the
  * `describeDb` gate decides — skip locally, fail under CI / REQUIRE_DB=1.
+ * `PG_TEST_HARNESS=off` takes the same path without trying Docker, for light local runs.
  *
  * Each consuming package adds a 4-line `test/globalSetup.ts` that calls this with its own
  * `migrateCwd` / `envVar` / `provideKey`. That is the entire onboarding cost.
@@ -28,13 +29,18 @@ export interface PgHarnessOptions {
   image?: string;
 }
 
-interface GlobalSetupContext {
+export interface GlobalSetupContext {
   provide: (key: string, value: unknown) => void;
 }
 
 /** Build the globalSetup function. Default-export the result from `test/globalSetup.ts`. */
 export function pgGlobalSetup(opts: PgHarnessOptions) {
   return async function setup({ provide }: GlobalSetupContext): Promise<() => Promise<void>> {
+    if (process.env.PG_TEST_HARNESS === "off") {
+      provide(opts.provideKey, undefined);
+      return async () => {};
+    }
+
     let started;
     try {
       started = await startPostgres(opts.image);

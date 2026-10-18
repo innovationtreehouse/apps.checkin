@@ -20,6 +20,7 @@
     "test:packages": "npm run test -w ./packages --if-present",
     "pretest:functions": "npm run db:generate:test",
     "test:functions": "npm run test -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function -w qbo-refresher-function --if-present",
+    "test:affected": "node scripts/test-affected.mjs",
     "test:all": "npm run test && npm run test:packages && npm run test:functions",
     "test:ci": "npm -w checkin-app run test:ci",
     "test:integration": "npm -w checkin-app run test:integration",

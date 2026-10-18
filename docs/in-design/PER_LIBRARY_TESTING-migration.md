@@ -5,27 +5,25 @@ none of them changes CI.
 
 ## State now
 
-- `scripts/test-affected.mjs` is an **unadopted draft**. No package.json script
-  points to it. Its light tier ran on three sample diffs (timings are in the
-  design doc) before testing was stopped. `--db`, `--flow` and `--all` have
-  never been run.
-- The two enabling changes it relies on are not made. Without them the light
-  vitest step starts a database container whenever Docker is up, and `--flow`
-  runs every flow file.
+- Steps 1–3 are done. `npm run test:affected` at the repo root runs
+  `scripts/test-affected.mjs`. Its light vitest step starts no database
+  container, and `--flow` on the standalone stack runs only the area's file.
+- `--db`, `--flow` and `--all` have never been run. Steps 4 and 5 prove the
+  first two.
 
 ## Steps
 
-1. **Harness opt-out.** In `packages/pg-test-harness/src/globalSetup.ts`, when
-   `PG_TEST_HARNESS=off`, provide `undefined` and start no container, the same
-   path it already takes when Docker is absent. Add one unit test next to the
-   existing no-Docker test. In the same PR, export `GlobalSetupContext`, which
-   fixes the `s-ingest-core` TS4082 error.
-2. **Flow file selection.** Change `test:flow:standalone` in
-   `checkin-app/package.json` to run `npm run test:flow -- $FLOW_ARGS` inside the
-   container. An empty `FLOW_ARGS` keeps today's run-everything behaviour.
-3. **Adopt the script.** Add `"test:affected": "node scripts/test-affected.mjs"`
-   to the root `package.json`, and remove the DRAFT header from the script.
-   Check `--dry-run` against the three sample diffs.
+1. **Done: harness opt-out.** In `packages/pg-test-harness/src/globalSetup.ts`, when
+   `PG_TEST_HARNESS=off`, the setup provides `undefined` and starts no
+   container, the same path it takes when Docker is absent. A unit test sits
+   next to the no-Docker test. `GlobalSetupContext` is exported, which fixes
+   the `s-ingest-core` TS4082 error.
+2. **Done: flow file selection.** `test:flow:standalone` in
+   `checkin-app/package.json` runs `npm run test:flow -- $FLOW_ARGS` inside the
+   container. An empty `FLOW_ARGS` runs every flow file.
+3. **Done: adopt the script.** The root `package.json` has
+   `"test:affected": "node scripts/test-affected.mjs"`, and the script has no
+   DRAFT header. `--dry-run` gives the expected plan for the three sample diffs.
 4. **Prove `--db`.** The owner approves this run once the tests make sense; it
    runs on the coordinator's heavy-job go, within its load limits. Run one small area against a
    throwaway Postgres. Record the template-migrate time against the file time,
