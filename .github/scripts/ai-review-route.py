@@ -228,6 +228,16 @@ def review_history(pr, repo, head_sha, budget):
     return out
 
 
+def first_round(pr, repo):
+    """No review from the bot yet. A failed lookup counts as a later round, so routing is unchanged."""
+    try:
+        return not gh("api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate",
+                      "--jq", f'.[] | select(.user.login == "{BOT}") | .id').strip()
+    except Exception as e:
+        print(f"::warning::could not list reviews ({e}); routing as a later round", file=sys.stderr)
+        return False
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
@@ -250,17 +260,20 @@ def route():
         chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
-    try:
-        a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
-            "reviewer": {"type": "choice",
-                         "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
-                         "criteria": rung_choice(ORDER)}})["reviewer"]
-        tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
-        tier = pick(a["probabilities"], ORDER)
-        t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
-    except Exception as e:
-        print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
-        tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
+    if os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true" and first_round(pr, repo):
+        tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
+    else:
+        try:
+            a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
+                "reviewer": {"type": "choice",
+                             "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
+                             "criteria": rung_choice(ORDER)}})["reviewer"]
+            tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
+            tier = pick(a["probabilities"], ORDER)
+            t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
+        except Exception as e:
+            print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
+            tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
