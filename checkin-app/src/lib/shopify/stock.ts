@@ -4,6 +4,7 @@
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import type { TxClient } from "@/lib/db-client";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { config } from "@/lib/config";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
@@ -262,6 +263,14 @@ function stillOwed(write: PendingStockWrite, outcome: "applied" | "notApplied"):
     return outcome === "applied" ? write.owedPart - write.delta : write.owedPart;
 }
 
+/** An absolute stock target, counted on the transaction that holds the Program row lock. */
+export type StockTarget = (db: TxClient) => Promise<number>;
+
+/** Serializes a program's seat changes, each with its carry change, against the re-arm recount. */
+async function lockProgramRow(tx: TxClient, programId: number): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
+}
+
 /** Take the program's stock lease if it is free or expired. One short statement; no transaction stays open. */
 async function takeStockLease(programId: number, capMs: number): Promise<string | null> {
     const token = crypto.randomUUID();
@@ -333,7 +342,7 @@ async function drainStock(
     reason: string,
     token: string,
     deadline: number,
-    target?: () => Promise<number>,
+    target?: StockTarget,
 ): Promise<DrainResult> {
     const result: DrainResult = { error: null, expiredKey: null };
     try {
@@ -380,12 +389,24 @@ async function drainStock(
             }
             if (target !== undefined) {
                 // An absolute target replaces whatever was owed before it, as the delta from what Shopify shows now.
-                // Counted under the lease, right before the carry is replaced. `available` already shows whether
-                // each parked write landed, so the target resolves them: settling one later would count it twice.
+                // Counted under the lease and under the Program row lock that every seat change takes with its
+                // carry change (changeProgramStockWith), so each change is counted with its delta in the carry or
+                // not at all. `available` already shows whether each parked write landed, so the target resolves
+                // them: settling one later would count it twice.
                 if (row.shopifyStockParked) {
                     console.log(`[SHOPIFY] Program ${programId} stock set from scratch (${reason}): cleared parked writes ${parkedWrites(row.shopifyStockParked).map((w) => w.key).join(", ")}`);
                 }
-                await bookStock(programId, token, { shopifyStockCarry: (await target()) - available, shopifyStockParked: null, shopifyStockUnconfirmed: 0 });
+                const quantity = target;
+                const shown = available;
+                await prisma.$transaction(async (tx) => {
+                    await lockProgramRow(tx, programId);
+                    const carry = (await quantity(tx)) - shown;
+                    const { count } = await tx.program.updateMany({
+                        where: { id: programId, shopifyStockLeaseToken: token },
+                        data: { shopifyStockCarry: carry, shopifyStockParked: null, shopifyStockUnconfirmed: 0 },
+                    });
+                    if (count !== 1) throw new StockLeaseLostError(`lost the Shopify stock lease for program ${programId}`);
+                });
                 result.expiredKey = null;
                 target = undefined;
                 continue;
@@ -454,7 +475,7 @@ async function pushProgramStock(
     reason: string,
     capMs: number,
     carryBefore: number,
-    target?: () => Promise<number>,
+    target?: StockTarget,
 ): Promise<boolean> {
     const deadline = Date.now() + capMs;
     try {
@@ -609,6 +630,53 @@ export async function changeProgramStock(
     }
     const capMs = options.inRequest ? programStockTiming.requestCapMs : programStockTiming.capMs;
     return { recorded: true, landed: await pushProgramStock(program.id, variantId, reason, capMs, carryBefore) };
+}
+
+/** The stock delta could not be written to the carry, so the transaction (row change included) rolled back. The board has been alerted. */
+export class StockNotRecordedError extends Error {}
+
+/**
+ * Change the rows that move a program's taken seats and record the stock delta
+ * they cause in ONE transaction under the Program row lock, then push. The row
+ * change and its carry change commit together, so the re-arm recount (which
+ * takes the same lock) never counts a change whose delta is not yet owed, a
+ * reader never sees the change without its delta, and a crash cannot keep one
+ * without the other. `change` returns the delta; a failure rolls both back and
+ * throws. A failed carry write alerts the board and throws {@link StockNotRecordedError}. Returns whether the push landed (a recorded
+ * delta that did not land stays owed and flagged, as with {@link changeProgramStock}).
+ */
+export async function changeProgramStockWith<T>(
+    program: { id: number; shopifyVariantId?: string | null },
+    reason: string,
+    change: (tx: TxClient) => Promise<{ result: T; delta: number }>,
+    options: StockWriteOptions = {},
+): Promise<{ result: T; landed: boolean }> {
+    const variantId = program.shopifyVariantId;
+    const { result, delta, carryBefore } = await prisma.$transaction(async (tx) => {
+        await lockProgramRow(tx, program.id);
+        const { result, delta } = await change(tx);
+        if (!variantId || delta === 0) return { result, delta: 0, carryBefore: 0 };
+        try {
+            const { shopifyStockCarry } = await tx.program.update({
+                where: { id: program.id },
+                data: { shopifyStockCarry: { increment: delta } },
+                select: { shopifyStockCarry: true },
+            });
+            return { result, delta, carryBefore: shopifyStockCarry - delta };
+        } catch (error) {
+            await alertStockPush(program.id, variantId, reason, error);
+            throw new StockNotRecordedError(`stock change for program ${program.id} could not be recorded`, { cause: error });
+        }
+    });
+    if (!variantId || delta === 0) return { result, landed: true };
+    if (config.shopifyMockActive()) console.log(`[SHOPIFY] (mock) Would adjust inventory by ${delta} for variant: ${variantId}`);
+    if (options.deferred) {
+        // ponytail: fire-and-forget, as in changeProgramStock; the daily heal lands what a restart drops.
+        void pushProgramStock(program.id, variantId, reason, programStockTiming.capMs, carryBefore);
+        return { result, landed: true };
+    }
+    const capMs = options.inRequest ? programStockTiming.requestCapMs : programStockTiming.capMs;
+    return { result, landed: await pushProgramStock(program.id, variantId, reason, capMs, carryBefore) };
 }
 
 /**
@@ -854,7 +922,7 @@ export async function syncProgramPrice(
  */
 export async function setProgramInventory(
     program: { id: number; shopifyVariantId?: string | null },
-    quantity: () => Promise<number>,
+    quantity: StockTarget,
     reason: string,
 ): Promise<boolean> {
     if (!program.shopifyVariantId) return true;

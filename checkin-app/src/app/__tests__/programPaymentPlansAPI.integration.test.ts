@@ -19,11 +19,11 @@ import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/ap
 import prisma from '@/lib/prisma';
 import * as shopify from '@/lib/shopify/stock';
 
-// Wrap only changeProgramStock (call-through) so one test can force a −1 that
+// Wrap only changeProgramStockWith (call-through) so one test can force a −1 that
 // could not be recorded; SWC exports are non-configurable getters, so no spyOn.
 jest.mock('@/lib/shopify/stock', () => {
     const actual = jest.requireActual('@/lib/shopify/stock');
-    return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
+    return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
 });
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
@@ -1250,7 +1250,7 @@ describe('Program payment-plan routes', () => {
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
             // Only a −1 the stock writer could not even record takes the failure branch.
-            jest.mocked(shopify.changeProgramStock).mockResolvedValueOnce({ recorded: false, landed: false });
+            jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new shopify.StockNotRecordedError('stock carry could not be written'));
             try {
                 await prisma.programParticipant.create({
                     data: { programId: p.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },

@@ -38,6 +38,7 @@ import * as mirror from "@/lib/shopifyRead/client";
 jest.mock("@/lib/shopify/stock", () => ({
     ...jest.requireActual("@/lib/shopify/stock"),
     adjustProgramInventory: jest.fn(async () => true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 

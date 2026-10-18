@@ -11,6 +11,7 @@ import { emailBoardMembers } from '@/lib/emailRecipients';
 jest.mock('@/lib/shopify/stock', () => ({
     setProgramProductOffSale: jest.fn().mockResolvedValue(true),
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 jest.mock('@/lib/shopify/client', () => ({
     reportShopifyFailure: jest.fn().mockResolvedValue(undefined),

@@ -31,6 +31,7 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/shopify/stock', () => ({
     __esModule: true,
     adjustProgramInventory: jest.fn(),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 jest.mock('@/lib/shopify/client', () => ({
     __esModule: true,
