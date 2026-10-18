@@ -10,7 +10,7 @@ import { PaymentError } from "@/lib/membership/payment";
 import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
-import { closeForRestore } from "@/lib/membership/archive";
+import { closeForRestore, lockOpenApplications } from "@/lib/membership/archive";
 import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
@@ -295,12 +295,18 @@ export const POST = withAuth(
                         });
                         if (boardMemberInHousehold) return "boardMember" as const;
                     }
-                    const membership = await ensureHouseholdMembership(tx, householdId);
-                    const applied = await setHouseholdStatus(tx, membership.id, deny
-                        ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
-                        : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
+                    if (deny) {
+                        const membership = await ensureHouseholdMembership(tx, householdId);
+                        const applied = await setHouseholdStatus(tx, membership.id, { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" });
+                        return applied ? membership.id : "notApplied" as const;
+                    }
+                    // Restore locks the applications before the household row, as payment and reset do.
+                    const membership = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true } });
+                    if (!membership) return "notApplied" as const;
+                    const openApplications = await lockOpenApplications(tx, membership.id);
+                    const applied = await setHouseholdStatus(tx, membership.id, { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
                     if (!applied) return "notApplied" as const;
-                    if (!deny) await closeForRestore(tx, membership.id, actor);
+                    await closeForRestore(tx, openApplications, actor);
                     return membership.id;
                 }).catch((e: unknown) => {
                     if (e instanceof ReviewError) return e;

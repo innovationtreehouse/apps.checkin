@@ -187,6 +187,41 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         }
     });
 
+    it('restore closes a BLOCKED application, refusing while it is paid or another sits at a step it cannot close', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const lead = await prisma.person.create({
+            data: { email: `restore-blocked-${TAG}@example.com`, name: 'Blocked Lead', household: { create: { name: "Test HH" } } },
+        });
+        const membership = await prisma.orgMembership.create({ data: { householdId: lead.householdId, status: 'DENIED' } });
+        const blocked = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'BLOCKED', paidAt: new Date() },
+        });
+        const legacy = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'RENEWAL_PENDING_BG' },
+        });
+        try {
+            const paid = await post({ householdId: lead.householdId, deny: false });
+            expect(paid.status).toBe(409);
+            expect((await paid.json()).error).toContain('record the refund');
+
+            await prisma.orgMembershipProcess.update({ where: { id: blocked.id }, data: { paidAt: null } });
+            const stuck = await post({ householdId: lead.householdId, deny: false });
+            expect(stuck.status).toBe(409);
+            expect((await stuck.json()).error).toContain('a step a restore cannot close');
+            expect((await prisma.orgMembership.findUnique({ where: { id: membership.id } }))?.status).toBe('DENIED');
+
+            await prisma.orgMembershipProcess.delete({ where: { id: legacy.id } });
+            const res = await post({ householdId: lead.householdId, deny: false });
+            expect(res.status).toBe(200);
+            const closed = await prisma.orgMembershipProcess.findUnique({ where: { id: blocked.id } });
+            expect([closed?.status, closed?.archivedFromStatus]).toEqual(['ARCHIVED', 'BLOCKED']);
+            const audit = await prisma.auditLog.findFirst({ where: { actorId: boardId, tableName: 'OrgMembershipProcess', affectedEntityId: blocked.id } });
+            expect(audit?.newData).toMatchObject({ status: 'ARCHIVED', reason: 'household restored' });
+        } finally {
+            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: membership.id } });
+        }
+    });
+
     it('restore is undeny only: it never moves an ACTIVE household to NONE', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         await prisma.orgMembership.update({ where: { householdId: plainHouseholdId }, data: { status: 'ACTIVE' } });

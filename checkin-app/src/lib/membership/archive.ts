@@ -70,18 +70,30 @@ export async function archiveApplication(processId: number, actorId: number) {
 const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 
 /**
- * Closes every open application of a household the board is restoring from DENIED,
- * so the family starts over and nothing decided before or during the denial carries
- * across. Refuses, rolling back the restore, while one still has a payment recorded.
- * Runs inside the restore transaction.
+ * Locks a household's applications FOR UPDATE and returns the open ones, for a
+ * restore to close. Taken before the household row, the order the payment and
+ * reset paths lock in.
  */
-export async function closeForRestore(tx: TxClient, orgMembershipId: number, actor: AuditActor) {
-    const open = await tx.orgMembershipProcess.findMany({
+export async function lockOpenApplications(tx: TxClient, orgMembershipId: number) {
+    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE "orgMembershipId" = ${orgMembershipId} ORDER BY id FOR UPDATE`;
+    return tx.orgMembershipProcess.findMany({
         where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where },
         select: { id: true, status: true, paidAt: true },
     });
-    if (open.some((p) => p.paidAt || !(RESTORE_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
+}
+
+/**
+ * Closes the open applications of a household the board is restoring from DENIED,
+ * so the family starts over and nothing decided before or during the denial carries
+ * across. Refuses, rolling back the restore, while one still has a payment recorded
+ * or sits at a step a restore cannot close.
+ */
+export async function closeForRestore(tx: TxClient, open: Awaited<ReturnType<typeof lockOpenApplications>>, actor: AuditActor) {
+    if (open.some((p) => p.paidAt)) {
         throw new ReviewError("wrong_phase", "This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then restore the household.");
+    }
+    if (open.some((p) => !(RESTORE_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
+        throw new ReviewError("wrong_phase", "This household has an application at a step a restore cannot close. Resolve that application first, then restore the household.");
     }
     for (const p of open) {
         const { count } = await tx.orgMembershipProcess.updateMany({

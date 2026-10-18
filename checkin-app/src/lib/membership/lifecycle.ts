@@ -331,7 +331,8 @@ type TState = ProcessStatus | OriginState;
 /**
  * What "Close application" (archiveApplication) accepts: the long-idle, unpaid
  * steps. It also requires `paidAt` null. BLOCKED, PENDING_BG_CLEARANCE and ACTIVE
- * are never closable — closing would erase a rejection or hide money.
+ * are not closable here — closing would erase a rejection or hide money. Only a
+ * board restore closes a BLOCKED one (`RESTORE_CLOSABLE_STATUSES`).
  */
 export const ARCHIVABLE_STATUSES = [
     "INTAKE",

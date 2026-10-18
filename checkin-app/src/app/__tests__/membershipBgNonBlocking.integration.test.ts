@@ -421,6 +421,15 @@ describe('background check is non-blocking', () => {
         await expect(overrideBlocked(processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
         expect(await statusOf(processId)).toBe('BLOCKED');
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
+
+        // A review still waiting on its second approval is refused the same way.
+        const open = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(open.processId);
+        await markBgConsent(open.processId, revA);
+        await attest(revA, open.processId, { result: 'APPROVE', subjectPersonIds: [open.leadId] });
+        await prisma.orgMembership.update({ where: { id: open.orgMembershipId }, data: { status: 'DENIED' } });
+        await expect(overrideBlocked(open.processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: open.processId } })).toBe(1);
     });
 
     it('override approve re-checks BLOCKED under the lock: a second approve is refused', async () => {
