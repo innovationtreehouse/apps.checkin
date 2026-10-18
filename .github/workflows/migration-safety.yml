@@ -41,6 +41,8 @@ on:
       # chain. Each populated-DB job skips itself when its own chains are unchanged.
       - 'packages/*/prisma/migrations/**'
       - '.github/workflows/migration-safety.yml'
+      - '.github/actions/ecr-public-login/**'
+      - '.github/actions/start-postgres/**'
 
 # pull_request runs share one group per ref, so a new push cancels the run it
 # supersedes. Every other event keys on run_id: a group of one, so main pushes,
@@ -74,34 +76,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       # Version matches deploy/docker-compose.yml's `db` service (postgres:15) —
       # same major version dev/prod run migrations against.
       # The DB runs as a step, not a service container: services start before
       # any step, so their pull can't use the ECR Public login above.
       - name: Start Postgres
-        run: |
-          bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:15
-          docker run -d --name postgres -p 5432:5432 \
-            -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=checkmein_migtest \
-            public.ecr.aws/docker/library/postgres:15
-          # Probe over TCP: the image's first-start init server listens only on
-          # the unix socket, so a TCP answer means the post-init restart is done.
-          for _ in $(seq 1 30); do
-            pg_isready -q -h localhost -p 5432 && exit 0
-            sleep 2
-          done
-          docker logs postgres; exit 1
+        uses: ./.github/actions/start-postgres
+        with:
+          db: checkmein_migtest
 
       - name: Determine base + check for migration changes
         id: base
@@ -309,33 +297,20 @@ jobs:
           done
           if [ -s "$CHANGED" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; else echo "skip=true" >> "$GITHUB_OUTPUT"; fi
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Log in to Amazon ECR Public
         if: steps.base.outputs.skip == 'false'
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        if: steps.base.outputs.skip == 'false'
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       # Same postgres:15 as the checkin job above, started as a step after the
       # ECR Public login.
       - name: Start Postgres
         if: steps.base.outputs.skip == 'false'
-        run: |
-          bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:15
-          docker run -d --name postgres -p 5432:5432 \
-            -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=checkmein_migtest \
-            public.ecr.aws/docker/library/postgres:15
-          for _ in $(seq 1 30); do
-            pg_isready -q -h localhost -p 5432 && exit 0
-            sleep 2
-          done
-          docker logs postgres; exit 1
+        uses: ./.github/actions/start-postgres
+        with:
+          db: checkmein_migtest
 
       - name: Setup Node.js
         if: steps.base.outputs.skip == 'false'

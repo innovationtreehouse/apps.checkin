@@ -88,16 +88,11 @@ jobs:
 
       # The deploy role has no ECR Public access; the pull-only role authenticates
       # the base-image pull, then the deploy role is assumed below.
-      - name: Configure AWS credentials for image pulls (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       - name: Pull base image
         run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine
@@ -245,43 +240,10 @@ jobs:
       # The QuickBooks token refresher Lambda (infra creates it from a stub and
       # ignores code changes; this step owns its code). Runs on the deploy-role
       # credentials assumed above. Skips while the function does not exist yet.
-      - name: Setup Node.js (qbo-refresher)
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: 'npm'
-
       - name: Deploy qbo-refresher (dev)
-        env:
-          FUNCTION_NAME: qbo-refresher-dev
-        run: |
-          set -euo pipefail
-          if ! OUT=$(aws lambda get-function --function-name "$FUNCTION_NAME" 2>&1 >/dev/null); then
-            # Before infra provisions the function, the deploy role also lacks
-            # lambda:GetFunction on it, so AWS answers AccessDenied rather than
-            # ResourceNotFound.
-            if printf '%s' "$OUT" | grep -q ResourceNotFoundException; then
-              echo "::notice::Lambda $FUNCTION_NAME does not exist yet; skipping its code deploy."
-              exit 0
-            fi
-            if printf '%s' "$OUT" | grep -q AccessDeniedException; then
-              echo "::warning::No access to Lambda $FUNCTION_NAME (not provisioned yet, or the deploy role lacks its grant); skipping its code deploy."
-              exit 0
-            fi
-            echo "$OUT" >&2
-            exit 1
-          fi
-
-          npm ci
-          npm run build -w qbo-refresher-function
-          ZIP="$RUNNER_TEMP/qbo-refresher.zip"
-          zip -j "$ZIP" qbo-refresher-function/dist/handler.js
-
-          aws lambda update-function-code \
-            --function-name "$FUNCTION_NAME" \
-            --zip-file "fileb://$ZIP" >/dev/null
-          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
-          echo "Deployed $FUNCTION_NAME."
+        uses: ./.github/actions/deploy-qbo-refresher
+        with:
+          environment: dev
 
       - name: Report result on the PR
         if: always()

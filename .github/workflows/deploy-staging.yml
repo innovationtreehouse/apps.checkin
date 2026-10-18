@@ -218,16 +218,11 @@ jobs:
 
       # The deploy role has no ECR Public access; the pull-only role authenticates
       # the base-image pull, then the deploy role is assumed below.
-      - name: Configure AWS credentials for image pulls (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
 
       - name: Pull base image
         run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine

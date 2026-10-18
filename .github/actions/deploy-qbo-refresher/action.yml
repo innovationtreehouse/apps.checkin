@@ -1,0 +1,54 @@
+name: Deploy qbo-refresher
+description: >
+  Build the QuickBooks token refresher Lambda and update its code for ONE env.
+  Infra creates the function from a stub and ignores code changes; this action
+  owns its code. Runs on the AWS credentials the caller has already assumed
+  (the deploy role), from the caller's checked-out workspace. Skips while the
+  function does not exist yet.
+
+inputs:
+  environment:
+    description: "qbo-refresher environment (dev | prod)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js (qbo-refresher)
+      uses: actions/setup-node@v5
+      with:
+        node-version: 24
+        cache: 'npm'
+
+    - name: Deploy qbo-refresher
+      shell: bash
+      env:
+        FUNCTION_NAME: qbo-refresher-${{ inputs.environment }}
+      run: |
+        set -euo pipefail
+        if ! OUT=$(aws lambda get-function --function-name "$FUNCTION_NAME" 2>&1 >/dev/null); then
+          # Before infra provisions the function, the deploy role also lacks
+          # lambda:GetFunction on it, so AWS answers AccessDenied rather than
+          # ResourceNotFound.
+          if printf '%s' "$OUT" | grep -q ResourceNotFoundException; then
+            echo "::notice::Lambda $FUNCTION_NAME does not exist yet; skipping its code deploy."
+            exit 0
+          fi
+          if printf '%s' "$OUT" | grep -q AccessDeniedException; then
+            echo "::warning::No access to Lambda $FUNCTION_NAME (not provisioned yet, or the deploy role lacks its grant); skipping its code deploy."
+            exit 0
+          fi
+          echo "$OUT" >&2
+          exit 1
+        fi
+
+        npm ci
+        npm run build -w qbo-refresher-function
+        ZIP="$RUNNER_TEMP/qbo-refresher.zip"
+        zip -j "$ZIP" qbo-refresher-function/dist/handler.js
+
+        aws lambda update-function-code \
+          --function-name "$FUNCTION_NAME" \
+          --zip-file "fileb://$ZIP" >/dev/null
+        aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+        echo "Deployed $FUNCTION_NAME."
