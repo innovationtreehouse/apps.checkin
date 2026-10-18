@@ -152,9 +152,12 @@ relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null w
 and as the date once closed, a create dated in a closed period fails with fault 6200 in "Required
 password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
 first with the sandbox books open, then after closing them (Settings → Account and settings →
-Advanced → Close the books) with a date before today and a password. It needs the consent token file, `QBO_ENVIRONMENT=sandbox`,
-`QBO_SANDBOX_DEPOSIT_ACCOUNT_ID` and `QBO_SANDBOX_INCOME_ACCOUNT_ID`, and creates up to two
-`[checkin-test]` Deposits per run. Never run it against production.
+Advanced → Close the books) with a date before today and a password. It needs the consent token
+file and `QBO_ENVIRONMENT=sandbox`. The test deposits go into the bank account named
+`QBO_SANDBOX_DEPOSIT_ACCOUNT` (default `Checking`), booked to the income account named
+`QBO_SANDBOX_INCOME_ACCOUNT` (default `Services`), as the Chart of Accounts names them; the sample
+sandbox company has both. It creates up to two `[checkin-test]` Deposits per run. Never run it against
+production.
 
 ## Notes
 

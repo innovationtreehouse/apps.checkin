@@ -3,27 +3,31 @@
 // them the way finance does: Settings → Account and settings → Advanced → Close the books, a closing
 // date before today, "Required password" (the closed-period refusal).
 // Run: npm run sandbox-checks -w @checkin/quickbooks
-// Needs QBO_TOKEN_FILE (from `npm run consent`), QBO_ENVIRONMENT=sandbox,
-// QBO_SANDBOX_DEPOSIT_ACCOUNT_ID (a bank account) and QBO_SANDBOX_INCOME_ACCOUNT_ID (an income account).
+// Needs QBO_TOKEN_FILE (from `npm run consent`) and QBO_ENVIRONMENT=sandbox. The test deposit goes
+// into the bank account QBO_SANDBOX_DEPOSIT_ACCOUNT (default "Checking"), booked to the income account
+// QBO_SANDBOX_INCOME_ACCOUNT (default "Services"), each named as the Chart of Accounts shows it.
 // Creates up to two [checkin-test] Deposits in the sandbox per run.
 import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, type TxnWrite } from "../src/client";
 import type { QboPreferences } from "../src/types";
 import { CREATE } from "../src/internal";
 import { fileAccessTokenSource, loadTokens, tokenFileFromEnv } from "../src/local";
 
-const need = (name: string): string => {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} must be set`);
-  return value;
-};
-
 if (qboEnvFromEnv() !== "sandbox") throw new Error("sandbox-checks runs against the sandbox only");
 const tokenFile = tokenFileFromEnv();
 const saved = loadTokens(tokenFile);
 if (!saved) throw new Error(`No QBO tokens at ${tokenFile}; run \`npm run consent -w @checkin/quickbooks\` first`);
 const client = new QuickBooksClient(fileAccessTokenSource(tokenFile), { env: "sandbox", realmId: saved.realmId });
-const bank = need("QBO_SANDBOX_DEPOSIT_ACCOUNT_ID");
-const income = need("QBO_SANDBOX_INCOME_ACCOUNT_ID");
+/** The id of the account named by `envName` (or `fallback`), which must have `type`. */
+async function accountId(envName: string, fallback: string, type: string): Promise<string> {
+  const name = process.env[envName] || fallback;
+  const account = await client.accountNamed(name);
+  if (!account) throw new Error(`No account named "${name}" in the sandbox; set ${envName} to one from the Chart of Accounts`);
+  if (account.AccountType !== type) throw new Error(`"${name}" is a ${account.AccountType ?? "?"} account, not ${type}; set ${envName}`);
+  console.log(`Using ${type} account "${name}" (id ${account.Id})`);
+  return account.Id;
+}
+const bank = await accountId("QBO_SANDBOX_DEPOSIT_ACCOUNT", "Checking", "Bank");
+const income = await accountId("QBO_SANDBOX_INCOME_ACCOUNT", "Services", "Income");
 const deposit = (txnDate: string): TxnWrite => ({
   entity: "Deposit",
   fields: { txnDate, depositToAccountId: bank, lines: [{ amountCents: 1_00, accountId: income }], memo: "closed-books sandbox check" },
