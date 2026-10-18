@@ -583,6 +583,29 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
+  // A place paid before the Board zeroed the price is still paid; the roster cannot
+  // tell, so a Board member gives a reason for any active place.
+  it("asks a Board member for a reason on an active place of a free program too", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ "/api/programs/1": programData });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    expect(within(modal).getByRole("button", { name: "Remove" })).toBeDisabled();
+    fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Paid before the price was zeroed" }) }),
+      ),
+    );
+  });
+
   it("surfaces the server error when removing a pending participant is rejected", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = routedFetch([

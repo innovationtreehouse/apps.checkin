@@ -53,13 +53,15 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   const [confirmAddPartOpened, { open: openConfirmAddPart, close: closeConfirmAddPart }] = useDisclosure(false);
   const [confirmRemovePartOpened, { open: openConfirmRemovePart, close: closeConfirmRemovePart }] = useDisclosure(false);
   const [pendingRemovePartId, setPendingRemovePartId] = useState<number | null>(null);
-  const [pendingRemovePaid, setPendingRemovePaid] = useState(false);
+  const [pendingRemoveNeedsReason, setPendingRemoveNeedsReason] = useState(false);
   const [removeReason, setRemoveReason] = useState("");
 
   const sortedVolunteers = program.volunteers ? [...program.volunteers].sort((a, b) => (b.isCore ? 1 : 0) - (a.isCore ? 1 : 0)) : [];
   const activeParticipants = program.participants.filter(p => p.status === 'ACTIVE');
   const pendingParticipants = program.participants.filter(p => p.status === 'PENDING');
   // An active place on a priced program is paid: only the Board removes it, with a reason.
+  // The roster carries no payment fields, so the Board gives a reason for every active
+  // place; one paid before the price was zeroed is refused for others by the server.
   const isPriced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
 
   // Roster mutations must never fail silently: a rejected remove (403 from a
@@ -165,9 +167,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     }
   };
 
-  const handleRemoveParticipant = (participantId: number, paid = false) => {
+  const handleRemoveParticipant = (participantId: number, needsReason = false) => {
     setPendingRemovePartId(participantId);
-    setPendingRemovePaid(paid);
+    setPendingRemoveNeedsReason(needsReason);
     setRemoveReason("");
     openConfirmRemovePart();
   };
@@ -178,7 +180,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const participantId = pendingRemovePartId;
     const reason = removeReason.trim();
     setPendingRemovePartId(null);
-    const body = pendingRemovePaid ? { participantId, reason } : { participantId };
+    const body = pendingRemoveNeedsReason ? { participantId, reason } : { participantId };
     const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
     if (data) {
       if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
@@ -267,7 +269,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
                   {isPriced && !isBoardMember ? (
                     <Button size="compact-xs" variant="subtle" color="red" disabled title="Only the Board removes a paid place">Remove</Button>
                   ) : (
-                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId, isPriced)}>Remove</Button>
+                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId, isBoardMember)}>Remove</Button>
                   )}
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
@@ -333,19 +335,19 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
 
       <Modal opened={confirmRemovePartOpened} onClose={closeConfirmRemovePart} title={<Text span fw={700} fz="lg">Remove Participant</Text>} centered>
         <Text mb="lg">Remove this participant?</Text>
-        {pendingRemovePaid && (
+        {pendingRemoveNeedsReason && (
           <Textarea
             mb="lg"
             required
             label="Reason"
-            description="This place is paid. Write the Board's reason for removing it; it is kept in the audit log."
+            description="A paid place needs the Board's written reason. It is kept in the audit log."
             value={removeReason}
             onChange={e => setRemoveReason(e.currentTarget.value)}
           />
         )}
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmRemovePart}>Cancel</Button>
-          <Button color="red" onClick={confirmRemoveParticipant} disabled={pendingRemovePaid && !removeReason.trim()}>Remove</Button>
+          <Button color="red" onClick={confirmRemoveParticipant} disabled={pendingRemoveNeedsReason && !removeReason.trim()}>Remove</Button>
         </Group>
       </Modal>
     </Stack>
