@@ -225,13 +225,14 @@ describe('isLegalTransition covers §5', () => {
         expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(true);
     });
 
-    test('close only from the unpaid, long-idle steps — never paid, blocked or active', () => {
+    test('close only from the unpaid, long-idle steps — never paid or active; blocked only by a board restore', () => {
         for (const from of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_RENEWAL'] as ProcessStatus[]) {
             expect(isLegalTransition(from, 'ARCHIVED')).toBe(true);
         }
-        for (const from of ['ACTIVE', 'BLOCKED', 'PENDING_BG_CLEARANCE'] as ProcessStatus[]) {
+        for (const from of ['ACTIVE', 'PENDING_BG_CLEARANCE'] as ProcessStatus[]) {
             expect(isLegalTransition(from, 'ARCHIVED')).toBe(false);
         }
+        expect(TRANSITIONS.filter((t) => t.from === 'BLOCKED' && t.to === 'ARCHIVED').map((t) => t.event)).toEqual(['closeForRestore']);
     });
 
     test('reopen returns to every closable step and to the legacy closed-from steps — ARCHIVED is not sealed', () => {

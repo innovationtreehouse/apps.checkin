@@ -246,7 +246,8 @@ Procedure below is built on them.
 - The board may close an unpaid application ("Close application"); there is no
   minimum wait. It is never destroyed, and "Reopen" returns it to the step it
   was closed from. A paid, blocked, clearance-waiting or active application
-  cannot be closed. Reopening refuses a denied household, or one with another
+  cannot be closed; the one exception is a restore, below, which also closes a
+  blocked application. Reopening refuses a denied household, or one with another
   open application. The word "archive" is reserved for archiving a household.  [Decision —
   *Principle: decisions are reversible*]
 
@@ -289,7 +290,10 @@ Procedure below is built on them.
 
 - An active household stops being one only by revocation or denial. A denied
   household never becomes active again by any route; the board's restore
-  returns it to no membership, and the family starts over.  [Decision]
+  returns it to no membership, and the family starts over. The restore closes
+  the household's open applications, blocked ones included, so nothing decided
+  before or during the denial carries across. It is refused while one of them
+  has a payment recorded, until the board records the refund.  [Decision]
 
 - Anything that reaches a denied household after the denial — a family's
   payment, an approval that would clear its check, a start or renewal, a board

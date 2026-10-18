@@ -13,7 +13,7 @@ import { personActor, type AuditActor } from "@/lib/auditActor";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
-import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
@@ -357,6 +357,12 @@ export async function attest(
             : withThis.filter((a) => a.result === "APPROVE").length;
         const clears = approvals >= REQUIRED_APPROVALS;
         if (clears) {
+            // An earlier approver is re-checked against the applicant as they stand now: one
+            // moved into the applicant's household since approving no longer counts. The
+            // check between reviewers already ran above, on their current households.
+            const dependent = process.attestations.some((a) => a.result === "APPROVE"
+                && (a.reviewerId === process.subjectPersonId || sharesHousehold(a.reviewer.householdId, applicantHouseholdId)));
+            if (dependent) throw new ReviewError("same_household_reviewer", "An earlier approver is now in the applicant's household, so this review cannot clear. Ask the board to reset it.");
             return clearBackgroundCheck(tx, processId, reviewerId, awaitingBgReview);
         }
         return { status: process.status, approvals };
@@ -634,6 +640,9 @@ export async function overrideBlocked(processId: number, actorId: number, action
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
             const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true } });
             if (!fresh) throw new ReviewError("not_found", "Application not found.");
+            if (applicantHouseholdId !== null && await lockAndFindDeniedHousehold(tx, [applicantHouseholdId]) !== null) {
+                throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reset.");
+            }
             const blocked = fresh.status === "BLOCKED";
             if (!blocked && !awaitingBgReview.has({ status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
                 throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
