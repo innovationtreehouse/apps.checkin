@@ -28,8 +28,9 @@ LADDER = [
     ("top", "anthropic/claude-opus-5.5", "8", "120",
      "Dollars a review, roughly double the high tier, and reserved for the rare case. Only when a missed bug would mean lost money, leaked personal data or a broken production deploy, AND the logic is subtle enough that the high tier would likely miss it. Choose this almost never.", ""),
 ]
-# Escalation bars: move to a rung only when P(this rung or higher) clears its bar.
-# Odds 1:1, 4:1, 39:1, so reaching Opus takes about ten times the concern of Argon.
+# Leave the free rung only when P(any paid rung) >= FREE_EXIT. Among paid rungs, and for
+# reruns, move to a rung only when P(this rung or higher) clears its bar: odds 1:1, 4:1, 39:1.
+FREE_EXIT = 0.985
 BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
@@ -116,11 +117,38 @@ def pr_state(pr, repo):
 
 def pick(probs, rungs):
     """Highest rung whose cumulative probability (it or any stronger rung) clears its bar."""
+    if rungs[0] == "free":
+        paid = sum(probs.get(r, 0) for r in rungs[1:])
+        if paid < FREE_EXIT:
+            return "free"
+        rungs, probs = rungs[1:], {r: probs.get(r, 0) / paid for r in rungs[1:]}
     chosen = rungs[0]
     for i, name in enumerate(rungs):
         if sum(probs.get(r, 0) for r in rungs[i:]) >= BARS[name]:
             chosen = name
     return chosen
+
+
+def rerun_gate(probs, higher, p):
+    """A rerun on a costlier rung also needs that rung's bar of confidence that the review is incomplete."""
+    rerun = pick(probs, higher)
+    while rerun != "none" and 1 - p < BARS[rerun]:
+        i = higher.index(rerun)
+        rerun = higher[i - 1] if i else "none"
+    return rerun
+
+
+def route_selftest():
+    assert pick({"free": 0.02, "mid": 0.6, "high": 0.38}, ORDER) == "free"
+    assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
+    assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
+    assert pick({"free": 0.0, "mid": 0.25, "high": 0.7, "top": 0.05}, ORDER) == "mid"
+    assert pick({"free": 0.05, "mid": 0.03, "high": 0.92}, ORDER) == "free"  # was high
+    assert pick({"free": 0.006, "mid": 0.594, "high": 0.4}, ORDER) == "mid"  # was free
+    assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
+    assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
+    assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    print("route selftest ok")
 
 
 def rung_choice(rungs):
@@ -293,12 +321,7 @@ def adjudicate():
             a = jev(state, qs)
             p = a["complete"]["noul"]
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
-            rerun = pick(a["rerun_on"]["probabilities"], higher)
-            # A rerun on a costlier rung also needs that rung's bar of confidence that the review is incomplete.
-            while rerun != "none" and 1 - p < BARS[rerun]:
-                i = higher.index(rerun)
-                rerun = higher[i - 1] if i else "none"
-            nxt = "none" if p >= COMPLETE_THRESHOLD else rerun
+            nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
             by = f"{JEV} complete={p:.2f}, rerun " + ", ".join(f"{k}={v:.2f}" for k, v in a["rerun_on"]["probabilities"].items())
         except Exception as e:
             print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
@@ -418,6 +441,9 @@ def recommend():
 if __name__ == "__main__":
     if sys.argv[1:] == ["scrub"]:
         scrub()
+        sys.exit(0)
+    if sys.argv[1:] == ["route-selftest"]:
+        route_selftest()
         sys.exit(0)
     if sys.argv[1:] == ["scrub-selftest"]:
         scrub_selftest()
