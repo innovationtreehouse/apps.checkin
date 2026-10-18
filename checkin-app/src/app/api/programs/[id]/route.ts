@@ -30,9 +30,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const auth = await authenticateRequest(req);
     if (auth.type !== 'session') return res;
 
-    const body = (await res.json()) as { startAt: string; endAt: string };
-    const coverageDate = programCoverageDate({
+    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number | null };
+    const coverageDate = await programCoverageDate({
         endAt: new Date(body.endAt),
+        appliesToYear: body.appliesToYear ?? null,
     });
     // viewerIsMember answers "is this household a Treehouse Member" (ACTIVE only);
     // viewerMemberPricingEligible answers the pricing question, which also covers a
@@ -62,6 +63,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
             leadMentorId: true,
             startAt: true,
             endAt: true,
+            appliesToYear: true,
             offSaleAt: true,
             phase: true,
             enrollmentStatus: true,

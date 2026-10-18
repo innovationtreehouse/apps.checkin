@@ -89,9 +89,9 @@ export async function unentitledMemberCodeUse(
         },
         select: { personId: true, person: { select: { householdId: true } } },
     });
-    const program = await prisma.program.findUnique({ where: { id: programId }, select: { startAt: true, endAt: true } });
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { startAt: true, endAt: true, appliesToYear: true } });
     if (!program) return true;
-    const through = programCoverageDate(program);
+    const through = await programCoverageDate(program);
     const boundHousehold = memberCodeHousehold(discountCodes, programId);
     if (boundHousehold !== null) {
         const [first] = enrolled;

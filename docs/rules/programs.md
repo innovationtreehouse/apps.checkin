@@ -213,8 +213,10 @@ Things the app takes as true because they are handled outside it.
 - A member discount code is minted for one household's unpaid claims, names that
   household, and is good for one order. On anyone else's order, or once that
   household's membership no longer covers the program, it activates nobody and
-  goes to the board. What "covers the program" means rests on the candidate
-  below, which is not settled.  [Decision]
+  goes to the board.  [Decision]
+
+- Member pricing requires the household's membership fee to cover the membership year the
+  program runs in, not the program's own dates.  [Decision]
 
 - A program priced on a tier with nothing wired to sell it is broken and is
   reported as such. A free tier has nothing to wire and is never reported, and a
@@ -226,11 +228,6 @@ Things the app takes as true because they are handled outside it.
   never arrive. An administrator's comped place never reaches the store and is
   seated as normal; nobody else's confirmation makes the program sellable, so
   none is offered.  [Decision — *Principle: fail closed*]
-
-> **Candidate, not settled — for owner ratification.** Member pricing requires
-> the membership to cover the program's end date, not merely be active today.
-> Falls back to status alone when the membership-year boundary is unset.
-> (`checkin-app/src/lib/orgMembership.ts`)
 
 ### Capacity and scholarship holds
 

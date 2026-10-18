@@ -59,6 +59,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
     let youthPersonId: number;
     let coveredProgramId: number;
     let uncoveredProgramId: number;
+    let statedEarlierProgramId: number;
 
     async function wipe() {
         const people = await prisma.person.findMany({ where: { email: { contains: TAG } }, select: { id: true, householdId: true } });
@@ -153,11 +154,25 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         });
         uncoveredProgramId = uncovered.id;
 
+        // Same past-boundary end date, but stated as the membership year the
+        // upcoming boundary closes.
+        const statedEarlier = await prisma.program.create({
+            data: {
+                startAt: new Date('2026-01-01'),
+                name: `Stated Earlier Prog ${TAG}`, phase: 'UPCOMING', endAt: uncoveredEndAt,
+                appliesToYear: boundary.getUTCFullYear() - 1,
+                shopifyVariantId: 'dev-mock-variant-discount-code-stated-earlier',
+                orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+            },
+        });
+        statedEarlierProgramId = statedEarlier.id;
+
         // Every checkout below pays for real unpaid claims.
         await prisma.programParticipant.createMany({
             data: [unsettledPersonId, settledPersonId, nonMemberPersonId].flatMap((personId) => [
                 { programId: coveredProgramId, personId, status: 'PENDING' as const },
                 { programId: uncoveredProgramId, personId, status: 'PENDING' as const },
+                { programId: statedEarlierProgramId, personId, status: 'PENDING' as const },
             ]),
         });
     });
@@ -206,6 +221,15 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         expect(data.code).toMatch(new RegExp(`^PRG${uncoveredProgramId}-H${settledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
         expect(mintSpy).toHaveBeenCalledWith(uncoveredProgramId, settledHouseholdId, 'dev-mock-variant-discount-code-uncovered', 1000);
+    });
+
+    it('mints a code for a past-boundary program stated as the year the unsettled member is covered for', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: unsettledPersonId } });
+        const res = await post(statedEarlierProgramId, [unsettledPersonId]);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.code).toMatch(new RegExp(`^PRG${statedEarlierProgramId}-H${unsettledHouseholdId}-`));
+        expect(mintSpy).toHaveBeenCalledWith(statedEarlierProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-stated-earlier', 1000);
     });
 
     it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
