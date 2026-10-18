@@ -65,7 +65,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@29a5faa6f3f6c4f8cf2f5d36a97060f0330fd21e # fork: upstream 26f990a + Gemini 4 signature and no-schema fixes (fork #1, #2)
+        uses: innovationtreehouse/openrouter-pr-review-action@9bac9bf636765f10250aadf93497dda57a70c7fd # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
@@ -75,6 +75,9 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
+          # Re-reviews only: cached brief of a long PR body and overflowing history.
+          # compaction defaults to auto; `off` stops only this brief, not history compaction.
+          compaction_model: nvidia/nemotron-3.5-super-vl:free
           # Continue the review loop only on new commits; label and reopen start fresh.
           review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
         env:
@@ -97,7 +100,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@29a5faa6f3f6c4f8cf2f5d36a97060f0330fd21e # fork: upstream 26f990a + Gemini 4 signature and no-schema fixes (fork #1, #2)
+        uses: innovationtreehouse/openrouter-pr-review-action@9bac9bf636765f10250aadf93497dda57a70c7fd # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
