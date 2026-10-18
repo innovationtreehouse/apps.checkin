@@ -21,10 +21,10 @@ jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>
 // import cycle (review → payment → personBgTriggers → renewal → review), so an
 // eager requireActual inside this factory re-enters review.ts mid-init and
 // throws a TDZ ReferenceError. external.ts only needs these two symbols here;
-// the real applyVolunteerStatus behavior is covered by membershipBgNonBlocking.
+// the real applyVolunteerFamilyStatus behavior is covered by membershipBgNonBlocking.
 jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
-    applyVolunteerStatus: jest.fn().mockResolvedValue(undefined),
+    applyVolunteerFamilyStatus: jest.fn().mockResolvedValue(undefined),
 }));
 
 const TAG = 'external-concurrency-test';

@@ -17,7 +17,7 @@ export const MEMBERSHIP_OPS_NAV_LINKS: NavLink[] = [
   // (lib/person/filters.ts). Nothing is destroyed, so there is nothing to reconcile.
   { name: "Merge Participants", href: "/membership-ops/participants/merge", icon: "🔗" },
   { name: "Households", href: "/membership-ops/households", icon: "🏠" },
-  { name: "Volunteers", href: "/membership-ops/volunteer-memberships", icon: "🙋" },
+  { name: "Volunteer Families", href: "/membership-ops/volunteer-memberships", icon: "🙋" },
   { name: "Applications", href: "/membership-ops/applications", icon: "📋" },
   // "Unclaimed Accounts" moved to Membership Audit (/membership-audit/unclaimed).
   { name: "Background-check Review", href: "/membership-ops/review", icon: "🔍" },

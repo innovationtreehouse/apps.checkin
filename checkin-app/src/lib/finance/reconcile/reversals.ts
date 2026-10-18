@@ -207,13 +207,13 @@ export async function reconcileReversals(): Promise<number> {
     // Expected membership fee per membership (for the "order edited down below the membership fee" case).
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { standardMembershipFeeCents: true, volunteerMembershipFeeCents: true, volunteerDiscountCode: true },
+        select: { standardMembershipFeeCents: true, volunteerMembershipFeeCents: true, volunteerFamilyDiscountCode: true },
     });
     const memberIds = procs.map((p) => p.orgMembershipId).filter((v): v is number => v != null);
     const members = memberIds.length
-        ? await prisma.orgMembership.findMany({ where: { id: { in: memberIds } }, select: { id: true, isVolunteer: true } })
+        ? await prisma.orgMembership.findMany({ where: { id: { in: memberIds } }, select: { id: true, isVolunteerFamily: true } })
         : [];
-    const isVolunteerById = new Map(members.map((m) => [m.id, m.isVolunteer]));
+    const isVolunteerFamilyById = new Map(members.map((m) => [m.id, m.isVolunteerFamily]));
 
     let raised = 0;
     for (const proc of procs) {
@@ -225,10 +225,10 @@ export async function reconcileReversals(): Promise<number> {
             // Discount-aware: add the coupon back so an ordinary couponed order (volunteer
             // rate, promo) isn't mistaken for a post-activation edit-down — only a real
             // shortfall below the GROSS membership fee counts. Keeps the "edited down" purpose intact.
-            const expected = isVolunteerById.get(proc.orgMembershipId ?? -1) ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
+            const expected = isVolunteerFamilyById.get(proc.orgMembershipId ?? -1) ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
             if (expected > 0 && o.totalCents + o.discountCents + AMOUNT_TOLERANCE_CENTS < expected) kind = "AMOUNT_MISMATCH";
         }
-        if (!kind && usesVolunteerCodeUnentitled(o, settings?.volunteerDiscountCode, isVolunteerById.get(proc.orgMembershipId ?? -1) ?? false)) {
+        if (!kind && usesVolunteerCodeUnentitled(o, settings?.volunteerFamilyDiscountCode, isVolunteerFamilyById.get(proc.orgMembershipId ?? -1) ?? false)) {
             // Coupon entitlement, shared with the forward pass — and load-bearing here:
             // orders the webhook activated in real time never reach the forward pass
             // (already recorded on the process → early return), so this loop over

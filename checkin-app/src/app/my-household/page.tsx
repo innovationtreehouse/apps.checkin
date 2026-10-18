@@ -54,7 +54,7 @@ type HouseholdData = {
   id?: number;
   name?: string;
   householdMembers?: HouseholdMember[];
-  orgMembership?: { status?: string; memberSince?: string; isVolunteer?: boolean } | null;
+  orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
 } & Partial<StructuredAddress> | null;
 
 const blankContactForm = { id: null as number | null, name: "", phone: "", email: "", relationship: "" };
@@ -391,7 +391,7 @@ export default function HouseholdPage() {
                       Valid through {formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' })}{isMembershipLapsed(validUntil) ? ' (lapsed)' : ''}
                     </Text>
                   )}
-                  {household.orgMembership.isVolunteer && <Badge variant="light">Volunteer-only family</Badge>}
+                  {household.orgMembership.isVolunteerFamily && <Badge variant="light">Volunteer-only family</Badge>}
                 </Group>
               </Alert>
             ) : (

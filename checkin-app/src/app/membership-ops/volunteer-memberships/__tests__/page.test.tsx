@@ -132,7 +132,7 @@ describe("membership-ops/volunteer-memberships page", () => {
       [ROSTER]: () => roster,
       [DESIGNATIONS]: () => ({
         designation: des(9, "pat@example.com", "2026-01-01T00:00:00Z"),
-        matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example", hasMembership: true, isVolunteer: false, signInVerified: false }],
+        matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example", hasMembership: true, isVolunteerFamily: false, signInVerified: false }],
       }),
     });
     renderWithProviders(<VolunteerMembershipsPage />);
@@ -147,11 +147,11 @@ describe("membership-ops/volunteer-memberships page", () => {
 
   it("shows an existing person's household and sets it only on confirm", async () => {
     setSession({ id: 1, isSysadmin: true });
-    const match = { personName: "Pat Example", householdId: 20, householdName: "Example", isVolunteer: false };
+    const match = { personName: "Pat Example", householdId: 20, householdName: "Example", isVolunteerFamily: false };
     let designationPosts = 0;
     const fetchMock = mockFetchJson({
       [ROSTER]: () => roster,
-      [DESIGNATIONS]: () => (++designationPosts === 1 ? { requiresConfirmation: true, match } : { household: { id: 20, name: "Example" }, isVolunteer: true }),
+      [DESIGNATIONS]: () => (++designationPosts === 1 ? { requiresConfirmation: true, match } : { household: { id: 20, name: "Example" }, isVolunteerFamily: true }),
     });
     renderWithProviders(<VolunteerMembershipsPage />);
     await screen.findByText("Alvarez");
@@ -338,6 +338,6 @@ describe("membership-ops/volunteer-memberships page", () => {
 
     // The load effect still fires before the guard's early return — let it settle.
     await waitFor(() => expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument());
-    expect(screen.queryByText("Volunteers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Volunteer Families")).not.toBeInTheDocument();
   });
 });

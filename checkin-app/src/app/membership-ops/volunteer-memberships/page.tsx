@@ -50,7 +50,7 @@ export default function VolunteerMembershipsPage() {
   const [statuses, setStatuses] = useState<string[]>([]);
   const [showInactive, setShowInactive] = useState(false);
   // An existing person the typed email matched; the Board confirms before their household changes.
-  const [match, setMatch] = useState<{ email: string; personName: string; householdId: number; householdName: string; isVolunteer: boolean } | null>(null);
+  const [match, setMatch] = useState<{ email: string; personName: string; householdId: number; householdName: string; isVolunteerFamily: boolean } | null>(null);
   // Everyone on file with the last address the Board entered, signed in or not.
   const [holders, setHolders] = useState<{ email: string; matches: AddressHolder[] } | null>(null);
 
@@ -211,7 +211,7 @@ export default function VolunteerMembershipsPage() {
       )}
 
       <Card withBorder radius="md" padding="lg">
-        <Title order={3} mb="xs">Volunteers</Title>
+        <Title order={3} mb="xs">Volunteer Families</Title>
         <Text c="dimmed" mb="md">
           Households on the volunteer membership fee, plus emails designated ahead of signup. If one
           of those emails applies for membership, that whole household is treated as a volunteer
@@ -281,12 +281,12 @@ export default function VolunteerMembershipsPage() {
           <Stack gap="xs" mt="md">
             <Text>
               {match.email} belongs to <b>{match.personName}</b> in the <b>{match.householdName}</b> household.
-              {match.isVolunteer
+              {match.isVolunteerFamily
                 ? " That household is already a volunteer household."
                 : " Confirm to set that household as a volunteer household."}
             </Text>
             <Group gap="sm">
-              <Button disabled={saving || match.isVolunteer} onClick={() => addDesignation(match.householdId)}>Confirm household</Button>
+              <Button disabled={saving || match.isVolunteerFamily} onClick={() => addDesignation(match.householdId)}>Confirm household</Button>
               <Button variant="subtle" disabled={saving} onClick={() => setMatch(null)}>Cancel</Button>
             </Group>
           </Stack>

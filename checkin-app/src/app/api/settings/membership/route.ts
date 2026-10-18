@@ -22,7 +22,7 @@ export const GET = handler('GET /api/settings/membership', async () => {
  * PUT /api/settings/membership — update board settings.
  * Body may include: standardMembershipFeeCents, volunteerMembershipFeeCents, orgMembershipYearBoundary (ISO|null),
  * orgMembershipVariantId (string|null),
- * orgMembershipProductUrl (string|null), volunteerDiscountCode (string|null),
+ * orgMembershipProductUrl (string|null), volunteerFamilyDiscountCode (string|null),
  * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
  * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
  * release gate, merged into the stored list in one statement so concurrent toggles don't clobber).
@@ -41,7 +41,7 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         orgMembershipYearBoundary?: string | null;
         orgMembershipVariantId?: string | null;
         orgMembershipProductUrl?: string | null;
-        volunteerDiscountCode?: string | null;
+        volunteerFamilyDiscountCode?: string | null;
         bgRecheckMonths?: number;
         devSigningTarget?: string | null;
         scholarshipDenialGraceDays?: number | null;
@@ -77,8 +77,8 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     if (body.orgMembershipProductUrl !== undefined) {
         data.orgMembershipProductUrl = body.orgMembershipProductUrl?.trim() || null;
     }
-    if (body.volunteerDiscountCode !== undefined) {
-        data.volunteerDiscountCode = body.volunteerDiscountCode?.trim() || null;
+    if (body.volunteerFamilyDiscountCode !== undefined) {
+        data.volunteerFamilyDiscountCode = body.volunteerFamilyDiscountCode?.trim() || null;
     }
     if (body.bgRecheckMonths !== undefined) data.bgRecheckMonths = Math.max(0, Math.round(body.bgRecheckMonths));
     // Dev-instance-only knob (signing target radio). Off-dev the whole form still

@@ -56,14 +56,14 @@ describe('Membership payment API', () => {
     const prevStoreDomain = process.env.SHOPIFY_STORE_DOMAIN;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
-    async function makeProc(label: string, isVolunteer: boolean, withLead = false) {
+    async function makeProc(label: string, isVolunteerFamily: boolean, withLead = false) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
         if (withLead) {
             const lead = await prisma.person.create({ data: { email: `lead-${TAG}@example.com`, name: 'Lead', householdId: hh.id } });
             await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
             leadId = lead.id;
         }
-        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteer } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily } });
         // bgClearedAt set: the background check has already cleared, so paying
         // activates the membership (the BG-not-cleared path is covered by the
         // non-blocking flow test).
@@ -91,7 +91,7 @@ describe('Membership payment API', () => {
             standardMembershipFeeCents: 10000,
             volunteerMembershipFeeCents: 2500,
             orgMembershipVariantId: VARIANT_ID,
-            volunteerDiscountCode: DISCOUNT_CODE,
+            volunteerFamilyDiscountCode: DISCOUNT_CODE,
         };
         await prisma.boardSettings.upsert({
             where: { id: 1 },
@@ -274,7 +274,7 @@ describe('Membership payment API', () => {
         const hh = await prisma.household.create({ data: { name: `Concurrent ${TAG}` } });
         const lead = await prisma.person.create({ data: { email: `concurrent-${TAG}@example.com`, name: 'C Lead', householdId: hh.id } });
         await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
-        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         // bgClearedAt set so paying activates (and the one congrats email fires).
         const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
 
