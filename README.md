@@ -46,7 +46,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 - **[Canonical Vocabulary](checkin-app/docs/VOCABULARY.md)** — what every domain word means (people, roles, money, tools, attendance).
 - **[Domain rules](docs/rules/)** — the register of board and operations decisions, one file per domain; read the relevant file before changing behaviour in that domain. How the corpus is organised and retired: **[Documentation Standard](docs/DOCUMENTATION_STANDARD.md)**.
 - **[Critical User Journeys](docs/backlog/CUJS.md)** — every user-facing flow, per step, tagged with what exists and what does not.
-- **[Design Specification](docs/designs/DESIGN.md)** — the original system design; further design notes live in [`docs/designs/`](docs/designs/).
+- **[Backlog](docs/backlog/INDEX.md)** — open work by area, from features to architecture clean-up; design work in progress lives in [`docs/in-design/`](docs/in-design/).
 
 ### Deployment & operations
 

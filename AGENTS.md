@@ -283,9 +283,8 @@ Read these before changing the relevant area — start here, then follow links.
 - `TRADEMARKS.md` — naming/brand constraints.
 
 **Design & product** (`docs/designs/`)
-- `DESIGN.md` — system design overview.
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
-- `PRODUCTION_PLAN.md`, `ARCHITECT_IDEAS_*.md` — roadmap/scoping notes.
+- `PRODUCTION_PLAN.md` — the production launch runbook.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).

@@ -124,6 +124,11 @@ Things the app takes as true because they are handled outside it.
 - Nobody is moved into or out of a denied household, by the board's household
   move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
+- Only the board or a sysadmin moves someone into a household of their own. The
+  person becomes its lead, so a youth cannot be moved into one, and the new
+  household starts with no org membership: a membership stays with the household
+  it belongs to.  [Decision]
+
 ### Identity and age
 
 - Every household member has a date of birth or an over-25 declaration, never
@@ -160,6 +165,10 @@ Things the app takes as true because they are handled outside it.
 
 - A Google account must have a verified email before it is first linked to a
   person record; an account already linked keeps signing in unchanged.  [Decision]
+
+- A first Google sign-in attaches to the one person whose email matches the
+  address signed in with, or creates a new person in a household of their own.
+  It never attaches by any other link: a name, a household, a former address.  [Decision — *Principle: identity is not authorisation*]
 
 - Changing a person's email unlinks their Google accounts.  [Decision — *Principle: fail closed*]
 
