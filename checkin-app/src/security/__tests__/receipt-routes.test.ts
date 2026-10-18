@@ -151,6 +151,9 @@ describe('role admission', () => {
             'POST /api/receipts/[id]/approve',
             'POST /api/receipts/import',
             'GET /api/receipts/mail-items',
+            'POST /api/receipts/[id]/ignore-file',
+            'GET /api/receipts/ignored-files',
+            'DELETE /api/receipts/ignored-files/[id]',
         ]));
         expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs']));
     });
