@@ -270,7 +270,8 @@ receipt came from, so which alias attributed a receipt needs no new column.
 An alias resolves to the same `ReceiptPrincipal`, with the same `id`. Every
 limit keys on that id, not on the address:
 
-- the daily upload limit (`uploadsPerPersonPerDay`) and the OCR allowance
+- the daily mail limit (`mailUploadsPerPersonPerDay`, or
+  `mailUploadsPerRaisedPersonPerDay` for a program lead or Board member) and the OCR allowance
   (`ocrCallsPerPersonPerDay`, under an advisory lock on the person id) are one
   allowance across all of a person's addresses. Mailing from a second address
   buys no extra receipts;

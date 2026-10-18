@@ -75,6 +75,17 @@ describe('grantCurrentYear opening an application', () => {
         }));
     });
 
+    it('refuses when the household went ACTIVE between the pre-check and the row lock', async () => {
+        findUnique.mockResolvedValue({ status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
+        jest.mocked(prisma.orgMembership.upsert).mockResolvedValue({ id: 3, status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.upsert>>);
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue(null);
+        jest.mocked(prisma.$queryRaw).mockResolvedValue([{ status: 'ACTIVE' }]);
+        jest.mocked(prisma.orgMembershipProcess.findMany).mockResolvedValue([]);
+
+        await expect(grantCurrentYear(7, { actorId: 99, reason: 'comp' })).rejects.toThrow(/already an active member/);
+        expect(prisma.orgMembershipProcess.create).not.toHaveBeenCalled();
+    });
+
     it('opens an INITIAL application when nothing is open or blocked', async () => {
         findUnique.mockResolvedValue({ status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
         jest.mocked(prisma.orgMembership.upsert).mockResolvedValue({ id: 3, status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.upsert>>);

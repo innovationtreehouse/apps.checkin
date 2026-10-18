@@ -169,7 +169,7 @@ export default function MembershipReviewPage() {
       const res = await fetch("/api/membership/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, result, isMarkedVolunteer: !!volunteer[processId], note: reviewNotes[processId]?.trim() || undefined, subjectPersonIds: subjectIdsFor(processId) }),
+        body: JSON.stringify({ processId, result, isMarkedVolunteerFamily: !!volunteer[processId], note: reviewNotes[processId]?.trim() || undefined, subjectPersonIds: subjectIdsFor(processId) }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {

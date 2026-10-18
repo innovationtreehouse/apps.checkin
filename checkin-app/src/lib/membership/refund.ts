@@ -10,8 +10,9 @@ import { personActor } from "@/lib/auditActor";
  *   - PENDING_BG_CLEARANCE → PENDING_PAYMENT: the board can then close it, or the
  *     family can pay again.
  *   - BLOCKED stays BLOCKED, so the rejection isn't erased.
- * `shopifyOrderId` is kept: it is what tells the reconciler the refunded order is
- * already accounted for, so it neither re-activates nor re-flags it.
+ * `shopifyOrderId` is kept, and the audit row records it: the reconciler reads that
+ * row to know the refunded order is accounted for, so it neither re-activates nor
+ * re-flags it after a re-payment overwrites the column.
  */
 export async function recordRefund(processId: number, actorId: number, reason: string) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });

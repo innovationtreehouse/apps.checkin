@@ -50,12 +50,12 @@ describe('Membership settings + volunteer designations API', () => {
 
         // A full-price active member who has signed in, for the designation confirm flow.
         const fullMember = await prisma.person.create({
-            data: { email: `fullmember-${TAG}@example.com`, name: 'Full', household: { create: { name: `Full HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
+            data: { email: `fullmember-${TAG}@example.com`, name: 'Full', household: { create: { name: `Full HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteerFamily: false } } } } },
         });
         await prisma.account.create({ data: { userId: fullMember.id, type: 'oauth', provider: 'google', providerAccountId: `${TAG}-${fullMember.id}` } });
         // A member of another household who has never signed in, holding an address before the Board designates it.
         await prisma.person.create({
-            data: { email: `preclaimed-${TAG}@example.com`, name: 'Preclaim', household: { create: { name: `Preclaim HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
+            data: { email: `preclaimed-${TAG}@example.com`, name: 'Preclaim', household: { create: { name: `Preclaim HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteerFamily: false } } } } },
         });
     });
 
@@ -175,7 +175,7 @@ describe('Membership settings + volunteer designations API', () => {
         expect(after).toBeNull();
     });
 
-    it("shows an existing member's household and sets isVolunteer only on confirm", async () => {
+    it("shows an existing member's household and sets isVolunteerFamily only on confirm", async () => {
         asBoard(boardId);
         const email = `fullmember-${TAG}@example.com`;
         const household = await prisma.household.findFirstOrThrow({ where: { name: `Full HH ${TAG}` }, include: { orgMembership: true } });
@@ -183,13 +183,13 @@ describe('Membership settings + volunteer designations API', () => {
         const preview = await DESIG_POST(jsonReq('POST', { email }));
         expect(preview.status).toBe(200);
         expect(await preview.json()).toMatchObject({ requiresConfirmation: true, match: { householdId: household.id, householdName: `Full HH ${TAG}` } });
-        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(false);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteerFamily).toBe(false);
 
         const confirm = await DESIG_POST(jsonReq('POST', { email, confirmHouseholdId: household.id }));
         expect(confirm.status).toBe(200);
-        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(true);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteerFamily).toBe(true);
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembership', affectedEntityId: household.orgMembership!.id, actorId: boardId } });
-        expect(audit?.newData).toEqual({ isVolunteer: true });
+        expect(audit?.newData).toEqual({ isVolunteerFamily: true });
         expect(await prisma.volunteerDesignation.count({ where: { email } })).toBe(0);
     });
 
@@ -203,7 +203,7 @@ describe('Membership settings + volunteer designations API', () => {
         const body = await res.json();
         expect(body.requiresConfirmation).toBeUndefined();
         expect(body.matches).toEqual([expect.objectContaining({ householdId: household.id, signInVerified: false, hasMembership: true })]);
-        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(false);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteerFamily).toBe(false);
     });
 
     it('treats inbox variants of a designated email as already designated', async () => {

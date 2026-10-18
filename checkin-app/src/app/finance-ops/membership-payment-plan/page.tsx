@@ -22,7 +22,7 @@ type MembershipPaymentPlanRequest = {
   stageEnteredAt: string | null;
   scholarshipRequestKind: string | null;
   orgMembership: {
-    isVolunteer: boolean;
+    isVolunteerFamily: boolean;
     household: {
       id: number;
       name: string;
@@ -169,7 +169,7 @@ export default function MembershipPaymentPlansPage() {
       render: (req) => (
         <>
           <Text fw={500}>{req.orgMembership.household.name}</Text>
-          <Text size="sm" c="dimmed">{req.orgMembership.isVolunteer ? 'Volunteer household' : 'Standard household'}</Text>
+          <Text size="sm" c="dimmed">{req.orgMembership.isVolunteerFamily ? 'Volunteer household' : 'Standard household'}</Text>
         </>
       ),
     },

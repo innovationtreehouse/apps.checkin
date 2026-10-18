@@ -9,6 +9,7 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, 
 import { isYouth } from "@/lib/time";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { auditKioskLeave, closeVia, recordClose } from "@/lib/attendance/close";
+import { specTrace } from "@/lib/specTrace";
 
 /** Countdown on the supervision confirm (#1436). #1347 PR-0 extended the
  *  route's debounce exemption to a fresh `supervisionWarnedAt` stamp, so the
@@ -109,7 +110,10 @@ export async function processCheckin(
 
     if (visitTime && fenceClientEventId) {
         const fenced = await fenceReplayedArrival(tx, participant.id, visitTime, fenceClientEventId);
-        if (fenced) return { kind: "checkin", person: participant, visit: fenced, supervisionShort: false, departedAtClose: true };
+        if (fenced) {
+            specTrace("VisitOpen", { p: participant.id, visitId: fenced.id, t: visitTime.getTime(), live: false, fencedBy: fenced.facilityCloseId });
+            return { kind: "checkin", person: participant, visit: fenced, supervisionShort: false, departedAtClose: true };
+        }
     }
 
     // A badge at the kiosk always checks in — someone scanning inside the
@@ -139,6 +143,7 @@ export async function processCheckin(
         },
     });
     invalidateAttendanceCache();
+    specTrace("VisitOpen", { p: participant.id, visitId: newVisit.id, t: arrivalTime.getTime(), live: !visitTime, fencedBy: null });
 
     // A youth arriving into a room short of supervision is WARNED, never blocked
     // (#1436): opening the door before the second adult is the keyholder's call to

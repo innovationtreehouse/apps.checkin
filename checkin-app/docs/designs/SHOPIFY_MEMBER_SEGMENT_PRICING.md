@@ -52,7 +52,7 @@ with a prefilled email. Everything in this proposal is secondary to solving that
   parallel capacity effort and closes the tier-confusion bug class by construction.
 - **Component 3 — membership dues (#278).** Same mechanism on the membership
   variant: a `volunteer`-segment automatic discount retires
-  `BoardSettings.volunteerDiscountCode` and the `discount=` URL param. Smaller
+  `BoardSettings.volunteerFamilyDiscountCode` and the `discount=` URL param. Smaller
   migration than component 2; could ship first.
 
 ## The identity-at-checkout options (a/b/c/d — tombstones)

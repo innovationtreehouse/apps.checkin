@@ -25,7 +25,7 @@ export const GET = handler('GET /api/settings/membership/volunteer-designations'
  *
  * Only a person whose address is sign-in-verified counts as its holder. When one
  * such person's household has a membership, the address is never stored: only a
- * confirm naming that household sets its OrgMembership.isVolunteer (audited).
+ * confirm naming that household sets its OrgMembership.isVolunteerFamily (audited).
  * Otherwise the address is stored as a designation, the membership fee preload. Every
  * response lists every person on file with the address, verified or not, so the
  * Board sees who else holds it.
@@ -60,7 +60,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
             name: true,
             email: true,
             _count: { select: { accounts: true } },
-            household: { select: { id: true, name: true, orgMembership: { select: { id: true, isVolunteer: true } } } },
+            household: { select: { id: true, name: true, orgMembership: { select: { id: true, isVolunteerFamily: true } } } },
         },
     });
     const holders = people.filter((p) => canonicalizeEmail(p.email!) === email);
@@ -69,7 +69,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         householdId: p.household.id,
         householdName: p.household.name,
         hasMembership: p.household.orgMembership !== null,
-        isVolunteer: p.household.orgMembership?.isVolunteer ?? false,
+        isVolunteerFamily: p.household.orgMembership?.isVolunteerFamily ?? false,
         signInVerified: isSignInVerified(p),
     }));
     const confirmable = holders.filter((p) => p.household.orgMembership && isSignInVerified(p));
@@ -87,7 +87,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         if (body.confirmHouseholdId === undefined) {
             return NextResponse.json({
                 requiresConfirmation: true,
-                match: { personName, householdId, householdName, isVolunteer: membership.isVolunteer },
+                match: { personName, householdId, householdName, isVolunteerFamily: membership.isVolunteerFamily },
                 matches,
             });
         }
@@ -95,7 +95,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
             return apiError("This email no longer matches that household. Look it up again.", 409);
         }
         await prisma.$transaction(async (tx) => {
-            await tx.orgMembership.update({ where: { id: membership.id }, data: { isVolunteer: true } });
+            await tx.orgMembership.update({ where: { id: membership.id }, data: { isVolunteerFamily: true } });
             await tx.auditLog.create({
                 data: {
                     actorId: auth.user.id,
@@ -103,12 +103,12 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
                     tableName: "OrgMembership",
                     affectedEntityId: membership.id,
                     secondaryAffectedEntity: householdId,
-                    oldData: { isVolunteer: membership.isVolunteer },
-                    newData: { isVolunteer: true },
+                    oldData: { isVolunteerFamily: membership.isVolunteerFamily },
+                    newData: { isVolunteerFamily: true },
                 },
             });
         });
-        return NextResponse.json({ household: { id: householdId, name: householdName }, isVolunteer: true, matches });
+        return NextResponse.json({ household: { id: householdId, name: householdName }, isVolunteerFamily: true, matches });
     }
 
     // Canonicalize both sides: rows stored before canonicalization still dedupe.

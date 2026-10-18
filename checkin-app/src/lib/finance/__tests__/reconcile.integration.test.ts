@@ -79,7 +79,7 @@ async function makeApplicant(opts: {
     status: "PENDING_PAYMENT" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
     household?: "NONE" | "DENIED";
     bgCleared?: boolean;
-    isVolunteer?: boolean;
+    isVolunteerFamily?: boolean;
     shopifyOrderId?: string;
     paid?: boolean;
 }): Promise<{ householdId: number; processId: number; membershipId: number }> {
@@ -88,7 +88,7 @@ async function makeApplicant(opts: {
         data: { email: opts.email, name: `Lead ${opts.email}`, isHouseholdLead: true, householdId: hh.id },
     });
     const m = await prisma.orgMembership.create({
-        data: { householdId: hh.id, status: opts.household ?? (opts.status === "ACTIVE" ? "ACTIVE" : "NONE"), isVolunteer: !!opts.isVolunteer },
+        data: { householdId: hh.id, status: opts.household ?? (opts.status === "ACTIVE" ? "ACTIVE" : "NONE"), isVolunteerFamily: !!opts.isVolunteerFamily },
     });
     const proc = await prisma.orgMembershipProcess.create({
         data: {
@@ -103,7 +103,7 @@ async function makeApplicant(opts: {
     return { householdId: hh.id, processId: proc.id, membershipId: m.id };
 }
 
-// The board-configured volunteer-rate coupon (BoardSettings.volunteerDiscountCode).
+// The board-configured volunteer-rate coupon (BoardSettings.volunteerFamilyDiscountCode).
 // Distinct from the "VOLUNTEER50" promo-style code other cases use, which must stay
 // unregistered-as-volunteer so they exercise the codes-are-Shopify's-business path.
 const VOLUNTEER_CODE = "VOLFAM";
@@ -145,8 +145,8 @@ beforeAll(async () => {
     restoreBoardSettings = await snapshotBoardSettings();
     await prisma.boardSettings.upsert({
         where: { id: 1 },
-        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
-        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
+        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
+        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
     });
 });
 
@@ -313,7 +313,7 @@ describe("forward recovery", () => {
         // are Shopify's business — but the family isn't entitled to the volunteer rate.
         const email = `volcode-${TAG}@ex.com`;
         const oid = `${TAG}-123`;
-        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteer: false });
+        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteerFamily: false });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
         ordersChangedSince.mockResolvedValue([
             // Lowercase on the order — Shopify codes are case-insensitive.
@@ -331,7 +331,7 @@ describe("forward recovery", () => {
     it("activates a volunteer family using the volunteer code, no exception", async () => {
         const email = `volok-${TAG}@ex.com`;
         const oid = `${TAG}-124`;
-        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteer: true });
+        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteerFamily: true });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
         ordersChangedSince.mockResolvedValue([
             order({ legacyId: oid, customerEmail: email, totalCents: 2000, discountCents: 3000, discountCodes: [VOLUNTEER_CODE] }),
@@ -483,7 +483,7 @@ describe("reversal detection", () => {
         // The webhook activated this in real time (order recorded on the process), so
         // the forward pass never re-examines it — the reversal loop is the daily audit.
         const oid = `${TAG}-204`;
-        const { processId } = await makeApplicant({ email: `revvol-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid, isVolunteer: false });
+        const { processId } = await makeApplicant({ email: `revvol-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid, isVolunteerFamily: false });
         ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "PAID", totalCents: 2000, discountCents: 3000, discountCodes: [VOLUNTEER_CODE] })]);
         await runReconcile();
         // Never auto-reverted — flagged for the board.
