@@ -124,29 +124,39 @@ def round_pairs(shas, base):
     return list(zip([base] + shas[:-1], shas))
 
 
+def round_entries(reviews, base, skip_id=None):
+    """Submitted bot reviews except skip_id, oldest first (same-second ties by id), as
+    (review id, (from, to), entry) with the diff still to fetch."""
+    rs = sorted((r for r in reviews if r["user"]["login"] == BOT and str(r["id"]) != skip_id and r.get("submitted_at")),
+                key=lambda r: (r["submitted_at"], r["id"]))
+    out = []
+    for n, (r, (a, b)) in enumerate(zip(rs, round_pairs([r["commit_id"] for r in rs], base)), 1):
+        entry = {"round": n, "reviewed_commit": b, "submitted_at": r["submitted_at"], "review_body": r.get("body") or "",
+                 "diff_range": f"{a}...{b}", "diff_status": "unavailable", "diff": ""}
+        if a == b:
+            entry["diff_status"], entry["diff_note"] = "no_new_changes", "same commit as the previous round"
+        out.append((r["id"], (a, b), entry))
+    return out
+
+
 def prior_rounds(pr, repo, skip_id=None):
     """Every earlier AI review round, oldest first: body and inline comments verbatim with their markers,
     plus the complete diff that round reviewed."""
+    # Round 1 compares base...sha1, i.e. from merge-base(current base tip, sha1); no per-round base sha is recorded.
     base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
-    reviews = sorted((r for r in api(repo, f"pulls/{pr}/reviews?per_page=100")
-                      if r["user"]["login"] == BOT and str(r["id"]) != skip_id),
-                     key=lambda r: r.get("submitted_at") or "")
     comments = {}
     for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
         comments.setdefault(c.get("pull_request_review_id"), []).append(
             {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
     rounds = []
-    for n, (r, (a, b)) in enumerate(zip(reviews, round_pairs([r["commit_id"] for r in reviews], base)), 1):
-        entry = {"round": n, "reviewed_commit": b, "submitted_at": r.get("submitted_at"),
-                 "review_body": r.get("body") or "", "inline_comments": comments.get(r["id"], [])}
-        if a == b:
-            entry["diff"], entry["diff_note"] = "", "same commit as the previous round: no new changes"
-        else:
+    for rid, (a, b), entry in round_entries(api(repo, f"pulls/{pr}/reviews?per_page=100"), base, skip_id):
+        entry["inline_comments"] = comments.get(rid, [])
+        if entry["diff_status"] == "unavailable":
             try:
                 entry["diff"] = gh("api", f"repos/{repo}/compare/{a}...{b}", "-H", "Accept: application/vnd.github.diff")
-                entry["diff_range"] = f"{a}...{b}"
+                entry["diff_status"] = "ok"
             except subprocess.CalledProcessError as e:
-                entry["diff_unavailable"] = f"compare {a}...{b} failed: {e.stderr.strip()}"
+                entry["diff_note"] = f"compare failed: {e.stderr.strip()}"
         rounds.append(entry)
     return rounds
 
@@ -195,6 +205,18 @@ def route_selftest():
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
     assert round_pairs(["a", "b", "b", "c"], "main") == [("main", "a"), ("a", "b"), ("b", "b"), ("b", "c")]
     assert round_pairs([], "main") == []
+    rv = lambda i, at, sha, who=BOT: {"id": i, "submitted_at": at, "commit_id": sha, "user": {"login": who}}
+    got = round_entries([rv(3, "T2", "b"), rv(2, "T1", "a"), rv(9, "T1", "x"), rv(4, None, "z"),
+                         rv(5, "T3", "b"), rv(6, "T0", "q", "someone"), rv(7, "T4", "c")], "main", skip_id="9")
+    assert [(i, ab, e["diff_status"]) for i, ab, e in got] == [
+        (2, ("main", "a"), "unavailable"), (3, ("a", "b"), "unavailable"), (5, ("b", "b"), "no_new_changes"), (7, ("b", "c"), "unavailable")]
+    assert [rid for rid, _, _ in round_entries([rv(11, "T1", "b"), rv(10, "T1", "a")], "main")] == [10, 11]
+    global prior_rounds
+    saved, prior_rounds = prior_rounds, lambda *a: 1 / 0
+    try:
+        assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
+    finally:
+        prior_rounds = saved
     print("route selftest ok")
 
 
