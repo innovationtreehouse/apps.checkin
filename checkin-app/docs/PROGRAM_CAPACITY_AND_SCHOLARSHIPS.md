@@ -77,7 +77,7 @@ Members pay less at the same variant via a **server-minted, single-use discount 
 server-side (never trusting a client flag). A failed mint degrades to an undiscounted link
 — checkout is never blocked.
 
-This is an interim mechanism. `docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is the
+This is an interim mechanism. `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is the
 planned upgrade — segment-gated automatic discounts, once checkout identity (that doc's
 §5) is solved — at which point per-checkout discount codes go away entirely.
 
@@ -279,7 +279,7 @@ remove or reach out. Nothing sends when both lists are empty.
 
 ## 6. Related
 
-- `docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
+- `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
   that per-checkout discount codes stand in for until checkout identity is solved.
 - `docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
   convention this design's legacy-variant transition follows.
