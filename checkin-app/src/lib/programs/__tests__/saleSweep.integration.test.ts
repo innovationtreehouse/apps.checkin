@@ -3,7 +3,7 @@
  */
 import prisma from '@/lib/prisma';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
-import { withdrawAndReleaseHold } from '@/lib/program/capacity';
+import { deleteAndReleaseHold } from '@/lib/program/capacity';
 import { setProgramProductOffSale, adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
 import { emailBoardMembers } from '@/lib/emailRecipients';
 
@@ -153,11 +153,11 @@ describe('program sale sweep', () => {
             });
         }
 
-        const a = await withdrawAndReleaseHold(ended.id, kid.id, ended);
+        const a = await deleteAndReleaseHold(ended.id, kid.id, ended);
         expect(a.released).toBe(true);
         expect(adjust).not.toHaveBeenCalled();
 
-        const b = await withdrawAndReleaseHold(open.id, kid.id, open);
+        const b = await deleteAndReleaseHold(open.id, kid.id, open);
         expect(b.released).toBe(true);
         expect(adjust).toHaveBeenCalledWith({ id: open.id, shopifyVariantId: open.shopifyVariantId }, 1, 'hold-release', {});
     });

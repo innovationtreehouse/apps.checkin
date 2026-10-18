@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
-import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
+import { deleteAndReleaseHold, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { householdLeadship } from "@/lib/household/leads";
@@ -194,20 +194,45 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             if (enforceLimits) {
                 await lockProgramAndCheckCapacity(tx, programId, 1, currentProgram.maxParticipants);
             }
-            return tx.programParticipant.create({
+            if (existingClaim?.status !== 'WITHDRAWN') {
+                return tx.programParticipant.create({
+                    data: {
+                        programId,
+                        personId: participantId,
+                        status: initialStatus,
+                        ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
+                    }
+                });
+            }
+            // One row per (person, program): re-enrolment reactivates the withdrawn
+            // row and clears the last stint's fields, so its order, plan request and
+            // clocks never join the new stint.
+            const { count } = await tx.programParticipant.updateMany({
+                where: { programId, personId: participantId, status: 'WITHDRAWN' },
                 data: {
-                    programId,
-                    personId: participantId,
                     status: initialStatus,
-                    ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
-                }
+                    endedAt: null,
+                    pendingSince: new Date(),
+                    isPaymentPlanRequested: false,
+                    scholarshipRequestKind: null,
+                    paymentPlanDeniedAt: null,
+                    wasOrgMemberAtApproval: null,
+                    shopifyOrderId: null,
+                    inventoryHeldAt: null,
+                    seatTakenWithoutSaleAt: takesSeatWithoutSale ? new Date() : null,
+                },
             });
+            if (count === 0) return null;
+            return tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: participantId } } });
         });
+        if (!enrollment) {
+            return apiError("Participant is already enrolled in this program.", 409);
+        }
 
         await prisma.auditLog.create({
             data: {
                 actorId: currentUserId,
-                action: 'CREATE',
+                action: existingClaim?.status === 'WITHDRAWN' ? 'EDIT' : 'CREATE',
                 tableName: 'ProgramParticipant',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
@@ -231,7 +256,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // an ACTIVE+held row by releasing +1 — which would silently undo this
         // decrement. A recorded -1 is stamped (seatTakenWithoutSaleAt), and
         // withdrawing the comp puts that seat back on sale (+1, see
-        // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
+        // deleteAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
         // changeProgramStock additionally no-ops when no variant is wired.
         let warning: string | undefined;
@@ -300,6 +325,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         if (!participantId) {
             return apiError("participantId is required", 400);
         }
+        if (body.mode !== undefined && body.mode !== 'remove' && body.mode !== 'withdraw') {
+            return apiError("mode must be 'remove' or 'withdraw'", 400);
+        }
 
         const currentProgram = await prisma.program.findUnique({
             where: { id: programId }
@@ -316,7 +344,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         // A household lead may withdraw only an unpaid enrollment: a paid
         // withdrawal (refund, restock) is the board's call. Enforced by the
-        // conditional delete below, not a separate read, so a payment landing
+        // conditional exit below, not a separate read, so a payment landing
         // mid-request cannot slip through.
         const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
         // Same for an adult removing themselves: a paid place is not the household's
@@ -358,39 +386,63 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
         }
 
-        // A seat taken out of Shopify without a payment — a scholarship hold, or
-        // a comped/approved place — goes back on sale (+1) with the removal,
-        // exactly once (see withdrawAndReleaseHold).
-        let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
-        try {
-            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, unpaidOnly ? unpaidWhere : undefined, { inRequest: true });
-        } catch (error) {
-            if (unpaidOnly && isPrismaError(error, 'P2025')) {
-                const row = await prisma.programParticipant.findUnique({
-                    where: { programId_personId: { programId, personId: participantId } },
-                    select: { status: true },
-                });
-                if (row?.status === 'ACTIVE') {
-                    if (isConflictedStaff) {
-                        return apiError("This place is paid and is in your own household; someone outside your household must remove it.", 403);
-                    }
-                    return apiError(isSelfRemoval
-                        ? "Your place is paid; ask the board to withdraw you."
-                        : "This child has paid; ask the board to withdraw them.", 403);
-                }
-            }
-            throw error;
+        const current = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId: participantId } },
+            select: { status: true },
+        });
+        if (!current || current.status === 'WITHDRAWN') {
+            return NextResponse.json({ success: true, idempotent: true });
         }
-        const { enrollment, released, shopifyOk } = withdrawal;
+
+        // "remove" deletes a place nobody really took up; "withdraw" keeps the row
+        // as history. Unchosen, a PENDING place is removed and an ACTIVE one
+        // withdrawn. Either exit is pinned to the status read here, so a payment
+        // landing mid-request gets a 409 instead of an exit chosen for the old status.
+        const mode: 'remove' | 'withdraw' = body.mode ?? (current.status === 'ACTIVE' ? 'withdraw' : 'remove');
+        const only: Prisma.ProgramParticipantWhereInput = {
+            AND: [{ status: current.status }, unpaidOnly ? unpaidWhere : {}],
+        };
+
+        // A seat taken out of Shopify without a payment — a scholarship hold, or
+        // a comped/approved place — goes back on sale (+1) with the exit, exactly
+        // once (see deleteAndReleaseHold / withdrawParticipant).
+        let exit: Awaited<ReturnType<typeof withdrawParticipant>>;
+        try {
+            exit = mode === 'withdraw'
+                ? await withdrawParticipant(programId, participantId, currentProgram, only, { inRequest: true })
+                : await deleteAndReleaseHold(programId, participantId, currentProgram, only, { inRequest: true });
+        } catch (error) {
+            if (!isPrismaError(error, 'P2025')) throw error;
+            exit = null;
+        }
+        if (!exit) {
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: participantId } },
+                select: { status: true },
+            });
+            if (unpaidOnly && row?.status === 'ACTIVE') {
+                if (isConflictedStaff) {
+                    return apiError("This place is paid and is in your own household; someone outside your household must remove it.", 403);
+                }
+                return apiError(isSelfRemoval
+                    ? "Your place is paid; ask the board to withdraw you."
+                    : "This child has paid; ask the board to withdraw them.", 403);
+            }
+            if (row && row.status !== 'WITHDRAWN') {
+                return apiError("This place changed while it was being removed. Reload and try again.", 409);
+            }
+            return NextResponse.json({ success: true, idempotent: true });
+        }
+        const { enrollment, released, shopifyOk } = exit;
 
         await prisma.auditLog.create({
             data: {
                 actorId: currentUserId,
-                action: 'DELETE',
+                action: mode === 'withdraw' ? 'EDIT' : 'DELETE',
                 tableName: 'ProgramParticipant',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                oldData: enrollment
+                ...(mode === 'withdraw' ? { newData: enrollment } : { oldData: enrollment }),
             }
         });
 
@@ -411,7 +463,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
         // After the sale ends a freed seat is not resold, so there is nothing to advise.
         // An over-capacity program (negative carry) owes this seat to its shortfall, not to the store.
-        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)
+        if (isSysAdminOrBoard && !released && current.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)
             && !(await owesShortfall(programId))) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";
         }
