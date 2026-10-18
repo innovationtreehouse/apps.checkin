@@ -157,6 +157,11 @@ Procedure below is built on them.
 - Refunds are handled outside the app, including the one owed on denial of
   membership.
 
+- Agreements are signed through an outside e-signature service, and the legal
+  weight of the signature rests on it: identifying the signer, their consent to
+  sign electronically, the audit trail, and keeping the signed copy. The app sends
+  the agreement out and records who signed it and when.
+
 - A background check is cleared within days of being performed, so dating the
   clearance rather than the check itself is immaterial against a window measured
   in months. Board and sysadmin can correct the date on the rare occasion it is

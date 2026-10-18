@@ -40,6 +40,11 @@ Shopify payouts (Income) and donations (Donations).
 
 Things the app takes as true because they are handled outside it.
 
+- Card payments are taken by an outside payment processor, which carries the
+  card-security obligations. The app never sees, stores or sends a card number;
+  it learns that a payment was made from the processor's notice and records the
+  order, not the card.
+
 - Refunds are issued outside the app, in the store and the books. The app learns
   of a reversal afterwards and is never responsible for issuing one.
 
