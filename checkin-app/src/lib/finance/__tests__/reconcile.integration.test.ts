@@ -862,6 +862,15 @@ describe("fast-path reversal webhook helper", () => {
         expect(takenBack()).toEqual([2]);
     });
 
+    it("a test order refunded with restock before the sale has ended takes its given-back seats back off sale, once", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs19-${TAG}@ex.com`, status: "ACTIVE" });
+        const oid = `${TAG}-329`;
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        expect(takenBack()).toEqual([2, -2]);
+    });
+
     it("a redelivered refund that removed a named sibling takes nothing back", async () => {
         const oid = `${TAG}-323`;
         const e = await makeOnSaleEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });

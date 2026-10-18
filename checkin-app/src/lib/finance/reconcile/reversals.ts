@@ -79,9 +79,10 @@ function publicSeats(program: { shopifyVariantId: string | null }, lines: { vari
 }
 
 /**
- * A restocking refund on an order no row records (withdrawn before it was paid, or
- * a stranger's order): after the program's sale has ended its restocked public
- * seats still go back off sale. Before then they stay on sale, as no child holds them.
+ * A restocking refund on an order no row records (withdrawn before it was paid, a
+ * stranger's order, or a test order): its restocked public seats go back off sale
+ * after the program's sale has ended, and always for a test order whose seats were
+ * already given back. Otherwise they stay on sale, as no child holds them.
  */
 async function settleUnrecordedRestock(orderLegacyId: string, refundId: string, recorded: Set<number>, restocked: RestockedLine[]): Promise<void> {
     if (restocked.length === 0) return;
@@ -90,15 +91,33 @@ async function settleUnrecordedRestock(orderLegacyId: string, refundId: string, 
         select: { id: true, shopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true },
     });
     for (const program of programs) {
-        if (!isSaleEnded(program)) continue;
+        const testOrder = await testOrderStockReturned(orderLegacyId, program.id);
+        if (!testOrder && !isSaleEnded(program)) continue;
         if (!(await claimRefundSettlement(refundId, orderLegacyId, program.id))) continue;
-        await takeBackAfterSale(orderLegacyId, program, publicSeats(program, restocked));
+        const k = publicSeats(program, restocked);
+        if (testOrder) {
+            logger.info(`[reconcile] refund on test order ${orderLegacyId} restocked ${k} seat(s) of program ${program.id} already given back: taking them back off sale`);
+            await adjustProgramInventory(program, -k, "refund-test-order", { deferred: true });
+        } else {
+            await takeBackAfterSale(orderLegacyId, program, k);
+        }
     }
 }
 
 async function takeBackAfterSale(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }, k: number): Promise<void> {
     logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${k} seat(s) of program ${program.id} after its sale ended: taking them back off sale`);
     await adjustProgramInventory(program, -k, "refund-after-sale", { deferred: true });
+}
+
+const testOrderKey = (orderLegacyId: string, programId: number) => `test-order:${orderLegacyId}:${programId}`;
+
+/** Whether returnTestOrderStock gave back this order's seats on this program. */
+async function testOrderStockReturned(orderLegacyId: string, programId: number): Promise<boolean> {
+    const claim = await prisma.auditLog.findFirst({
+        where: { tableName: TEST_ORDER_STOCK_TABLE, secondaryAffectedEntity: programId, newData: { path: ["key"], equals: testOrderKey(orderLegacyId, programId) } },
+        select: { id: true },
+    });
+    return claim !== null;
 }
 
 /**
@@ -115,7 +134,7 @@ export async function returnTestOrderStock(orderLegacyId: string, lines: { varia
     for (const program of programs) {
         const k = publicSeats(program, lines);
         if (k === 0) continue;
-        if (!(await claimOnce(TEST_ORDER_STOCK_TABLE, "webhook:shopify-order", `test-order:${orderLegacyId}:${program.id}`, program.id, { orderLegacyId, programId: program.id }))) continue;
+        if (!(await claimOnce(TEST_ORDER_STOCK_TABLE, "webhook:shopify-order", testOrderKey(orderLegacyId, program.id), program.id, { orderLegacyId, programId: program.id }))) continue;
         logger.info(`[reconcile] test order ${orderLegacyId} took ${k} seat(s) of program ${program.id}: giving them back`);
         await adjustProgramInventory(program, k, "test-order", { deferred: true });
     }
