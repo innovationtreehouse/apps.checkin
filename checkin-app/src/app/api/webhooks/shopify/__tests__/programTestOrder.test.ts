@@ -9,13 +9,14 @@
 import crypto from 'crypto';
 import { POST } from '../route';
 import prisma from '@/lib/prisma';
-import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
+import { activateProgramEnrollment, refuseReversedActivation } from '@/lib/programs/activateEnrollment';
 import { adjustProgramInventory } from '@/lib/shopify';
 import { orderEntitlesEnrollment } from '@/lib/finance/reconcile/program';
 import { returnTestOrderStock } from '@/lib/finance/reconcile/reversals';
 
 jest.mock('@/lib/programs/activateEnrollment', () => ({
     activateProgramEnrollment: jest.fn(),
+    refuseReversedActivation: jest.fn(),
 }));
 jest.mock('@/lib/programs/memberDiscountCode', () => ({
     unentitledMemberCodeUse: jest.fn().mockResolvedValue(false),
@@ -103,5 +104,18 @@ describe('POST /api/webhooks/shopify — program test orders', () => {
         expect(activate).toHaveBeenCalledWith(expect.objectContaining({ programId: 7, personIds: [41], shopifyOrderId: '777001' }));
         expect(returnTestOrderStock).not.toHaveBeenCalled();
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: false, outcome: 'program 7: activated 1 of 1 participant(s)' });
+    });
+
+    it('an order reversed before activation is recorded as refused, not activated', async () => {
+        activate.mockResolvedValueOnce({ activatedCount: 0, reversed: true });
+        await POST(signedReq(JSON.stringify(PROGRAM_ORDER)));
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ outcome: 'program 7: order reversed before activation — raised, not activated' });
+    });
+
+    it('a refunded payload goes through the shared refusal, not activation', async () => {
+        entitles.mockResolvedValueOnce({ ok: false, kind: 'REVERSED_BEFORE_ACTIVATION' });
+        await POST(signedReq(JSON.stringify(PROGRAM_ORDER)));
+        expect(refuseReversedActivation).toHaveBeenCalledWith(7, [41], '777001');
+        expect(activate).not.toHaveBeenCalled();
     });
 });

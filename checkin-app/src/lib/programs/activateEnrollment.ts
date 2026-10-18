@@ -3,6 +3,8 @@ import { logger } from "@/lib/logger";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
+import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
+import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -17,6 +19,7 @@ import { saleStockDelta } from "@/lib/programs/saleState";
  *
  * Callers must first establish the order pays for these people
  * (orderEntitlesEnrollment in lib/finance/reconcile/program.ts); this function does not.
+ * A reversed order activates nobody (see {@link refuseReversedActivation}).
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -32,6 +35,8 @@ export interface ActivateEnrollmentResult {
     activatedCount: number;
     releasedHoldCount: number;
     claimantSeatCount: number;
+    /** True when the order was reversed, so nobody was activated. */
+    reversed?: boolean;
 }
 
 /**
@@ -48,12 +53,39 @@ export function publicStockDelta(releasedHoldCount: number, claimantSeatCount: n
     return releasedHoldCount - claimantSeatCount;
 }
 
+/**
+ * A refunded, cancelled or disputed order activates nobody. The reversal goes in
+ * the ledger (so a resolved flag still blocks), each child still awaiting payment
+ * is raised to the Board (CRITICAL, emailed), and any seat a refund restocked is
+ * taken back off sale. Shared by the webhook, the reconciler and the gate below.
+ */
+export async function refuseReversedActivation(programId: number, personIds: number[], shopifyOrderId: string): Promise<void> {
+    logger.warn(`[enroll] order ${shopifyOrderId} was reversed before program ${programId} activated — NOT activated, raised to the board`);
+    await recordReversal(shopifyOrderId, "REVERSED_BEFORE_ACTIVATION");
+    for (const personId of personIds) {
+        const pending = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId }, ...fromWhere("PENDING_UNPAID") },
+            select: { personId: true },
+        });
+        if (pending) await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId, programId, personId, severity: "CRITICAL" });
+    }
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true } });
+    await takeBackRestockedSeats(shopifyOrderId, { id: programId, shopifyVariantId: program?.shopifyVariantId ?? null });
+}
+
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
     const { programId, personIds, shopifyOrderId, lines = [] } = input;
     const program = await prisma.program.findUnique({
         where: { id: programId },
         select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
     });
+
+    // ponytail: checked before the per-row flips, not under a lock. A refund recorded after this
+    // check but before a row is flipped matches no row; the daily reconcile raises it as a REFUND, with no take-back.
+    if (shopifyOrderId && (await isOrderReversed(prisma, shopifyOrderId))) {
+        await refuseReversedActivation(programId, personIds, shopifyOrderId);
+        return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
+    }
 
     let activatedCount = 0;
     let releasedHoldCount = 0;
