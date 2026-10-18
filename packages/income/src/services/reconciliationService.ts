@@ -62,7 +62,8 @@ async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
 async function ownEntryFirst(orgId: string, id: number, actor: Actor) {
   const row = await openRow(orgId, id);
   if (isClaimed(row)) throw new ServiceError(409, "The payout is being posted; try again shortly");
-  if (!row.qbCreateAttemptedAt) return null;
+  // A drifted payout's attempt is the one that booked the drifted deposit; finance decides it.
+  if (!row.qbCreateAttemptedAt || row.kind === RECON_KIND.DRIFT) return null;
   const { posting } = getIncomeConfig();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
   let own: OwnEntry;

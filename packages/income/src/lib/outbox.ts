@@ -17,6 +17,7 @@ import {
   incomeKey,
   isClaimed,
   lockReconciliation,
+  nextNote,
   matchWindow,
   otherLaneClaims,
   runReconcile,
@@ -181,10 +182,13 @@ export type OwnEntry =
   | { kind: "held"; note: string }
   | { kind: "unsure"; note: string };
 
+/** Every app key a QuickBooks entry's memo carries. */
+const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" ") ?? [];
+
 /**
  * Look for the deposit the app created for an attempted payout: every deposit QuickBooks
- * created since the first attempt, kept when its memo carries the payout's key. Throws when
- * the read fails.
+ * created since the first attempt, kept when its memo carries the payout's key. An entry
+ * carrying more than one key is never taken as the payout's own. Throws when the read fails.
  */
 export async function ownEntry(
   client: QuickBooksClient,
@@ -194,8 +198,10 @@ export async function ownEntry(
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
   const key = incomeKey(row.payoutGid);
-  const keyed = entries.filter((e) => appKeyOf(e) === key);
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
+  const shared = keyed.find((e) => appKeysOf(e).length > 1);
+  if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };
   if (keyed.length > 1) return { kind: "unsure", note: `the app may already have booked this payout: deposits ${keyed.map((e) => e.Id).join(", ")} carry its key` };
   if (!keyed.length) return { kind: "none" };
   const holder = await db.payoutReconciliation.findUnique({ where: { orgId_depositId: { orgId, depositId: keyed[0].Id } }, select: { id: true } });
@@ -276,14 +282,9 @@ export async function postPayout(
     if (!(await lockReconciliation(tx, orgId, wait))) return null;
     const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
     if (!postable(current) || isClaimed(current, claimedAt.getTime())) return { row: current, attempted: undefined };
-    // Finance acting on the payout answers any note it carried.
     const claimed = await tx.payoutReconciliation.update({
       where: { id },
-      data: {
-        postClaimedAt: claimedAt,
-        qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? claimedAt,
-        ...(actor.userId !== null && { qbNote: null }),
-      },
+      data: { postClaimedAt: claimedAt, qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? claimedAt },
     });
     return { row: claimed, attempted: current.qbCreateAttemptedAt };
   });
@@ -340,13 +341,15 @@ export async function postPayout(
       // Another post took the payout over; a deposit this one created is now finance's to void or link.
       if (result.kind !== "created") return { outcome: "waiting" as const, row: current };
       const note = `app entry ${result.id} may need voiding: its post lost the payout to another`;
-      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: note } });
+      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: nextNote(current.qbNote, null, note) } });
       await audit(tx, orgId, "reconciliation.lost_claim", current, saved, { ...actor, reason: note });
       return { outcome: "failed" as const, row: saved };
     }
 
+    // An outcome that sets a note keeps any warning about another stray app entry on the row.
     const settle = async (outcome: PostOutcome, action: string, data: Partial<PayoutReconciliation>, reason?: string) => {
-      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { ...data, postClaimedAt: null } });
+      const note = data.qbNote === undefined ? {} : { qbNote: nextNote(current.qbNote, data.depositId ?? null, data.qbNote) };
+      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { ...data, ...note, postClaimedAt: null } });
       await audit(tx, orgId, action, current, saved, { ...actor, reason });
       return { outcome, row: saved };
     };
@@ -437,8 +440,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * The income cron step: match every paid payout, stamp switch-on, read the books closing date,
  * check every assigned bucket (alerting finance once per bucket that has become unusable), then
  * post the outbox's WAITING rows and every NEEDS_MAPPING row, oldest first. A payout first seen
- * after switch-on books itself, however late it arrived; one seen before waits out its match
- * window and then goes to finance. A payout with an undecided item or unusable bucket holds as
+ * after switch-on books itself, however late it arrived; one seen before goes to finance as
+ * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item or unusable bucket holds as
  * NEEDS_MAPPING until finance decides. Creates stop at the org's count and cents caps, which
  * fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
@@ -542,17 +545,19 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
   const rows = await db.payoutReconciliation.findMany({ where: { orgId } });
   const byKey = new Map(rows.map((r) => [incomeKey(r.payoutGid), r]));
   let flagged = 0;
+  const note = (e: { Id: string }) => `app entry ${e.Id} is not linked; void or link it`;
   for (const e of entries) {
-    const key = appKeyOf(e);
-    const row = key ? byKey.get(key) : undefined;
-    if (!row || row.depositId === e.Id || isClaimed(row, now.getTime())) continue;
-    const note = `app entry ${e.Id} is not linked; void or link it`;
-    if (row.qbNote === note) continue;
-    await db.$transaction(async (tx) => {
-      const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { qbNote: note } });
-      await audit(tx, orgId, "reconciliation.orphan_entry", row, saved, { userId: null, reason: note });
-    });
-    flagged++;
+    for (const key of appKeysOf(e)) {
+      const row = byKey.get(key);
+      if (!row || row.depositId === e.Id || isClaimed(row, now.getTime()) || row.qbNote?.includes(note(e))) continue;
+      const qbNote = nextNote(row.qbNote, null, note(e));
+      await db.$transaction(async (tx) => {
+        const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { qbNote } });
+        await audit(tx, orgId, "reconciliation.orphan_entry", row, saved, { userId: null, reason: note(e) });
+      });
+      row.qbNote = qbNote;
+      flagged++;
+    }
   }
   return { status: "ran", read: entries.length, flagged, full };
 }

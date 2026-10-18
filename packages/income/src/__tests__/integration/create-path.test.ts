@@ -4,7 +4,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
-import { runReconcile } from "../../lib/reconcile";
+import { ATTEMPTED_MATCH_NOTE, runReconcile } from "../../lib/reconcile";
 import { CLOSED_NOTE, drainIncomeOutbox, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
@@ -265,6 +265,19 @@ describeDb("drainIncomeOutbox — closed books", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("a hand booking reconcile matches answers the closed note and leaves the queue", async () => {
+    qbo.closeDate = "2026-06-28";
+    await switchOn();
+    const p = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
+
+    qbo.hand("H2", "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "MATCHED", depositId: "H2", qbNote: null, reason: null });
+    expect(await reconciliationService.countQueue(ORG_A)).toBe(0);
+  });
+
   it("a match in closed books is still allowed", async () => {
     qbo.closeDate = "2026-06-29";
     await switchOn();
@@ -439,6 +452,62 @@ describeDb("postPayout — claim, lookup and settle", () => {
       status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, postClaimedAt: null, qbNote: `deposit H2 is already held by payout ${other}`,
     });
     expect(qbo.posts).toHaveLength(1);
+
+    // Past its window, reconcile never turns it back into a bookable NO_DEPOSIT.
+    await runReconcile(ORG_A, new Date("2026-07-20T12:00:00Z"));
+    expect(await rowFor(p)).toMatchObject({ kind: "AMBIGUOUS_DEPOSIT", qbNote: `deposit H2 is already held by payout ${other}` });
+  });
+
+  it("an own deposit that carries a second app key is never taken as the payout's own", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    const own = qbo.deposits.at(-1);
+    if (!own) throw new Error("no deposit");
+    own.PrivateNote = `${own.PrivateNote} [checkin:${qbKey("income", gid(7))}]`;
+    own.TxnDate = "2026-08-15";
+    qbo.mode = "ok";
+
+    expect(await resolve(p, { action: "retry" })).toMatchObject({
+      status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, qbNote: `the app may already have booked this payout: deposit ${own.Id} carries more than one app key`,
+    });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a warning about another stray app entry survives a failed retry and a later post", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    const warning = "app entry 999 is not linked; void or link it";
+    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { qbNote: warning } });
+
+    await resolve(p, { action: "retry" });
+    expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED", qbNote: warning });
+    qbo.mode = "ok";
+    expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "POSTED", qbNote: warning });
+  });
+
+  it("an attempted payout is never matched by amount in reconcile; finance's match looks up first", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    qbo.mode = "ok";
+    qbo.hand("H2", "2026-06-28", 500);
+
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, qbNote: ATTEMPTED_MATCH_NOTE });
+    expect(await resolve(p, { action: "match", depositId: "H2" })).toMatchObject({ status: "RESOLVED", depositId: "H2", qbNote: null });
+  });
+
+  it("a drifted app-created payout can be dismissed; the lookup never re-links the drifted deposit", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED" });
+    setPayout(p, { netCents: 450 });
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "DRIFT", depositId: null });
+
+    expect(await resolve(p, { action: "dismiss", reason: "refund netted by hand" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", depositId: null });
   });
 
   it("finance's dismiss on an attempted payout links the app's own deposit instead", async () => {
@@ -491,6 +560,20 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(linked)).qbNote).toBeNull();
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
     expect(sweepAlerts).toHaveLength(0);
+  });
+
+  it("checks every app key an entry carries", async () => {
+    const a = payout(2, "2026-06-28", 500);
+    const b = payout(3, "2026-06-28", 300);
+    await drain();
+    const aEntry = (await rowFor(a)).depositId;
+    const entry = qbo.deposits.find((d) => d.Id === aEntry);
+    if (!entry) throw new Error("no deposit");
+    entry.PrivateNote = `${entry.PrivateNote} [checkin:${qbKey("income", b)}]`;
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
+    expect(await rowFor(b)).toMatchObject({ status: "POSTED", qbNote: `app entry ${aEntry} is not linked; void or link it` });
+    expect((await rowFor(a)).qbNote).toBeNull();
   });
 
   it("alerts finance when the read fills a page", async () => {

@@ -48,6 +48,24 @@ export function isClaimed(row: Pick<PayoutReconciliation, "postClaimedAt">, now:
   return row.postClaimedAt !== null && now - row.postClaimedAt.getTime() <= CLAIM_TTL_MS;
 }
 
+/** The app entry a stray-entry warning names ("may need voiding", "is not linked"), or null for any other note. */
+export function strayEntryOf(note: string | null): string | null {
+  return /^app entry (\S+) (?:may need voiding|is not linked)/.exec(note ?? "")?.[1] ?? null;
+}
+
+/**
+ * The app note a payout carries once it holds `depositId` and adds `next`: a warning about a
+ * different stray app entry stays until finance answers it; every other note is replaced.
+ */
+export function nextNote(current: string | null, depositId: string | null, next: string | null): string | null {
+  const stray = strayEntryOf(current);
+  const kept = stray && stray !== depositId ? current : null;
+  return [...new Set([kept, next].filter((n): n is string => !!n))].join("; ") || null;
+}
+
+/** The queue note on an attempted payout a deposit fits by amount: its own deposit may sit outside the window. */
+export const ATTEMPTED_MATCH_NOTE = "a deposit fits by amount, but the app may already have booked this payout; matching checks for the app's own deposit first";
+
 /** When income posting switched on for the org, or null while it is off. */
 export async function postingOnAt(orgId: string): Promise<Date | null> {
   return (await db.incomeOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true } }))?.qbPostingOnAt ?? null;
@@ -249,6 +267,29 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               excludedIds: excluded,
             });
 
+        // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
+        const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
+        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, window);
+
+        // An attempted payout's own deposit may sit outside the window, so it never matches by amount
+        // here: the drain's post or finance's match looks up its own deposit first.
+        if (match?.kind === "found" && match.via === "amount" && row?.qbCreateAttemptedAt) {
+          if (row.status === RECON_STATUS.WAITING && !windowElapsed) continue;
+          if (row.status === RECON_STATUS.OPEN && row.kind === RECON_KIND.AMBIGUOUS_DEPOSIT) continue;
+          const saved = await tx.payoutReconciliation.update({
+            where: { id: row.id },
+            data: {
+              status: RECON_STATUS.OPEN,
+              kind: RECON_KIND.AMBIGUOUS_DEPOSIT,
+              payoutNetCents: fact.netCents,
+              qbNote: nextNote(row.qbNote, null, ATTEMPTED_MATCH_NOTE),
+            },
+          });
+          await audit(tx, orgId, "reconciliation.opened", row, saved, { userId: null, reason: ATTEMPTED_MATCH_NOTE });
+          if (!open) result.opened++;
+          continue;
+        }
+
         if (match?.kind === "found") {
           const d = depositsById.get(match.id);
           if (!d) throw new Error(`matched deposit ${match.id} is not in the read`);
@@ -263,6 +304,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             depositTotalCents: d.totalCents,
             payoutNetCents: fact.netCents,
             postClaimedAt: null,
+            reason: null,
+            qbNote: nextNote(row?.qbNote ?? null, d.id, null),
           };
           const saved = row
             ? await tx.payoutReconciliation.update({ where: { id: row.id }, data })
@@ -275,6 +318,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
         // A failed or over-cap create stays parked until a deposit turns up or finance retries.
         if (row?.kind === RECON_KIND.POST_FAILED || row?.kind === RECON_KIND.OVER_CAP) continue;
+        // An attempted payout sent to finance as ambiguous stays there: the app may have booked it.
+        if (row?.qbCreateAttemptedAt && open && row.kind === RECON_KIND.AMBIGUOUS_DEPOSIT) continue;
         // A held payout is outside the window's clock; it tracks the payout's net while it waits.
         if (row?.kind === RECON_KIND.NEEDS_MAPPING) {
           if (row.payoutNetCents === fact.netCents) continue;
@@ -282,10 +327,6 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           await audit(tx, orgId, "reconciliation.needs_mapping", row, saved, { userId: null, reason: "payout_amount" });
           continue;
         }
-        // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
-        const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
-        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, window);
-
         // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox. An
         // ambiguous one never waits there: it goes straight to finance and is never created.
         if (!fact.sumMismatch && !windowElapsed && match?.kind !== "ambiguous") {
