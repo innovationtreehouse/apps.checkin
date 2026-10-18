@@ -186,19 +186,19 @@ describeDb("mailbox ignore list", () => {
 
   it("rejects an unknown discard field", async () => {
     const id = await holdItem();
-    await expect(mailQueueService.discard(id, { reason: "x", ignoreFile: false })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(mailQueueService.discard(id, { reason: "x", ignoreFile: false })).rejects.toMatchObject({ status: 400 });
   });
 
   it("lists a discarded receipt's file, once, with no audit row on its receipt", async () => {
     const r = { id: await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined) };
-    await expect(mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" })).rejects.toMatchObject({ status: 409 });
     await receiptService.discard(r.id, "finance");
     const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
     const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
     expect(await mailQueueService.ignoreReceiptFile(r.id, { reason: "again" })).toMatchObject({ id: entry.id, reason: "logo" });
     expect(await ignoreRows()).toEqual([expect.objectContaining({ receiptId: null, fieldChanged: "receipt", valueBefore: r.id, valueAfter: "logo" })]);
-    await expect(mailQueueService.ignoreReceiptFile("no-such-receipt", { reason: "logo" })).rejects.toMatchObject({ statusCode: 404 });
+    await expect(mailQueueService.ignoreReceiptFile("no-such-receipt", { reason: "logo" })).rejects.toMatchObject({ status: 404 });
   });
 
   it("removes an entry, audited like an add", async () => {
@@ -208,6 +208,6 @@ describeDb("mailbox ignore list", () => {
     expect(await mailQueueService.removeIgnored(entry.id)).toMatchObject({ id: entry.id, fileHash: "logo" });
     expect(await mailQueueService.listIgnored()).toEqual([]);
     expect((await ignoreRows())[1]).toMatchObject({ receiptId: null, userId: FINANCE.id, action: "file_unignored", valueBefore: "logo", valueAfter: "newsletter logo" });
-    await expect(mailQueueService.removeIgnored(entry.id)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(mailQueueService.removeIgnored(entry.id)).rejects.toMatchObject({ status: 404 });
   });
 });
