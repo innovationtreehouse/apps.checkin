@@ -9,8 +9,10 @@ import { PageContainer } from "@/components/ui/PageContainer";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { useConflicts } from "@/hooks/useConflicts";
-import { leadsAnyProgram, leadPendingCount } from "@/components/navBadges";
-import { MY_PROGRAMS_LIBRARY_TABS, visibleLibraryTabs } from "@/lib/libraryNav";
+import { leadPendingCount } from "@/components/navBadges";
+import type { SectionLink } from "@/lib/nav/types";
+import { visibleLinks } from "@/lib/nav/gates";
+import { MY_PROGRAMS } from "@/lib/nav/sections/myPrograms";
 import { TabBadge } from "@/components/ui/CountBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -28,11 +30,10 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
   const authed = status === "authenticated";
   const counts = useTodoCounts(authed);
   const { conflicts } = useConflicts(authed);
-  // Library tabs (e.g. Expense approvals) admit their own audience, such as a
-  // program treasurer who leads no program; Attendance/Conflicts stay lead-only.
-  const libraryTabs = visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, session?.user, counts);
-  const isLead = leadsAnyProgram(counts);
-  const admitted = isLead || libraryTabs.length > 0;
+  // Attendance/Conflicts are lead-only; Expense approvals also admits a program
+  // treasurer who leads no program.
+  const links = visibleLinks(MY_PROGRAMS, session?.user, counts);
+  const admitted = links.length > 0;
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/");
@@ -48,21 +49,17 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
   }
   if (!admitted) return null; // redirect in flight
 
-  const TABS = [
-    ...(isLead
-      ? [
-          { value: "/my-programs/attendance", label: "Attendance" },
-          { value: "/my-programs/conflicts", label: "Conflicts" },
-        ]
-      : []),
-    ...libraryTabs.map((t) => ({ value: t.href, label: t.name })),
-  ];
   const active =
-    TABS.filter((t) => pathname === t.value || pathname.startsWith(`${t.value}/`))
-      .sort((a, b) => b.value.length - a.value.length)[0]?.value ?? TABS[0].value;
+    links.filter((t) => pathname === t.href || pathname.startsWith(`${t.href}/`))
+      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? links[0].href;
 
   const pending = leadPendingCount(counts);
   const conflictCount = conflicts?.length ?? 0;
+  const tabBadge = ({ href, badge }: SectionLink): React.ReactNode => {
+    if (href === "/my-programs/attendance") return pending > 0 ? <CountBadge intent="action">{pending}</CountBadge> : undefined;
+    if (href === "/my-programs/conflicts") return conflictCount > 0 ? <CountBadge intent="alert">{conflictCount}</CountBadge> : undefined;
+    return <TabBadge badge={badge?.(counts) ?? null} />;
+  };
   const subtitle: Record<string, string> = {
     "/my-programs/attendance": "Manage Attendance for Programs you lead",
     "/my-programs/conflicts": "Resolve Duplicate or overlapping check-ins for your programs",
@@ -72,24 +69,8 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
     <PageContainer>
       <Tabs value={active} onChange={(v) => { if (v && v !== active) router.push(v); }} mb="md">
         <ScrollableTabsList>
-          {isLead && (
-            <>
-              <Tabs.Tab
-                value="/my-programs/attendance"
-                rightSection={pending > 0 ? <CountBadge intent="action">{pending}</CountBadge> : undefined}
-              >
-                Attendance
-              </Tabs.Tab>
-              <Tabs.Tab
-                value="/my-programs/conflicts"
-                rightSection={conflictCount > 0 ? <CountBadge intent="alert">{conflictCount}</CountBadge> : undefined}
-              >
-                Conflicts
-              </Tabs.Tab>
-            </>
-          )}
-          {libraryTabs.map((t) => (
-            <Tabs.Tab key={t.href} value={t.href} rightSection={<TabBadge badge={t.badge?.(counts) ?? null} />}>
+          {links.map((t) => (
+            <Tabs.Tab key={t.href} value={t.href} rightSection={tabBadge(t)}>
               {t.name}
             </Tabs.Tab>
           ))}

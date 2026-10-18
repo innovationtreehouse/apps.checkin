@@ -4,7 +4,8 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 
 import { waitFor } from "@testing-library/react";
 import { renderWithProviders, setSession, resetRtl, router } from "@/test-helpers/rtl";
-import { FINANCE_NAV_LINKS, revenueOpsTabs } from "@/lib/financeNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import PaymentPlanPage from "../payment-plan/page";
 import MembershipPaymentPlanPage from "../membership-payment-plan/page";
 import ShopifyHoldsPage from "../shopify-holds/page";
@@ -43,10 +44,10 @@ describe.each([
   });
 });
 
-describe("revenueOpsTabs", () => {
+describe("Revenue Ops tabs", () => {
   it("hides the legacy tabs from FINANCE-only and shows them to Board", () => {
-    expect(revenueOpsTabs({ id: 1, isFinance: true }, null)).toEqual([]);
-    expect(revenueOpsTabs({ id: 2, isBoardMember: true }, null).map((t) => t.href)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income", "/donations"]);
-    expect(revenueOpsTabs({ id: 3, isSysadmin: true }, null)).toEqual([]);
+    expect(visibleLinks(REVENUE_OPS, { isFinance: true }, null)).toEqual([]);
+    expect(visibleLinks(REVENUE_OPS, { isBoardMember: true }, null).map((t) => t.href)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income", "/donations"]);
+    expect(visibleLinks(REVENUE_OPS, { isSysadmin: true }, null)).toEqual([]);
   });
 });

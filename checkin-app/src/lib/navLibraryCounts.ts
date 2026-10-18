@@ -6,7 +6,8 @@
  */
 import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
-import { canSeeIncome, canSeeReceiving } from "@/lib/libraryNav";
+import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
+import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
@@ -30,7 +31,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "bulk-donation",
-    visible: (u) => !!u.isFinance || !!u.isBoardMember,
+    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
       const { getNavCounts, getOrgId } = await import("@checkin/bulk-donation");
@@ -40,13 +41,13 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "workflow-mapping",
-    visible: canSeeReceiving,
+    visible: (u) => hasAnyRole(u, RECEIVING_ROLES),
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
   {
     library: "income",
-    visible: canSeeIncome,
+    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
     count: async (): Promise<Record<string, number>> =>
       process.env.INCOME_DATABASE_URL
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }

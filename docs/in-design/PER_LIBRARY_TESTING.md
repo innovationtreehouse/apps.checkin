@@ -52,7 +52,7 @@ flight; they are listed so the map is right when it lands.
 
 | Key | Package | Checkin wiring, routes, pages | Registry + classification | Flow test |
 |---|---|---|---|---|
-| catalog | `packages/global-catalog` | `src/lib/catalog/`, `src/lib/catalogNav.ts`, `src/app/catalog/`, `src/app/api/catalog/` | `src/security/registry/catalog.ts`, `src/security/catalogSyntheticClassifications.ts` | `flow-tests/catalog.flow.test.ts` |
+| catalog | `packages/global-catalog` | `src/lib/catalog/`, `src/lib/nav/sections/inventory.ts`, `src/app/catalog/`, `src/app/api/catalog/` | `src/security/registry/catalog.ts`, `src/security/catalogSyntheticClassifications.ts` | `flow-tests/catalog.flow.test.ts` |
 | inventory | `packages/local-inventory` | `src/lib/localInventory/`, `src/app/inventory/`, `src/app/api/inventory/` | `registry/inventory.ts`, `inventorySyntheticClassifications.ts` | `flow-tests/local-inventory.flow.test.ts` |
 | income | `packages/income` | `src/lib/income/`, `src/app/income/`, `src/app/api/income/` | `registry/income.ts`, `incomeSyntheticClassifications.ts` | `flow-tests/income.flow.test.ts` |
 | expense | `packages/expense` | `src/lib/expense/`, `src/app/expense/`, `src/app/api/expense/` | `registry/expense.ts`, `expenseSyntheticClassifications.ts` | `flow-tests/expense.flow.test.ts` |

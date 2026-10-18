@@ -2,7 +2,8 @@
 // without pulling in React/Mantine. AppFrame imports navBadgeFor for rendering
 // and leadsAnyProgram for the staff "My Programs" visibility gate.
 import type { TodoCounts } from '@/lib/nav/todoCounts';
-import type { LibraryKey, NavTab } from '@/lib/libraryNav';
+import type { LibraryKey } from '@/lib/libraryRelease';
+import type { SectionLink } from '@/lib/nav/types';
 
 export type NavBadge = { count: number; color: string; label: string };
 
@@ -25,7 +26,7 @@ export function foldBadges(badges: NavBadge[]): NavBadge[] {
 }
 
 /** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' pills, folded. */
-export function sectionBadges(href: string, tabs: readonly NavTab[], counts: TodoCounts | null): NavBadge[] {
+export function sectionBadges(href: string, tabs: readonly SectionLink[], counts: TodoCounts | null): NavBadge[] {
   const tabBadges = tabs.flatMap((t) => {
     const b = t.badge?.(counts);
     return b ? [b] : [];
@@ -34,7 +35,7 @@ export function sectionBadges(href: string, tabs: readonly NavTab[], counts: Tod
 }
 
 /** A section tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
-export function sectionTabBadge(tabs: readonly NavTab[], href: string, counts: TodoCounts | null): NavBadge | null {
+export function sectionTabBadge(tabs: readonly SectionLink[], href: string, counts: TodoCounts | null): NavBadge | null {
   return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
 }
 

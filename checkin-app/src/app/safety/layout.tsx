@@ -4,7 +4,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Tabs, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { SAFETY_SECTION_ROLES } from "@/lib/safetyNav";
+import { linkGate, visibleLinks } from "@/lib/nav/gates";
+import { SAFETY, SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { tabBadgeFor } from "@/components/navBadges";
 import { CountBadge } from "@/components/ui/CountBadge";
@@ -17,12 +18,12 @@ export default function SafetyLayout({ children }: { children: React.ReactNode }
   const router = useRouter();
   const confirmNav = useConfirmNav();
   const { data: session } = useSession();
-  const sessionUser = session?.user as { isSysadmin?: boolean; isBoardMember?: boolean } | undefined;
-  const isBoard = !!(sessionUser?.isSysadmin || sessionUser?.isBoardMember);
-  const { loading, ready } = useRequireRole(SAFETY_SECTION_ROLES);
+  const sessionUser = session?.user;
+  const seesTrustedAdults = linkGate(SAFETY, "/safety/trusted-adults")(sessionUser, null);
+  const { loading, ready } = useRequireRole(SAFETY_ROLES);
   // Trusted-adult disclosures awaiting board review — same count as the Safety nav badge
   // (derived in navBadges.tabBadgeFor so nav and tab can't diverge).
-  const counts = useTodoCounts(isBoard);
+  const counts = useTodoCounts(seesTrustedAdults);
   const taCount = tabBadgeFor("/safety/trusted-adults", counts)?.count ?? 0;
 
   if (loading) {
@@ -38,13 +39,12 @@ export default function SafetyLayout({ children }: { children: React.ReactNode }
 
   if (!ready) return null;
 
-  // Trusted Adults is board-only. /safety redirects to the first tab.
-  const tabs: { name: string; href: string; count?: number }[] = [
-    { name: "🚑 Emergency Contacts", href: "/safety/emergency-contacts" },
-    { name: "📞 Board Contact Info", href: "/safety/board-contacts" },
-    { name: "📋 Pickup List", href: "/safety/pickup" },
-    ...(isBoard ? [{ name: "🔗 Trusted Adults", href: "/safety/trusted-adults", count: taCount }] : []),
-  ];
+  // /safety redirects to the first tab.
+  const tabs = visibleLinks(SAFETY, sessionUser, null).map((l) => ({
+    name: `${l.icon} ${l.name}`,
+    href: l.href,
+    count: l.href === "/safety/trusted-adults" ? taCount : undefined,
+  }));
   const active = tabs.find((t) => pathname === t.href)?.href ?? null;
 
   return (

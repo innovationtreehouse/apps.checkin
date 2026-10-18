@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
-import { defaultShopTab, shopRoles } from "@/lib/shopNav";
+import { defaultShopTab, shopRoles } from "@/lib/nav/sections/shopOps";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 /**

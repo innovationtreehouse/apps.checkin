@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import FacilityLayout from "../layout";
-import { FACILITY_NAV_LINKS } from "@/lib/facilityNav";
+import { FACILITY_OPS } from "@/lib/nav/sections/facilityOps";
 
 const push = jest.fn();
 let mockPathname = "/facility-ops/visits";
@@ -94,7 +94,7 @@ describe("FacilityLayout role gate", () => {
       data: { user: { id: 3, isBoardMember: true } },
       status: "authenticated",
     });
-    expect(screen.getAllByRole("tab")).toHaveLength(FACILITY_NAV_LINKS.length);
+    expect(screen.getAllByRole("tab")).toHaveLength(FACILITY_OPS.links.length);
   });
 
   it("redirects an authenticated user with none of the allowed roles", () => {

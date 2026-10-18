@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
-import { visibleFacilityLinks } from "@/lib/facilityNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { FACILITY_OPS } from "@/lib/nav/sections/facilityOps";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 /**
@@ -18,7 +19,7 @@ export default function FacilityOpsIndex() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      router.replace(visibleFacilityLinks(session?.user)[0]?.href ?? "/");
+      router.replace(visibleLinks(FACILITY_OPS, session?.user, null)[0]?.href ?? "/");
     }
   }, [status, session, router]);
 

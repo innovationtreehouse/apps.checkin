@@ -5,15 +5,18 @@ import { useSession } from "next-auth/react";
 import { Box } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { CountBadge } from "@/components/ui/CountBadge";
-import { DONATION_NAV_LINKS, donationAreaLinks, isDonationViewerClient } from "@/lib/donationNav";
+import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
+import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import RevenueOpsLayout from "../finance-ops/layout";
 
 type NavCounts = { unassignedQueue: number; disbursementHolds: number };
 
+const donationLinks = DONATION_NAV_LINKS.map(({ name, href, icon }) => ({ name, href, icon }));
+
 /** Revenue Ops chrome and gate, with the donation screens as a second tab row. */
 export default function DonationsLayout({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
-  const authorized = isDonationViewerClient(session?.user);
+  const authorized = REVENUE_OPS.visible(session?.user, null);
   const [counts, setCounts] = useState<NavCounts | null>(null);
 
   useEffect(() => {
@@ -28,7 +31,7 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
   return (
     <RevenueOpsLayout>
       <SectionTabs
-        links={donationAreaLinks}
+        links={donationLinks}
         mb="md"
         badgeFor={(href) => {
           const field = DONATION_NAV_LINKS.find((l) => l.href === href)?.badge;

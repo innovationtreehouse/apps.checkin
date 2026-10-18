@@ -6,7 +6,7 @@ import { pdf } from "@react-pdf/renderer";
 import { Badge, Button, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { FACILITY_AGGREGATE_ROLES } from "@/lib/facilityNav";
+import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import BadgeDocument from "@/components/admin/BadgeDocument";

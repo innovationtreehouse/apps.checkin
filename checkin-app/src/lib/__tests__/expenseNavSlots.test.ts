@@ -1,4 +1,6 @@
-import { EXPENSE_OPS_TABS, MY_PROGRAMS_LIBRARY_TABS, expenseOpsTabs, visibleLibraryTabs } from "../libraryNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
+import { MY_PROGRAMS } from "@/lib/nav/sections/myPrograms";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
@@ -27,23 +29,23 @@ const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
 describe("Expense Ops tabs", () => {
   it("shows Expenses then Settings to FINANCE and Board", () => {
-    expect(names(expenseOpsTabs(finance, released))).toEqual(["Expenses", "Settings"]);
-    expect(names(expenseOpsTabs(board, released))).toEqual(["Expenses", "Settings"]);
-    expect(expenseOpsTabs(finance, released).map((t) => t.href)).toEqual(["/expense", "/expense/settings"]);
+    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(["Expenses", "Settings"]);
+    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(["Expenses", "Settings"]);
+    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)).toEqual(["/expense", "/expense/settings"]);
   });
 
   it("hides them from a program lead and a plain member", () => {
-    expect(expenseOpsTabs(lead, released)).toEqual([]);
-    expect(expenseOpsTabs(member, released)).toEqual([]);
+    expect(visibleLinks(EXPENSE_OPS, lead, released)).toEqual([]);
+    expect(visibleLinks(EXPENSE_OPS, member, released)).toEqual([]);
   });
 
   it("hides them from FINANCE until expense is released, and keeps them for Board", () => {
-    expect(expenseOpsTabs(finance, unreleased)).toEqual([]);
-    expect(names(expenseOpsTabs(board, unreleased))).toEqual(["Expenses", "Settings"]);
+    expect(visibleLinks(EXPENSE_OPS, finance, unreleased)).toEqual([]);
+    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(["Expenses", "Settings"]);
   });
 
   it("badges Expenses with holds plus open flags", () => {
-    const [expenses] = EXPENSE_OPS_TABS;
+    const [expenses] = EXPENSE_OPS.links;
     expect(expenses.badge?.(counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } }))).toEqual({
       count: 3,
       color: "red",
@@ -55,18 +57,18 @@ describe("Expense Ops tabs", () => {
 
 describe("My Programs Expense approvals tab", () => {
   it("shows to a program lead and not to FINANCE or a plain member", () => {
-    expect(names(visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, lead, released))).toEqual(["Expense approvals"]);
-    expect(visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, finance, released)).toEqual([]);
-    expect(visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, member, released)).toEqual([]);
+    expect(names(visibleLinks(MY_PROGRAMS, lead, released))).toEqual(["Expense approvals"]);
+    expect(visibleLinks(MY_PROGRAMS, finance, released)).toEqual([]);
+    expect(visibleLinks(MY_PROGRAMS, member, released)).toEqual([]);
   });
 
   it("hides from a program lead until expense is released", () => {
-    expect(visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, lead, unreleased)).toEqual([]);
+    expect(visibleLinks(MY_PROGRAMS, lead, unreleased)).toEqual([]);
   });
 
   it("badges with lines awaiting the viewer's sign-off", () => {
-    const [approvals] = MY_PROGRAMS_LIBRARY_TABS;
-    expect(approvals.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
+    const approvals = MY_PROGRAMS.links.find((l) => l.href === "/my-programs/expense-approvals");
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
       count: 2,
       color: "treehouseGreen",
       label: "2 expense lines awaiting your sign-off",

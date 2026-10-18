@@ -2,7 +2,8 @@
 
 import { useSession } from "next-auth/react";
 import { Box, Center, Group, Loader, Stack, Text } from "@mantine/core";
-import { MEMBERSHIP_OPS_SECTION_ROLES, isMembershipOpsAdmin, canReviewMembership, visibleMembershipOpsLinks } from "@/lib/membershipOpsNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ROLES, isMembershipOpsAdmin, canReviewMembership } from "@/lib/nav/sections/membershipOps";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { tabBadgeFor, reviewBadges } from "@/components/navBadges";
@@ -12,15 +13,15 @@ import { PageContainer } from "@/components/ui/PageContainer";
 
 export default function MembershipOpsLayout({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
-  const sessionUser = session?.user as { isSysadmin?: boolean; isBoardMember?: boolean; isBackgroundCheckReviewer?: boolean; isOperations?: boolean } | undefined;
-  const isAdmin = isMembershipOpsAdmin(sessionUser);
-  const { loading, ready } = useRequireRole(MEMBERSHIP_OPS_SECTION_ROLES);
+  const sessionUser = session?.user;
+  const isAdmin = isMembershipOpsAdmin(sessionUser, null);
+  const { loading, ready } = useRequireRole(MEMBERSHIP_OPS_ROLES);
 
   // Fetch counts for reviewers too (not just admins), so the Review tab badges
   // work for a reviewer-only user.
-  const canReview = canReviewMembership(sessionUser);
+  const canReview = canReviewMembership(sessionUser, null);
   const todoCounts = useTodoCounts(isAdmin || canReview);
-  const navLinks = visibleMembershipOpsLinks(sessionUser);
+  const navLinks = visibleLinks(MEMBERSHIP_OPS, sessionUser, null);
 
   if (loading) {
     return (

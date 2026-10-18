@@ -1,13 +1,14 @@
 "use client";
 
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
-import { FACILITY_SECTION_ROLES, visibleFacilityLinks } from "@/lib/facilityNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { FACILITY_AGGREGATE_ROLES, FACILITY_OPS } from "@/lib/nav/sections/facilityOps";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 
 export default function FacilityLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, ready } = useRequireRole(FACILITY_SECTION_ROLES);
+  const { user, loading, ready } = useRequireRole(FACILITY_AGGREGATE_ROLES);
 
   if (loading) {
     return (
@@ -24,7 +25,7 @@ export default function FacilityLayout({ children }: { children: React.ReactNode
 
   return (
     <PageContainer>
-      <SectionTabs links={visibleFacilityLinks(user)} mb="md" />
+      <SectionTabs links={visibleLinks(FACILITY_OPS, user, null)} mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );
