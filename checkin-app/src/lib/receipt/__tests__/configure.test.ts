@@ -54,7 +54,7 @@ describe('receipt runtime: mail intake bindings', () => {
     it('attributes mail to the one adult member with that sign-in email', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([person()]);
         const found = await boundConfig().people?.submitterByEmail('pat@example.org');
-        expect(found).toEqual({ id: 7, name: 'Pat Example', firstName: 'Pat', lastName: 'Example', isAdult: true });
+        expect(found).toEqual({ id: 7, name: 'Pat Example', firstName: 'Pat', lastName: 'Example', isAdult: true, raisedMailLimit: false });
         expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
             where: { mergedIntoId: null, accounts: { some: {} }, email: { equals: 'pat@example.org', mode: 'insensitive' } },
         });
@@ -69,6 +69,16 @@ describe('receipt runtime: mail intake bindings', () => {
     ])('answers null when %s', async (_label, rows) => {
         prisma.person.findMany = jest.fn().mockResolvedValue(rows);
         expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toBeNull();
+    });
+
+    it.each([
+        ['a Board member', person({ roles: [{ role: 'BOARD' }] }), true],
+        ['the lead of an active program', person({ programsLed: [{ id: 1, phase: 'RUNNING' }] }), true],
+        ['the lead of finished programs only', person({ programsLed: [{ id: 1, phase: 'FINISHED' }] }), false],
+        ['anyone else', person({ roles: [{ role: 'FINANCE' }] }), false],
+    ])('gives %s the matching mail limit', async (_label, row, raised) => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([row]);
+        expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toMatchObject({ raisedMailLimit: raised });
     });
 
     it('leaves the mailbox unbound unless both the refresher and the address are set off-local', () => {
