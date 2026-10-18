@@ -493,9 +493,12 @@ ships with that lane's code. The three related fixes are separate PRs, outside
 this split.
 
 Only PR 1 changes the security boundary. The new columns and
-`DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours, and
-no route returns them; the income and donation "book" actions ride on routes
-whose role and response types stay as registered.
+`DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours. Income's
+reconciliation routes return whole `PayoutReconciliation` rows, so its claim and
+create-attempt columns reach finance and the board as internal fields, under the
+existing registry entries; the settings route selects only the caps. The income
+and donation "book" actions ride on routes whose role and response types stay as
+registered.
 
 PRs 3, 4 and 5 touch different packages and can run in parallel once 1 and 2
 have landed.

@@ -9,16 +9,18 @@ import {
   addDays,
   audit,
   incomeKey,
+  isClaimed,
   lockReconciliation,
   matchWindow,
   otherLaneClaims,
+  postingOnAt,
   runReconcile,
   windowDays,
   type ReconStatus,
 } from "../lib/reconcile";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
-import { incomeTakeoverLine, isPostable, postPayout } from "../lib/outbox";
+import { closedThroughOf, isPostable, ownEntry, postPayout, type OwnEntry } from "../lib/outbox";
 import { ServiceError } from "@checkin/component-kit";
 
 export interface Actor {
@@ -27,11 +29,12 @@ export interface Actor {
   correlationId?: string;
 }
 
-/** The three finance resolutions the resolve route accepts. */
+/** The finance resolutions the resolve route accepts. */
 export type ResolveAction =
   | { action: "match"; depositId: string; reason?: string }
   | { action: "dismiss"; reason: string }
-  | { action: "retry" };
+  | { action: "retry" }
+  | { action: "book" };
 
 async function openRow(orgId: string, id: number) {
   const row = await db.payoutReconciliation.findUnique({ where: { id } });
@@ -47,6 +50,74 @@ async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
   const from = addDays(payoutDate, -w);
   const to = addDays(payoutDate, w);
   return (await depositsIn(source, [[from, to]])).filter((d) => d.depositToAccount === bank);
+}
+
+/**
+ * Before finance matches or dismisses a payout whose create may already have landed, look for
+ * the app's own deposit. Found: the payout is linked to it and returned, and finance's action
+ * is not applied. Held by another payout, or unclear: refused. Nothing found, or never
+ * attempted: null, and the action goes ahead.
+ */
+async function ownEntryFirst(orgId: string, id: number, actor: Actor) {
+  const row = await openRow(orgId, id);
+  if (isClaimed(row)) throw new ServiceError(409, "The payout is being posted; try again shortly");
+  if (!row.qbCreateAttemptedAt) return null;
+  const { posting } = getIncomeConfig();
+  if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
+  let own: OwnEntry;
+  try {
+    own = await ownEntry(posting.client, orgId, row, row.qbCreateAttemptedAt);
+  } catch {
+    throw new ServiceError(503, "QuickBooks could not be read to check for the app's own deposit");
+  }
+  if (own.kind === "none") return null;
+  if (own.kind !== "found") throw new ServiceError(409, own.note);
+  const d = own.deposit;
+  try {
+    return await db.$transaction(async (tx) => {
+      await lockReconciliation(tx, orgId, true);
+      const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+      if (current.status !== RECON_STATUS.OPEN || isClaimed(current)) throw new ServiceError(409, "Already resolved");
+      const note = `The app had already booked this payout as deposit ${d.id}; it is linked to that deposit and your action was not applied`;
+      const saved = await tx.payoutReconciliation.update({
+        where: { id },
+        data: {
+          status: RECON_STATUS.POSTED,
+          kind: null,
+          resolution: RECON_RESOLUTION.AUTO,
+          origin: RECON_ORIGIN.CREATED,
+          reason: note,
+          depositId: d.id,
+          depositTxnDate: d.txnDate,
+          depositTotalCents: d.totalCents,
+        },
+      });
+      await audit(tx, orgId, "reconciliation.posted", current, saved, { ...actor, reason: note });
+      return saved;
+    });
+  } catch (err) {
+    if (isUniqueConstraintError(err)) throw new ServiceError(409, `App entry ${d.id} already backs another payout`);
+    throw err;
+  }
+}
+
+/** Finance's go-ahead runs the post path with the gate read now; a failed read is a 503. */
+async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
+  const { mirror, posting } = getIncomeConfig();
+  if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
+  let closeDate: string | null;
+  try {
+    closeDate = await posting.client.bookCloseDate();
+  } catch {
+    throw new ServiceError(503, "QuickBooks could not be read for its books closing date");
+  }
+  const closedThrough = closedThroughOf(closeDate, await postingOnAt(orgId));
+  if (!closedThrough) throw new ServiceError(409, "QuickBooks has no books closing date set, and income posting is not switched on");
+  const turn = await postPayout(orgId, id, { closedThrough, mayCreate: true }, true, { actor, book });
+  if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
+  if (turn.outcome === "held") throw new ServiceError(409, `Decide the payout's items first: ${turn.row.reason ?? ""}`);
+  if (book && turn.outcome === "waiting") throw new ServiceError(409, "The payout is not ready to book: it is being posted, or its Shopify payout changed");
+  return turn.row;
 }
 
 /** Drop deposits a payout or another lane already holds, or finance excluded. */
@@ -105,6 +176,8 @@ export const reconciliationService = {
   /** A deposit whose amount differs from the payout's net needs finance's reason. */
   async matchToDeposit(orgId: string, id: number, depositId: string, actor: Actor, reason?: string) {
     const why = reason?.trim() || null;
+    const linked = await ownEntryFirst(orgId, id, actor);
+    if (linked) return linked;
     const row = await openRow(orgId, id);
     const inWindow = await windowDeposits(row.payoutDate);
 
@@ -114,7 +187,7 @@ export const reconciliationService = {
         const deposit = (await unclaimed(tx, orgId, inWindow)).find((d) => d.id === depositId);
         if (!deposit) throw new ServiceError(422, "Deposit is not an unclaimed candidate for this payout");
         const current = await tx.payoutReconciliation.findUnique({ where: { id } });
-        if (current?.status !== RECON_STATUS.OPEN) throw new ServiceError(409, "Already resolved");
+        if (current?.status !== RECON_STATUS.OPEN || isClaimed(current)) throw new ServiceError(409, "Already resolved");
         if (deposit.totalCents !== current.payoutNetCents && !why) {
           throw new ServiceError(400, "A reason is required when the deposit amount differs from the payout");
         }
@@ -145,12 +218,13 @@ export const reconciliationService = {
   async dismiss(orgId: string, id: number, reason: string, actor: Actor) {
     const why = reason.trim();
     if (!why) throw new ServiceError(400, "A reason is required");
-    await openRow(orgId, id);
+    const linked = await ownEntryFirst(orgId, id, actor);
+    if (linked) return linked;
 
     return db.$transaction(async (tx) => {
       await lockReconciliation(tx, orgId, true);
       const current = await tx.payoutReconciliation.findUnique({ where: { id } });
-      if (current?.status !== RECON_STATUS.OPEN) throw new ServiceError(409, "Already resolved");
+      if (current?.status !== RECON_STATUS.OPEN || isClaimed(current)) throw new ServiceError(409, "Already resolved");
       const saved = await tx.payoutReconciliation.update({
         where: { id },
         data: {
@@ -220,11 +294,19 @@ export const reconciliationService = {
     if (row.status !== RECON_STATUS.OPEN || (row.kind !== RECON_KIND.POST_FAILED && row.kind !== RECON_KIND.OVER_CAP)) {
       throw new ServiceError(409, "Only a failed or over-cap deposit create can be retried");
     }
-    const { mirror, posting } = getIncomeConfig();
-    if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
-    const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true, { actor });
-    if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
-    return turn.row;
+    return goAhead(orgId, id, actor, false);
+  },
+
+  /**
+   * Finance's "book it" for a NO_DEPOSIT payout: the post path with the closed-books gate read
+   * now, outside the per-run caps. It still matches first and never creates in closed books.
+   */
+  async book(orgId: string, id: number, actor: Actor) {
+    const row = await openRow(orgId, id);
+    if (row.status !== RECON_STATUS.OPEN || row.kind !== RECON_KIND.NO_DEPOSIT) {
+      throw new ServiceError(409, "Only a payout with no matching deposit can be booked");
+    }
+    return goAhead(orgId, id, actor, true);
   },
 
   resolve(orgId: string, id: number, req: ResolveAction, actor: Actor) {
@@ -235,6 +317,8 @@ export const reconciliationService = {
         return reconciliationService.dismiss(orgId, id, req.reason, actor);
       case "retry":
         return reconciliationService.retry(orgId, id, actor);
+      case "book":
+        return reconciliationService.book(orgId, id, actor);
     }
   },
 };

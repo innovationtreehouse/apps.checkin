@@ -25,8 +25,9 @@ const resolveBody = z.discriminatedUnion(
     z.object({ action: z.literal("match"), reason: z.string({ error: "reason must be a string" }).optional(), depositId: requiredString("depositId") }),
     z.object({ action: z.literal("dismiss"), reason: requiredString("reason") }),
     z.object({ action: z.literal("retry") }),
+    z.object({ action: z.literal("book") }),
   ],
-  { error: (issue) => (isJsonObject(issue.input) ? "action must be match, dismiss or retry" : NOT_AN_OBJECT) },
+  { error: (issue) => (isJsonObject(issue.input) ? "action must be match, dismiss, retry or book" : NOT_AN_OBJECT) },
 );
 
 const positiveIntOrNull = { error: "budgetOwnerId must be a positive integer or null" };

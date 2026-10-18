@@ -31,7 +31,7 @@ interface RunResult {
 }
 
 const KIND_HELP: Record<string, string> = {
-  NO_DEPOSIT: "No QuickBooks deposit matches this payout",
+  NO_DEPOSIT: "No QuickBooks deposit matches this payout; book it, match it, or dismiss it with a reason",
   AMBIGUOUS_DEPOSIT: "More than one deposit could be this payout",
   TXN_SUM_MISMATCH: "The payout's transactions don't add up to its net",
   DRIFT: "The payout or its deposit changed after it was reconciled",
@@ -110,6 +110,9 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
         {(row.kind === "POST_FAILED" || row.kind === "OVER_CAP") && (
           <Button size="xs" variant="default" disabled={busy} onClick={() => resolve({ action: "retry" }, "Retried")}>Retry create</Button>
         )}
+        {row.kind === "NO_DEPOSIT" && (
+          <Button size="xs" variant="default" disabled={busy} onClick={() => resolve({ action: "book" }, "Booked")}>Book it</Button>
+        )}
       </Group>
     </>
   );
@@ -175,7 +178,7 @@ export default function ReconciliationPage() {
                     <Table.Td>
                       <Badge size="sm" color="orange">{row.kind}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>
-                      {row.kind === "NEEDS_MAPPING" && row.reason && <Text size="sm">{row.reason}</Text>}
+                      {row.reason && <Text size="sm">{row.reason}</Text>}
                     </Table.Td>
                     <Table.Td><Code>{row.payoutGid}</Code></Table.Td>
                     <Table.Td>

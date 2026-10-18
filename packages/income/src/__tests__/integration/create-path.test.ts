@@ -5,7 +5,7 @@ import { db } from "../../db";
 import { configureIncome, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
 import { runReconcile } from "../../lib/reconcile";
-import { drainIncomeOutbox, incomeTakeoverLine } from "../../lib/outbox";
+import { CLOSED_NOTE, drainIncomeOutbox, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
@@ -13,6 +13,8 @@ import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, OwnerInfo, Payout
 import { clearAll, ORG_A } from "../helpers/fixtures";
 
 const NOW = new Date("2026-06-30T12:00:00Z");
+/** When the shared setup switches income posting on: before any payout the tests add. */
+const ON_AT = new Date("2026-06-30T11:00:00Z");
 const BANK = "35";
 const ACCOUNTS = { income: "80", charge_remainder: "81", fees: "90", adjustments: "91" };
 const tokens = { current: async () => "tok" };
@@ -35,7 +37,13 @@ class FakeQbo {
   posts: { key: string; body: PostedDeposit }[] = [];
   mode: "ok" | "reject" | "accept-then-drop" | "closed" = "ok";
   /** The books closing date Preferences reports. */
-  closeDate: string | null = null;
+  closeDate: string | null = "2026-05-31";
+  /** Preferences reads fail. */
+  closeDateFails = false;
+  /** When QuickBooks created each deposit, by Id. */
+  createdAt = new Map<string, number>();
+  /** Runs inside a create, before QuickBooks answers. */
+  onCreate: (() => Promise<void>) | null = null;
   /** Keys whose create is refused while every other create succeeds. */
   rejectKeys = new Set<string>();
   private nextId = 1000;
@@ -45,7 +53,13 @@ class FakeQbo {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if ((init?.method ?? "GET") === "GET") {
       if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
+        if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
+      }
+      const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
+      if (since) {
+        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(0, Number(since[2]));
+        return json({ QueryResponse: list.length ? { Deposit: list } : {} });
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
       if (!m) throw new Error(`unexpected query ${url.search}`);
@@ -59,12 +73,15 @@ class FakeQbo {
     const Id = String(this.nextId++);
     const cents = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0);
     this.deposits.push({ Id, TxnDate: body.TxnDate, TotalAmt: cents / 100, DepositToAccountRef: body.DepositToAccountRef, PrivateNote: body.PrivateNote });
+    this.createdAt.set(Id, Date.now());
+    await this.onCreate?.();
     if (this.mode === "accept-then-drop") throw new Error("socket hang up");
     return json({ Deposit: { Id } });
   };
 
   hand(Id: string, TxnDate: string, cents: number, account = BANK) {
     this.deposits.push({ Id, TxnDate, TotalAmt: cents / 100, DepositToAccountRef: { value: account } });
+    this.createdAt.set(Id, Date.now());
   }
 }
 
@@ -74,6 +91,7 @@ let txns: Record<string, MirrorBalanceTxn[]>;
 let orderLines: MirrorOrderLine[];
 let owners: OwnerInfo[];
 let alerts: PostCapEvent[];
+let sweepAlerts: { orgId: string; since: Date }[];
 let bucketAlerts: BucketUnusableEvent[];
 let activeClasses: string[];
 
@@ -107,19 +125,23 @@ function bind(over: Partial<IncomeConfig> = {}) {
     bankAccountId: BANK,
     posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS, mirrorNewestWins: true },
     classes: { activeClassIds: async () => activeClasses },
-    alerts: { postCapReached: async (e) => void alerts.push(e), bucketUnusable: async (e) => void bucketAlerts.push(e) },
+    alerts: {
+      postCapReached: async (e) => void alerts.push(e),
+      bucketUnusable: async (e) => void bucketAlerts.push(e),
+      sweepIncomplete: async (e) => void sweepAlerts.push(e),
+    },
     ...over,
   });
 }
 
 const rowFor = (g: string) => db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } } });
 const drain = (now = NOW) => drainIncomeOutbox(ORG_A, now);
+const finance = { userId: 9 };
+const resolve = (g: string, req: Parameters<typeof reconciliationService.resolve>[2]) =>
+  rowFor(g).then((r) => reconciliationService.resolve(ORG_A, r.id, req, finance));
 
-/** A hand-booked payout matched in QuickBooks, which sets the takeover line at its date. */
-function handBooked(n: number, day: string, cents: number) {
-  payout(n, day, cents);
-  qbo.hand(`H${n}`, day, cents);
-}
+/** The first connected drain, before any payout: switches income posting on at ON_AT. */
+const switchOn = () => drain(ON_AT);
 
 beforeEach(async () => {
   await clearAll();
@@ -130,6 +152,7 @@ beforeEach(async () => {
   orderLines = [];
   owners = [];
   alerts = [];
+  sweepAlerts = [];
   bucketAlerts = [];
   activeClasses = ["700"];
   bind();
@@ -140,20 +163,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describeDb("drainIncomeOutbox — the takeover line", () => {
-  it("with no hand-booked match there is no line, and nothing is created", async () => {
+describeDb("drainIncomeOutbox — switch-on and the open period", () => {
+  it("the first connected drain reconciles, then switches on; a payout it already held goes to finance at once", async () => {
     const p = payout(2, "2026-06-28", 500);
-    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+    expect(await drain()).toMatchObject({ post: { posted: 0, queued: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null, reason: null });
     expect(qbo.posts).toHaveLength(0);
-    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null });
+    const { qbPostingOnAt } = await db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId: ORG_A } });
+    expect(qbPostingOnAt).toEqual(NOW);
+
+    await drain(new Date("2026-07-01T12:00:00Z"));
+    expect((await db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId: ORG_A } })).qbPostingOnAt).toEqual(NOW);
   });
 
-  it("creates the deposit for a payout after the line, keyed and dated inside its window", async () => {
-    handBooked(1, "2026-06-01", 970);
+  it("an open-period payout finance has booked by hand is matched, never sent to finance", async () => {
+    payout(2, "2026-06-28", 500);
+    qbo.hand("H2", "2026-06-28", 500);
+    expect(await drain()).toMatchObject({ reconcile: { matched: 1 }, post: { queued: 0 } });
+    expect(await rowFor(gid(2))).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "H2" });
+  });
+
+  it("a payout first seen after switch-on is created, keyed and dated inside its window", async () => {
+    await switchOn();
     const p = payout(2, "2026-06-28", 500);
 
-    expect(await drain()).toMatchObject({ reconcile: { matched: 1 }, post: { posted: 1 } });
-    expect(await rowFor(gid(1))).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "H1" });
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
     expect(qbo.posts).toHaveLength(1);
     const { key, body } = qbo.posts[0];
     expect(key).toBe(qbKey("income", p));
@@ -161,106 +195,263 @@ describeDb("drainIncomeOutbox — the takeover line", () => {
     expect(body).toMatchObject({ TxnDate: "2026-06-28", DepositToAccountRef: { value: BANK } });
     const row = await rowFor(p);
     expect(row).toMatchObject({
-      status: "POSTED", origin: "created", kind: null, depositTxnDate: "2026-06-28", depositTotalCents: 500,
+      status: "POSTED", origin: "created", kind: null, depositTxnDate: "2026-06-28", depositTotalCents: 500, postClaimedAt: null,
     });
+    expect(row.qbCreateAttemptedAt).not.toBeNull();
     expect(row.depositId).toBe(qbo.deposits.at(-1)?.Id);
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.posted" } })).toBe(1);
   });
 
-  it("never creates for a payout on or before the line; it waits, then opens NO_DEPOSIT", async () => {
-    handBooked(1, "2026-06-27", 970);
-    const p = payout(2, "2026-06-25", 500);
-
-    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
-
-    await drain(new Date("2026-07-03T12:00:00Z"));
-    expect(qbo.posts).toHaveLength(0);
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
-  });
-
-  it("a books closing date before the payout still lets it be created", async () => {
-    handBooked(1, "2026-06-01", 970);
-    const p = payout(2, "2026-06-28", 500);
-    qbo.closeDate = "2026-06-15";
-
+  it("a payout the mirror delivers weeks late is created, not timed out to finance", async () => {
+    await switchOn();
+    const p = payout(2, "2026-06-10", 500);
     expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED", depositTxnDate: "2026-06-10" });
+  });
+
+  it("finance books an open-period payout; it still matches first and is never capped", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 100 }, { userId: 9, isFinance: true, isBoard: false });
+    const p = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await resolve(p, { action: "book" })).toMatchObject({ status: "POSTED", origin: "created" });
     expect(qbo.posts).toHaveLength(1);
-    expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
+    expect(alerts).toHaveLength(0);
   });
 
-  it("re-reads the books closing date before the create; a payout it covers waits, never created", async () => {
-    handBooked(1, "2026-06-01", 970);
+  it("a pre-switch-on payout never counts against the caps", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 1000 }, { userId: 9, isFinance: true, isBoard: false });
+    const old = payout(2, "2026-06-26", 5000);
+    await drain(ON_AT);
+    const fresh = payout(3, "2026-06-28", 400);
+
+    expect(await drain()).toMatchObject({ post: { posted: 1, over_cap: 0, capped: null } });
+    expect(await rowFor(old)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
+    expect(await rowFor(fresh)).toMatchObject({ status: "POSTED" });
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("book is offered only on NO_DEPOSIT", async () => {
+    await switchOn();
     const p = payout(2, "2026-06-28", 500);
-    qbo.closeDate = "2026-06-30";
-
-    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
-    expect(qbo.posts).toHaveLength(0);
-    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
-  });
-
-  it("a create QuickBooks refuses as a closed period waits, never POST_FAILED", async () => {
-    handBooked(1, "2026-06-01", 970);
-    const p = payout(2, "2026-06-28", 500);
-    qbo.mode = "closed";
-
-    expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
-  });
-
-  it("an app-created deposit never moves the line; a hand-booked one does", async () => {
-    handBooked(1, "2026-06-01", 970);
-    payout(2, "2026-06-26", 500);
+    qbo.mode = "reject";
     await drain();
-    expect((await rowFor(gid(2))).status).toBe("POSTED");
-
-    // Between the hand line (06-01) and the app's own deposit (06-26): still after the line.
-    payout(3, "2026-06-24", 300);
-    await drain();
-    expect(await rowFor(gid(3))).toMatchObject({ status: "POSTED", origin: "created" });
-
-    // A newer hand booking moves the line to 06-29, so 06-28 is now too old.
-    handBooked(4, "2026-06-29", 444);
-    payout(5, "2026-06-28", 200);
-    await drain();
-    expect(await rowFor(gid(4))).toMatchObject({ status: "MATCHED", origin: "matched" });
-    expect(await rowFor(gid(5))).toMatchObject({ status: "WAITING" });
-    expect(qbo.posts).toHaveLength(2);
+    await expect(resolve(p, { action: "book" })).rejects.toMatchObject({ status: 409 });
   });
 });
 
-describeDb("drainIncomeOutbox — the line never steps back", () => {
-  it("a drifted hand match keeps its line, so no older payout becomes create-eligible", async () => {
-    handBooked(1, "2026-06-01", 970);
-    handBooked(4, "2026-06-29", 444);
-    await drain();
-    expect(await rowFor(gid(4))).toMatchObject({ status: "MATCHED", origin: "matched" });
-    expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-29");
+describeDb("drainIncomeOutbox — closed books", () => {
+  it("with no closing date, nothing dated before switch-on is created; it goes to finance as closed", async () => {
+    qbo.closeDate = null;
+    await switchOn();
+    const before = payout(2, "2026-06-29", 500);
+    const onDay = payout(3, "2026-06-30", 400);
 
-    qbo.deposits = qbo.deposits.filter((d) => d.Id !== "H4");
-    payout(5, "2026-06-28", 200);
+    expect(await drain()).toMatchObject({ post: { posted: 1, queued: 1 } });
+    expect(await rowFor(before)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+    expect(await rowFor(onDay)).toMatchObject({ status: "POSTED" });
+  });
+
+  it("a payout the closing date covers is never created, even by finance's book", async () => {
+    qbo.closeDate = "2026-06-28";
+    await switchOn();
+    const p = payout(2, "2026-06-28", 500);
+
     await drain();
-    expect(await rowFor(gid(4))).toMatchObject({ status: "OPEN", kind: "DRIFT", origin: null });
-    expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-29");
-    expect(await rowFor(gid(5))).toMatchObject({ status: "WAITING" });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+    expect(await resolve(p, { action: "book" })).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
     expect(qbo.posts).toHaveLength(0);
   });
 
-  it("a finance manual match of a hand deposit sets the line", async () => {
-    handBooked(1, "2026-06-01", 970);
+  it("a match in closed books is still allowed", async () => {
+    qbo.closeDate = "2026-06-29";
+    await switchOn();
+    payout(2, "2026-06-28", 500);
+    qbo.hand("H2", "2026-06-28", 500);
     await drain();
+    expect(await rowFor(gid(2))).toMatchObject({ status: "MATCHED", depositId: "H2" });
+  });
+
+  it("a create QuickBooks refuses as a closed period goes to finance as closed, never POST_FAILED", async () => {
+    await switchOn();
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "closed";
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, queued: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: CLOSED_NOTE });
+  });
+
+  it("an unreadable closing date creates nothing; matching still runs", async () => {
+    await switchOn();
+    const p = payout(2, "2026-06-28", 500);
+    payout(3, "2026-06-28", 300);
+    qbo.hand("H3", "2026-06-28", 300);
+    qbo.closeDateFails = true;
+
+    expect(await drain()).toMatchObject({ reconcile: { matched: 1 }, post: "unreadable" });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("book answers 503 when the closing date can't be read, and 409 with no closing date and no switch-on", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    await runReconcile(ORG_A, new Date("2026-07-10T12:00:00Z"));
+    expect(await rowFor(p)).toMatchObject({ kind: "NO_DEPOSIT" });
+
+    qbo.closeDateFails = true;
+    await expect(resolve(p, { action: "book" })).rejects.toMatchObject({ status: 503 });
+    qbo.closeDateFails = false;
+    qbo.closeDate = null;
+    await expect(resolve(p, { action: "book" })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("no books closing date") });
+    expect(qbo.posts).toHaveLength(0);
+  });
+});
+
+describeDb("postPayout — claim, lookup and settle", () => {
+  beforeEach(switchOn);
+
+  const claimAt = (g: string, at: Date) =>
+    db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } }, data: { postClaimedAt: at } });
+
+  it("a fresh claim keeps the drain and reconcile off the payout; a stale one is taken over", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    await runReconcile(ORG_A, NOW);
+    await claimAt(p, new Date());
+    qbo.hand("H2", "2026-06-28", 500);
+
+    expect(await drain()).toMatchObject({ reconcile: { matched: 0 }, post: { waiting: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+
+    await claimAt(p, new Date(Date.now() - 11 * 60_000));
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "MATCHED", depositId: "H2", postClaimedAt: null });
+  });
+
+  it("finance's match and dismiss refuse a payout being posted", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    await claimAt(p, new Date());
+    await expect(resolve(p, { action: "dismiss", reason: "dup" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a retry on an attempted payout finds its own deposit by key even after finance re-dated it", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED" });
+    const own = qbo.deposits.at(-1);
+    if (!own) throw new Error("no deposit");
+    own.TxnDate = "2026-08-15";
+    qbo.mode = "ok";
+
+    expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "POSTED", origin: "created", depositId: own.Id, depositTxnDate: "2026-08-15" });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("an own deposit another payout holds goes to finance with a note; nothing is created", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    const own = qbo.deposits.at(-1)?.Id;
+    const other = await db.payoutReconciliation.create({
+      data: { orgId: ORG_A, payoutGid: gid(3), payoutDate: "2026-06-20", payoutNetCents: 999, status: "RESOLVED", depositId: own },
+    });
+    qbo.mode = "ok";
+
+    expect(await resolve(p, { action: "retry" })).toMatchObject({
+      status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", reason: `app entry ${own} is held by payout ${other.id}`,
+    });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a full page of new deposits means the app may have booked it: finance's queue, nothing created", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
     await drain();
     qbo.mode = "ok";
-    qbo.hand("H2", "2026-06-29", 499);
-    await reconciliationService.matchToDeposit(ORG_A, (await rowFor(p)).id, "H2", { userId: 9 }, "bank fee taken");
-    expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-28");
+    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+
+    expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", reason: expect.stringContaining("may already have booked") });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a post that loses its claim after creating leaves finance a note to void the entry", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.onCreate = async () => void (await claimAt(p, new Date(Date.now() + 1000)));
+
+    expect(await drain()).toMatchObject({ post: { failed: 1, posted: 0 } });
+    const created = qbo.deposits.at(-1)?.Id;
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null, reason: `app entry ${created} may need voiding: its post lost the payout to another` });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.lost_claim" } })).toBe(1);
+  });
+
+  it("finance's dismiss on an attempted payout links the app's own deposit instead", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    const own = qbo.deposits.at(-1);
+    if (!own) throw new Error("no deposit");
+    own.TxnDate = "2026-08-15";
+    qbo.mode = "ok";
+
+    const row = await resolve(p, { action: "dismiss", reason: "booked elsewhere" });
+    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: own.Id, resolution: "AUTO", reason: expect.stringContaining("not applied") });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.dismissed" } })).toBe(0);
+  });
+
+  it("finance's match on an attempted payout answers 503 when the lookup can't read QuickBooks", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })));
+    await expect(resolve(p, { action: "match", depositId: "H9" })).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("dismiss on a payout never attempted needs no lookup", async () => {
+    const p = payout(2, "2026-06-10", 500);
+    await runReconcile(ORG_A, NOW);
+    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { status: "OPEN", kind: "NO_DEPOSIT" } });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })));
+    expect(await resolve(p, { action: "dismiss", reason: "refunded" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+  });
+});
+
+describeDb("runIncomeOrphanSweep", () => {
+  beforeEach(switchOn);
+
+  it("notes an app-keyed deposit its payout does not hold, once, and leaves linked ones alone", async () => {
+    const linked = payout(2, "2026-06-28", 500);
+    const stray = payout(3, "2026-06-28", 300);
+    await drain();
+    expect(await rowFor(linked)).toMatchObject({ status: "POSTED" });
+    const strayEntry = (await rowFor(stray)).depositId;
+    await db.payoutReconciliation.update({
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: stray } },
+      data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
+    });
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ status: "ran", read: 2, flagged: 1, full: false });
+    expect(await rowFor(stray)).toMatchObject({ reason: `app entry ${strayEntry} is not linked; void or link it` });
+    expect((await rowFor(linked)).reason).toBeNull();
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect(sweepAlerts).toHaveLength(0);
+  });
+
+  it("alerts finance when the read fills a page", async () => {
+    payout(2, "2026-06-28", 500);
+    await drain();
+    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
+    expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
+  });
+
+  it("reads nothing when no payout was attempted in the last 30 days", async () => {
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toEqual({ status: "ran", read: 0, flagged: 0, full: false });
   });
 });
 
 describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
-  beforeEach(() => handBooked(1, "2026-06-01", 970));
+  beforeEach(switchOn);
 
   it("found by amount (finance retry): a hand entry booked after a failed create links, nothing more is posted", async () => {
     const p = payout(2, "2026-06-28", 500);
@@ -293,7 +484,7 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.hand("OTHER", "2026-06-28", 500, "36");
 
-    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 1 });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 0 });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null });
     await drain();
     expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
@@ -376,10 +567,10 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(alerts).toHaveLength(0);
   });
 
-  it("never posts a WAITING payout older than its match window", async () => {
+  it("never posts a payout seen before switch-on once it is older than its match window", async () => {
     const p = payout(2, "2026-06-10", 500);
     await db.payoutReconciliation.create({
-      data: { orgId: ORG_A, payoutGid: p, payoutDate: "2026-06-10", payoutNetCents: 500, status: "WAITING" },
+      data: { orgId: ORG_A, payoutGid: p, payoutDate: "2026-06-10", payoutNetCents: 500, status: "WAITING", createdAt: new Date("2026-06-10T12:00:00Z") },
     });
     bind({ reconcileFrom: new Date("2026-06-20T00:00:00Z") });
     await drain();
@@ -404,7 +595,7 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
 });
 
 describeDb("drainIncomeOutbox — replay after a crash", () => {
-  beforeEach(() => handBooked(1, "2026-06-01", 970));
+  beforeEach(switchOn);
 
   it("QuickBooks accepted but the answer was lost: the next run finds it by key and posts nothing", async () => {
     const p = payout(2, "2026-06-28", 500);
@@ -443,12 +634,12 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
     // A fitting deposit that carries another payout's key goes to finance, never matched or created.
     expect(await rowFor(p3)).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, origin: null });
     expect(qbo.posts).toHaveLength(1);
-    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.matched" } })).toBe(1);
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.matched" } })).toBe(0);
   });
 });
 
 describeDb("drainIncomeOutbox — deposit lines", () => {
-  beforeEach(() => handBooked(1, "2026-06-01", 970));
+  beforeEach(switchOn);
 
   function orderPayout(n: number) {
     const g = payout(n, "2026-06-28", 0);
@@ -570,16 +761,17 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(bucketAlerts).toHaveLength(2);
   });
 
-  it("a held payout on or before a newer takeover line goes back to WAITING", async () => {
+  it("a held payout seen before switch-on stays held, then goes to finance once its items are decided", async () => {
+    await clearAll();
     const g = orderPayout(2);
-    await drain();
-    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING" });
+    expect(await drain()).toMatchObject({ post: { held: 1 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING" });
+    await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409 });
 
-    handBooked(4, "2026-06-29", 444);
-    await drain();
-    expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-29");
-    expect(await rowFor(g)).toMatchObject({ status: "WAITING", kind: null, reason: null });
-    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.released" } })).toBe(1);
+    await general();
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
+    await drain(new Date("2026-06-30T13:00:00Z"));
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", reason: null });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -617,7 +809,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   it("an alert send that fails is not retried: the bucket stays recorded", async () => {
     owners = [{ ...camp, quickBooksClassId: null }];
     let sends = 0;
-    bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); } } });
+    bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); }, sweepIncomplete: async () => {} } });
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
 
     await drain();
@@ -674,7 +866,7 @@ describeDb("item assignment", () => {
 });
 
 describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
-  beforeEach(() => handBooked(1, "2026-06-01", 970));
+  beforeEach(switchOn);
 
   it("a payout status revert raises DRIFT on a POSTED row, which is never rebooked", async () => {
     const p = payout(2, "2026-06-28", 500);
@@ -715,7 +907,7 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
   it("creates nothing while the finance alert is unbound", async () => {
     bind({ alerts: undefined });
     const p = payout(2, "2026-06-28", 500);
-    expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 1 }, post: "unbound" });
+    expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 0 }, post: "unbound" });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
     expect(qbo.posts).toHaveLength(0);
   });
@@ -730,7 +922,7 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
   it("without a posting binding the run only matches; payouts wait", async () => {
     bind({ posting: undefined });
     const p = payout(2, "2026-06-28", 500);
-    expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 1 }, post: "unbound" });
+    expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 0 }, post: "unbound" });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
     expect(qbo.posts).toHaveLength(0);
   });
@@ -761,18 +953,6 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
     expect(await rowFor(gid(2))).toMatchObject({ status: "POSTED" });
     expect(await rowFor(bad)).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
     expect(await rowFor(gid(4))).toMatchObject({ status: "POSTED" });
-  });
-
-  it("a payout on or before the line never counts against the caps", async () => {
-    handBooked(5, "2026-06-27", 444);
-    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 1000 }, { userId: 9, isFinance: true, isBoard: false });
-    const old = payout(2, "2026-06-26", 5000);
-    const fresh = payout(3, "2026-06-28", 400);
-
-    expect(await drain()).toMatchObject({ post: { posted: 1, over_cap: 0, capped: null } });
-    expect(await rowFor(old)).toMatchObject({ status: "WAITING" });
-    expect(await rowFor(fresh)).toMatchObject({ status: "POSTED" });
-    expect(alerts).toHaveLength(0);
   });
 });
 
