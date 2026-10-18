@@ -5,7 +5,7 @@
    "**/prisma/migrations/**",
    "**/schema.prisma"
   ],
-  "instructions": "Read checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md. Old tasks keep running during the deploy drain, so: new columns are nullable or defaulted; no rename or drop of anything the released code still reads (check the latest release tag, not main); no backfill in the same deploy; every new migration.sql is wrapped in BEGIN; ... COMMIT; unless it carries a '-- no-transaction: <reason>' line. Enum value removal must remap rows first."
+  "instructions": "Read docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md. Old tasks keep running during the deploy drain, so: new columns are nullable or defaulted; no rename or drop of anything the released code still reads (check the latest release tag, not main); no backfill in the same deploy; every new migration.sql is wrapped in BEGIN; ... COMMIT; unless it carries a '-- no-transaction: <reason>' line. Enum value removal must remap rows first."
  },
  {
   "name": "security-boundary",

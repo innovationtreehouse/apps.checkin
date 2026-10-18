@@ -4,7 +4,7 @@
 **Supersedes:** Audit item **P2-3** (naming confusion around "session"/"program"/"event")
 **Scope:** `checkin-app` (schema + security + UI + data migration)
 **Progress:** P1 (table + backfill, no readers) merged in September 2026 (issue #1361). P2–P5 remain. The `ProgramInstance` table stays; it is not to be dropped.
-**Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
+**Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
 
 **Naming.** This doc says **program leader** for the person who runs a program, matching the rules register (`docs/rules/programs.md`). The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
 

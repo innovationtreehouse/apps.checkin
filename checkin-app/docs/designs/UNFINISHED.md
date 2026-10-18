@@ -2,7 +2,7 @@
 
 Open decisions, deferred fixes, and not-yet-built items surfaced during the
 2026-07-02 vocabulary sweep. Decided terms are recorded in
-[../VOCABULARY.md](../VOCABULARY.md); this doc holds what's left to *act on*. Add
+[../VOCABULARY.md](../../../docs/VOCABULARY.md); this doc holds what's left to *act on*. Add
 sections freely — we'll find more. Nothing here is implemented; investigation only.
 (Audited against `main` 2026-08-08: everything below is still open. Items that
 resolved have been moved to *Considered and dismissed*.)
@@ -44,7 +44,7 @@ privileged-"staff" onto it. (4) audit every call site for over/under-grant.
 ## 🟢 Background-check verbs (decided)
 
 **✅ A reviewer *reviews*, *attests*, and two attestations *clear* the check**
-([../VOCABULARY.md](../VOCABULARY.md) › Background check). Four copy/identifier
+([../VOCABULARY.md](../../../docs/VOCABULARY.md) › Background check). Four copy/identifier
 renames, all ops-facing or internal — no schema, no `src/security/`:
 - The reviewer queue asserts the report's content rather than the reviewer's
   judgement: "check is clean" on the row button, in the modal title, confirm label
@@ -294,7 +294,7 @@ here rather than graduating.
 - **`household` vs `family` — split kept, decided.** Code is `Household`; "family"
   is allowed as warm user copy, and `TrustedAdult.familyContext` is a distinct
   *attribute* (the board-facing explanation), not a stale alias — both recorded in
-  [VOCABULARY.md](../VOCABULARY.md). The unify option (`familyContext` →
+  [VOCABULARY.md](../../../docs/VOCABULARY.md). The unify option (`familyContext` →
   `householdContext`, `memberFamilies` → `memberHouseholds`) is **not** being taken.
   _(was proposal Phase 5)_
 - **`student` / `youth` == non-lead** — checked, **NOT** a logic conflation. It

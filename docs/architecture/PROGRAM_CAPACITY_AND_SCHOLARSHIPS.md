@@ -4,7 +4,7 @@
 PENDING) and #931 (`34a92fb7`, org-member snapshot at approval) on top.
 **Product decisions:** 2026-07-06 (single-pool capacity, hold-ledger scholarship lifecycle).
 **Statechart:** the enrollment trunk + scholarship parallel region are formalized as one
-declarative machine — see `generated/lifecycle/enrollment.md`. This doc (§1–4) is the Shopify/capacity
+declarative machine — see `docs/generated/lifecycle/enrollment.md`. This doc (§1–4) is the Shopify/capacity
 mechanics it builds on.
 
 ## 1. Shopify is the source of truth for program capacity
@@ -284,5 +284,5 @@ remove or reach out. Nothing sends when both lists are empty.
 
 - `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
   that per-checkout discount codes stand in for until checkout identity is solved.
-- `docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
+- `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
   convention this design's legacy-variant transition follows.

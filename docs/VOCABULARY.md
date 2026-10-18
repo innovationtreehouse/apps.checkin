@@ -10,7 +10,7 @@ screen. That is not a collision to "fix"; it is the model working as intended.
 Terms are **product-owner decided**. Where the code hasn't caught up yet an entry
 is marked *(rename pending)*; open follow-ups are tracked under issue #1322.
 How to apply these words in code is in
-[../../docs/conventions.md](../../docs/conventions.md).
+[conventions.md](conventions.md).
 
 ## The core rule
 
@@ -67,7 +67,7 @@ Program roles (all Treehouse Volunteers):
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
-| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](../../docs/rules/programs.md), Assumptions) |
+| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](rules/programs.md), Assumptions) |
 | **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
@@ -97,7 +97,7 @@ Rules:
 - **Canonical top label = "Tool Certifier"** *(retire "Shop Certifier")*.
 - **`instructor` is tool-only** — "program instructor" is banned.
 - **Enum rank ≠ declaration order** — real rank is `BASIC < CERTIFIED < DOF < INSTRUCTOR < MAY_CERTIFY_OTHERS`; make it explicit in the enum *(pending)*.
-- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools. The rules are in [../../docs/rules/tools-certification.md](../../docs/rules/tools-certification.md).
+- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools. The rules are in [../../docs/rules/tools-certification.md](rules/tools-certification.md).
 
 ## Money
 
@@ -139,7 +139,7 @@ Rules:
    never "approve" for the act, never "attest" for the outcome.
 2. **Never "clean," never "passed."** The app never holds the report or its
    result, only that a reviewer read it and what they judged
-   ([../../docs/rules/membership.md](../../docs/rules/membership.md), Procedure ›
+   ([../../docs/rules/membership.md](rules/membership.md), Procedure ›
    Application and review). Both words state an outcome of the report; "I approve
    this person" states the judgement, which is what is stored. Policy's own
    outcome vocabulary is approval, restriction, or denial — a pass/fail framing
@@ -173,7 +173,7 @@ One activity, a pipeline of distinct stages — name each; keep the scoped verbs
 ## Supervision terms (safety vocabulary)
 
 - **Tripod** — the presence of **3 Members, each ≥ 9 years old**, in an area that is **Observable and Interruptible**; lets a Certified (Green) work solo. *(policy term; not modeled in code)*
-- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets — see [../../docs/rules/attendance-checkin.md](../../docs/rules/attendance-checkin.md), Procedure › Supervision)*
+- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets — see [../../docs/rules/attendance-checkin.md](rules/attendance-checkin.md), Procedure › Supervision)*
 - **Observable and Interruptible** — no locked doors; another adult can see or hear and could enter. *(not modeled)*
 - **"dedicated" (DOF/Instructor)** — "actively watching you use the tool" (not wandering). **Not software-enforceable — ignore in code.**
 
@@ -226,5 +226,5 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 ## Reference terms
 
-- **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](../../docs/rules/membership.md).
+- **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](rules/membership.md).
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).

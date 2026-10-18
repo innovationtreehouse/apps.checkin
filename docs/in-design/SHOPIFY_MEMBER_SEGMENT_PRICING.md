@@ -4,7 +4,7 @@
 exists (`shopify.ts` creates only Products/Variants and consumes `orders/paid`).
 The **interim** mechanism shipped instead (#930): single-pool capacity +
 per-enrollee server-minted single-use discount codes (`createShopifySingleVariantProgram`,
-`mintMemberDiscountCode`; see `checkin-app/docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
+`mintMemberDiscountCode`; see `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
 which is exactly option (d) below, the narrow stopgap. Segment-gated automatic
 discounts remain the intended **end-state**. The current wiring (one variant per
 program at the non-member price, `buildMembershipCheckoutUrl`, the #739

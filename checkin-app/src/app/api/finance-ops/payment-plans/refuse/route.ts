@@ -15,7 +15,7 @@ import { fromWhere } from "@/lib/programs/enrollmentState";
 // (that let the seat re-sell out from under a denied-but-not-withdrawn
 // applicant). The hold is released, exactly once, by whichever of withdrawal /
 // normal payment / grace-period expiry fires first (see
-// docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md).
+// docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md).
 export const POST = withAuth(
     { roles: ['isBoardMember'] },
     async (req, auth) => {

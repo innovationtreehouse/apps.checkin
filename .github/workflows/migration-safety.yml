@@ -21,7 +21,7 @@ name: Migration safety (populated DB)
 # migrations/prisma/schema.prisma, so there's nothing new to verify.
 #
 # Coalesce PRs (checkin-app/scripts/coalesce-migrations.ts — see
-# checkin-app/docs/MIGRATION_COALESCE_FLOW.md) are a special case the normal
+# docs/ops/MIGRATION_COALESCE_FLOW.md) are a special case the normal
 # "replay new migrations on the populated base DB" check CANNOT run: a
 # coalesce PR deletes the whole migration chain it replaces, so there is
 # nothing to replay on top of a base DB that already has that chain applied.
@@ -248,7 +248,7 @@ jobs:
           BASELINE="${{ steps.base.outputs.baseline }}"
           FILE="checkin-app/prisma/migrations/$BASELINE/reconcile.sql"
           if [ ! -f "$FILE" ]; then
-            echo "::error::Coalesce PR is missing $FILE — already-migrated environments (dev, prod) need this to reconcile their _prisma_migrations ledger to the new baseline. See checkin-app/docs/MIGRATION_COALESCE_FLOW.md."
+            echo "::error::Coalesce PR is missing $FILE — already-migrated environments (dev, prod) need this to reconcile their _prisma_migrations ledger to the new baseline. See docs/ops/MIGRATION_COALESCE_FLOW.md."
             exit 1
           fi
           echo "Found $FILE"

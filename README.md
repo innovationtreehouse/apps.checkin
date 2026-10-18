@@ -43,7 +43,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 
 - **[AGENTS.md](AGENTS.md)** — orientation for contributors and agents: test commands, repo conventions, editing rules.
 - **[CONSTITUTION.md](CONSTITUTION.md)** — purpose and core principles (security, privacy, auditability); what must never be weakened.
-- **[Canonical Vocabulary](checkin-app/docs/VOCABULARY.md)** — what every domain word means (people, roles, money, tools, attendance).
+- **[Canonical Vocabulary](docs/VOCABULARY.md)** — what every domain word means (people, roles, money, tools, attendance).
 - **[Domain rules](docs/rules/)** — the register of board and operations decisions, one file per domain; read the relevant file before changing behaviour in that domain. How the corpus is organised and retired: **[Documentation Standard](docs/DOCUMENTATION_STANDARD.md)**.
 - **[Critical User Journeys](docs/backlog/CUJS.md)** — every user-facing flow, per step, tagged with what exists and what does not.
 - **[Backlog](docs/backlog/INDEX.md)** — open work by area, from features to architecture clean-up; design work in progress lives in [`docs/in-design/`](docs/in-design/).
@@ -51,8 +51,8 @@ variables go in `checkin-app/.env` — the setup guides list them.
 ### Deployment & operations
 
 - **[Production Launch Runbook](docs/designs/PRODUCTION_PLAN.md)** — the ordered checklist behind ops.innovationtreehouse.org.
-- **[Deploy / Migration Order of Operations](checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md)** — why migrations run before rollout and what that implies for schema changes.
-- **[Migration Coalesce Flow](checkin-app/docs/MIGRATION_COALESCE_FLOW.md)** — a release may apply at most **one** new migration; how to coalesce accumulated migrations ([`checkin-app/scripts/coalesce-migrations.ts`](checkin-app/scripts/coalesce-migrations.ts)).
+- **[Deploy / Migration Order of Operations](docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md)** — why migrations run before rollout and what that implies for schema changes.
+- **[Migration Coalesce Flow](docs/ops/MIGRATION_COALESCE_FLOW.md)** — a release may apply at most **one** new migration; how to coalesce accumulated migrations ([`checkin-app/scripts/coalesce-migrations.ts`](checkin-app/scripts/coalesce-migrations.ts)).
 - **[`.github/workflows/`](.github/workflows/)** — [`ci.yml`](.github/workflows/ci.yml) (lint, tests, build — also reused to revalidate release tags), [`deploy-dev.yml`](.github/workflows/deploy-dev.yml) (merge to main → dev), [`deploy-prod.yml`](.github/workflows/deploy-prod.yml) (published `v*` release → prod, human-approved), [`migration-safety.yml`](.github/workflows/migration-safety.yml) (new migrations must apply to a *populated* DB), [`flow-tests.yml`](.github/workflows/flow-tests.yml), [`shopify-live.yml`](.github/workflows/shopify-live.yml), [`security-boundary-isolation.yml`](.github/workflows/security-boundary-isolation.yml).
 
 ### Security
@@ -63,7 +63,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 ### Money & Shopify
 
 - **[s-read-function/README.md](s-read-function/README.md)** — the Shopify → Postgres ingestion pipeline; [DEPLOY.md](s-read-function/DEPLOY.md) for rollout, [FUTUREWORK.md](s-read-function/FUTUREWORK.md) for the backlog.
-- **[Program Capacity & Scholarships](checkin-app/docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md)** — capacity as single-pool Shopify inventory and the scholarship hold-ledger lifecycle.
+- **[Program Capacity & Scholarships](docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md)** — capacity as single-pool Shopify inventory and the scholarship hold-ledger lifecycle.
 
 ### Testing
 

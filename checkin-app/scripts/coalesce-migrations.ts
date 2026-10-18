@@ -7,7 +7,7 @@ import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "
 
 /**
  * Coalesces the accumulated migrations on main into a single baseline
- * migration, ahead of a release — see checkin-app/docs/MIGRATION_COALESCE_FLOW.md
+ * migration, ahead of a release — see docs/ops/MIGRATION_COALESCE_FLOW.md
  * for the policy this implements (migrations accumulate between releases;
  * they're usually coalesced via this script before a release; how many
  * migrations a release actually carries is a manual per-release call — no
@@ -198,7 +198,7 @@ function renderReconcileSql(baselineName: string, checksumHex: string): string {
 -- applied, instead of \`prisma migrate deploy\` trying (and failing) to
 -- replay the squashed history this migration replaced.
 --
--- See checkin-app/docs/MIGRATION_COALESCE_FLOW.md for the ECS one-off
+-- See docs/ops/MIGRATION_COALESCE_FLOW.md for the ECS one-off
 -- command to run this against dev/prod. Safe to re-run (idempotent DELETE).
 BEGIN;
 DELETE FROM "_prisma_migrations";
@@ -221,7 +221,7 @@ prod) needs that file applied to its _prisma_migrations ledger BEFORE its
 next \`prisma migrate deploy\` — otherwise that deploy looks for migrations
 that no longer exist in the repo and fails.
 
-Two honest paths (full commands in checkin-app/docs/MIGRATION_COALESCE_FLOW.md):
+Two honest paths (full commands in docs/ops/MIGRATION_COALESCE_FLOW.md):
   1. Preemptive: dev auto-deploys on every merge to main — run the ECS
      one-off reconcile task in the merge -> deploy window, before the
      automatic migrate step gets there.
