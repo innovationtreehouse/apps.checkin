@@ -3,6 +3,7 @@ import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { specTrace } from "@/lib/specTrace";
 
 /**
  * Finds all program IDs that a participant is associated with
@@ -124,6 +125,7 @@ export async function processVisitCheckout(
         });
         if (count === 0) return [];
         invalidateAttendanceCache();
+        specTrace("VisitDepart", { p: participantId, visitId, via: source, t: departure.getTime(), closeId: facilityCloseId });
         return [await db.visit.findUniqueOrThrow({ where: { id: visitId } })];
     };
 
@@ -156,6 +158,7 @@ export async function processVisitCheckout(
         // First, delete the original open visit
         const { count } = await tx.visit.deleteMany({ where: { id: visitId, departedAt: null, ...LIVE_VISIT } });
         if (count === 0) return [];
+        specTrace("VisitDepart", { p: participantId, visitId, via: source, t: departure.getTime(), closeId: facilityCloseId, chunked: true });
 
         const createdVisits = [];
         let currentIterStart = arrivedAt;
