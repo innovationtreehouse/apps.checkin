@@ -6,7 +6,6 @@
  */
 import { db as defaultDb } from "./db";
 import type { PrismaClient } from "./generated/prisma/client";
-import { ServiceError } from "./services/categoryService";
 import type { CatalogRuntimeConfig, CatalogPrincipal, OrgEventConsumer, OrgIdentity } from "./contract";
 
 // Stored on globalThis, not a module-scoped `let` — the same singleton pattern
@@ -61,33 +60,4 @@ export function getOrg(): Promise<OrgIdentity> {
  */
 export function getDb(): PrismaClient {
   return defaultDb;
-}
-
-/**
- * An HTTP-status error thrown by a route factory. The host translates it into
- * its own API error at the route boundary; the library never imports the
- * host's error class.
- */
-export class CatalogHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CatalogHttpError";
-  }
-}
-
-export function catalogError(status: number, message: string): CatalogHttpError {
-  return new CatalogHttpError(status, message);
-}
-
-/** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */
-export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof ServiceError) throw catalogError(err.status, err.message);
-    throw err;
-  }
 }

@@ -1,39 +1,19 @@
 /**
  * Glue between checkin's handler() and the receipt library's services (#1265 §6). The routes
  * gate; the library narrows rows by `Access`, filters a submitter by the principal's id, and
- * throws ServiceError for every expected failure.
+ * throws ServiceError for every expected failure, which componentRoute renders.
  */
 import { recordReceiptDonorReads } from "@checkin/bulk-donation";
 import type { Access } from "@checkin/receipt";
 import { readCapped } from "@checkin/utils";
+import { componentRoute } from "@/lib/components/route";
 import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
 import type { Role } from "@/security/core";
 import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
 
-/**
- * Brand check, not `instanceof`: the instrumentation chunk that configures the library and
- * this route's chunk load separate copies of it, so the class identity differs.
- */
-function serviceStatus(err: unknown): number | null {
-  if (!(err instanceof Error) || err.name !== "ServiceError") return null;
-  const status = "statusCode" in err ? err.statusCode : undefined;
-  return typeof status === "number" && Number.isInteger(status) ? status : null;
-}
-
-/** Runs a library call, turning its ServiceError into checkin's API error. */
-export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    const status = serviceStatus(err);
-    if (status !== null && err instanceof Error) throw new ApiResponseError(status, err.message);
-    throw err;
-  }
-}
-
 export function receiptRoute<P extends Record<string, string>>(fn: HandlerFn<P>): HandlerFn<P> {
   return async (ctx) => {
-    const bag = await mapServiceErrors(() => fn(ctx));
+    const bag = await componentRoute(fn)(ctx);
     await auditDonorReads(ctx, bag);
     return bag;
   };

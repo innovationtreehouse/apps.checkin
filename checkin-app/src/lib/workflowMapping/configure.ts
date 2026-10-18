@@ -17,27 +17,6 @@ import { catalogReader } from "@/lib/catalog/reader";
 import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
-const HTTP_ERROR_NAME = "WorkflowMappingHttpError";
-
-/** The library's HTTP error; the route wrapper translates it into handler()'s ApiResponseError. */
-export class WorkflowMappingHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = HTTP_ERROR_NAME;
-  }
-}
-
-/**
- * Checked by name, not `instanceof`: the error is built by the configure call in
- * the instrumentation bundle, while routes load their own copy of this module.
- */
-export function isWorkflowMappingHttpError(err: unknown): err is WorkflowMappingHttpError {
-  return err instanceof Error && err.name === HTTP_ERROR_NAME && typeof (err as { status?: unknown }).status === "number";
-}
-
 /**
  * X5: the intake parses the receipt, asserts the org and dedupes on
  * receiptId itself; its errors propagate so the money leg lands in apply_failed.
@@ -52,7 +31,6 @@ export function configureRuntime(): void {
   configureWorkflowMapping({
     auth: { getPrincipal },
     org: getOrg,
-    httpError: (status, message) => new WorkflowMappingHttpError(status, message),
     catalogReader,
     catalogSubmissions: createCatalogSubmissions(getOrg),
     inventorySink: createLocalInventorySink(getOrg),

@@ -9,7 +9,7 @@ import { actorOf } from "../lib/caller";
 import { lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /** A reimbursement matches a Bill; every other line matches a Purchase. */
 export type QbMatchEntity = "Bill" | "Purchase";

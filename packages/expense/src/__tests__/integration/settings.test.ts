@@ -14,7 +14,7 @@ describe("updateExpenseSettings — guards", () => {
   });
 
   it("only FINANCE or the board edits", async () => {
-    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ status: 403 });
   });
 
   it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalEquipmentUnitCents: 1.5 }, { bogus: 1 }])(

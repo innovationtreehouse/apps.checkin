@@ -4,14 +4,15 @@
 import { receiptService } from "@checkin/receipt";
 import { FILE_CONTENT_TYPES, type FileContentType } from "@/security/core";
 import { fileHandler } from "@/security/fileHandler";
-import { accessOf, mapServiceErrors } from "@/lib/receipt/route";
+import { componentRoute } from "@/lib/components/route";
+import { accessOf } from "@/lib/receipt/route";
 
 function isFileContentType(type: string): type is FileContentType {
   return (FILE_CONTENT_TYPES as readonly string[]).includes(type);
 }
 
-export const GET = fileHandler<{ id: string }>("GET /api/receipts/[id]/file", async ({ params, role }) => {
-  const file = await mapServiceErrors(() => receiptService.getFile(params.id, accessOf(role)));
+export const GET = fileHandler<{ id: string }>("GET /api/receipts/[id]/file", componentRoute(async ({ params, role }) => {
+  const file = await receiptService.getFile(params.id, accessOf(role));
   // Upload's magic-byte check admits only allowlisted types; anything else is a stored-data bug.
   if (!isFileContentType(file.mimeType)) throw new Error(`receipt ${params.id} has unservable type ${file.mimeType}`);
   return {
@@ -19,4 +20,4 @@ export const GET = fileHandler<{ id: string }>("GET /api/receipts/[id]/file", as
     contentType: file.mimeType,
     filename: file.mimeType === "text/plain" ? `receipt-${params.id}.txt` : undefined,
   };
-});
+}));

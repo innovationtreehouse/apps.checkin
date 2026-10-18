@@ -5,7 +5,8 @@ import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schem
 
 const challengeRepo = createConversionChallengeRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
-import { ServiceError, reviewTransitionError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
 import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 

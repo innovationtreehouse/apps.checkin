@@ -13,7 +13,7 @@ import { createProvisionalItemMapRepository } from "../repositories/provisionalI
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export async function receiveCompletedReceipt(
   raw: unknown,

@@ -9,7 +9,7 @@ import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBu
 import { lockExpense, voidSignoffs } from "../lib/signoff-facts";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 const expenseRepo = createExpenseRepository(db);
 

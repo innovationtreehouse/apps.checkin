@@ -18,7 +18,7 @@ vi.mock("../../runtime", async (importOriginal) => ({
 
 import { upload } from "../../routes/uploads";
 import { uploadedFileService } from "../../services/uploadedFileService";
-import { ServiceError } from "../../services/serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { BenevityRow } from "../../lib/csv-parser";
 
 const MB = 1024 * 1024;
@@ -105,14 +105,14 @@ describe("processUpload unique collisions", () => {
   it("answers a transaction repeated within one file with a 400 naming it", async () => {
     const p = uploadedFileService.processUpload("org-1", 1, "u", "f.csv", Buffer.from("x"), [row("T1"), row("T1")], null);
     await expect(p).rejects.toBeInstanceOf(ServiceError);
-    await expect(p).rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining("T1") });
+    await expect(p).rejects.toMatchObject({ status: 400, message: expect.stringContaining("T1") });
     expect(transaction).not.toHaveBeenCalled();
   });
 
   it("answers a concurrent upload's P2002 with a 409", async () => {
     transaction.mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
     const p = uploadedFileService.processUpload("org-1", 1, "u", "f.csv", Buffer.from("x"), [row("T1")], null);
-    await expect(p).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/already being uploaded/) });
+    await expect(p).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already being uploaded/) });
   });
 
   it("passes any other database error through", async () => {

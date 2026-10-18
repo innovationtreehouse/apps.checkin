@@ -445,7 +445,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     await db.expenseLineItem.update({ where: { id: line }, data: { manualQbAccount: null } });
 
-    await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({ status: 409 });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
@@ -719,7 +719,7 @@ describeDb("QB-2 posting — a line's account after posting", () => {
     await db.expense.update({ where: { id }, data: { qbMatchState } });
 
     await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
       message: "already posted to QuickBooks; correct it there",
     });
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBeNull();

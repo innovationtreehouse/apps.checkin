@@ -9,15 +9,6 @@ export const OTHER_ORG_ID = "00000000-0000-0000-0000-000000000099";
 export const TEST_ORG_NAME = "Test Org";
 export const MANAGER: WorkflowPrincipal = { id: 7, name: "manager" };
 
-export class TestHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
 /** Records what reaches each push target; succeeds unless told to fail. */
 export function recordingSinks() {
   const calls = {
@@ -58,7 +49,6 @@ export function configure(
   configureWorkflowMapping({
     auth: { getPrincipal: async () => principal },
     org: async () => ({ id: TEST_ORG_ID, name: TEST_ORG_NAME }),
-    httpError: (status, message) => new TestHttpError(status, message),
     ...rest,
   });
 }

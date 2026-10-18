@@ -2,7 +2,7 @@
 // takes the board. Every change is written to the audit log with its before and after.
 import { db } from "../db";
 import { recordAudit, type TxClient } from "../lib/audit";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { Actor } from "./reconciliationService";
 
 export interface IncomeSettings {

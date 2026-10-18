@@ -1,15 +1,9 @@
+import { ServiceError } from "@checkin/component-kit";
 import { WorkflowTransitionError } from "@checkin/workflows";
 import { db } from "../db";
 import { createCatalogRepository } from "../repositories/catalog";
 
 const catalogRepo = createCatalogRepository(db);
-
-export class ServiceError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-    this.name = "ServiceError";
-  }
-}
 
 /**
  * Maps a refused review transition to a ServiceError. A refusal from an already

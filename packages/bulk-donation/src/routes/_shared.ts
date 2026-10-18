@@ -1,29 +1,7 @@
-/**
- * Parse helpers for the route factories. Failures throw a host-rendered HTTP
- * error (runtime.donationError), so the library never touches NextResponse.
- */
-import type { ZodType } from "zod";
+/** Audit and paging helpers for the route factories. */
 import type { AuditContext } from "../workflows/disbursement.actor";
 import type { DonorReadContext } from "../repositories/audit";
-import { donationError, getPrincipal } from "../runtime";
-
-export function parseId(raw: string | undefined, label = "id"): number {
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) throw donationError(400, `Invalid ${label}`);
-  return n;
-}
-
-export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    throw donationError(400, "Invalid JSON body");
-  }
-  const result = schema.safeParse(raw);
-  if (!result.success) throw donationError(400, result.error.issues[0]?.message ?? "Invalid request body");
-  return result.data;
-}
+import { getPrincipal } from "../runtime";
 
 /** A caller's correlation id is kept only when it is a short token; anything else gets a fresh UUID. */
 const CORRELATION_ID = /^[A-Za-z0-9._:-]{1,64}$/;

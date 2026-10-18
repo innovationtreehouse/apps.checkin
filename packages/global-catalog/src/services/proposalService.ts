@@ -6,7 +6,8 @@ import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/s
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
-import { ServiceError, reviewTransitionError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";

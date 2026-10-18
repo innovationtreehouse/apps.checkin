@@ -1,8 +1,9 @@
+import { httpError } from "@checkin/component-kit";
 import { db } from "../db";
 import { EDITABLE_RECEIPT_STATES, EDITABLE_RECEIPT_WHERE, type ReceivedReceipt, type ReceivedReceiptLineStatusRow } from "../db/schema";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrg, httpError, type Actor } from "../runtime";
+import { getOrg, type Actor } from "../runtime";
 
 /** The org's receipt by id, or 404. */
 export async function loadReceipt(receiptId: number): Promise<ReceivedReceipt> {

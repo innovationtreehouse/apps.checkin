@@ -152,8 +152,6 @@ export interface WorkflowRuntimeConfig {
   auth: WorkflowAuth;
   /** Async accessor resolved per call, never at boot: the host may read it from its own store. */
   org: () => Promise<OrgIdentity>;
-  /** Builds the host's HTTP error; the library throws what it returns. */
-  httpError: (status: number, message: string) => Error;
   catalogReader?: CatalogReader;
   catalogSubmissions?: CatalogSubmissions;
   expenseSink?: ExpenseSink;

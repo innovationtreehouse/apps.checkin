@@ -1,7 +1,7 @@
 // Re-export stub (#1272): mounts an expense route factory under /api/expense/* through
 // checkin's handler(). The endpoint string MUST match its src/security/registry/expense.ts entry.
 import { handler } from "@/security/handler";
-import { expenseRoute } from "@/lib/expense/route";
+import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/expense";
 
-export const POST = handler("POST /api/expense/flags/[id]/check-off", expenseRoute(routes.finance.checkOff));
+export const POST = handler("POST /api/expense/flags/[id]/check-off", componentRoute(routes.finance.checkOff));

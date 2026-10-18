@@ -6,7 +6,7 @@ import { InKindDonorSchema, inventorySourceKey } from "../contract";
 import { getCatalogLookup, getInventoryApply } from "../runtime";
 import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export const MAX_IN_KIND_LINE_QUANTITY = 100_000;
 export const MAX_IN_KIND_LINE_VALUE_CENTS = 100_000_000;

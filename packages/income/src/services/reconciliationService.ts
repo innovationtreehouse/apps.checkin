@@ -19,7 +19,7 @@ import {
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
 import { incomeTakeoverLine, isPostable, postPayout } from "../lib/outbox";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export interface Actor {
   userId: number;

@@ -32,12 +32,6 @@ const runTag = `${process.env.TEST_RUN_ID ?? process.pid}_${process.env.JEST_WOR
 const DBS = { wm: `wm_x4_${runTag}`, li: `li_x4_${runTag}` };
 const base = process.env.TEST_BASE_URL ?? process.env.DATABASE_URL ?? '';
 
-class TestHttpError extends Error {
-    constructor(public readonly status: number, message: string) {
-        super(message);
-    }
-}
-
 function prismaBin(): string {
     const req = createRequire(resolve(__dirname, '../../../../package.json'));
     const pkg = req('prisma/package.json') as { bin: string | Record<string, string> };
@@ -84,7 +78,6 @@ beforeAll(async () => {
     configureWorkflowMapping({
         auth: { getPrincipal: async () => ({ id: 1, name: 'Manager' }) },
         org: async () => ORG,
-        httpError: (status, message) => new TestHttpError(status, message),
         // The expense leg (X5) is a stand-in, so each test chooses whether the money side lands.
         expenseSink: {
             pushReceipt: async () => {

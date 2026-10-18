@@ -28,6 +28,7 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@checkin/component-kit": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",

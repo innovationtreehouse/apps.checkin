@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@checkin/money": "*",
+    "@checkin/component-kit": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@prisma/adapter-pg": "^7.8.0",

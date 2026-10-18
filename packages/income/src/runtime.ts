@@ -9,7 +9,6 @@ import type {
   QbDepositSource,
 } from "./contract";
 import type { DepositAccount } from "./lib/deposit-lines";
-import { ServiceError } from "./services/serviceError";
 
 /** QuickBooks account ids a created deposit's lines book to. */
 export type IncomeQbAccounts = Record<DepositAccount, string>;
@@ -88,27 +87,6 @@ export async function getOrgId(): Promise<string> {
   const org = getIncomeConfig().org;
   if (!org) throw new Error("income runtime not configured: the host must pass org to configureIncome()");
   return (await org()).id;
-}
-
-/** An HTTP-status error thrown by a route factory; the host renders it at the route boundary. */
-export class IncomeHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "IncomeHttpError";
-  }
-}
-
-/** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */
-export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof ServiceError) throw new IncomeHttpError(err.statusCode, err.message);
-    throw err;
-  }
 }
 
 /** YYYY-MM-DD in UTC, the format CSV payout dates and QB txnDates use. */

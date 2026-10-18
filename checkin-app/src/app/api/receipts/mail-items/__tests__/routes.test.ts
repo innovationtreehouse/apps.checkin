@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import type { NextRequest as NextRequestType } from "next/server";
+import { ServiceError } from "@checkin/component-kit";
 import { getServerSession } from "next-auth/next";
 import { mailQueueService } from "@checkin/receipt";
 import { GET as list } from "../route";
@@ -18,8 +19,7 @@ const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 const service = jest.mocked(mailQueueService);
 
-/** A ServiceError as the library throws it (matched by name and status). */
-const serviceError = (statusCode: number, message: string) => Object.assign(new Error(message), { name: "ServiceError", statusCode });
+const serviceError = (status: number, message: string) => new ServiceError(status, message);
 
 function signIn(flags: Record<string, boolean | string> = {}) {
   mockSession.mockResolvedValue({

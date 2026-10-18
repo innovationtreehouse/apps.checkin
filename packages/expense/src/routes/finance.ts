@@ -3,6 +3,7 @@
  * ledgers, settings, flags, the capital seed and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
+import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpenseRouteHandler } from "../contract";
@@ -16,7 +17,7 @@ import { checkOffFlag, listOpenFlags } from "../services/flagService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
 import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
-import { httpError, mapServiceErrors, pageArgs, parseBody, parseId, query } from "./_shared";
+import { pageArgs } from "./_shared";
 
 /** Runs `fn` for a FINANCE principal; the registry gate already admitted only FINANCE. */
 async function asFinance() {

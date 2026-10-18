@@ -1,9 +1,9 @@
 /** Provisional items and the uom_mismatch merge-conflict queue (manager-only). */
+import { mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
 import { z } from "zod";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices, mapServiceErrors } from "../runtime";
+import { getOrgId, getPrincipal, getServices } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { parseBody, parseId } from "./_shared";
 
 const resolveSchema = z.object({ quantityMethod: z.enum(["use_provisional", "use_existing", "sum"]) });
 

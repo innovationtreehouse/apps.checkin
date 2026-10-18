@@ -3,33 +3,23 @@
  * authorizes and strips the returned bag; a factory parses, calls a service, and names
  * each value by the model the host classifies it as.
  */
+import { httpError, mapServiceErrors, parseId, readJson } from "@checkin/component-kit";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
-import { getIncomeConfig, getOrgId, getPrincipal, IncomeHttpError, mapServiceErrors } from "./runtime";
+import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
 import { RECON_STATUS, runReconcile } from "./lib/reconcile";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
 
-function parseId(raw: string | undefined): number {
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) throw new IncomeHttpError(400, "Invalid id");
-  return n;
-}
-
 async function readBody(req: Request): Promise<Record<string, unknown>> {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    throw new IncomeHttpError(400, "Invalid JSON body");
-  }
-  if (typeof body !== "object" || body === null || Array.isArray(body)) throw new IncomeHttpError(400, "Expected a JSON object");
+  const body = await readJson(req);
+  if (typeof body !== "object" || body === null || Array.isArray(body)) throw httpError(400, "Expected a JSON object");
   return body as Record<string, unknown>;
 }
 
 function requiredString(body: Record<string, unknown>, key: string): string {
   const v = body[key];
-  if (typeof v !== "string" || !v.trim()) throw new IncomeHttpError(400, `${key} is required`);
+  if (typeof v !== "string" || !v.trim()) throw httpError(400, `${key} is required`);
   return v.trim();
 }
 
@@ -41,7 +31,7 @@ async function actor(): Promise<Actor> {
 /** Next may hand a URL-encoded payout GID through unchanged. */
 function payoutGid(raw: string | undefined): string {
   const gid = decodeURIComponent(raw ?? "");
-  if (!gid) throw new IncomeHttpError(400, "Invalid payout id");
+  if (!gid) throw httpError(400, "Invalid payout id");
   return gid;
 }
 
@@ -54,7 +44,7 @@ export const getPayout: IncomeRouteHandler = async ({ params }) => {
   const gid = payoutGid(params.gid);
   const mirror = getIncomeConfig().mirror;
   const payout = mirror ? await mirror.payout(gid) : null;
-  if (!mirror || !payout) throw new IncomeHttpError(404, "Payout not found");
+  if (!mirror || !payout) throw httpError(404, "Payout not found");
   const orgId = await getOrgId();
   const [transactions, reconciliation] = await Promise.all([
     mirror.transactions(gid),
@@ -81,7 +71,7 @@ function resolveAction(body: Record<string, unknown>): ResolveAction {
   switch (body.action) {
     case "match": {
       const reason = body.reason;
-      if (reason !== undefined && typeof reason !== "string") throw new IncomeHttpError(400, "reason must be a string");
+      if (reason !== undefined && typeof reason !== "string") throw httpError(400, "reason must be a string");
       return { action: "match", depositId: requiredString(body, "depositId"), reason };
     }
     case "dismiss":
@@ -89,7 +79,7 @@ function resolveAction(body: Record<string, unknown>): ResolveAction {
     case "retry":
       return { action: "retry" };
     default:
-      throw new IncomeHttpError(400, "action must be match, dismiss or retry");
+      throw httpError(400, "action must be match, dismiss or retry");
   }
 }
 
@@ -103,7 +93,7 @@ export const resolve: IncomeRouteHandler = async ({ req, params }) => {
 /** Run reconciliation now. An unbound mirror or deposit source answers zero counts. */
 export const run: IncomeRouteHandler = async () => {
   const result = await runReconcile(await getOrgId());
-  if (result.status === "busy") throw new IncomeHttpError(409, "A reconciliation run is already in progress");
+  if (result.status === "busy") throw httpError(409, "A reconciliation run is already in progress");
   const counts = result.status === "ran" ? result : { matched: 0, opened: 0, drifted: 0 };
   return {
     IncomeReconciliationCount: { status: result.status, matched: counts.matched, opened: counts.opened, drifted: counts.drifted },
@@ -115,7 +105,7 @@ export const listItems: IncomeRouteHandler = async () => ({
 });
 
 function variantId(raw: string | undefined): string {
-  if (!raw || !/^\d+$/.test(raw)) throw new IncomeHttpError(400, "Invalid variant id");
+  if (!raw || !/^\d+$/.test(raw)) throw httpError(400, "Invalid variant id");
   return raw;
 }
 
@@ -123,7 +113,7 @@ export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const variant = variantId(params.variantId);
   const budgetOwnerId = (await readBody(req)).budgetOwnerId;
   if (typeof budgetOwnerId !== "number" || !Number.isInteger(budgetOwnerId) || budgetOwnerId <= 0) {
-    throw new IncomeHttpError(400, "budgetOwnerId must be a positive integer");
+    throw httpError(400, "budgetOwnerId must be a positive integer");
   }
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {

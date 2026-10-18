@@ -36,7 +36,7 @@ describeDb("provisional GTIN guard", () => {
     const svc = makeReceiptService();
     await expect(
       svc.applyReceipt(TEST_ORG_ID, "r-guard", undefined, [{ gtin13: REAL_GTIN, quantityDelta: 1, isProvisional: true }]),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
     expect(await db.inventoryProvisionalItem.count()).toBe(0);
   });
 
@@ -53,6 +53,6 @@ describeDb("provisional GTIN guard", () => {
       svc.createProvisional(TEST_ORG_ID, {
         provisionalGtin13: REAL_GTIN, name: "x", usageBehavior: "Durable", proposedByUserId: 1, receiptId: "r-1",
       }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
   });
 });

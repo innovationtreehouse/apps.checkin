@@ -1,11 +1,11 @@
 // Finance's QuickBooks queue (design §7): the disbursements the drain holds, their live
 // candidate Deposits, and the resolutions — pick a Deposit, dismiss, or re-arm for the drain.
+import { ServiceError } from "@checkin/component-kit";
 import { appKeyOf, depositCandidate, qbKey } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";
 import { getQbPosting, otherLaneClaimedDepositIds } from "../runtime";
-import { ServiceError } from "../services/serviceError";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE, recordQbMatched, type QbMatchState } from "./qb-match";
 import { QB_HELD_STATES, QB_RETRYABLE_STATES } from "./qb-queue-states";

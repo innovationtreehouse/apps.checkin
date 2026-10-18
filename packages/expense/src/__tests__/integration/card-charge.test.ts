@@ -36,7 +36,7 @@ describeDb("card charges", () => {
     expect((await signoffStatus(id))[0].missing).toEqual(["BOARD_AUTHORIZATION"]);
     expect(await events(id)).toBe(0);
 
-    await expect(recordBoardAuthorization(FINANCE, id, "  ")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(recordBoardAuthorization(FINANCE, id, "  ")).rejects.toMatchObject({ status: 400 });
     await recordBoardAuthorization(FINANCE, id, "Board minutes 2026-10-01, item 4");
 
     expect(await events(id)).toBe(1);
@@ -68,7 +68,7 @@ describeDb("card charges", () => {
 
   it("FINANCE marks it single-source or not Everyday, one-way; nobody else can", async () => {
     const id = await signedCard();
-    await expect(markNotEveryday(BOARD, id, "single_source")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(markNotEveryday(BOARD, id, "single_source")).rejects.toMatchObject({ status: 403 });
     await markNotEveryday(FINANCE, id, "single_source");
     expect(await holds(id)).toEqual(["BOARD_AUTHORIZATION"]);
 
@@ -83,9 +83,9 @@ describeDb("card charges", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 60_000 });
     await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
-    await expect(recordBoardAuthorization(FINANCE, id, "Board vote")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(recordBoardAuthorization(FINANCE, id, "Board vote")).rejects.toMatchObject({ status: 403 });
     await recordBoardAuthorization(principal(4, { isFinance: true }), id, "Board vote");
-    await expect(recordBoardAuthorization(principal(4, { isFinance: true }), id, "again")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(recordBoardAuthorization(principal(4, { isFinance: true }), id, "again")).rejects.toMatchObject({ status: 409 });
   });
 
   it("a Board member records it only when every FINANCE holder is conflicted, and that raises a COI flag", async () => {
@@ -106,6 +106,6 @@ describeDb("card charges", () => {
   it("a reimbursement takes no Board authorization", async () => {
     bindPorts({ signoff: directory({ finance: [3] }) });
     const id = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
-    await expect(recordBoardAuthorization(FINANCE, id, "x")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(recordBoardAuthorization(FINANCE, id, "x")).rejects.toMatchObject({ status: 400 });
   });
 });

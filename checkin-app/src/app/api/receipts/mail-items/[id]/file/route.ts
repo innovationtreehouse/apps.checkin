@@ -4,14 +4,15 @@
 import { mailQueueService } from "@checkin/receipt";
 import { FILE_CONTENT_TYPES, type FileContentType } from "@/security/core";
 import { fileHandler } from "@/security/fileHandler";
-import { mailItemId, mapServiceErrors } from "@/lib/receipt/route";
+import { componentRoute } from "@/lib/components/route";
+import { mailItemId } from "@/lib/receipt/route";
 
 function isFileContentType(type: string): type is FileContentType {
   return (FILE_CONTENT_TYPES as readonly string[]).includes(type);
 }
 
-export const GET = fileHandler<{ id: string }>("GET /api/receipts/mail-items/[id]/file", async ({ params }) => {
-  const file = await mapServiceErrors(() => mailQueueService.getFile(mailItemId(params.id)));
+export const GET = fileHandler<{ id: string }>("GET /api/receipts/mail-items/[id]/file", componentRoute(async ({ params }) => {
+  const file = await mailQueueService.getFile(mailItemId(params.id));
   // Intake's magic-byte check admits only allowlisted types; anything else is a stored-data bug.
   if (!isFileContentType(file.mimeType)) throw new Error(`mail item ${params.id} has unservable type ${file.mimeType}`);
   return {
@@ -19,4 +20,4 @@ export const GET = fileHandler<{ id: string }>("GET /api/receipts/mail-items/[id
     contentType: file.mimeType,
     filename: file.mimeType === "text/plain" ? `mail-item-${params.id}.txt` : undefined,
   };
-});
+}));

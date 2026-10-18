@@ -30,7 +30,7 @@ describeDb("upload limits", () => {
     withLimits({ uploadsPerPersonPerDay: 2 });
     await manual();
     await manual();
-    await expect(manual()).rejects.toMatchObject({ statusCode: 429 });
+    await expect(manual()).rejects.toMatchObject({ status: 429 });
     expect(await db.receipt.count()).toBe(2);
     actAs(BOB);
     await manual();
@@ -41,7 +41,7 @@ describeDb("upload limits", () => {
     await receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "A" }) });
     await receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "B" }) });
     await expect(receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "C" }) })).rejects.toMatchObject({
-      statusCode: 429,
+      status: 429,
     });
     actAs(BOB);
     await receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "D" }) });
@@ -53,11 +53,11 @@ describeDb("upload limits", () => {
     actAs(BOB);
     await receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "B" }) });
     await expect(receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "C" }) })).rejects.toMatchObject({
-      statusCode: 429,
+      status: 429,
     });
     actAs(ALICE);
     await expect(receiptService.upload(sized(1000), "text/plain", { details: manualDetails({ retailer: "D" }) })).rejects.toMatchObject({
-      statusCode: 429,
+      status: 429,
     });
   });
 
@@ -75,9 +75,9 @@ describeDb("OCR call quota", () => {
     const failed = await receiptService.upload(textFile(), "text/plain", {});
     expect(failed.state).toBe("ocr_failed");
     await receiptService.retryOcr(failed.id, "submitter");
-    await expect(receiptService.retryOcr(failed.id, "submitter")).rejects.toMatchObject({ statusCode: 429 });
+    await expect(receiptService.retryOcr(failed.id, "submitter")).rejects.toMatchObject({ status: 429 });
     expect(await stateOf(failed.id)).toBe("ocr_failed");
-    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ statusCode: 429 });
+    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 429 });
     expect(await db.receiptAuditLog.count({ where: { userId: ALICE.id, action: "ocr_call" } })).toBe(2);
   });
 
@@ -85,7 +85,7 @@ describeDb("OCR call quota", () => {
     configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
     await receiptService.upload(textFile(), "text/plain", {});
     configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
-    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ statusCode: 429 });
+    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 429 });
   });
 
   it("manual uploads spend no OCR calls", async () => {

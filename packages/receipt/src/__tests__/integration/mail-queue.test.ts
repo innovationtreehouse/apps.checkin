@@ -64,7 +64,7 @@ describeDb("finance mail queue", () => {
     expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "assigned", fileBlob: null });
     expect(await db.receiptAuditLog.count({ where: { receiptId: receipts[0].id, action: "mail_assigned", userId: FINANCE.id } })).toBe(1);
 
-    await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ statusCode: 404 });
+    await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ status: 404 });
     expect(await db.receipt.count()).toBe(1);
   });
 
@@ -83,7 +83,7 @@ describeDb("finance mail queue", () => {
     ["their own household", "bob@example.org"],
   ])("refuses a finance holder assigning to %s, and audits the attempt", async (_who, email) => {
     const id = await holdItem();
-    await expect(mailQueueService.assign(id, { email })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(mailQueueService.assign(id, { email })).rejects.toMatchObject({ status: 403 });
     expect(await db.receipt.count()).toBe(0);
     expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
     expect(await db.receiptAuditLog.count({ where: { action: "mail_assign_refused", valueBefore: String(id) } })).toBe(1);
@@ -93,16 +93,16 @@ describeDb("finance mail queue", () => {
     const id = await holdItem();
     // The host port answers null alike for no one, several people, unverified sign-in and a failed submitter gate.
     for (const email of ["nobody@example.org", "unverified@example.org"]) {
-      await expect(mailQueueService.assign(id, { email })).rejects.toMatchObject({ statusCode: 404, message: CANNOT_ASSIGN });
+      await expect(mailQueueService.assign(id, { email })).rejects.toMatchObject({ status: 404, message: CANNOT_ASSIGN });
     }
-    await expect(mailQueueService.assign(id, {})).rejects.toMatchObject({ statusCode: 400 });
+    await expect(mailQueueService.assign(id, {})).rejects.toMatchObject({ status: 400 });
     expect(await db.receipt.count()).toBe(0);
   });
 
   it("discards only with a reason, clears the file and audits the reason", async () => {
     const id = await holdItem();
     for (const body of [{}, { reason: "   " }]) {
-      await expect(mailQueueService.discard(id, body)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(mailQueueService.discard(id, body)).rejects.toMatchObject({ status: 400 });
     }
     expect(await mailQueueService.discard(id, { reason: "newsletter" })).toMatchObject({ id, status: "discarded" });
     expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "discarded", fileBlob: null });
@@ -112,8 +112,8 @@ describeDb("finance mail queue", () => {
       valueBefore: String(id),
       valueAfter: "newsletter",
     });
-    await expect(mailQueueService.discard(id, { reason: "again" })).rejects.toMatchObject({ statusCode: 404 });
-    await expect(mailQueueService.getFile(id)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(mailQueueService.discard(id, { reason: "again" })).rejects.toMatchObject({ status: 404 });
+    await expect(mailQueueService.getFile(id)).rejects.toMatchObject({ status: 404 });
   });
 
   it("serves a held file and audits the read", async () => {
@@ -134,7 +134,7 @@ describeDb("finance mail queue", () => {
   it("releases a deferred item as its sender, outside their daily upload limit, and audits who released it", async () => {
     configureQueue({ uploadsPerPersonPerDay: 0 });
     const id = await holdItem("deferred", "alice@example.org");
-    await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ statusCode: 429 });
+    await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ status: 429 });
 
     const out = await mailQueueService.assign(id, { release: true });
     const [receipt] = await db.receipt.findMany();
@@ -142,14 +142,14 @@ describeDb("finance mail queue", () => {
     expect(out).toMatchObject({ id, status: "assigned", receiptId: receipt.id });
     expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "assigned", fileBlob: null });
     expect(await db.receiptAuditLog.count({ where: { receiptId: receipt.id, action: "mail_released", userId: FINANCE.id } })).toBe(1);
-    await expect(mailQueueService.assign(id, { release: true })).rejects.toMatchObject({ statusCode: 404 });
+    await expect(mailQueueService.assign(id, { release: true })).rejects.toMatchObject({ status: 404 });
   });
 
   it("releases only a deferred item, and never to the releaser's own household", async () => {
-    await expect(mailQueueService.assign(await holdItem(), { release: true })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(mailQueueService.assign(await holdItem(), { release: true })).rejects.toMatchObject({ status: 409 });
     const own = await holdItem("deferred", "bob@example.org");
-    await expect(mailQueueService.assign(own, { release: true })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(mailQueueService.assign(own, { release: false })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(mailQueueService.assign(own, { release: true })).rejects.toMatchObject({ status: 403 });
+    await expect(mailQueueService.assign(own, { release: false })).rejects.toMatchObject({ status: 400 });
     expect(await db.receipt.count()).toBe(0);
   });
 

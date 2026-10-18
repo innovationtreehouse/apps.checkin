@@ -3,12 +3,12 @@
  * reject) return an empty bag: the services return void, so the response is a
  * bare 200 and the client refetches the list (track 5 owns that UI).
  */
+import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createProposalRepository } from "../repositories/proposal";
 import { approveItemReferenceProposal, rejectItemReferenceProposal } from "../services/proposalService";
-import { getDb, getPrincipal, mapServiceErrors } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, readJson, parseBody, query } from "./_shared";
 
 const repo = () => createProposalRepository(getDb());
 const rejectSchema = z.object({ rejectionReason: z.string().min(1, "rejectionReason is required") });
@@ -30,7 +30,7 @@ export const approve: CatalogRouteHandler = async ({ params }) => {
 
 export const reject: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { rejectionReason } = parseBody(rejectSchema, await readJson(req));
+  const { rejectionReason } = await parseBody(req, rejectSchema);
   const principal = await getPrincipal();
   await mapServiceErrors(() => rejectItemReferenceProposal(id, principal.id, rejectionReason));
   return {};

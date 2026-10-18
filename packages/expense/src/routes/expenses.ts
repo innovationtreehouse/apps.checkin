@@ -3,6 +3,7 @@
  * per-expense actions. Approver reads are filtered here to the caller's buckets (viewerScope);
  * an expense outside that scope answers 404.
  */
+import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
@@ -22,19 +23,7 @@ import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, 
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
-import {
-  httpError,
-  mapServiceErrors,
-  pageArgs,
-  parseBody,
-  parseId,
-  query,
-  scopedApprovals,
-  scopedExpenses,
-  scopedLines,
-  viewerScope,
-  type ViewerScope,
-} from "./_shared";
+import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
   id: true,

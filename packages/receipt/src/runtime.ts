@@ -11,7 +11,7 @@ import type {
   ReceiptSink,
   ReimbursementStatus,
 } from "./contract";
-import { ServiceError } from "./services/serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import { DEFAULT_LIMITS, type ReceiptLimits } from "./lib/limits";
 
 /** Thrown by an inert port: the crossing is declared but not bound yet. Callers retry later. */

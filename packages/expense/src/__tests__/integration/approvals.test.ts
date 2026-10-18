@@ -34,12 +34,12 @@ describeDb("approveLine", () => {
   it("a caller who approves no bucket is refused", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] } }) });
     const { id, approvalId } = await lineInApproval();
-    await expect(approveLine(STRANGER, id, approvalId)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(approveLine(STRANGER, id, approvalId)).rejects.toMatchObject({ status: 403 });
   });
 
   it("FINANCE overrides only with a comment, under a distinct audit action", async () => {
     const { id, approvalId } = await lineInApproval();
-    await expect(approveLine(FINANCE, id, approvalId)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(approveLine(FINANCE, id, approvalId)).rejects.toMatchObject({ status: 400 });
 
     await approveLine(FINANCE, id, approvalId, "leader away");
 
@@ -55,7 +55,7 @@ describeDb("exceptions", () => {
     const { id, approvalId } = await lineInApproval();
 
     await raiseException(LEADER, id, approvalId, "not ours");
-    await expect(rejectException(LEADER, id, approvalId, "no")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(rejectException(LEADER, id, approvalId, "no")).rejects.toMatchObject({ status: 403 });
     await rejectException(FINANCE, id, approvalId, "refusing this charge");
 
     expect(await approval(approvalId)).toMatchObject({ status: "rejected" });
@@ -95,6 +95,6 @@ describeDb("assignOwner", () => {
 
   it("only FINANCE assigns", async () => {
     const { id, approvalId } = await lineInApproval(null);
-    await expect(assignOwner(LEADER, id, approvalId, 100)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(assignOwner(LEADER, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
   });
 });

@@ -60,24 +60,24 @@ describeDb("manual upload", () => {
   it("rejects a caller-supplied reimbursee", async () => {
     await expect(
       receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: 5 }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("refuses reimbursement for a non-adult uploader", async () => {
     actAs(MINOR);
     await expect(
       receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
     expect(await db.receipt.count()).toBe(0);
   });
 
   it("an id-less session is unauthenticated", async () => {
     actAs({ ...ALICE, id: undefined as unknown as number });
     await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails() })).rejects.toMatchObject({
-      statusCode: 401,
+      status: 401,
     });
     actAs(null);
-    await expect(receiptService.listMine()).rejects.toMatchObject({ statusCode: 401 });
+    await expect(receiptService.listMine()).rejects.toMatchObject({ status: 401 });
   });
 });
 
@@ -86,19 +86,19 @@ describeDb("upload limits", () => {
     const lineItems = Array.from({ length: 201 }, () => ({ description: "x", quantity: 1, unitPrice: 0 }));
     await expect(
       receiptService.upload(textFile(), "text/plain", { details: manualDetails({ lineItems, receiptTotal: "0" }) }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("rejects a file whose bytes do not match its declared type", async () => {
     await expect(receiptService.upload(textFile(), "application/pdf", { details: manualDetails() })).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
   });
 
   it("rejects text holding a NUL byte", async () => {
     await expect(
       receiptService.upload(Buffer.from("a\u0000b"), "text/plain", { details: manualDetails() }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
   });
 });
 

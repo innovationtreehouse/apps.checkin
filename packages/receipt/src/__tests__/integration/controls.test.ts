@@ -27,7 +27,7 @@ describeDb("finance decisions on one's own receipt", () => {
     await receiptService.upload(file, "text/plain", { details: manualDetails() });
     const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     expect(dup.state).toBe("duplicate_flagged");
-    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(dup.id)).toBe("duplicate_flagged");
   });
 
@@ -35,7 +35,7 @@ describeDb("finance decisions on one's own receipt", () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     await stuckBeforeDelivery(r.id);
-    await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(r.id)).toBe("flow_error");
   });
 
@@ -59,7 +59,7 @@ describeDb("a receipt already sent to receiving", () => {
   it("refuses a restart, so no changed copy is re-sent", async () => {
     const id = await pushedThenReopened("flow_error");
     actAs(FINANCE);
-    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/already sent to receiving/) });
+    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already sent to receiving/) });
     expect(await stateOf(id)).toBe("flow_error");
     expect(ports.calls.pushes).toHaveLength(1);
   });
@@ -74,7 +74,7 @@ describeDb("a receipt already sent to receiving", () => {
       () => receiptService.deleteLine(id, "submitter", line.id),
       () => receiptService.resubmit(id, "submitter"),
     ]) {
-      await expect(attempt()).rejects.toMatchObject({ statusCode: 409 });
+      await expect(attempt()).rejects.toMatchObject({ status: 409 });
     }
     expect((await db.receiptDetail.findUniqueOrThrow({ where: { id } })).retailer).not.toBe("Changed");
     expect(ports.calls.pushes).toHaveLength(1);
@@ -130,7 +130,7 @@ describeDb("the tax and date fields", () => {
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
-    await expect(receiptService.edit(r.id, "submitter", { tax: 1 })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.edit(r.id, "submitter", { tax: 1 })).rejects.toMatchObject({ status: 403 });
     await receiptService.edit(r.id, "submitter", { tax: 0, retailer: "Fixed" });
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { tax: 1 });
@@ -140,7 +140,7 @@ describeDb("the tax and date fields", () => {
   it("a submitter cannot change the date; finance can", async () => {
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
-    await expect(receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ status: 403 });
     expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "decision_refused" } })).toMatchObject({
       userId: ALICE.id,
       valueAfter: "edit receiptDate",
@@ -153,8 +153,8 @@ describeDb("the tax and date fields", () => {
   it("finance on its own receipt edits as its submitter: tax and date are refused, other fields save", async () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
-    await expect(receiptService.edit(r.id, "finance", { tax: 1 })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.edit(r.id, "finance", { tax: 1 })).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ status: 403 });
     await receiptService.edit(r.id, "finance", { retailer: "Typo fixed" });
     const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
     await receiptService.editLine(r.id, "finance", line.id, { description: "Washer" });
@@ -184,8 +184,8 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(r.state).toBe("financial_review");
     actAs(HOUSEMATE);
-    await expect(receiptService.approveFinancial(r.id, "family")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.rejectFinancial(r.id, "family")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.approveFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.rejectFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
     expect(await refusals(r.id)).toEqual([[HOUSEMATE.id, "approve"], [HOUSEMATE.id, "reject"]]);
     actAs(FINANCE);
     await receiptService.approveFinancial(r.id);
@@ -197,7 +197,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     await receiptService.upload(file, "text/plain", { details: manualDetails() });
     const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     actAs(HOUSEMATE);
-    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ status: 403 });
     expect(await refusals(dup.id)).toEqual([[HOUSEMATE.id, "clear duplicate"]]);
     actAs(FINANCE);
     await receiptService.clearDuplicate(dup.id);
@@ -208,7 +208,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     await stuckBeforeDelivery(r.id);
     actAs(HOUSEMATE);
-    await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ status: 403 });
     actAs(FINANCE);
     await receiptService.restartFlow(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
@@ -219,12 +219,12 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     expect(r.state).toBe("submitter_review");
     const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
     actAs(HOUSEMATE);
-    await expect(receiptService.edit(r.id, "finance", { tax: 1 })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.edit(r.id, "finance", { retailer: "x" })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.addLine(r.id, "finance", { description: "Nut", quantity: 1, unitPrice: 1 })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.editLine(r.id, "finance", line.id, { unitPrice: 1 })).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.deleteLine(r.id, "finance", line.id)).rejects.toMatchObject({ statusCode: 403 });
-    await expect(receiptService.discard(r.id, "finance")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.edit(r.id, "finance", { tax: 1 })).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.edit(r.id, "finance", { retailer: "x" })).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.addLine(r.id, "finance", { description: "Nut", quantity: 1, unitPrice: 1 })).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.editLine(r.id, "finance", line.id, { unitPrice: 1 })).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.deleteLine(r.id, "finance", line.id)).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.discard(r.id, "finance")).rejects.toMatchObject({ status: 403 });
     expect((await refusals(r.id)).map(([, action]) => action)).toEqual(["edit", "edit", "add line", "edit line", "delete line", "discard"]);
     expect(await stateOf(r.id)).toBe("submitter_review");
 

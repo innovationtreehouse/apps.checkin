@@ -2,11 +2,11 @@
  * Location route factories. The list carries each location's item counts as
  * `_count`, which the screen uses to block deleting a location in use.
  */
+import { mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
 import { z } from "zod";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices, mapServiceErrors } from "../runtime";
+import { getOrgId, getPrincipal, getServices } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { parseBody, parseId } from "./_shared";
 
 const nameSchema = z.object({ name: z.string().trim().min(1, "name is required") });
 const reassignSchema = z.object({ targetLocationId: z.number().int().positive("targetLocationId is required") });

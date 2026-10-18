@@ -13,7 +13,6 @@ import { createInventoryService } from "./lib/services/inventoryService";
 import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { ServiceError } from "./lib/services/serviceError";
 import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
 
 // On globalThis so the instrumentation chunk that configures it and the route
@@ -86,32 +85,4 @@ let services: ReturnType<typeof buildServices> | undefined;
 export function getServices(): ReturnType<typeof buildServices> {
   services ??= buildServices();
   return services;
-}
-
-/**
- * An HTTP-status error thrown by a route factory. The host translates it into
- * its own API error at the route boundary.
- */
-export class InventoryHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "InventoryHttpError";
-  }
-}
-
-export function inventoryError(status: number, message: string): InventoryHttpError {
-  return new InventoryHttpError(status, message);
-}
-
-/** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */
-export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof ServiceError) throw inventoryError(err.statusCode, err.message);
-    throw err;
-  }
 }

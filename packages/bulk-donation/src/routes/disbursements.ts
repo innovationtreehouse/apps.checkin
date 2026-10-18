@@ -2,16 +2,17 @@
  * Disbursements: holds and resubmit, completed events, nav counts, and the
  * QuickBooks finance queue (candidates, resolve, exclusions).
  */
+import { httpError, mapServiceErrors, parseBody } from "@checkin/component-kit";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { disbursementService } from "../services/disbursementService";
 import { getNavCounts } from "../services/navCountsService";
-import { donationError, getOrgId, mapServiceErrors } from "../runtime";
+import { getOrgId } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { qbCandidates as liveQbCandidates, resolveQbHold } from "../lib/qb-queue";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, pageArgs, parseBody } from "./_shared";
+import { auditContext, pageArgs } from "./_shared";
 
 const exclusionSchema = z.object({
   qbTxnId: z.string().trim().min(1, "qbTxnId is required"),
@@ -32,13 +33,13 @@ function qbStateFilter(req: Request): string[] | undefined {
   if (raw === null) return undefined;
   const states = raw.split(",").map((s) => s.trim()).filter(Boolean);
   const unknown = states.find((s) => !QB_STATES.has(s));
-  if (unknown !== undefined || states.length === 0) throw donationError(400, `Unknown qbState: ${unknown ?? raw}`);
+  if (unknown !== undefined || states.length === 0) throw httpError(400, `Unknown qbState: ${unknown ?? raw}`);
   return states;
 }
 
 function disbursementId(params: Record<string, string>): string {
   const id = params.disbursementId?.trim();
-  if (!id) throw donationError(400, "Invalid disbursementId");
+  if (!id) throw httpError(400, "Invalid disbursementId");
   return id;
 }
 
@@ -92,7 +93,7 @@ export const createExclusion: DonationRouteHandler = async ({ req }) => {
     return {
       DonationQbMatchExclusion: await db.$transaction(async (tx) => {
         const holder = await tx.disbursementEvent.findFirst({ where: { orgId, qbTxnId }, select: { disbursementId: true } });
-        if (holder) throw donationError(409, `That QuickBooks entry backs disbursement ${holder.disbursementId}`);
+        if (holder) throw httpError(409, `That QuickBooks entry backs disbursement ${holder.disbursementId}`);
         const row = await tx.donationQbMatchExclusion.create({
           data: { orgId, qbTxnId, reason, excludedByUserId: audit.actorUserId },
         });
@@ -101,7 +102,7 @@ export const createExclusion: DonationRouteHandler = async ({ req }) => {
       }),
     };
   } catch (err) {
-    if (isUniqueConstraintError(err)) throw donationError(409, "That QuickBooks entry is already excluded");
+    if (isUniqueConstraintError(err)) throw httpError(409, "That QuickBooks entry is already excluded");
     throw err;
   }
 };

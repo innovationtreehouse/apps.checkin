@@ -42,7 +42,7 @@ describeDb("workflow transitions", () => {
     commit();
     await rival;
 
-    expect(await outcome).toMatchObject({ statusCode: 409 });
+    expect(await outcome).toMatchObject({ status: 409 });
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).isCapital).toBe(false);
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "capital_review_submitted" } })).toBe(0);
     expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");

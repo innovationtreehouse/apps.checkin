@@ -17,9 +17,9 @@ describeDb("submitter scope", () => {
   it("a submitter cannot see or act on another person's receipt", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     actAs(BOB);
-    await expect(receiptService.get(r.id, "submitter")).rejects.toMatchObject({ statusCode: 404 });
-    await expect(receiptService.discard(r.id, "submitter")).rejects.toMatchObject({ statusCode: 404 });
-    await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ statusCode: 404 });
+    await expect(receiptService.get(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
+    await expect(receiptService.discard(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
+    await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
     expect(await receiptService.listMine()).toEqual([]);
   });
 

@@ -1,7 +1,7 @@
 import type { Db } from "../db/index";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
 import { applyQtyChangeIn } from "./inventoryService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export function createReceiveQueueService({
   receiveQueueRepo,

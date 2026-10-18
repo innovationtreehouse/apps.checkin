@@ -4,7 +4,7 @@ import { insertReceipt } from "../lib/insert";
 import { runFullFlow } from "../lib/receipt-flow";
 import { ImportBatchSchema } from "../lib/schemas";
 import { getOrg, requireActor } from "../runtime";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export interface ImportRowResult {
   importSourceId: string;

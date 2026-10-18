@@ -66,7 +66,7 @@ describeDb("LocationService", () => {
   it("throws 404 updating a non-existent location", async () => {
     const svc = makeLocationService();
     await expect(svc.updateLocation(9999, TEST_ORG_ID, "X", 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -75,7 +75,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID_2, "Other org loc", 1);
     const [loc] = await svc.listLocations(TEST_ORG_ID_2);
     await expect(svc.updateLocation(loc.id, TEST_ORG_ID, "Hack", 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -90,7 +90,7 @@ describeDb("LocationService", () => {
   it("throws 404 deleting a non-existent location", async () => {
     const svc = makeLocationService();
     await expect(svc.deleteLocation(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -99,7 +99,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID, "A", 1);
     const [loc] = await svc.listLocations(TEST_ORG_ID);
     await expect(svc.reassignLocation(loc.id, loc.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
   });
 
@@ -108,7 +108,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID, "Source", 1);
     const [source] = await svc.listLocations(TEST_ORG_ID);
     await expect(svc.reassignLocation(source.id, 9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 });
@@ -132,7 +132,7 @@ describeDb("InventoryService", () => {
     const svc = makeInventoryService();
     await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000002" }, 1);
     await expect(svc.createItem(TEST_ORG_ID, { gtin13: "1000000000002" }, 1)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
@@ -153,7 +153,7 @@ describeDb("InventoryService", () => {
   it("throws 404 updating a non-existent item", async () => {
     const svc = makeInventoryService();
     await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { existingQuantity: 1 }, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -171,7 +171,7 @@ describeDb("InventoryService", () => {
   it("throws 404 deleting a non-existent item", async () => {
     const svc = makeInventoryService();
     await expect(svc.deleteItem(TEST_ORG_ID, "9999999999998", 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -247,7 +247,7 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
@@ -255,7 +255,7 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID_2);
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -277,8 +277,8 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
     await svc.cancel(item.id, TEST_ORG_ID, 1);
-    await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ statusCode: 409 });
-    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
     expect(await db.orgItem.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 
@@ -286,14 +286,14 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
     await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
   it("throws 404 cancelling a non-existent item", async () => {
     const svc = makeReceiveQueueService();
     await expect(svc.cancel(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 });

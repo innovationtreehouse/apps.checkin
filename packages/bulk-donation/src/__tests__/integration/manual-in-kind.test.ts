@@ -82,7 +82,7 @@ describeDb("recordInKindWithoutReceipt", () => {
   it("rejects an item that is not in the catalog, recording nothing", async () => {
     await expect(
       recordInKindWithoutReceipt({ ...input, lines: [{ gtin13: "0099999999999", quantity: 1, valueCents: 100 }] }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
     expect(await db.manualInKindDonation.count()).toBe(0);
     expect(applied).toHaveLength(0);
   });
@@ -103,6 +103,6 @@ describeDb("recordInKindWithoutReceipt", () => {
 
   it("does not load another org's donation", async () => {
     const { id } = await recordInKindWithoutReceipt(input);
-    await expect(manualInKindService.loadInventory("other-org", id)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(manualInKindService.loadInventory("other-org", id)).rejects.toMatchObject({ status: 404 });
   });
 });

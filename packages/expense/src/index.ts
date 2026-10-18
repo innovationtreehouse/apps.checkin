@@ -33,10 +33,8 @@ export * from "./services/provisionalItemMapService";
 export * from "./services/qbMatchService";
 export * from "./services/reimbursementStatus";
 export * from "./services/reimburseeVendorService";
-export * from "./services/serviceError";
 export * from "./services/settingsService";
 export * from "./services/signoffService";
 export * from "./services/sweeps";
 
 export * as routes from "./routes";
-export { ExpenseHttpError } from "./routes/_shared";

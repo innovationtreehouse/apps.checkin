@@ -67,7 +67,7 @@ describeDb("apply idempotency", () => {
 
     await expect(
       svc.applyReceipt(TEST_ORG_ID, "r-1", "Costco", [{ gtin13: GTIN, quantityDelta: 4 }]),
-    ).rejects.toMatchObject({ statusCode: 409 });
+    ).rejects.toMatchObject({ status: 409 });
     expect(await qty(TEST_ORG_ID)).toBe(3);
     expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ status: "applied", failureReason: null });
 
@@ -142,10 +142,10 @@ describeDb("apply idempotency", () => {
       await expect(
         svc.applyReceipt(orgId, "r-bad", undefined, [{ gtin13: GTIN, quantityDelta, conversionFactor }]),
         label,
-      ).rejects.toMatchObject({ statusCode: 400 });
+      ).rejects.toMatchObject({ status: 400 });
     }
     await expect(svc.applyDonation(TEST_ORG_ID, "", [{ gtin13: GTIN, quantityDelta: 1 }])).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
     expect(await qty(TEST_ORG_ID)).toBe(0);
     expect(await db.receivedInventoryDelta.count()).toBe(0);

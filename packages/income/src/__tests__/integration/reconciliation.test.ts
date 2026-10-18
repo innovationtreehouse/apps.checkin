@@ -347,7 +347,7 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     expect((await rowFor("P0")).depositId).toBe("D1");
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
   });
 
@@ -355,7 +355,7 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     deposits = [dep("D7", "2026-06-02", 95), dep("D8", "2026-06-02", 97)];
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 }, "  ")).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
     expect((await rowFor("P1")).status).toBe("OPEN");
     expect(await reconciliationService.matchToDeposit(ORG_A, row.id, "D8", { userId: 1 })).toMatchObject({
@@ -368,7 +368,7 @@ describeDb("reconciliationService — finance actions", () => {
     deposits = [{ ...dep("D7", "2026-06-02", 97), depositToAccount: "99" }];
     expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
   });
 
@@ -390,7 +390,7 @@ describeDb("reconciliationService — finance actions", () => {
   it("dismiss requires a reason, then resolves", async () => {
     const row = await openRow();
     await expect(reconciliationService.dismiss(ORG_A, row.id, "  ", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
     const saved = await reconciliationService.dismiss(ORG_A, row.id, "booked as a transfer", { userId: 1 });
     expect(saved).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", reason: "booked as a transfer" });
@@ -400,10 +400,10 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     await reconciliationService.dismiss(ORG_A, row.id, "x", { userId: 1 });
     await expect(reconciliationService.dismiss(ORG_A, row.id, "y", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
     await expect(reconciliationService.dismiss(ORG_B, row.id, "y", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 });
@@ -422,14 +422,14 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     const row = await rowFor("P1");
     expect(row.kind).toBe("NO_DEPOSIT");
     await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
   it("retry on POST_FAILED reports the deposit write as unavailable and changes nothing", async () => {
     const row = await postFailed();
     await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
-      statusCode: 503,
+      status: 503,
     });
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
   });
@@ -510,7 +510,7 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
     await exclude("D1");
     expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
   });
 
@@ -531,14 +531,14 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
   });
 
   it("requires a reason, refuses a duplicate, and refuses a deposit a payout holds", async () => {
-    await expect(exclude("D9", " ")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(exclude("D9", " ")).rejects.toMatchObject({ status: 400 });
     await exclude("D9");
-    await expect(exclude("D9")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D9")).rejects.toMatchObject({ status: 409 });
 
     payout("P1", "2026-06-01", 97);
     deposits = [dep("D1", "2026-06-02", 97)];
     await runReconcile(ORG_A, NOW);
-    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
   });
 
   it("refuses a deposit that fits a payout still waiting for its deposit", async () => {
@@ -546,7 +546,7 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
     await runReconcile(ORG_A, NOW);
     expect((await rowFor("P1")).status).toBe("WAITING");
     deposits = [dep("D1", "2026-06-29", 97), dep("D2", "2026-06-29", 50)];
-    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
     expect(await reconciliationService.listExclusions(ORG_A)).toEqual([]);
     await expect(exclude("D2")).resolves.toMatchObject({ qbTxnId: "D2" });
   });
@@ -559,7 +559,7 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
       data: { status: "OPEN", kind: "POST_FAILED" },
     });
     deposits = [{ ...dep("D1", "2026-06-29", 120), appKey: incomeKey("P1"), depositToAccount: "99" }];
-    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
   });
 });
 
@@ -589,7 +589,7 @@ describeDb("claims across lanes", () => {
     deposits = [dep("D1", "2026-06-02", 97)];
     expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
   });
 
@@ -622,7 +622,7 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
       },
     });
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
     expect((await rowFor("P1")).status).toBe("OPEN");
   });

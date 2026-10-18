@@ -1,12 +1,13 @@
 /** Benevity uploads: list, import, the stored-CSV download, and dropping an all-duplicate blob. */
+import { httpError, mapServiceErrors, parseId } from "@checkin/component-kit";
 import { readCapped } from "@checkin/utils";
 import { db } from "../db";
 import { CsvValidationError, parseBenevityCsv } from "../lib/csv-parser";
 import { recordDonorDataRead } from "../repositories/audit";
 import { uploadedFileService } from "../services/uploadedFileService";
-import { donationError, getOrgId, mapServiceErrors } from "../runtime";
+import { getOrgId } from "../runtime";
 import type { DonationFileRouteHandler, DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, pageArgs, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs } from "./_shared";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Room over the file cap for the multipart framing. */
@@ -14,7 +15,7 @@ const FORM_OVERHEAD_BYTES = 512 * 1024;
 /** Browsers label a .csv as any of these; Excel on Windows says vnd.ms-excel, some send none. */
 const CSV_MIME_TYPES = new Set(["text/csv", "application/csv", "text/plain", "application/vnd.ms-excel", ""]);
 
-const tooLarge = () => donationError(413, "File is larger than 10 MB");
+const tooLarge = () => httpError(413, "File is larger than 10 MB");
 
 export const list: DonationRouteHandler = async ({ req }) => ({
   UploadedFile: await uploadedFileService.listFiles(await getOrgId(), pageArgs(req)),
@@ -28,21 +29,21 @@ export const upload: DonationRouteHandler = async ({ req }) => {
       headers: { "content-type": req.headers.get("content-type") ?? "" },
     }).formData();
   } catch {
-    throw donationError(400, "Expected a multipart upload");
+    throw httpError(400, "Expected a multipart upload");
   }
   const file = form.get("file");
-  if (!(file instanceof File)) throw donationError(400, "file is required");
+  if (!(file instanceof File)) throw httpError(400, "file is required");
   if (file.size > MAX_UPLOAD_BYTES) throw tooLarge();
   if (!file.name.toLowerCase().endsWith(".csv") || !CSV_MIME_TYPES.has(file.type.split(";")[0].trim().toLowerCase())) {
-    throw donationError(415, "Upload a Benevity .csv file");
+    throw httpError(415, "Upload a Benevity .csv file");
   }
   const buffer = Buffer.from(await file.arrayBuffer());
   let rows;
   try {
     rows = parseBenevityCsv(buffer);
   } catch (err) {
-    if (err instanceof CsvValidationError) throw donationError(400, err.message);
-    throw donationError(400, "Could not parse the CSV");
+    if (err instanceof CsvValidationError) throw httpError(400, err.message);
+    throw httpError(400, "Could not parse the CSV");
   }
   const audit = await auditContext(req);
   const orgId = await getOrgId();
@@ -61,7 +62,7 @@ export const download: DonationFileRouteHandler = async ({ req, params }) => {
     where: { id, orgId },
     select: { id: true, orgId: true, originalFilename: true, fileBlob: true },
   });
-  if (!file?.fileBlob) throw donationError(404, "File not found");
+  if (!file?.fileBlob) throw httpError(404, "File not found");
   await recordDonorDataRead(db, orgId, "uploaded_file", await donorReader(req, "GET /api/donations/uploaded-files/[id]/blob"), {
     ids: [id],
     count: 1,
