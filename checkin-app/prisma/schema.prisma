@@ -546,6 +546,10 @@ model OrgMembershipProcess {
   shopifyOrderId        String?
   /// @sensitivity:internal
   paidAt                DateTime?
+  /// The membership year this settlement bought, as the year its boundary opens in
+  /// (2026 for 2026-2027). Set once when the process is paid; null reads as unsettled.
+  /// @sensitivity:public
+  appliesToYear         Int?
   // The @map holds the physical column on its old name: most reads of this model
   // carry no select, so the previous release reads it through a rolling deploy's
   // drain window. Rename it in a later release (contract stage).
@@ -585,6 +589,17 @@ model OrgMembershipProcess {
 
   @@index([orgMembershipId])
   @@index([status])
+}
+
+/// The Shopify variant that sells each membership year. One row per year.
+model MembershipYearVariant {
+  /// Opening-year key: 2026 for 2026-2027.
+  /// @sensitivity:public
+  membershipYear   Int     @id
+  /// @sensitivity:internal
+  shopifyVariantId String  @unique
+  /// @sensitivity:internal
+  productUrl       String?
 }
 
 model BackgroundCheckAttestation {
