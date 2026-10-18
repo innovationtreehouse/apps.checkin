@@ -66,9 +66,9 @@ export const itemCategoryService = {
       if (bucket.archivedAt || !bucket.quickBooksClassId) {
         throw new ServiceError(422, `Budget-owner bucket ${bucketIssue(bucket, new Set())}`);
       }
+      if (!classes) throw new ServiceError(503, "QuickBooks Classes are not connected, so no item can be assigned to a bucket");
       let active: string[];
       try {
-        if (!classes) throw new Error("QuickBooks Classes are not connected");
         active = await classes.activeClassIds();
       } catch {
         throw new ServiceError(503, "QuickBooks can't be reached to check the bucket's Class; try again later");

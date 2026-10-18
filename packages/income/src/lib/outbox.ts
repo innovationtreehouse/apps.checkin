@@ -4,7 +4,7 @@ import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror } from "../contract";
 import { getIncomeConfig, isoDay, type IncomePosting } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
-import { checkBuckets, unusableBuckets } from "./buckets";
+import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
 import { toQbDeposit } from "./qb-deposits";
 import {
@@ -94,7 +94,7 @@ async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirro
  * or null when every sale has a usable decision. Custom items carry no variant and book as
  * general income.
  */
-export function mappingGap(sales: PayoutSales, unusable: ReadonlyMap<number, string>): string | null {
+export function mappingGap(sales: PayoutSales, problem: BucketProblem): string | null {
   const undecided = new Set<string>();
   const broken = new Map<number, string>();
   for (const l of sales.orderLines) {
@@ -104,7 +104,7 @@ export function mappingGap(sales: PayoutSales, unusable: ReadonlyMap<number, str
       continue;
     }
     const bucket = sales.categories.get(l.variantId);
-    const issue = bucket == null ? undefined : unusable.get(bucket);
+    const issue = bucket == null ? undefined : problem(bucket);
     if (bucket != null && issue) broken.set(bucket, issue);
   }
   const parts = [
@@ -133,6 +133,9 @@ async function moveRow(
     return saved;
   });
 }
+
+/** The outcome a row that holds, or was left as it was, reports. */
+const heldOutcome = (row: PayoutReconciliation) => ({ outcome: isHeld(row) ? ("held" as const) : ("waiting" as const), row });
 
 /** Hold a payout as NEEDS_MAPPING, naming the gap. A row already held for the same gap is left as it is. */
 function holdForMapping(orgId: string, id: number, gap: string, wait: boolean, actor: RowActor = { userId: null }) {
@@ -177,16 +180,17 @@ async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: Pay
  * One payout's turn through the outbox: match before create via findOrCreate, then record
  * the outcome. found → link (POSTED when it carries the payout's key); created → POSTED;
  * ambiguous → finance's queue; failed → POST_FAILED; too old or no line → left as it is.
- * Returns null when another holder has the lock and `wait` is off.
+ * Returns null when another holder has the lock and `wait` is off. `problem` and `sales` are
+ * the drain's own reads, read here when absent.
  */
 export async function postPayout(
   orgId: string,
   id: number,
   line: string | null,
   wait: boolean,
-  actor: RowActor = { userId: null },
-  unusable?: ReadonlyMap<number, string>,
+  opts: { actor?: RowActor; problem?: BucketProblem; sales?: PayoutSales } = {},
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
+  const actor = opts.actor ?? { userId: null };
   const { mirror, posting } = getIncomeConfig();
   if (!mirror || !posting?.mirrorNewestWins) throw new Error("income posting is not enabled");
   const row = await db.payoutReconciliation.findUniqueOrThrow({ where: { id } });
@@ -201,13 +205,13 @@ export async function postPayout(
     return { outcome: "waiting", row };
   }
 
-  const sales = await payoutSales(orgId, payout.payoutGid, mirror);
+  const sales = opts.sales ?? (await payoutSales(orgId, payout.payoutGid, mirror));
   if (line !== null && row.payoutDate > line) {
     // Only a payout the app would create waits for finance's decisions.
-    const gap = mappingGap(sales, unusable ?? (await unusableBuckets(orgId)));
+    const gap = mappingGap(sales, opts.problem ?? (await bucketProblems(orgId)));
     if (gap) {
       const held = await holdForMapping(orgId, id, gap, wait, actor);
-      return held && { outcome: "held", row: held };
+      return held && heldOutcome(held);
     }
   } else if (isHeld(row)) {
     // On or before the line the app never creates, so a held payout goes back to the match window.
@@ -333,7 +337,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   if (!mirror || !posting || !alerts) return { reconcile, post: "unbound" };
   if (!posting.mirrorNewestWins) return { reconcile, post: "gated" };
 
-  const unusable = await checkBuckets(orgId);
+  const problem = await checkBuckets(orgId);
   const line = await incomeTakeoverLine(orgId);
   const caps = await readIncomeSettings(db, orgId);
   const today = isoDay(now);
@@ -355,14 +359,16 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
 
   for (const [i, r] of due.entries()) {
     const cents = Math.abs(r.payoutNetCents);
+    let sales: PayoutSales | undefined;
     // Only a payout after the line can be created, so only it is held to the caps.
     if (line !== null && r.payoutDate > line) {
       // The mapping check comes before the caps so a held payout keeps its reason.
-      // ponytail: postPayout reads the payout's sales again; pass them through if mirror reads get slow.
-      const gap = mappingGap(await payoutSales(orgId, r.payoutGid, mirror), unusable);
+      sales = await payoutSales(orgId, r.payoutGid, mirror);
+      const gap = mappingGap(sales, problem);
       if (gap) {
-        if (!(await holdForMapping(orgId, r.id, gap, false))) return { reconcile, post: "busy" };
-        post.held++;
+        const held = await holdForMapping(orgId, r.id, gap, false);
+        if (!held) return { reconcile, post: "busy" };
+        post[heldOutcome(held).outcome]++;
         continue;
       }
       if (cents > caps.maxCreateCentsPerRun) {
@@ -377,7 +383,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
         break;
       }
     }
-    const turn = await postPayout(orgId, r.id, line, false, { userId: null }, unusable);
+    const turn = await postPayout(orgId, r.id, line, false, { problem, sales });
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
     if (turn.outcome === "posted") createdCents += cents;

@@ -42,8 +42,9 @@ checkin, and every decision is audited.
 - **Some items book to their own QuickBooks class.** Finance maps a Shopify
   item to a budget-owner bucket, checkin's table whose QuickBooks reference is a
   Class (owner decision; the same buckets bulk donation and expense use). A
-  deposit the app creates splits the payout across those classes; unmapped
-  items book at organization level.
+  deposit the app creates splits the payout across those classes. An item
+  finance marks as general income books at organization level; a payout with an
+  undecided item waits as needs mapping (see `docs/rules/revenue.md` § Income).
 - **Check, cash and grant income stay out of scope for good** (owner
   decision). They are pure QuickBooks work, and the system does not duplicate them.
 - **Cost:** a four-model library on its own database, three read-only ports,
@@ -499,8 +500,9 @@ register file:
   it is never silently re-matched. `[Decision — *Principle: people decide about people*]`
 - Store history reaches the app only through the mirror; there is no in-app
   upload of store exports. `[Decision — deliberate limit]`
-- Items finance has not mapped book at organization level; mapping an item is
-  never required before a payout posts. A mapping change never rebooks a deposit
+- Items book at organization level only where finance chose general income; a
+  payout with an item finance has not decided on waits until finance does (see
+  `docs/rules/revenue.md` § Income). A mapping change never rebooks a deposit
   already created. `[Decision]`
 - Income keeps no buyer identity; who paid is read from the mirror where it is
   needed. `[Decision — *Principle: least privilege*]`

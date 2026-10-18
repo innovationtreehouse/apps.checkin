@@ -222,7 +222,7 @@ export const reconciliationService = {
     }
     const { mirror, posting } = getIncomeConfig();
     if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
-    const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true, actor);
+    const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true, { actor });
     if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
     return turn.row;
   },

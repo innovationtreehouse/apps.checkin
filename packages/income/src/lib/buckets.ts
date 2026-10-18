@@ -26,9 +26,15 @@ async function bucketState(): Promise<{ buckets: OwnerInfo[]; active: Set<string
   return { buckets, active: new Set(active) };
 }
 
+/** Why an assigned bucket can't take sales right now, or undefined when it can. */
+export type BucketProblem = (bucketId: number) => string | undefined;
+
+/** Every bucket's problem while the buckets or their Classes can't be read. */
+export const UNCHECKED = "can't be checked: QuickBooks Classes can't be read";
+
 interface BucketCheck {
-  /** Unusable assigned bucket id → reason. */
-  unusable: Map<number, string>;
+  /** Unusable assigned bucket id → reason. Null while the buckets or Classes can't be read. */
+  unusable: Map<number, string> | null;
   itemCounts: Map<number, number>;
   names: Map<number, string>;
 }
@@ -38,20 +44,28 @@ async function assess(orgId: string): Promise<BucketCheck> {
   const itemCounts = await assignedBucketItemCounts(orgId);
   const check: BucketCheck = { unusable: new Map(), itemCounts, names: new Map() };
   if (!itemCounts.size) return check;
-  const { buckets, active } = await bucketState();
-  const byId = new Map(buckets.map((b) => [b.id, b]));
+  let state: Awaited<ReturnType<typeof bucketState>>;
+  try {
+    state = await bucketState();
+  } catch {
+    return { ...check, unusable: null };
+  }
+  const byId = new Map(state.buckets.map((b) => [b.id, b]));
   for (const id of itemCounts.keys()) {
-    const issue = bucketIssue(byId.get(id), active);
-    if (issue) check.unusable.set(id, issue);
+    const issue = bucketIssue(byId.get(id), state.active);
+    if (issue) check.unusable?.set(id, issue);
     const name = byId.get(id)?.name;
     if (name) check.names.set(id, name);
   }
   return check;
 }
 
-/** Buckets items are assigned to that can't take sales now, with the reason. */
-export async function unusableBuckets(orgId: string): Promise<Map<number, string>> {
-  return (await assess(orgId)).unusable;
+const problemOf = (unusable: Map<number, string> | null): BucketProblem =>
+  unusable ? (id) => unusable.get(id) : () => UNCHECKED;
+
+/** Problems of the buckets items are assigned to, as they stand now. */
+export async function bucketProblems(orgId: string): Promise<BucketProblem> {
+  return problemOf((await assess(orgId)).unusable);
 }
 
 async function assignedBucketItemCounts(orgId: string): Promise<Map<number, number>> {
@@ -82,29 +96,36 @@ export async function openBucketIssues(orgId: string): Promise<Map<number, strin
 /**
  * The run's bucket check: alert finance once for each assigned bucket that has become
  * unusable, and record a bucket that is usable again (or no longer assigned) as restored, so
- * a later break alerts again. Returns the unusable buckets; payouts with their sales hold.
+ * a later break alerts again. While the Classes can't be read nothing is recorded and every
+ * bucket reports UNCHECKED, so only payouts with a bucketed sale hold.
  */
-export async function checkBuckets(orgId: string): Promise<Map<number, string>> {
+export async function checkBuckets(orgId: string): Promise<BucketProblem> {
   const alerts = getIncomeConfig().alerts;
   if (!alerts) throw new Error("income alerts are not bound");
   const [{ unusable, itemCounts, names }, open] = await Promise.all([assess(orgId), openBucketIssues(orgId)]);
+  if (!unusable) return problemOf(null);
   const fresh = [...unusable].filter(([id]) => !open.has(id));
   const restored = [...open.keys()].filter((id) => !unusable.has(id));
-  if (!fresh.length && !restored.length) return unusable;
+  if (!fresh.length && !restored.length) return problemOf(unusable);
 
-  await db.$transaction(async (tx) => {
-    // Held with the run's lock so two runs never alert for the same bucket.
+  const recorded = await db.$transaction(async (tx) => {
+    // Held with the run's lock so two runs never record the same bucket.
     await lockReconciliation(tx, orgId, true);
     const current = await openBucketIssues(orgId);
-    for (const [id, issue] of fresh) {
-      if (current.has(id)) continue;
-      await alerts.bucketUnusable({ orgId, budgetOwnerId: id, bucketName: names.get(id) ?? null, issue, itemCount: itemCounts.get(id) ?? 0 });
+    const newly = fresh.filter(([id]) => !current.has(id));
+    for (const [id, issue] of newly) {
       await recordAudit(tx, { orgId, actorUserId: null, action: UNUSABLE, entityType: BUCKET_ENTITY, entityId: id, reason: issue });
     }
-    for (const id of restored) {
-      if (!current.has(id)) continue;
+    for (const id of restored.filter((r) => current.has(r))) {
       await recordAudit(tx, { orgId, actorUserId: null, action: RESTORED, entityType: BUCKET_ENTITY, entityId: id });
     }
+    return newly;
   });
-  return unusable;
+  // Sent after commit, outside the lock: a failed send loses that email, never doubles it.
+  await Promise.allSettled(
+    recorded.map(([id, issue]) =>
+      alerts.bucketUnusable({ orgId, budgetOwnerId: id, bucketName: names.get(id) ?? null, issue, itemCount: itemCounts.get(id) ?? 0 }),
+    ),
+  );
+  return problemOf(unusable);
 }

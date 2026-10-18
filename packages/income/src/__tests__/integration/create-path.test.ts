@@ -535,6 +535,62 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(bucketAlerts).toHaveLength(2);
   });
 
+  it("a held payout on or before a newer takeover line goes back to WAITING", async () => {
+    const g = orderPayout(2);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING" });
+
+    handBooked(4, "2026-06-29", 444);
+    await drain();
+    expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-29");
+    expect(await rowFor(g)).toMatchObject({ status: "WAITING", kind: null, reason: null });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.released" } })).toBe(1);
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a held payout whose net changes tracks the new net and stays held", async () => {
+    const g = orderPayout(2);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", payoutNetCents: 9830 });
+
+    setPayout(g, { netCents: 9700 });
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", payoutNetCents: 9700 });
+    const audits = await db.incomeAuditLog.findMany({ where: { action: "reconciliation.needs_mapping", reason: "payout_amount" } });
+    expect(audits).toHaveLength(1);
+  });
+
+  it("while the Classes can't be read, only payouts with a bucketed sale hold, and no alert fires", async () => {
+    owners = [camp];
+    bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await general();
+    const held = orderPayout(2);
+    const plain = payout(3, "2026-06-28", 500);
+
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 1 } });
+    expect(await rowFor(held)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "bucket 7 can't be checked: QuickBooks Classes can't be read" });
+    expect(await rowFor(plain)).toMatchObject({ status: "POSTED" });
+    expect(bucketAlerts).toHaveLength(0);
+    expect(await db.incomeAuditLog.count({ where: { entityType: "budget_owner" } })).toBe(0);
+
+    bind();
+    await drain();
+    expect(await rowFor(held)).toMatchObject({ status: "POSTED" });
+  });
+
+  it("an alert send that fails is not retried: the bucket stays recorded", async () => {
+    owners = [{ ...camp, quickBooksClassId: null }];
+    let sends = 0;
+    bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); } } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+
+    await drain();
+    await drain();
+    expect(sends).toBe(1);
+    expect(await db.incomeAuditLog.count({ where: { action: "bucket.unusable" } })).toBe(1);
+  });
+
   it("reassigning a broken bucket's items releases the payout without touching the bucket", async () => {
     owners = [{ ...camp, quickBooksClassId: null }];
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });

@@ -58,7 +58,10 @@ export interface IncomeConfig {
   mirror?: PayoutMirror;
   deposits?: QbDepositSource;
   owners?: OwnerDirectory;
-  /** Active QuickBooks Classes. Unbound, no item can be assigned to a bucket and nothing with a bucket is created. */
+  /**
+   * Active QuickBooks Classes. Unbound or unreachable, no item can be assigned to a bucket, and
+   * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
+   */
   classes?: QbClassSource;
   /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
   bankAccountId?: string;
