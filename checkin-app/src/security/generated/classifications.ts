@@ -252,6 +252,7 @@ export const classifications = {
         shopifyStockLeaseUntil: 'internal',
         shopifyStockLeaseToken: 'internal',
         shopifyStockUnconfirmed: 'internal',
+        shopifyStockParked: 'internal',
         shopifySyncStartedAt: 'internal',
         shopifySyncToken: 'internal',
     },

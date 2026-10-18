@@ -527,14 +527,13 @@ export const STOCK_BOOKKEEPING_RESET = {
     shopifyStockCarry: 0,
     shopifyStockPendingWrite: null,
     shopifyStockUnconfirmed: 0,
+    shopifyStockParked: null,
     shopifyStockPushNeededAt: null,
 } satisfies Prisma.ProgramUpdateManyMutationInput;
 
 /** Shopify keeps an idempotency key 24 h; a pending write older than this is not resent (it could apply twice) but parked as unconfirmed. */
 const PENDING_WRITE_RESEND_LIMIT_MS = 23 * 60 * 60_000;
 
-/** In the IntegrationErrorLog message written when a stock change is parked as unconfirmed. */
-const UNCONFIRMED_LOG_MARK = "could not be confirmed";
 
 /** Codes that mean "not settled yet — resend the same request". */
 const TRANSIENT_CODES = new Set(["THROTTLED", "INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "IDEMPOTENCY_CONCURRENT_REQUEST"]);
@@ -738,6 +737,27 @@ async function sendStockWrite(gql: Gql, write: PendingStockWrite, deadline: numb
     throw new Error(`inventoryAdjustQuantities userErrors: ${JSON.stringify(data.inventoryAdjustQuantities?.userErrors)}`);
 }
 
+/** A write parked as unconfirmed: never re-sent, settled on its own by a person. */
+interface ParkedStockWrite {
+    key: string;
+    delta: number;
+    parkedAt: string;
+}
+
+function parkedWrites(column: string | null): ParkedStockWrite[] {
+    return column ? (JSON.parse(column) as ParkedStockWrite[]) : [];
+}
+
+/** Now, or 1 ms after the latest parked write: `parkedAt` names the write on the board's settle screen. */
+function uniqueParkedAt(earlier: ParkedStockWrite[]): string {
+    const latest = Math.max(0, ...earlier.map((w) => Date.parse(w.parkedAt)));
+    return new Date(Math.max(Date.now(), latest + 1)).toISOString();
+}
+
+function parkedColumn(writes: ParkedStockWrite[]): string | null {
+    return writes.length > 0 ? JSON.stringify(writes) : null;
+}
+
 /** How much of a settled write the app still owes: what it wanted minus what landed. */
 function stillOwed(write: PendingStockWrite, outcome: "applied" | "notApplied"): number {
     return outcome === "applied" ? write.owedPart - write.delta : write.owedPart;
@@ -823,7 +843,7 @@ async function drainStock(
             if (Date.now() >= deadline) throw new StockWriteUnsettledError(`stock push for program ${programId} ran out of time`);
             const row = await prisma.program.findUnique({
                 where: { id: programId },
-                select: { shopifyStockCarry: true, shopifyStockPendingWrite: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+                select: { shopifyStockCarry: true, shopifyStockPendingWrite: true, shopifyStockParked: true, startAt: true, offSaleAt: true, saleEndedAt: true },
             });
             if (!row) throw new Error(`program ${programId} not found`);
 
@@ -831,10 +851,13 @@ async function drainStock(
                 const pending = JSON.parse(row.shopifyStockPendingWrite) as PendingStockWrite;
                 if (Date.now() - Date.parse(pending.sentAt) >= PENDING_WRITE_RESEND_LIMIT_MS) {
                     // Shopify may have forgotten the key, so a resend could apply twice: a person settles it.
+                    // Kept as its own entry: writes of opposite sign must not cancel before anyone settles them.
                     result.expiredKey = pending.key;
+                    const earlier = parkedWrites(row.shopifyStockParked);
+                    const parked = [...earlier, { key: pending.key, delta: pending.delta, parkedAt: uniqueParkedAt(earlier) }];
                     await bookStock(programId, token, {
                         shopifyStockCarry: { increment: pending.owedPart - pending.delta },
-                        shopifyStockUnconfirmed: { increment: pending.delta },
+                        shopifyStockParked: parkedColumn(parked),
                         shopifyStockPendingWrite: null,
                     });
                 } else {
@@ -858,8 +881,13 @@ async function drainStock(
             }
             if (target !== undefined) {
                 // An absolute target replaces whatever was owed before it, as the delta from what Shopify shows now.
-                // Counted under the lease, right before the carry is replaced.
-                await bookStock(programId, token, { shopifyStockCarry: (await target()) - available });
+                // Counted under the lease, right before the carry is replaced. `available` already shows whether
+                // each parked write landed, so the target resolves them: settling one later would count it twice.
+                if (row.shopifyStockParked) {
+                    console.log(`[SHOPIFY] Program ${programId} stock set from scratch (${reason}): cleared parked writes ${parkedWrites(row.shopifyStockParked).map((w) => w.key).join(", ")}`);
+                }
+                await bookStock(programId, token, { shopifyStockCarry: (await target()) - available, shopifyStockParked: null, shopifyStockUnconfirmed: 0 });
+                result.expiredKey = null;
                 target = undefined;
                 continue;
             }
@@ -953,10 +981,10 @@ async function pushProgramStock(
         const result = await drainStock(gql, programId, variantId, reason, token, deadline, target);
         const row = await prisma.program.findUnique({
             where: { id: programId },
-            select: { shopifyStockCarry: true, shopifyStockUnconfirmed: true, shopifyStockPendingWrite: true, shopifyStockPushNeededAt: true },
+            select: { shopifyStockCarry: true, shopifyStockUnconfirmed: true, shopifyStockParked: true, shopifyStockPendingWrite: true, shopifyStockPushNeededAt: true },
         });
         const carryAfter = row?.shopifyStockCarry ?? 0;
-        const needsPush = result.error !== null || carryAfter !== 0 || (row?.shopifyStockUnconfirmed ?? 0) !== 0 || !!row?.shopifyStockPendingWrite;
+        const needsPush = result.error !== null || carryAfter !== 0 || (row?.shopifyStockUnconfirmed ?? 0) !== 0 || !!row?.shopifyStockParked || !!row?.shopifyStockPendingWrite;
         await prisma.program.updateMany({
             where: { id: programId, shopifyStockLeaseToken: token },
             data: {
@@ -979,12 +1007,11 @@ async function pushProgramStock(
             );
         }
         if (result.expiredKey) {
-            // The board settles it on Revenue Ops > Unconfirmed Shopify stock (settleUnconfirmedStock);
-            // that screen dates each row by this log entry's message.
+            // The board settles it on Revenue Ops > Unconfirmed Shopify stock (settleUnconfirmedStock).
             await reportShopifyFailure(
                 "adjustProgramInventory",
-                new Error(`stock write ${result.expiredKey} for program ${programId} ${UNCONFIRMED_LOG_MARK}`),
-                { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, unconfirmed: row?.shopifyStockUnconfirmed ?? null },
+                new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
+                { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, parked: row?.shopifyStockParked ?? null },
                 `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Unconfirmed Shopify stock.`,
             );
         }
@@ -1121,13 +1148,13 @@ export async function healProgramStock(): Promise<{ checked: number; settled: nu
     return { checked: programs.length, settled };
 }
 
-/** A program's parked stock change, as the board's settle screen shows it. */
+/** One parked stock write, as the board's settle screen shows it. A program parked twice has two rows. */
 export interface UnconfirmedStockRow {
     programId: number;
     programName: string;
     unconfirmed: number;
     carry: number;
-    /** When the last write was parked (its IntegrationErrorLog row); null once that row is purged. */
+    /** When the write was parked, unique per program: the settle names the write by it. Null for an amount the previous release parked. */
     unconfirmedSince: Date | null;
     /** Shopify's `available` now; null when it can't be read within a few seconds. */
     shopifyAvailable: number | null;
@@ -1136,25 +1163,14 @@ export interface UnconfirmedStockRow {
 /** Bounds the board screen's Shopify read per program. */
 const UNCONFIRMED_READ_CAP_MS = 5_000;
 
-/** Every program with a parked (unconfirmed) stock change. Never writes. */
+/** Every parked (unconfirmed) stock write, oldest first per program. Never writes. */
 export async function listUnconfirmedStock(): Promise<UnconfirmedStockRow[]> {
     const programs = await prisma.program.findMany({
-        where: { shopifyStockUnconfirmed: { not: 0 } },
-        select: { id: true, name: true, shopifyVariantId: true, shopifyStockUnconfirmed: true, shopifyStockCarry: true },
+        where: { OR: [{ shopifyStockParked: { not: null } }, { shopifyStockUnconfirmed: { not: 0 } }] },
+        select: { id: true, name: true, shopifyVariantId: true, shopifyStockParked: true, shopifyStockUnconfirmed: true, shopifyStockCarry: true },
         orderBy: { id: "asc" },
     });
     if (programs.length === 0) return [];
-
-    const logs = await prisma.integrationErrorLog.findMany({
-        where: { source: "shopify", message: { contains: UNCONFIRMED_LOG_MARK } },
-        select: { timestamp: true, context: true },
-        orderBy: { timestamp: "desc" },
-    });
-    const since = new Map<number, Date>();
-    for (const { timestamp, context } of logs) {
-        const programId = context && typeof context === "object" && !Array.isArray(context) ? context.programId : undefined;
-        if (typeof programId === "number" && !since.has(programId)) since.set(programId, timestamp);
-    }
 
     const gql = await stockGql().catch(() => null);
     const available = async (variantId: string | null): Promise<number | null> => {
@@ -1165,14 +1181,16 @@ export async function listUnconfirmedStock(): Promise<UnconfirmedStockRow[]> {
             return null;
         }
     };
-    return Promise.all(programs.map(async (p) => ({
-        programId: p.id,
-        programName: p.name,
-        unconfirmed: p.shopifyStockUnconfirmed,
-        carry: p.shopifyStockCarry,
-        unconfirmedSince: since.get(p.id) ?? null,
-        shopifyAvailable: await available(p.shopifyVariantId),
-    })));
+    const perProgram = await Promise.all(programs.map(async (p) => {
+        const shopifyAvailable = await available(p.shopifyVariantId);
+        const row = (unconfirmed: number, unconfirmedSince: Date | null): UnconfirmedStockRow =>
+            ({ programId: p.id, programName: p.name, unconfirmed, carry: p.shopifyStockCarry, unconfirmedSince, shopifyAvailable });
+        return [
+            ...(p.shopifyStockUnconfirmed !== 0 ? [row(p.shopifyStockUnconfirmed, null)] : []),
+            ...parkedWrites(p.shopifyStockParked).map((w) => row(w.delta, new Date(w.parkedAt))),
+        ];
+    }));
+    return perProgram.flat();
 }
 
 /** "landed": Shopify has the change, so it is dropped. "notLanded": it goes back into the owed carry. */
@@ -1183,15 +1201,19 @@ export type SettleUnconfirmedOutcome = { carry: number } | { refused: "notFound"
 const SETTLE_LEASE_MS = 10_000;
 
 /**
- * A board member settles a program's unconfirmed stock change after checking
- * Shopify by hand. Under the program's stock lease, in one transaction: refuses
- * when the amount is no longer `expected` (stale page), else zeroes it, adds it
- * to the carry for "notLanded", and writes the AuditLog row. "landed" makes no
- * Shopify call; "notLanded" then nudges a push so the carry lands as a keyed delta.
+ * A board member settles one of a program's parked stock writes after checking
+ * Shopify by hand. The write is named by the row the page showed: its `parkedAt`
+ * and amount, or `parkedAt` null for the previous release's amount. Under the
+ * program's stock lease, in one transaction: refuses as stale when that write is
+ * no longer parked (settled from another tab, or a re-arm resolved it), else
+ * removes it, adds it to the carry for "notLanded", and writes the AuditLog row.
+ * "landed" makes no Shopify call; "notLanded" then nudges a push so the carry
+ * lands as a keyed delta.
  */
 export async function settleUnconfirmedStock(
     programId: number,
     expected: number,
+    parkedAt: string | null,
     choice: UnconfirmedStockChoice,
     actorId: number,
 ): Promise<SettleUnconfirmedOutcome> {
@@ -1202,11 +1224,21 @@ export async function settleUnconfirmedStock(
     let settled: { carry: number; variantId: string | null } | null;
     try {
         settled = await prisma.$transaction(async (tx) => {
+            const before = await tx.program.findUniqueOrThrow({
+                where: { id: programId },
+                select: { shopifyStockParked: true, shopifyStockUnconfirmed: true },
+            });
+            const parked = parkedWrites(before.shopifyStockParked);
+            const legacy = parkedAt === null && before.shopifyStockUnconfirmed === expected;
+            const index = parkedAt === null ? -1 : parked.findIndex((w) => w.parkedAt === parkedAt && w.delta === expected);
+            if (index === -1 && !legacy) return null;
+            const settledKey = legacy ? null : parked[index].key;
+            const bookkeeping: Prisma.ProgramUpdateManyMutationInput = legacy
+                ? { shopifyStockUnconfirmed: 0 }
+                : { shopifyStockParked: parkedColumn(parked.filter((_, i) => i !== index)) };
             const { count } = await tx.program.updateMany({
-                where: { id: programId, shopifyStockLeaseToken: token, shopifyStockUnconfirmed: expected },
-                data: choice === "landed"
-                    ? { shopifyStockUnconfirmed: 0 }
-                    : { shopifyStockUnconfirmed: 0, shopifyStockCarry: { increment: expected } },
+                where: { id: programId, shopifyStockLeaseToken: token },
+                data: choice === "landed" ? bookkeeping : { ...bookkeeping, shopifyStockCarry: { increment: expected } },
             });
             if (count !== 1) return null;
             const row = await tx.program.findUniqueOrThrow({
@@ -1219,8 +1251,8 @@ export async function settleUnconfirmedStock(
                     action: "EDIT",
                     tableName: "Program",
                     affectedEntityId: programId,
-                    oldData: { shopifyStockUnconfirmed: expected },
-                    newData: { settledUnconfirmedStock: choice, amount: expected, shopifyStockUnconfirmed: 0, shopifyStockCarry: row.shopifyStockCarry },
+                    oldData: { shopifyStockUnconfirmed: before.shopifyStockUnconfirmed, shopifyStockParked: before.shopifyStockParked },
+                    newData: { settledUnconfirmedStock: choice, amount: expected, key: settledKey, shopifyStockCarry: row.shopifyStockCarry },
                 },
             });
             return { carry: row.shopifyStockCarry, variantId: row.shopifyVariantId };

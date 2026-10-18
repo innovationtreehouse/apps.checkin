@@ -10,8 +10,8 @@ import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageLoader } from "@/components/ui/PageLoader";
 
-// Programs whose Shopify stock change could not be confirmed (lib/shopify.ts
-// parks it as unconfirmed and never re-sends it). The board checks the program in
+// Shopify stock writes that could not be confirmed (lib/shopify.ts parks each one
+// and never re-sends it), one row per write. The board checks the program in
 // Shopify and settles each one: the write landed, or it didn't and is owed again.
 type Row = {
   programId: number;
@@ -60,10 +60,10 @@ export default function UnconfirmedShopifyStockPage() {
       const res = await fetch(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice, expected: row.unconfirmed }),
+        body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
       if (res.ok) {
-        setRows(prev => prev.filter(r => r.programId !== row.programId));
+        fetchRows();
         notifications.show({
           message: choice === 'landed'
             ? `${row.programName}: cleared — Shopify already has the change.`
@@ -122,7 +122,7 @@ export default function UnconfirmedShopifyStockPage() {
       <DataTable
         columns={columns}
         rows={rows}
-        getRowKey={(r) => String(r.programId)}
+        getRowKey={(r) => `${r.programId}-${r.unconfirmedSince ?? 'earlier'}-${r.unconfirmed}`}
         emptyMessage="No unconfirmed Shopify stock changes."
       />
 

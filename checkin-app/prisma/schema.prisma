@@ -1084,10 +1084,14 @@ model Program {
   shopifyStockLeaseUntil    DateTime?
   /// @sensitivity:internal
   shopifyStockLeaseToken    String?
-  /// Stock change Shopify could not confirm (a write still unsettled past its key's 24 h).
-  /// Never re-sent; a person checks Shopify and settles it.
+  /// Sum of parked stock changes the previous release booked; read as one parked
+  /// entry until settled. Current code parks into shopifyStockParked.
   /// @sensitivity:internal
   shopifyStockUnconfirmed   Int       @default(0)
+  /// Parked stock writes, a JSON list of { key, delta, parkedAt }: each one Shopify
+  /// could not confirm, never re-sent, settled one by one by a person. Null = none.
+  /// @sensitivity:internal
+  shopifyStockParked        String?
   /// Claim on the Shopify product sync: one run per program, held without a DB
   /// transaction across the Shopify calls. A claim past its stale age may be taken over.
   /// @sensitivity:internal
