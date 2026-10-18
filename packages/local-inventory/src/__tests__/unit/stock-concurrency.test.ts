@@ -294,4 +294,33 @@ describeDb("merge after a concurrent resolution", () => {
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
     expect(await db.inventoryMergeConflict.count()).toBe(0);
   });
+
+  it("a fulfil racing an approve of a provisional with no stock row receives under the real GTIN", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "a-1", lineItemId: 1 },
+    });
+
+    // Hold the provisional's row so the approve queues on it first, then the fulfil behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 21, 1);
+    await someoneBlocked(1);
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, approve, fulfil]);
+
+    expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
 });

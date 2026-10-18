@@ -24,6 +24,15 @@ export async function lockOrgItemPair(tx: Prisma.TransactionClient, orgId: strin
   return { provisionalRow, existingRow };
 }
 
+/**
+ * Lock the provisional's own row and read it under the lock. Merges and fulfils take it before
+ * the org-item pair, so they serialize even when neither GTIN has an org-item row yet.
+ */
+export async function lockProvisional(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string) {
+  await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${orgId} AND provisional_gtin13 = ${provisionalGtin13} FOR UPDATE`;
+  return tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13 } });
+}
+
 export function createProvisionalItemService({
   provisionalRepo,
   resolutionRepo,
@@ -50,6 +59,7 @@ export function createProvisionalItemService({
   ): Promise<void> {
     const now = new Date();
     await db.$transaction(async (tx) => {
+      await lockProvisional(tx, orgId, provisionalGtin13);
       const { provisionalRow, existingRow } = await lockOrgItemPair(tx, orgId, provisionalGtin13, realGtin13);
       // The caller read the status outside this transaction; a concurrent merge that already
       // resolved the provisional wins, and this one does nothing.
