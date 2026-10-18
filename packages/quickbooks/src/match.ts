@@ -23,8 +23,6 @@ export interface MatchRequest {
   key: string;
   /** Inclusive YYYY-MM-DD range every hit's date must fall in; callers pad it with a grace on both sides. */
   window: { from: string; to: string };
-  /** From takeoverLine(); null means no line, and nothing may be created. */
-  takeoverLine: string | null;
   /** Entries other records of the lane already hold. */
   claimedIds: ReadonlySet<string>;
   /** Entries finance excluded from matching. */
@@ -34,9 +32,7 @@ export interface MatchRequest {
 export type MatchResult =
   | { kind: "found"; id: string; via: "key" | "amount" }
   | { kind: "ambiguous"; ids: string[] }
-  | { kind: "not-found-after-line" }
-  | { kind: "not-found-before-line" }
-  | { kind: "not-found-no-line" };
+  | { kind: "not-found" };
 
 /**
  * The "find" half of match-before-create. Stateless: the caller supplies the
@@ -54,7 +50,6 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
   qboDate(req.window.from);
   qboDate(req.window.to);
   if (req.window.from > req.window.to) throw new Error(`Match window is reversed: ${req.window.from} > ${req.window.to}`);
-  if (req.takeoverLine !== null) qboDate(req.takeoverLine);
 
   const fits = (c: MatchCandidate) =>
     c.amountCents === req.amountCents &&
@@ -72,24 +67,7 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
   if (hand.length === 1 && hits.length === 1) return { kind: "found", id: hand[0].id, via: "amount" };
   if (hits.length > 0) return { kind: "ambiguous", ids: hits.map((c) => c.id) };
 
-  if (req.takeoverLine === null) return { kind: "not-found-no-line" };
-  return req.date > req.takeoverLine ? { kind: "not-found-after-line" } : { kind: "not-found-before-line" };
-}
-
-/** A lane record's link to QuickBooks: "hand" if the entry was hand-booked, "app" if the app created it. */
-export interface TiedRecord {
-  date: string;
-  qbOrigin: "hand" | "app" | null;
-}
-
-/** The date of the newest record tied to a hand-booked entry; null (create nothing) when there is none. */
-export function takeoverLine(records: Iterable<TiedRecord>): string | null {
-  let line: string | null = null;
-  for (const r of records) {
-    qboDate(r.date);
-    if (r.qbOrigin === "hand" && (line === null || r.date > line)) line = r.date;
-  }
-  return line;
+  return { kind: "not-found" };
 }
 
 type AppKeyOf<T> = (entry: T) => string | undefined;

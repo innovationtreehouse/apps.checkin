@@ -33,7 +33,9 @@ interface PostedDeposit {
 class FakeQbo {
   deposits: QboDeposit[] = [];
   posts: { key: string; body: PostedDeposit }[] = [];
-  mode: "ok" | "reject" | "accept-then-drop" = "ok";
+  mode: "ok" | "reject" | "accept-then-drop" | "closed" = "ok";
+  /** The books closing date Preferences reports. */
+  closeDate: string | null = null;
   /** Keys whose create is refused while every other create succeeds. */
   rejectKeys = new Set<string>();
   private nextId = 1000;
@@ -42,6 +44,9 @@ class FakeQbo {
     const url = new URL(String(input));
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if ((init?.method ?? "GET") === "GET") {
+      if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
+        return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
+      }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
       if (!m) throw new Error(`unexpected query ${url.search}`);
       const list = this.deposits.filter((d) => d.TxnDate >= m[1] && d.TxnDate <= m[2]);
@@ -49,6 +54,7 @@ class FakeQbo {
     }
     const body = JSON.parse(String(init?.body)) as PostedDeposit;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     if (this.mode === "reject" || this.rejectKeys.has(url.searchParams.get("requestid") ?? "")) return json({ Fault: { Error: [{ code: "6000" }] } }, 400);
     const Id = String(this.nextId++);
     const cents = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0);
@@ -171,6 +177,35 @@ describeDb("drainIncomeOutbox — the takeover line", () => {
     await drain(new Date("2026-07-03T12:00:00Z"));
     expect(qbo.posts).toHaveLength(0);
     expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
+  });
+
+  it("a books closing date before the payout still lets it be created", async () => {
+    handBooked(1, "2026-06-01", 970);
+    const p = payout(2, "2026-06-28", 500);
+    qbo.closeDate = "2026-06-15";
+
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts).toHaveLength(1);
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
+  });
+
+  it("re-reads the books closing date before the create; a payout it covers waits, never created", async () => {
+    handBooked(1, "2026-06-01", 970);
+    const p = payout(2, "2026-06-28", 500);
+    qbo.closeDate = "2026-06-30";
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+  });
+
+  it("a create QuickBooks refuses as a closed period waits, never POST_FAILED", async () => {
+    handBooked(1, "2026-06-01", 970);
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "closed";
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
   });
 
   it("an app-created deposit never moves the line; a hand-booked one does", async () => {

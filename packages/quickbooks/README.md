@@ -14,19 +14,24 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   `qboRealmFromEnv()` reads `QBO_ENVIRONMENT` + `QBO_REALM_ID` under the same guard.
 - Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
   `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`.
-  There is no since-a-date reader.
+  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase` or `Bill` entries
+  QuickBooks created at or after `since` (`MetaData.CreateTime`), one page of 1,000, with `full: true`
+  when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
+  finds an app entry a dated window misses.
+- `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
+  null when finance has set none (absent, null or empty). It throws when the read fails or the date is malformed;
+  nothing caches it. It and the reference lists below are the other reads with no date window.
 - Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
   e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.
 - Reference lists for the FINANCE bootstrap: `accounts()`, `classes()`, `vendors()` (active entries).
 - `billsBetween` returns `Balance` and `LinkedTxn`; `billPaymentsByIds(ids)` reads the payments a Bill
   links, so a caller can tell when a Bill was paid.
 - Match-before-create, find half (`match.ts`, pure, no writes): `findMatch(candidates, request)` answers
-  `found` (`via: "key"` for the app's own creation, `"amount"` for a hand entry), `ambiguous`,
-  `not-found-after-line`, `not-found-before-line` or `not-found-no-line`. Every hit, key or hand, must
+  `found` (`via: "key"` for the app's own creation, `"amount"` for a hand entry), `ambiguous` or
+  `not-found`. Every hit, key or hand, must
   match amount, date window and account or vendor; callers pad the window with a grace on both sides,
   since QuickBooks dates drift a day or two. A key hit that fails a check, or a matching entry carrying
-  another record's key, is `ambiguous`, never `found` or not-found. Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
-  app-created ties never move it, and no hand tie means no line. `depositCandidate`, `purchaseCandidate`
+  another record's key, is `ambiguous`, never `found` or `not-found`. Claimed and excluded ids are skipped. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
 - The one write (QB-2) is package-internal: callers write only through `findOrCreate` and `createVendor`,
   which look the key (or name) up before every create, since QBO's `requestid` dedup window is short.
@@ -50,13 +55,19 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - An in-kind pair (clearing Deposit + Purchase) is two `findOrCreate` calls with their own keys
   (e.g. `qbKey("in-kind", id + ".deposit")`); a crash between them leaves the second for the next run,
   where the first is found by key.
-- `findOrCreate(client, request)` (`write.ts`, stateless): reads the record's window, runs `findMatch`, and
-  answers `found` / `ambiguous` (post nothing), `created` (after the takeover line), `too-old` (on or
-  before the line) or `no-line` (never create), or `failed` (any error; nothing is retried here). The
-  created `TxnDate` must sit inside the window, so a crash after QBO accepts is found by key next run.
+- `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate
+  (`docs/in-design/QB_CLOSED_BOOKS.md`). It reads the record's window, runs `findMatch`, and answers
+  `found` / `ambiguous` (post nothing, closed period included), `closed` (not found and dated on or
+  before `closedThrough`), `needs-finance` (not found and `mayCreate` false), `created`, or `failed`
+  (any error; nothing is retried here). Before a create it re-reads `bookCloseDate()` and gates on the
+  later of that and `closedThrough`; a failed read is `failed`, and a create QuickBooks refuses with
+  fault 6210 (closed period) is `closed`. The created `TxnDate` must sit inside the window, so a crash
+  after QBO accepts is found by key next run.
+- A failed request throws `QboRequestError`, whose `codes` are the fault's numeric codes.
 - `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
   `<name> (Vendor)`; an existing Vendor with the resulting name is returned as `found` with `via: "name"`.
-- `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
+- `qboString` / `qboDate` — how a caller's value enters a query: escaped / validated literals. The one
+  other literal is `createdSince`'s timestamp, built by the client from a validated `Date`.
 - Not on the main entry, because they read `QBO_CLIENT_SECRET` or token files and the app never
   holds either:
   - `@checkin/quickbooks/oauth` (`src/oauth.ts`): `oauthConfigFromEnv`, `authUrl`, `exchangeCode`,
@@ -133,6 +144,20 @@ Reads in 93-day chunks. Against the production company it also needs `CHECKIN_EN
 Writes `.ground-truth.json` (normalized `GroundTruthRecord[]`) and prints a shape report:
 row count, distinct vendors, and how many totals collide — the real collision count for the
 amount-anchored vendor join.
+
+## Sandbox checks
+
+`npm run sandbox-checks -w @checkin/quickbooks` confirms, against the sandbox only, what the gate
+relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
+and as the date once closed, a create dated in a closed period fails with fault 6210 in "Required
+password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
+first with the sandbox books open, then after closing them (Settings → Account and settings →
+Advanced → Close the books) with a date before today and a password. It needs the consent token
+file and `QBO_ENVIRONMENT=sandbox`. The test deposits go into the bank account named
+`QBO_SANDBOX_DEPOSIT_ACCOUNT` (default `Checking`), booked to the income account named
+`QBO_SANDBOX_INCOME_ACCOUNT` (default `Services`), as the Chart of Accounts names them; the sample
+sandbox company has both. It creates up to two `[checkin-test]` Deposits per run. Never run it against
+production.
 
 ## Notes
 

@@ -1,4 +1,4 @@
-import { findOrCreate, takeoverLine, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { findOrCreate, qboDate, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror } from "../contract";
@@ -63,13 +63,14 @@ export async function incomeTakeoverLine(orgId: string): Promise<string | null> 
     where: { orgId, entityType: "payout_reconciliation", action: { in: MATCH_ACTIONS } },
     select: { after: true },
   });
-  return takeoverLine(
-    events.map((e) => {
-      const after = JSON.parse(e.after ?? "{}") as Partial<Pick<PayoutReconciliation, "payoutDate" | "origin">>;
-      if (typeof after.payoutDate !== "string") throw new Error("match audit event has no payoutDate");
-      return { date: after.payoutDate, qbOrigin: after.origin === RECON_ORIGIN.MATCHED ? "hand" : "app" };
-    }),
-  );
+  let line: string | null = null;
+  for (const e of events) {
+    const after = JSON.parse(e.after ?? "{}") as Partial<Pick<PayoutReconciliation, "payoutDate" | "origin">>;
+    if (typeof after.payoutDate !== "string") throw new Error("match audit event has no payoutDate");
+    qboDate(after.payoutDate);
+    if (after.origin === RECON_ORIGIN.MATCHED && (line === null || after.payoutDate > line)) line = after.payoutDate;
+  }
+  return line;
 }
 
 /** A payout's sales: its transactions, their order lines, and finance's decision for each item that has one. */
@@ -179,7 +180,8 @@ async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: Pay
 /**
  * One payout's turn through the outbox: match before create via findOrCreate, then record
  * the outcome. found → link (POSTED when it carries the payout's key); created → POSTED;
- * ambiguous → finance's queue; failed → POST_FAILED; too old or no line → left as it is.
+ * ambiguous → finance's queue; failed → POST_FAILED; on or before the line, covered by the
+ * QuickBooks books closing date (or refused as fault 6210), or with no line → left as it is.
  * Returns null when another holder has the lock and `wait` is off. `problem` and `sales` are
  * the drain's own reads, read here when absent.
  */
@@ -252,7 +254,9 @@ export async function postPayout(
             write,
             key: incomeKey(current.payoutGid),
             window,
-            takeoverLine: line,
+            // With no line, a closed date before the payout's own makes every miss needs-finance.
+            closedThrough: line ?? addDays(write.fields.txnDate, -1),
+            mayCreate: line !== null,
             claimedIds: new Set([...foreign, ...held.flatMap((h) => (h.depositId ? [h.depositId] : []))]),
             excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
           })
@@ -297,13 +301,15 @@ export async function postPayout(
         case "failed":
           if (current.kind === RECON_KIND.POST_FAILED) return { outcome: "failed" as const, row: current };
           return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED }, result.error);
-        case "too-old":
-        case "no-line":
+        case "closed":
+        case "needs-finance":
           return { outcome: "waiting" as const, row: current };
       }
     },
-    // Two QuickBooks requests, each with a 30s timeout and one Retry-After wait.
-    { timeout: 90_000 },
+    // Covers the window read, closing-date read and create at their usual speed. A 429 retry or a paged
+    // window can overrun it; the rollback leaves the payout WAITING, and the next drain finds an
+    // applied create by its key.
+    { timeout: 135_000 },
   );
 }
 

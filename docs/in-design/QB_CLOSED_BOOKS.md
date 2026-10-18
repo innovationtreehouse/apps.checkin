@@ -150,13 +150,14 @@ is not stored on the record for the same reason: it would go stale.
 
 **QuickBooks' refusal guards the last gap.** Finance can still close a period
 between the app's last read and the create itself. For that gap the app relies
-on QuickBooks refusing to post into a closed period (fault 6200).
-`findOrCreate` reports fault 6200 as `closed`, the same result as a date the
+on QuickBooks refusing to post into a closed period (fault 6210).
+`findOrCreate` reports fault 6210 as `closed`, the same result as a date the
 gate stopped itself. The lane holds the record as closed, never as
 `POST_FAILED`, so it is never retried as a failed post. The next run reads the
 closing date again and keeps the record held under the new date. The shared
-gate PR's sandbox check confirms that QuickBooks returns fault 6200 for a create
-dated in a closed period, in the closing mode finance uses.
+gate PR's sandbox check confirms that QuickBooks returns fault 6210 for a create
+dated in a closed period, in the closing mode finance uses. It was observed in
+the sandbox in "Required password" mode, as HTTP 400 (2026-10-18).
 
 ### 3. Switch-on timestamp
 
@@ -454,9 +455,9 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
    No app code.
 2. **Shared gate:** `packages/quickbooks` replaces `takeoverLine` with
    `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It re-reads the
-   closing date just before each create and reports fault 6200 as `closed`
+   closing date just before each create and reports fault 6210 as `closed`
    (section 2). It adds the created-since read used by the key lookup and the
-   sweep (sections 6 and 7). It confirms the closing date field, fault 6200 for
+   sweep (sections 6 and 7). It confirms the closing date field, fault 6210 for
    a closed period, and the created-since query in the sandbox. Until each lane PR lands, its caller passes its old line
    as `closedThrough` with `mayCreate: true` (or `mayCreate: false` when it has no
    line), and maps `closed` to today's `too-old` and `needs-finance` to today's

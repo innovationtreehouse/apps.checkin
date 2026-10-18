@@ -34,7 +34,9 @@ class FakeQbo {
   purchases: QboPurchase[] = [];
   bills: QboBill[] = [];
   posts: { entity: string; key: string; body: PostedTxn }[] = [];
-  mode: "ok" | "down" | "accept-then-drop" = "ok";
+  mode: "ok" | "down" | "accept-then-drop" | "closed" = "ok";
+  /** The books closing date Preferences reports. */
+  closeDate: string | null = null;
   /** While set, every request waits on it: a QuickBooks call still in flight. */
   gate: Promise<void> | null = null;
   private nextId = 5000;
@@ -45,11 +47,15 @@ class FakeQbo {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if (this.mode === "down") return json({ Fault: { Error: [{ code: "3100" }] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
+      if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
+        return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
+      }
       const m = /FROM (Purchase|Bill) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(url.searchParams.get("query") ?? "");
       if (!m) throw new Error(`unexpected query ${url.search}`);
       const list = (m[1] === "Purchase" ? this.purchases : this.bills).filter((t) => t.TxnDate >= m[2] && t.TxnDate <= m[3]);
       return json({ QueryResponse: list.length ? { [m[1]]: list } : {} });
     }
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const entity = url.pathname.endsWith("/bill") ? "Bill" : "Purchase";
     const body = JSON.parse(String(init?.body)) as PostedTxn;
     this.posts.push({ entity, key: url.searchParams.get("requestid") ?? "", body });
@@ -240,6 +246,35 @@ describeDb("QB-2 posting — match before create", () => {
 
     expect(await postExpenseToQb(ORG, id)).toBe("queued");
     expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("BEFORE_LINE");
+  });
+
+  it("a books closing date before the expense still lets it be created", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.closeDate = "2026-08-31";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("re-reads the books closing date before the create and holds an expense it covers as BEFORE_LINE", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.closeDate = "2026-09-30";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("BEFORE_LINE");
+  });
+
+  it("a create QuickBooks refuses as a closed period is held as BEFORE_LINE, never POST_FAILED", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.mode = "closed";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
     expect((await expenseRow(id)).qbMatchState).toBe("BEFORE_LINE");
   });
 });

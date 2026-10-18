@@ -282,8 +282,9 @@ function withClaim(id: number, claim: Claim, fn: (tx: Tx) => Promise<PostOutcome
 
 /**
  * One disbursement's turn. found by amount → MATCHED (moves the takeover line); found by key or
- * created → CREATED; ambiguous → AMBIGUOUS; before the line → BEFORE_LINE; no line → left as it
- * is; a failure → POST_FAILED, then NEEDS_FINANCE after MAX_POST_ATTEMPTS. Over the per-run cents
+ * created → CREATED; ambiguous → AMBIGUOUS; on or before the line, or covered by the QuickBooks
+ * books closing date (read before the create, or refused as fault 6210) → BEFORE_LINE; no line →
+ * left as it is; a failure → POST_FAILED, then NEEDS_FINANCE after MAX_POST_ATTEMPTS. Over the per-run cents
  * cap it is matched only, and NEEDS_FINANCE when nothing matches.
  *
  * Claim, call, settle: the record is claimed under its row lock, the QuickBooks calls run outside
@@ -312,7 +313,9 @@ export async function postDisbursementToQb(id: number): Promise<PostOutcome | "u
       write,
       key: qbKey("donation", `${before.orgId}:${before.disbursementId}`),
       window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
-      takeoverLine: line,
+      // With no line, a closed date before the record's own makes every miss needs-finance.
+      closedThrough: line ?? shiftDate(date, -1),
+      mayCreate: line !== null,
       claimedIds: new Set([...held, ...foreign]),
       excludedIds: new Set(excluded.map((x) => x.qbTxnId)),
     });
@@ -338,9 +341,9 @@ export async function postDisbursementToQb(id: number): Promise<PostOutcome | "u
         }
         case "ambiguous":
           return settle(tx, before, "queued", QB_MATCH_STATE.AMBIGUOUS, { note: `candidates: ${result.ids.join(", ")}` });
-        case "too-old":
+        case "closed":
           return settle(tx, before, "queued", QB_MATCH_STATE.BEFORE_LINE);
-        case "no-line":
+        case "needs-finance":
           return overCap
             ? settle(tx, before, "queued", QB_MATCH_STATE.NEEDS_FINANCE, { note: `net is over the per-run cap of ${MAX_CREATE_CENTS_PER_RUN} cents` })
             : settle(tx, before, "waiting", before.qbMatchState as QbMatchState);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billCandidate, depositCandidate, findMatch, purchaseCandidate, takeoverLine, type MatchRequest } from "../match";
+import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchRequest } from "../match";
 import { appKeyOf } from "../client";
 import type { QboBill, QboDeposit, QboPurchase } from "../types";
 
@@ -20,7 +20,6 @@ const base: MatchRequest = {
   ref: "35",
   key: "gid://shopify/Payout/1",
   window: { from: "2025-03-03", to: "2025-03-10" },
-  takeoverLine: "2025-03-01",
   claimedIds: new Set(),
   excludedIds: new Set(),
 };
@@ -47,7 +46,7 @@ describe("findMatch", () => {
       deposit("3", "2025-03-05", 123.45, { DepositToAccountRef: { value: "36" } }),
       deposit("4", "2025-03-05", 123.44),
     ];
-    expect(run(misses)).toEqual({ kind: "not-found-after-line" });
+    expect(run(misses)).toEqual({ kind: "not-found" });
   });
 
   it("sends more than one candidate to a person", () => {
@@ -61,9 +60,7 @@ describe("findMatch", () => {
     const rows = [deposit("10", "2025-03-04", 123.45), deposit("12", "2025-03-09", 123.45)];
     expect(run(rows, { excludedIds: new Set(["10"]) })).toEqual({ kind: "found", id: "12", via: "amount" });
     expect(run(rows, { claimedIds: new Set(["12"]) })).toEqual({ kind: "found", id: "10", via: "amount" });
-    expect(run(rows, { excludedIds: new Set(["10"]), claimedIds: new Set(["12"]) })).toEqual({
-      kind: "not-found-after-line",
-    });
+    expect(run(rows, { excludedIds: new Set(["10"]), claimedIds: new Set(["12"]) })).toEqual({ kind: "not-found" });
   });
 
   it("finds the app's own creation by the caller's key, ahead of a hand entry of the same amount", () => {
@@ -116,8 +113,8 @@ describe("findMatch", () => {
   it("ignores another record's key entry that does not match, or that its record already holds", () => {
     const off = deposit("22", "2025-03-04", 99, { PrivateNote: "app:gid://shopify/Payout/2" });
     const held = deposit("23", "2025-03-04", 123.45, { PrivateNote: "app:gid://shopify/Payout/2" });
-    expect(run([off])).toEqual({ kind: "not-found-after-line" });
-    expect(run([held], { claimedIds: new Set(["23"]) })).toEqual({ kind: "not-found-after-line" });
+    expect(run([off])).toEqual({ kind: "not-found" });
+    expect(run([held], { claimedIds: new Set(["23"]) })).toEqual({ kind: "not-found" });
   });
 
   it("sends a key hit that is excluded, claimed or duplicated to a person", () => {
@@ -128,20 +125,6 @@ describe("findMatch", () => {
     expect(run([own, twin])).toEqual({ kind: "ambiguous", ids: ["20", "23"] });
   });
 
-  it("answers before-line for a record on or before the takeover line (too old)", () => {
-    expect(run([], { date: "2025-03-01" })).toEqual({ kind: "not-found-before-line" });
-    expect(run([], { date: "2025-02-27" })).toEqual({ kind: "not-found-before-line" });
-    expect(run([], { date: "2025-03-02" })).toEqual({ kind: "not-found-after-line" });
-  });
-
-  it("fails closed with no takeover line", () => {
-    expect(run([], { takeoverLine: null })).toEqual({ kind: "not-found-no-line" });
-  });
-
-  it("still finds a match with no takeover line", () => {
-    expect(run([deposit("10", "2025-03-05", 123.45)], { takeoverLine: null })).toMatchObject({ kind: "found" });
-  });
-
   it("skips the ref check when the request carries none", () => {
     const elsewhere = deposit("3", "2025-03-05", 123.45, { DepositToAccountRef: { value: "36" } });
     expect(run([elsewhere], { ref: undefined })).toEqual({ kind: "found", id: "3", via: "amount" });
@@ -149,7 +132,6 @@ describe("findMatch", () => {
 
   it("rejects bad dates and a reversed window", () => {
     expect(() => run([], { date: "2025-3-3" })).toThrow(/Invalid QBO date/);
-    expect(() => run([], { takeoverLine: "x" })).toThrow(/Invalid QBO date/);
     expect(() => run([], { window: { from: "2025-03-10", to: "2025-03-03" } })).toThrow(/reversed/);
   });
 });
@@ -170,33 +152,5 @@ describe("candidate adapters", () => {
     expect(purchaseCandidate(purchase)).toMatchObject({ amountCents: 1200, ref: "41" });
     expect(billCandidate(bill, (b) => b.DocNumber)).toMatchObject({ ref: "77", appKey: undefined });
     expect(billCandidate({ ...bill, DocNumber: "exp-9" }, (b) => b.DocNumber)).toMatchObject({ appKey: "exp-9" });
-  });
-});
-
-describe("takeoverLine", () => {
-  it("is the newest record tied to an entry the app did not create", () => {
-    expect(
-      takeoverLine([
-        { date: "2025-02-01", qbOrigin: "hand" },
-        { date: "2025-03-01", qbOrigin: "hand" },
-        { date: "2025-02-15", qbOrigin: "hand" },
-      ]),
-    ).toBe("2025-03-01");
-  });
-  it("never moves for app-created entries or untied records", () => {
-    expect(
-      takeoverLine([
-        { date: "2025-02-01", qbOrigin: "hand" },
-        { date: "2025-06-01", qbOrigin: "app" },
-        { date: "2025-07-01", qbOrigin: null },
-      ]),
-    ).toBe("2025-02-01");
-  });
-  it("is null (fail closed) with no hand-booked match", () => {
-    expect(takeoverLine([])).toBeNull();
-    expect(takeoverLine([{ date: "2025-06-01", qbOrigin: "app" }])).toBeNull();
-  });
-  it("rejects a bad date", () => {
-    expect(() => takeoverLine([{ date: "06/01/2025", qbOrigin: "hand" }])).toThrow(/Invalid QBO date/);
   });
 });

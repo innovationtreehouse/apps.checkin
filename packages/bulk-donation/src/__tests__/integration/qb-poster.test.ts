@@ -40,7 +40,9 @@ interface PostedDeposit {
 class FakeQbo {
   deposits: QboDeposit[] = [];
   posts: { key: string; body: PostedDeposit }[] = [];
-  mode: "ok" | "down" | "accept-then-drop" = "ok";
+  mode: "ok" | "down" | "accept-then-drop" | "closed" = "ok";
+  /** The books closing date Preferences reports. */
+  closeDate: string | null = null;
   private nextId = 7000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -49,6 +51,9 @@ class FakeQbo {
     if (this.mode === "down") return json({ Fault: { Error: [{ code: "3100" }] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
+      if (query === "SELECT * FROM Preferences") {
+        return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
+      }
       const account = /FROM Account WHERE FullyQualifiedName = '([^']+)'/.exec(query);
       if (account) {
         const Id = ACCOUNTS[account[1]];
@@ -60,6 +65,7 @@ class FakeQbo {
       return json({ QueryResponse: list.length ? { Deposit: list } : {} });
     }
     if (!url.pathname.endsWith("/deposit")) throw new Error(`unexpected write ${url.pathname}`);
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const body = JSON.parse(String(init?.body)) as PostedDeposit;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
@@ -207,6 +213,32 @@ describeDb("donation QuickBooks drain: outcomes", () => {
     expect(await postDisbursementToQb(e.id)).toBe("queued");
     expect((await stateOf(e.id)).qbMatchState).toBe("BEFORE_LINE");
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a books closing date before the disbursement still lets it be created", async () => {
+    await handMatched("2026-09-01");
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.closeDate = "2026-08-31";
+    expect(await postDisbursementToQb(e.id)).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+    expect((await stateOf(e.id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("re-reads the books closing date before the create and holds a disbursement it covers as BEFORE_LINE", async () => {
+    await handMatched("2026-09-01");
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.closeDate = "2026-09-30";
+    expect(await postDisbursementToQb(e.id)).toBe("queued");
+    expect((await stateOf(e.id)).qbMatchState).toBe("BEFORE_LINE");
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a create QuickBooks refuses as a closed period is held as BEFORE_LINE, never POST_FAILED", async () => {
+    await handMatched("2026-09-01");
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.mode = "closed";
+    expect(await postDisbursementToQb(e.id)).toBe("queued");
+    expect((await stateOf(e.id)).qbMatchState).toBe("BEFORE_LINE");
   });
 
   it("skips deposits income or finance's exclusions hold, and creates instead", async () => {
