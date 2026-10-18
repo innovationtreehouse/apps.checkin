@@ -1,11 +1,11 @@
 /**
  * The Shopify bulk-operation lifecycle calls in bulk.ts: starting an export
- * (success, userErrors, and the no-operation response), reading the current op, and
+ * (success, the "already running" userError, and the no-operation response), polling an op by id, and
  * downloading the JSONL (success + HTTP error). reassembly itself is covered in
  * bulk-reassemble.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { startOrdersBackfill, getCurrentBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
+import { startOrdersBackfill, getBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
 import { fakeClient } from "../helpers/fakeClient.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -32,13 +32,25 @@ describe("startOrdersBackfill", () => {
   });
 });
 
-describe("getCurrentBulkOperation", () => {
-  it("returns the current operation, or null when there is none", async () => {
-    expect(await getCurrentBulkOperation(fakeClient({ currentBulkOperation: { id: "gid://op/9", status: "RUNNING" } }))).toEqual({
-      id: "gid://op/9",
-      status: "RUNNING",
-    });
-    expect(await getCurrentBulkOperation(fakeClient({ currentBulkOperation: null }))).toBeNull();
+describe("getBulkOperation", () => {
+  it("polls bulkOperation(id:) with the tracked id, not the deprecated currentBulkOperation", async () => {
+    const client = fakeClient({ bulkOperation: { id: "gid://op/9", status: "RUNNING", objectCount: "12" } });
+    expect(await getBulkOperation(client, "gid://op/9")).toEqual({ id: "gid://op/9", status: "RUNNING", objectCount: "12" });
+    expect(client.calls[0].variables).toEqual({ id: "gid://op/9" });
+    expect(client.calls[0].query).toContain("bulkOperation(id: $id)");
+    expect(client.calls[0].query).not.toContain("currentBulkOperation");
+  });
+
+  it.each([
+    { id: "gid://op/9", status: "COMPLETED", url: "https://storage.googleapis.com/r.jsonl", errorCode: null },
+    { id: "gid://op/9", status: "FAILED", url: null, errorCode: "INTERNAL_SERVER_ERROR" },
+    { id: "gid://op/9", status: "CANCELED", url: null, errorCode: null },
+  ])("returns the $status operation as Shopify reports it", async (op) => {
+    expect(await getBulkOperation(fakeClient({ bulkOperation: op }), "gid://op/9")).toEqual(op);
+  });
+
+  it("returns null when Shopify no longer knows the id", async () => {
+    expect(await getBulkOperation(fakeClient({ bulkOperation: null }), "gid://op/9")).toBeNull();
   });
 });
 

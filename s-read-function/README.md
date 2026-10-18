@@ -35,7 +35,7 @@ EventBridge (cron)  ─▶  handler  ─┬─ incremental sync (orders + payout
 - Payout ↔ order association is a stored column on each balance transaction
   (`payout_gid` + `order_gid`), not a heuristic. All cents are **signed**, so refunds
   and negative adjustments within a payout need no special handling. The incremental
-  balance-transaction pull filters on `processed_at` — verified (2025-07) to be the same
+  balance-transaction pull filters on `processed_at` — documented (2026-04) as the same
   instant as the node's `transactionDate`, which is the field the watermark advances on, so
   the filter axis matches the watermark axis (no skips, no full re-pull).
 
@@ -50,7 +50,7 @@ Copy `.env.example` to `.env` (git-ignored) and fill it in:
 | `SHOPIFY_SHOP` | `your-store.myshopify.com`. |
 | `SHOPIFY_ADMIN_TOKEN` | Static Admin API access token (`shpat_...`). Local/legacy shortcut — see below. |
 | `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` | Dev Dashboard app credentials. Set these **instead of** `SHOPIFY_ADMIN_TOKEN` to have the process mint its own token (required for the deployed sync, since nobody is around to hand-paste a fresh one every ~24h). |
-| `SHOPIFY_API_VERSION` | API version to pin, e.g. `2025-07`. |
+| `SHOPIFY_API_VERSION` | API version to pin; defaults to `2026-04`. |
 | `STORE_ID` | Seed used **only** by offline `inject` (defaults to `SHOPIFY_SHOP`). Real syncs ignore it and derive `store_id` from the live store's `myshopifyDomain` (recorded in the `store` registry table); a mismatch is logged as a warning. |
 | `CUTOVER_DATE` | ISO date — backfill starts here and moves forward. |
 | `MONITORING_DATABASE_URL` | Optional. Monitoring Postgres the run-freshness heartbeat is pushed to; unset = no push. |

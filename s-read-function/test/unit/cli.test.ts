@@ -39,7 +39,7 @@ const origArgv = process.argv;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.loadShopifyConfig.mockReturnValue({ endpoint: "https://shop/graphql.json", apiVersion: "2025-07", adminToken: "t" });
+  m.loadShopifyConfig.mockReturnValue({ endpoint: "https://shop/graphql.json", apiVersion: "2026-04", adminToken: "t" });
   m.loadDbConfig.mockReturnValue({ storeId: "s1" });
   m.disconnect.mockResolvedValue(undefined);
   m.findStore.mockResolvedValue(null);
@@ -71,7 +71,7 @@ describe("cli — connectivity & read probes", () => {
     await runCli(["ping"]);
 
     expect(m.request).toHaveBeenCalledOnce();
-    expect(logged("shopify ping ok")).toMatchObject({ apiVersion: "2025-07" });
+    expect(logged("shopify ping ok")).toMatchObject({ apiVersion: "2026-04" });
     expect(process.exitCode).toBeUndefined();
   });
 
