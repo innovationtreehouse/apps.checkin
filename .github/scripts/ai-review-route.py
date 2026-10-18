@@ -74,12 +74,13 @@ def ladder(chosen, lines, nfiles):
     return "free"
 
 
-def jev(state, questions):
+def jev(state, questions, timeout=180):
     body = json.dumps({"model": JEV, "state": state, "questions": questions}).encode()
     req = urllib.request.Request("https://openrouter.ai/api/v1/systemone", data=body, headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
-    # Full-context states can push Jev into long-context mode; give it room before the fallbacks kick in.
-    with urllib.request.urlopen(req, timeout=600) as r:
+    # timeout bounds each socket read, not the whole call. Routing has cheap fallbacks, so it gets less
+    # time than the judge (600 s), keeping three hung calls well inside the job's 50 minutes.
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
@@ -125,6 +126,11 @@ def round_pairs(shas, base):
     return list(zip([base] + shas[:-1], shas))
 
 
+def linear_since(cmp):
+    """A round-to-round compare holds only PR work: the old head is an ancestor and no merge commits came in."""
+    return cmp.get("status") == "ahead" and all(len(c.get("parents", [])) <= 1 for c in cmp.get("commits", []))
+
+
 def round_entries(reviews, base, skip_id=None):
     """Submitted bot reviews except skip_id, oldest first (same-second ties by id), as
     (review id, (from, to), entry) with the diff still to fetch."""
@@ -156,6 +162,12 @@ def prior_rounds(pr, repo, skip_id=None):
         entry["inline_comments"] = comments.get(rid, [])
         if entry["diff_status"] == "unavailable":
             try:
+                if a != base and not linear_since(json.loads(gh("api", f"repos/{repo}/compare/{a}...{b}"))):
+                    entry["diff_status"] = "base_changed"
+                    entry["diff_note"] = ("the branch was rebased or merged with its base between these rounds, "
+                                          "so a round-to-round diff would include base-branch changes; none is shown")
+                    rounds.append(entry)
+                    continue
                 entry["diff"] = gh("api", f"repos/{repo}/compare/{a}...{b}", "-H", "Accept: application/vnd.github.diff")
                 entry["diff_status"] = "ok"
             except subprocess.CalledProcessError as e:
@@ -208,6 +220,9 @@ def route_selftest():
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
     assert round_pairs(["a", "b", "b", "c"], "main") == [("main", "a"), ("a", "b"), ("b", "b"), ("b", "c")]
     assert round_pairs([], "main") == []
+    assert linear_since({"status": "ahead", "commits": [{"parents": [1]}, {"parents": [2]}]})
+    assert not linear_since({"status": "ahead", "commits": [{"parents": [1, 2]}]})  # merged main in
+    assert not linear_since({"status": "diverged", "commits": [{"parents": [1]}]})  # rebased
     rv = lambda i, at, sha, who=BOT: {"id": i, "submitted_at": at, "commit_id": sha, "user": {"login": who}}
     got = round_entries([rv(3, "T2", "b"), rv(2, "T1", "a"), rv(9, "T1", "x"), rv(4, None, "z"),
                          rv(5, "T3", "b"), rv(6, "T0", "q", "someone"), rv(7, "T4", "c")], "main", skip_id="9")
@@ -391,7 +406,7 @@ def adjudicate():
                   "rerun_on": {"type": "choice",
                                "instructions": "If the review must be redone, which stronger reviewer should redo it? Cost matters: pick the cheapest one that would fix what the review missed.",
                                "criteria": rung_choice(higher)}}
-            a = jev(state, qs)
+            a = jev(state, qs, timeout=600)
             p = a["complete"]["noul"]
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
