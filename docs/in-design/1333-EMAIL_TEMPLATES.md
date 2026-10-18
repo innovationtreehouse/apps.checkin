@@ -47,10 +47,28 @@ surface**, so a non-dev editor cannot inject markup or break the layout. (See th
 `<iframe>` preview history noted in `scholarshipAckCopy.ts` — this design avoids that class of
 problem by construction.)
 
+A single line break inside a paragraph is a line break (`<br>`), and a paragraph that is empty
+after token substitution is dropped. Today's HTML maps onto plain text like this:
+
+- **A heading** becomes the first paragraph. Emoji stay, as text; the heading size and colour go.
+- **Bold** is dropped. The words stay.
+- **A line that appears only sometimes** (the check-in "📍 via badge scan" line) is a text token
+  the code fills, or leaves empty.
+- **Wording that differs between variants** (checked in / checked out) is a text token the code
+  fills. When the variants differ in a whole sentence or subject, each variant gets its own key
+  (`membership.welcome` / `membership.renewed`).
+- **A list** is a text token the code fills with one item per line; **a count** is a text token.
+- **A link inside a sentence** keeps its place as a link token with its fixed label ("You can
+  manage it {{actionLink}}." with the label "here"). Where today's link text is the URL itself,
+  the token has no label and shows the URL. The post-event button becomes a plain link.
+- **HTML a caller builds** (the Shopify error intros, the attendance-flag detail) is an escaped
+  text token; those callers pass plain text from step 4 on.
+
 ### 3. Token registry — `src/lib/email-templates/registry.ts`
 
-The registry is the **only** per-key code. It does not hold copy (copy is in the DB); it holds
-the *contract* for each key:
+The registry is the **only** per-key code. It holds the *contract* for each key and its
+default copy; a Board override lives in the DB. The token types and the substitution functions
+sit beside it in `src/lib/email-templates/tokens.ts`:
 
 ```ts
 type TokenKind = "text" | "link";
@@ -67,7 +85,7 @@ export const REGISTRY: Record<string, TemplateSpec> = { ... }
 - `text` tokens are **HTML-escaped** and inserted as text — **in the body only**. The
   **subject** is not HTML; it substitutes tokens **raw/unescaped** (see §4), so "Arts & Crafts"
   and "O'Brien" arrive intact. (Escaping a subject is the existing outreach wart at
-  `outreach/render.ts:76` — this design fixes it rather than generalizing it to all 27 flows.)
+  `outreach/render.ts:76` — this design fixes it rather than generalizing it to every flow.)
 - `link` tokens render as `<a href="{value}">{label}</a>` — the URL is a system value in the
   send `ctx`, the anchor label lives in the registry. The editor places `{{actionLink}}` in the
   body; they never type a URL or an `<a>`, and the label is not editable (D-2 below).
@@ -125,7 +143,7 @@ non-goal.
 
 ### 7. The sweep — one conversion, no partial state
 
-Migrate all ~27 flows to `sendTemplated` in a single pass. Because the registry defaults == current copy, the
+Migrate every flow to `sendTemplated` in a single pass. Because the registry defaults == current copy, the
 diff is behavior-neutral on wording. The old inline builders and hardcoded subjects are
 **deleted**, not left beside the new path. Folds the two existing deploy-free systems in too
 (see D). After the sweep there is exactly one way to send mail.
@@ -140,101 +158,117 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (27)
+## Key list (39)
 
-Grouped by prefix. `link` tokens noted; everything else is `text`.
+37 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+no default copy in code today (the Board writes it, and it is empty until they do).
+`link` tokens are noted; everything else is `text`. Tokens are named after the words they
+stand for in today's copy, so a key without a link today has no `actionLink`.
 
-### checkin (attendance) — 2
+### checkin and attendance — 4
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `checkin.receipt` | `sendCheckinNotifications` participant (`checkinReceiptTemplate`) | participant | name, action, date, time |
-| `checkin.householdMember` | `sendCheckinNotifications` household leads (`householdMemberTemplate`) | household lead | leadName, memberName, action, date, time |
+| `checkin.receipt` | `sendCheckinNotifications` participant (`checkinReceiptTemplate`) | participant | name, emoji, visitWord, action, date, time, via |
+| `checkin.householdMember` | `sendCheckinNotifications` household leads (`householdMemberTemplate`) | household lead | leadName, memberName, emoji, arrivalWord, action, date, time, via |
+| `attendance.selfCorrectionFlag` | significant visit edit/delete (`attendance/manual/[id]`) | board | scope, change, visitId, actorName, verb, whose, score, detail |
+| `attendance.keyholderHandover` | last keyholder names a successor (`keyholderGuard`) | named keyholder | leaverName, when, peopleInside |
 
 > Resolved (flag A): `sendNotification` CHECKIN/CHECKOUT is **dead** — test-only, no prod
-> caller. The live check-in mail is the two rows above. No `checkin.notify`/`checkout.notify`
+> caller. The live check-in mail is the first two rows above. No `checkin.notify`/`checkout.notify`
 > keys. No separate `checkin.leadAlert` — the lead notice *is* `checkin.householdMember`.
+> `emoji`, `visitWord`/`arrivalWord` and `action` carry the check-in/check-out wording; `via` is
+> the "📍 via badge scan" line, empty when the source is unknown.
 
-### notifications — 3
+### programs — 7
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `enrollment.confirm` | `sendNotification` PROGRAM_ENROLLMENT (`participants/route.ts:148`) | family | name, programName |
-| `program.assignment` | `sendNotification` PROGRAM_ASSIGNMENT (`programs/route.ts:241`) | lead mentor | programName, `actionLink` |
-| `program.announced` | `notifyNewProgramAnnounced` | families | name, programName, `actionLink` |
+| `enrollment.confirm` | `sendNotification` PROGRAM_ENROLLMENT (`participants/route.ts`) | family | name, programName |
+| `program.assignment` | `sendNotification` PROGRAM_ASSIGNMENT (`programs/route.ts`) | lead mentor | programName, `actionLink` ("here") |
+| `program.announced` | `notifyNewProgramAnnounced` | families | name, programName |
+| `event.postEvent` | `postEventTemplate` | lead mentor / core volunteer | eventName, rsvpCount, checkinCount, `actionLink` ("Review & Confirm Attendance") |
+| `participant.pendingWarning.day1` | pending-participants cron, day 1 | family | programName |
+| `participant.pendingWarning.day3` | pending-participants cron, day 3 | family | programName |
+| `participant.pendingWarning.day6` | pending-participants cron, day 6 | family | programName |
 
-> `program.assignment` migrates the **already-shipped** `programAssignmentTemplate` (#1220,
-> `email-templates/program-assignment.ts`), which renders a `manageUrl` link
-> (`/program-ops/programs/{programId}`). That link is **required** — the default body must include
-> the `{{actionLink}}` token so the sweep doesn't regress #1220's lead welcome email down to a
-> link-less version. (An earlier draft of this doc called PROGRAM_ASSIGNMENT a live "System
-> Action" bug — that was stale: #1220 fixed it on `main` before this design; the row above
-> mirrors the shipped template.)
+> `program.assignment` migrates the **already-shipped** `programAssignmentTemplate` (#1220),
+> which links to `/program-ops/programs/{programId}`. The default body keeps that link as
+> `{{actionLink}}`, so the lead welcome email doesn't lose it.
+> The three pending warnings share a body and differ only in subject, which escalates by day;
+> each is its own key so the Board can edit each subject.
 
-### post-event — 1
+### membership — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `event.postEvent` | `postEventTemplate` | attendees | eventName, `actionLink` |
+| `membership.reviewNeeded` | `notifyReviewers` | review team | `actionLink` (shows the URL) |
+| `membership.paymentOpen` | `notifyPaymentOpen` | family | `actionLink` (shows the URL) |
+| `membership.paymentOpenExistingCheck` | `notifyPaymentOpenOnExistingCheck` | family | `actionLink` (shows the URL) |
+| `membership.welcome` | `sendCongrats`, first membership | family | `actionLink` ("Visit your dashboard") |
+| `membership.renewed` | `sendCongrats`, renewal | family | `actionLink` ("Visit your dashboard") |
 
-### membership — 3
+### board — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `membership.reviewNeeded` | `notifyReviewers` | review team | applicantName, `actionLink` |
-| `membership.paymentOpen` | `notifyPaymentOpen` | family | `actionLink`, deadline |
-| `membership.congrats` | `sendCongrats` | family | householdName, `actionLink` |
-
-### board — 3
-| key | trigger | recipient | tokens |
-|-----|---------|-----------|--------|
-| `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` |
-| `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` |
-| `board.pendingDigest` | pending-participants digest | board | listItems, `actionLink` |
+| `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
+| `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` ("Open payment problems") |
+| `board.pendingDigest` | pending-participants digest | board | approachingCount, overdueCount, approachingList, overdueList |
+| `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
+| `board.programAgeMisfit` | program date/age edit (`programs/update.ts`) | board | programName, count, people, `actionLink` ("Open the program") |
 
 > See sub-decision B (blurb) below.
 
-### participant — 1
+### finance — 2
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `participant.pendingWarning` | pending-participants warning | family | participantName, deadline |
+| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the mail queue") |
+| `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
 
 ### shopify — 1
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `shopify.error` | `reportShopifyFailure` | board/sysadmin | errorDetail, `actionLink` |
+| `shopify.error` | `reportShopifyFailure` (Shopify writes, sale sweep, lifecycle drift) | board/sysadmin | intro, errorDetail |
 
-### trustedAdult — 7 (flag C, fully spelled out — no "resolve at build")
+> `intro` is the caller's one-line description of what failed. The callers pass it as plain
+> text from step 4 on (today it is HTML with `<strong>`).
+
+### trustedAdult — 8 (flag C, fully spelled out — no "resolve at build")
 | key | trigger (`service.ts`) | recipient | tokens |
 |-----|------------------------|-----------|--------|
-| `trustedAdult.boardReview` | `notifyBoard` :580 | board | `actionLink` |
-| `trustedAdult.requestInfo` | REQUEST_INFO :421 | family | note, `actionLink` |
-| `trustedAdult.deniedRevoked` | DENY + `revokePriorApprovals` :429 | family | adultName, `actionLink` |
-| `trustedAdult.changeNotApproved` | DENY, prior approval survives :442 | family | adultName, until, `actionLink` |
-| `trustedAdult.notApproved` | DENY, nothing survives :448 | family | adultName, `actionLink` |
-| `trustedAdult.overrideDecided` | `overrideReview` deny/revoke :521 | family | adultName, action, `actionLink` |
-| `trustedAdult.expiring` | `runExpirySweep` :545 | family | deadline, `actionLink` |
+| `trustedAdult.boardReview` | `notifyBoard` | board | `actionLink` ("Review it") |
+| `trustedAdult.requestInfo` | REQUEST_INFO | family | note, `actionLink` |
+| `trustedAdult.deniedRevoked` | DENY + `revokePriorApprovals` | family | adultName, `actionLink` |
+| `trustedAdult.changeNotApproved` | DENY, prior approval survives | family | adultName, until, `actionLink` |
+| `trustedAdult.notApproved` | DENY, nothing survives | family | adultName, `actionLink` |
+| `trustedAdult.overrideDecided` | `overrideReview` deny/revoke | family | adultName, action, `actionLink` |
+| `trustedAdult.expiring` | `runExpirySweep` warning | family | deadline, `actionLink` |
+| `trustedAdult.expired` | `runExpirySweep` lapse, adult left unauthorized | family | adultName, `actionLink` |
 
-> `deniedRevoked` (:429, from the normal decide path) and `overrideDecided` (:521, from the
+> `deniedRevoked` (from the normal decide path) and `overrideDecided` (from the
 > sysadmin override path) share a subject but keep **separate keys** — different code paths,
 > different bodies (`overrideDecided` carries an `{{action}}` = denied/revoked token). Deliberately
 > not merged: collapsing them is exactly the "resolve at build" shortcut we're avoiding.
-> The static `<a>View your trusted adults</a>` footer that `notifyHouseholdFamily` appends
-> today becomes the `{{actionLink}}` token in each family template.
+> The "View your trusted adults" link that `notifyHouseholdFamily` appends today is the
+> `{{actionLink}}` token (label "View your trusted adults") in each family template.
+> `until` is " (valid until YYYY-MM-DD)", or empty when the approval has no end date.
 
-### scholarship — 4 (flag D: folded in from `BoardSettings`)
+### scholarship — 5 (flag D: folded in from `BoardSettings`)
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `scholarship.membershipReview` | membership request-payment-plan | review team | applicantName, `actionLink` |
-| `scholarship.programReview` | program request-payment-plan | review team | applicantName, programName, `actionLink` |
+| `scholarship.membershipReview` | membership request-payment-plan | review team | householdId, requestKind, `actionLink` (shows the URL) |
+| `scholarship.programReview` | program request-payment-plan | review team | personName, programName, requestKind, `actionLink` (shows the URL) |
 | `scholarship.ackMembership` | `sendScholarshipAck` membership (was `DEFAULT_ACK_MEMBERSHIP_BODY`) | family | — |
 | `scholarship.ackProgram` | `sendScholarshipAck` program (was `DEFAULT_ACK_PROGRAM_BODY`) | family | programName |
+| `scholarship.ackProgramHoldFailed` | program request whose Shopify seat hold failed | family | — |
 
 > Fold detail: the ACK copy currently lives in `BoardSettings.scholarshipAck{Subject,Membership
 > Body,ProgramBody}` and is edited on `settings/email`. The sweep migrates those values into the
 > two `scholarship.ack*` rows and moves editing to the new tab. The three `BoardSettings` columns
 > + their `settings/email` controls are **dropped in the follow-up contract release** (build
-> order step 8), not here — old pods still read them during the drain. The
-> `scholarship.ackProgram` subject == `scholarship.ackMembership` subject at seed
-> time; each row owns its own subject field going forward.
+> order step 8), not here — old pods still read them during the drain. The three
+> `scholarship.ack*` subjects are the same at the start; each key owns its own subject going
+> forward. Until step 4 the ACK defaults stay in `scholarshipAckCopy.ts` and the registry
+> imports them, so the default wording exists in one place.
 
-### outreach — 2 (flag D: folded in from `BoardSettings`)
+### outreach — 2 (flag D: folded in from `BoardSettings`; joins the registry in step 5)
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | prospects | name, deadline, actionWord, `actionLink` |
@@ -252,15 +286,16 @@ Grouped by prefix. `link` tokens noted; everything else is `text`.
 ## Sub-decisions
 
 **B — `board.paymentException` blurb: B-1, a `{{blurb}}` token with the blurbs in code.**
-The reconciler maps 11 exception kinds to a one-line human description
-(`PAID_WHILE_BLOCKED → "a household paid but its application is blocked…"`, etc.). Those 11
-descriptions stay in the registry, in code. There is one `board.paymentException` row, and the
+The reconciler maps each exception kind (15 today) to a one-line human description
+(`PAID_WHILE_BLOCKED → "a household paid but its application is blocked…"`, etc.). Those
+descriptions stay in code (`EXCEPTION_BLURB` in `membership/boardAlerts.ts`), and the send fills
+`{{blurb}}` from them. There is one `board.paymentException` row, and the
 editable copy is the sentence around `{{blurb}}`. The descriptions are reconciliation
 diagnostics rather than board-tuned copy, so changing one is a code change and a deploy.
 
-The alternative, B-2, was 11 keys (`board.paymentException.PAID_WHILE_BLOCKED`, …), each fully
-board-editable. It cost 11 near-identical rows for one flow, 11 extra seeds and 11 list entries
-in the admin UI, for copy the board does not need to tune.
+The alternative, B-2, was one key per kind (`board.paymentException.PAID_WHILE_BLOCKED`, …), each
+fully board-editable. It cost a near-identical row, seed and admin-UI list entry per kind for one
+flow, for copy the board does not need to tune.
 
 **D-2 — link anchor label: fixed in code with its link.**
 Link tokens render as `<a href="{url}">{label}</a>`. The URL is a runtime ctx value; the
@@ -278,12 +313,16 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
 ## Build order
 
 1. `EmailTemplate` model + migration (creates the empty table; no seed, see §6).
-2. `registry.ts` (27 specs, whose defaults are today's copy) + generalize `substituteTokens`/`findUnknownTokens` to per-key.
-3. `sendTemplated` + generalized `renderAckBody`-style body→`<p>` + `baseEmailLayout` wrap.
+2. `registry.ts` (37 specs, whose defaults are today's copy; outreach waits for step 5) + per-key
+   `substituteTokens`/`findUnknownTokens` in `email-templates/tokens.ts`. No send path changes;
+   `outreach/tokens.ts` and its two consumers move in step 5 with the outreach copy.
+3. `sendTemplated` + generalized `renderAckBody`-style body→`<p>` (single newline → `<br>`, empty
+   paragraph dropped) + `baseEmailLayout` wrap.
 4. Sweep all call sites to `sendTemplated`; delete inline builders + hardcoded subjects.
 5. Fold outreach + scholarship — **expand only**: migrate `BoardSettings` copy → rows, update
    render wrappers + both preview consumers to read from `EmailTemplate`. **Leave the old
-   `BoardSettings` columns in place and still populated** this release.
+   `BoardSettings` columns in place and still populated** this release. Add the two
+   `outreach.*` registry entries here; their default wording is a Board decision.
 6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
    add `"templates"` to `SettingsTabs`.
