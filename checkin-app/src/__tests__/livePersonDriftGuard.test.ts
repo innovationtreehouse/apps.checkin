@@ -173,6 +173,7 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── authz target checks (class 3, never rendered or counted) ──────────────
     'lib/programs/events.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
+    'lib/bulkDonation/donorSurname.ts': 'In-kind accept step\'s conflict rule: the first findMany is pinned to `id: { in }` over named parties (the decider, and the uploader or recorder) to learn their households. A since-merged uploader must still resolve, or their household would silently drop out of the conflict set. The household members it then reads filter LIVE_PERSON. Never rendered or counted.',
 
     // ── historical / audit trail (showing a since-merged identity is correct) ──
     'app/api/membership-audit/bg-attestations/route.ts': 'BG attestation history: three FK-pinned to-one Person relations (reviewer, attestation.subjectPerson, process.subjectPerson) resolve names for historical attestation records. A reviewer or subject who has since been merged must still appear in the audit trail.',
