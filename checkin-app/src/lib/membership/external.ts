@@ -3,7 +3,7 @@ import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
-import { notifyReviewers, applyVolunteerStatus } from "@/lib/membership/review";
+import { notifyReviewers, applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
@@ -128,9 +128,9 @@ export async function advanceExternalIfComplete(processId: number) {
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
         // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
         // background check clears — so a pre-designated volunteer family must get
-        // isVolunteer here, not only at clearance (#874). Sticky + idempotent;
+        // isVolunteerFamily here, not only at clearance (#874). Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.
-        if (membership) await applyVolunteerStatus(tx, process.orgMembershipId!, membership.householdId, false);
+        if (membership) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, membership.householdId, false);
         await tx.auditLog.create({
             data: {
                 ...systemActor("system:membership-external-advance"),

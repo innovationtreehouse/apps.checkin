@@ -117,7 +117,7 @@ describe('Ownership-boundary authorization', () => {
         return p.id;
     }
     async function mkPendingProcess(householdId: number, status: 'PENDING_PAYMENT' | 'PENDING_RENEWAL', kind: 'INITIAL' | 'RENEWAL') {
-        const m = await prisma.orgMembership.create({ data: { householdId, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'NONE', isVolunteerFamily: false } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind, status } });
     }
 

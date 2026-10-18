@@ -61,7 +61,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     /** A fresh household + membership + PENDING_PAYMENT process, matching what the dev UI lists. */
     async function makeProc() {
         const hh = await prisma.household.create({ data: { name: `Dev Mock HH ${TAG}` } });
-        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         // No bgClearedAt: activate() deterministically lands PENDING_BG_CLEARANCE
         // (not ACTIVE) when it advances — see payment.ts `activating = !!process.bgClearedAt`.
         const p = await prisma.orgMembershipProcess.create({

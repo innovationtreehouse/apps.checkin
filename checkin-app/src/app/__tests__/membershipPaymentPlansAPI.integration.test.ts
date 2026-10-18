@@ -68,7 +68,7 @@ describe('Membership payment-plan routes', () => {
             await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
             personId = lead.id;
         }
-        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         const p = await prisma.orgMembershipProcess.create({
             data: {
                 orgMembershipId: m.id,

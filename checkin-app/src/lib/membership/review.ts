@@ -280,7 +280,7 @@ export async function reviewQueueCounts(reviewerId: number): Promise<{ canActOn:
 export async function attest(
     reviewerId: number,
     processId: number,
-    input: { result: "APPROVE" | "REJECT"; isMarkedVolunteer?: boolean; note?: string; subjectPersonIds?: number[] },
+    input: { result: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; note?: string; subjectPersonIds?: number[] },
 ) {
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) throw new ReviewError("not_reviewer", "You are not a background-check reviewer.");
@@ -335,7 +335,7 @@ export async function attest(
         }
 
         await tx.backgroundCheckAttestation.create({
-            data: { processId, reviewerId, subjectPersonId, result: input.result, isMarkedVolunteer: !!input.isMarkedVolunteer, note: input.note ?? null },
+            data: { processId, reviewerId, subjectPersonId, result: input.result, isMarkedVolunteerFamily: !!input.isMarkedVolunteerFamily, note: input.note ?? null },
         });
 
         if (input.result === "REJECT") {
@@ -402,7 +402,7 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
                     subjectPersonId: own.subjectPersonId,
                     result: own.result,
                     note: own.note,
-                    isMarkedVolunteer: own.isMarkedVolunteer,
+                    isMarkedVolunteerFamily: own.isMarkedVolunteerFamily,
                     createdAt: own.createdAt,
                 },
                 newData: { reason, action: "reviewer undo" },
@@ -484,7 +484,7 @@ export async function clearBackgroundCheck(
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
     }
-    await applyVolunteerStatus(tx, orgMembershipId, householdId, process.attestations.some((a) => a.isMarkedVolunteer));
+    await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, process.attestations.some((a) => a.isMarkedVolunteerFamily));
 
     const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status, stageEnteredAt: now } });
     if (!count) throw movedOn();
@@ -551,7 +551,7 @@ export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: {
 /**
  * True if any household-lead email matches any volunteer-designation email, under
  * the shared Gmail/+tag-aware canonicalization. Extracted (pure) so the money-path
- * match rule is unit-testable without a DB. DRIVES THE MEMBERSHIP FEE via isVolunteer.
+ * match rule is unit-testable without a DB. DRIVES THE MEMBERSHIP FEE via isVolunteerFamily.
  */
 export function matchesVolunteerDesignation(parentEmails: string[], designationEmails: string[]): boolean {
     const parents = new Set(parentEmails.map(canonicalizeEmail));
@@ -560,7 +560,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 }
 
 /**
- * Sticky/additive volunteer status: set Membership.isVolunteer = true if ANY
+ * Sticky/additive volunteer status: set Membership.isVolunteerFamily = true if ANY
  * reviewer marked the family volunteer-only OR a household parent's sign-in-verified
  * email is pre-designated. Never clears it here. Runs at every PENDING_PAYMENT transition
  * (external advance, fresh-check intake shortcut, fresh-check renewal) so the
@@ -569,15 +569,15 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
  * Not a self-grant site: designations are guarded where written, and the
  * reviewer-marked pass runs only behind clearBackgroundCheck's guard.
  */
-export async function applyVolunteerStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
-    let isVolunteer = markedByReviewer;
-    if (!isVolunteer) {
+export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
+    let isVolunteerFamily = markedByReviewer;
+    if (!isVolunteerFamily) {
         const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
         const designations = await db.volunteerDesignation.findMany({ select: { email: true } });
-        isVolunteer = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
+        isVolunteerFamily = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
     }
-    if (isVolunteer) {
-        await db.orgMembership.update({ where: { id: orgMembershipId }, data: { isVolunteer: true } });
+    if (isVolunteerFamily) {
+        await db.orgMembership.update({ where: { id: orgMembershipId }, data: { isVolunteerFamily: true } });
     }
 }
 

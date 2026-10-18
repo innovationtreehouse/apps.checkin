@@ -130,7 +130,14 @@ export const GET = withAuth(
 
                 return NextResponse.json({
                     signing,
-                    household: { ...withFlatContact(household), householdMembers: membersWithBg, householdLeads, bgValidUntil: householdBgValidUntil },
+                    household: {
+                        ...withFlatContact(household),
+                        // isVolunteer mirrors isVolunteerFamily for edit modals loaded before the rename deploy; drop it one release later.
+                        orgMembership: household.orgMembership && { ...household.orgMembership, isVolunteer: household.orgMembership.isVolunteerFamily },
+                        householdMembers: membersWithBg,
+                        householdLeads,
+                        bgValidUntil: householdBgValidUntil,
+                    },
                     validUntil: household.orgMembership?.status === "ACTIVE" && detailCycle ? coveredThrough(detailCycle, detailSettled) : null,
                 });
             }
