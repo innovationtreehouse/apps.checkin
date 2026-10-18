@@ -161,6 +161,34 @@ describeDb("an id-less session is unauthenticated", () => {
   });
 });
 
+describeDb("a changed decision leaves only its own GTIN on the line", () => {
+  it("re-proposing or marking not-inventory clears the linked GTIN", async () => {
+    const { r, lines } = await pendingWithLines(3);
+    const [proposed, nonInventory] = lines;
+    for (const ls of [proposed, nonInventory]) {
+      await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000017" });
+    }
+    await lineItemService.proposeProvisionalItem(r.id, proposed.id, {
+      proposedName: "Widget",
+      proposedCategoryId: 1,
+      proposedSubcategoryId: 2,
+      proposedUsageBehavior: "Durable",
+    });
+    await lineItemService.markNonInventory(r.id, nonInventory.id);
+    const read = (id: number) => db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id } });
+    expect(await read(proposed.id)).toMatchObject({
+      recognitionStatus: "provisional",
+      assignedGtin13: null,
+      provisionalItemGtin13: "2000000000015",
+    });
+    expect(await read(nonInventory.id)).toMatchObject({
+      recognitionStatus: "non_inventory",
+      assignedGtin13: null,
+      provisionalItemGtin13: null,
+    });
+  });
+});
+
 describeDb("a catalog remap after the manager's decision", () => {
   const PROV = "2000000000015";
   const REAL = "0000000000031";

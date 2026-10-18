@@ -188,6 +188,7 @@ export const lineItemService = {
     // Provisional: human-entered factor; version 1 (no catalog reference yet).
     await updateEditableLine(edit, {
       recognitionStatus: "provisional",
+      assignedGtin13: null,
       provisionalItemGtin13: provisionalGtin13,
       conversionFactor,
       conversionVersion: 1,
@@ -213,7 +214,7 @@ export const lineItemService = {
     const edit = await loadEditableLine(receiptId, lineId);
     const { received } = edit;
 
-    await updateEditableLine(edit, { recognitionStatus: "non_inventory", provisionalItemGtin13: null }, actor);
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null }, actor);
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
