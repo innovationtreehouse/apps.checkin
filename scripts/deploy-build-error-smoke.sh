@@ -104,11 +104,12 @@ SQL
 )
 
 # Persona-mint is off under NODE_ENV=production; a JWT carrying the person id
-# is enough, since the jwt callback re-reads roles by token.id on every request.
+# and email is enough: the jwt callback re-reads roles by token.id on every
+# request and ends a token whose email no longer matches the person's.
 TOKEN=$(docker run --rm -w /app/checkin-app -e SECRET="$SECRET" -e PERSON_ID="$PERSON_ID" \
   "$BUILDER_IMAGE" node -e '
     require("next-auth/jwt")
-      .encode({ secret: process.env.SECRET, token: { id: Number(process.env.PERSON_ID), sub: process.env.PERSON_ID } })
+      .encode({ secret: process.env.SECRET, token: { id: Number(process.env.PERSON_ID), sub: process.env.PERSON_ID, email: "smoke-probe@example.com" } })
       .then((t) => process.stdout.write(t));')
 echo "::add-mask::$TOKEN"
 COOKIE="next-auth.session-token=$TOKEN"
