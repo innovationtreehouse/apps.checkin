@@ -4,7 +4,7 @@
 
 Status: **APPROVED baseline (v2, 2026-07-20).** Synthesized from all sources (chips A–F + D2),
 deduped, bucketed, tagged. Buckets + coverage + readiness + GH associations signed off (Q5).
-GH issues opened for every backlog item (2026-07-22): #1226–#1322 for the net-new set, plus pre-existing handles. Only `CM5` (external fix underway), `RB18` (anti-item, "do NOT port"), and `RB22` (open rename DECISION — may not be wanted) intentionally have no issue.
+GH issues opened for every backlog item (2026-07-22): #1226–#1322 for the net-new set, plus pre-existing handles. Only `CM5` (external fix underway) and `RB18` (anti-item, "do NOT port") intentionally have no issue.
 
 ## Legend
 - **Origin**: PORT (exists in an Inventory app) · CREATE (net-new) · ENHANCE (extend built checkin) · FIX (open bug) · DECISION (keep/kill or policy call)
@@ -251,9 +251,9 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | RB15 | `@sensitivity` classifications on vendored Prisma schemas (monitoring-db, s-ingest-core) — pre-commit gate will block | CHORE | READY-FOR-DEV | S | ? | F | #236 (open) |
 | RB17 | Role-assignment UI won't scale at ~10 roles; role-search results cut off | ENHANCE | READY-FOR-DEV | S | ? | F | #161, #1150 (open) |
 | RB18 | Auth-app: **do NOT port** — checkin RBAC supersedes (recorded for scope clarity) | — | — | — | ? | A | none |
-| RB20 | Vocab rename ledger (UNFINISHED.md): leadMentor→ProgramLeader, staff→Treehouse Volunteer, dues→membership-fee, ToolLevel explicit rank, dependent retire+BUG-2, payment "certified"→"manual", **+ "Review/Reviewer" term convergence** (BG-reviewer / attestation-reviewer / membership-review / trusted-adult "decider" — decide one canonical word or keep distinct), etc. | CHORE | READY-FOR-DEV | M | ? | C | #1322 (open) |
+| RB20 | Vocab rename ledger: leadMentor→ProgramLeader, staff→Treehouse Volunteer, dues→membership-fee, ToolLevel explicit rank, dependent retire+BUG-2, payment "certified"→"manual", **+ "Review/Reviewer" term convergence** (BG-reviewer / attestation-reviewer / membership-review / trusted-adult "decider" — decide one canonical word or keep distinct), etc. | CHORE | READY-FOR-DEV | M | ? | C | #1322 (open) |
 | RB21 | **Eliminate `dangerously_allow_all_data_access`** (from PR #146 design proposal, 2026-05-14) — replace the stripper-bypass used by ~23 routes with a transformer registry (~10 primitives). Security-boundary, own-PR discipline (ties RB16/#1133) | ENHANCE | NEEDS-DESIGN | L | ? | design-PR | #1348 (open) |
-| RB22 | **`'member'` field-visibility TIER — rename to `orgMember` or bless as-is?** (UNFINISHED Phase-4 OQ-1) — the security *visibility* tier `'member'` (a typed access contract, `member`-view holds member+public) is a different axis from the org-membership noun and was deliberately left OUT of the Phase-4 rename. Open question whether a rename is even wanted (reads fine as "member-visible"). If done: ~34 `'member'` tokens in `registry.ts` scope arrays + one `@sensitivity:member` tag + generated classifications + parser guards — **partly tsc-blind**, needs the full jest security suite as the net (over/under-grant risk). Its own slice, low priority. | ENHANCE | DECISION | S | leave as-is (works) | UNFINISHED | none |
+| RB22 | **`'member'` field-visibility TIER — rename to `orgMember` or bless as-is?** — the security *visibility* tier `'member'` (a typed access contract, `member`-view holds member+public) is a different axis from the org-membership noun and was deliberately left OUT of the Phase-4 rename. Open question whether a rename is even wanted (reads fine as "member-visible"). If done: ~60 lines of `'member'` tokens in `registry.ts` scope arrays + one `@sensitivity:member` tag + generated classifications + parser guards — **partly tsc-blind**, needs the full jest security suite as the net (over/under-grant risk). Its own slice, low priority. | ENHANCE | DECISION | S | leave as-is (works) | vocab sweep | #2348 (open) |
 
 ---
 
