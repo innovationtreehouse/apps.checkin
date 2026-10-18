@@ -18,6 +18,9 @@ import { activateByProcessId } from '@/lib/membership/payment';
 jest.mock('@/lib/membership/payment', () => ({
     activateByProcessId: jest.fn(),
 }));
+jest.mock('@/lib/finance/reconcile/reversals', () => ({
+    returnTestOrderStock: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/shopify', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
 }));

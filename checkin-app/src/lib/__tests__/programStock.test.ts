@@ -373,6 +373,32 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(after()).toEqual(clean);
     });
 
+    it('a pending +1 resent after the sale has ended lands, then goes straight back off sale', async () => {
+        setRow({ saleEndedAt: new Date(), shopifyStockPendingWrite: pendingWrite({ key: 'program-42-hold-release-old', reason: 'hold-release', delta: 1, owedPart: 1 }) });
+        const s = shopify({ ProgramStockAdjust: [adjustOk, adjustOk], ProgramStockRead: [readReply(1)] });
+
+        expect(await healProgramStock()).toEqual({ checked: 1, settled: 1 });
+
+        expect(s.adjusts()[0].variables.idempotencyKey).toBe('program-42-hold-release-old');
+        expect(s.adjusts().map((c) => c.variables.input!.changes[0].delta)).toEqual([1, -1]);
+        expect(after()).toEqual(clean);
+    });
+
+    it('a +1 in flight when the sale ends lands, then goes straight back off sale', async () => {
+        const s = shopify({ ProgramStockRead: [readReply(0), readReply(1)], ProgramStockAdjust: [adjustOk, adjustOk] });
+        const inner = global.fetch;
+        global.fetch = jest.fn(async (url: string, init: RequestInit) => {
+            const res = await inner(url, init);
+            if (String(init.body).includes('ProgramStockAdjust')) db.__state.row!.saleEndedAt = new Date();
+            return res;
+        }) as unknown as typeof fetch;
+
+        expect(await adjustProgramInventory(program, 1, 'hold-release')).toBe(true);
+
+        expect(s.adjusts().map((c) => c.variables.input!.changes[0].delta)).toEqual([1, -1]);
+        expect(after()).toEqual(clean);
+    });
+
     it('setProgramInventory (re-arm) lands an absolute quantity as a delta, replacing deltas owed before it', async () => {
         setRow({ shopifyStockCarry: -2, shopifyStockPushNeededAt: new Date() });
         const s = shopify({ ProgramStockRead: [readReply(1), readReply(1)], ProgramStockAdjust: [adjustOk] });

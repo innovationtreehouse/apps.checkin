@@ -11,6 +11,7 @@ import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { membershipVariantIdSet, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
 import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
+import { returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { isShopifyTestNotification, logRejectedShopifyWebhook, recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 interface ShopifyOrder {
@@ -88,6 +89,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
             return NextResponse.json({ success: true });
         }
 
+        // Shopify took stock for a test order; give it back, whatever the cart attributes say.
+        if (facts.legacyId && isShopifyTestNotification(order)) await returnTestOrderStock(facts.legacyId, facts.lines);
+
         // Iterate through line items to find CheckMeIn_Account_ID and Program_ID
         // We set these custom attributes in the permalink URL:
         // https://[store].myshopify.com/cart/[VariantID]:1?attributes[CheckMeIn_Account_ID]=123&attributes[Program_ID]=456
@@ -148,7 +152,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         let outcome = "no membership or program attributes — ignored";
 
         if (accountIdStr && programIdStr && isShopifyTestNotification(order)) {
-            // A test-mode order moves no money; it never activates a seat or moves stock.
+            // A test-mode order moves no money; it never activates a seat (its stock was given back above).
             outcome = `test order for program ${programIdStr} — ignored`;
             logger.info(`[SHOPIFY WEBHOOK] Test order ${order.id ?? "?"} for program ${programIdStr} — ignored`);
         } else if (accountIdStr && programIdStr) {
