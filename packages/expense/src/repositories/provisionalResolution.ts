@@ -1,3 +1,4 @@
+import { isUniqueConstraintError } from "@checkin/pg-kit";
 import type { Db } from "../db";
 import type { ExpenseProvisionalResolution } from "../db/schema";
 
@@ -39,7 +40,7 @@ export function createProvisionalResolutionRepository(db: Db) {
       } catch (err) {
         // P2002 unique race: another writer inserted concurrently. Re-read and
         // apply the latest fact via update so the record still converges.
-        if (isUniqueRace(err)) {
+        if (isUniqueConstraintError(err)) {
           return db.expenseProvisionalResolution.update({
             where: { provisional_resolution_org_gtin_unique: { orgId, provisionalGtin13 } },
             data: { ...payload, recordedAt: new Date() },
@@ -55,15 +56,6 @@ export function createProvisionalResolutionRepository(db: Db) {
       });
     },
   };
-}
-
-function isUniqueRace(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "P2002"
-  );
 }
 
 export type ProvisionalResolutionRepository = ReturnType<typeof createProvisionalResolutionRepository>;

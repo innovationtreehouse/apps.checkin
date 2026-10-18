@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@checkin/money": "*",
+    "@checkin/pg-kit": "*",
     "@checkin/telemetry": "*",
     "@checkin/utils": "*",
     "@prisma/adapter-pg": "^7.8.0",

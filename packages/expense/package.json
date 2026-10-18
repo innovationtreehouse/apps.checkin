@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@checkin/money": "*",
+    "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",
