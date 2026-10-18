@@ -61,7 +61,7 @@ describeDb("S5 handler", () => {
 
 describeDb("S5 catch-up", () => {
   it("is a no-op with the inert event source", async () => {
-    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0 });
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {
@@ -69,9 +69,45 @@ describeDb("S5 catch-up", () => {
     await orgEventConsumer.onOrgEvents([rejected(21)]);
     configure({ eventsSince: async (_org, after) => [approved(20), rejected(21)].filter((e) => e.id > after) });
 
-    expect(await catchUpOrgEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0, skipped: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0 });
 
     expect(await resolution(PROV)).toMatchObject({ realGtin13: REAL });
     expect(await db.inventoryReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
+  });
+});
+
+describeDb("S5 catch-up: stored resolutions", () => {
+  async function pendingProvisionalWithStock(quantity: number) {
+    await db.inventoryProvisionalItem.create({
+      data: { provisionalGtin13: PROV, name: "Widget", usageBehavior: "Unknown", orgId: TEST_ORG_ID, status: "pending" },
+    });
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROV, existingQuantity: quantity, desiredQuantity: 0 } });
+  }
+  const qty = async (gtin13: string) =>
+    (await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13 } }))?.existingQuantity ?? null;
+
+  it("merges a pending provisional whose resolution arrived before it, once", async () => {
+    // The resolution is stored with no provisional row; the reconcile after the creating commit never ran.
+    await orgEventConsumer.onOrgEvents([approved(5)]);
+    await pendingProvisionalWithStock(3);
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1 });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({
+      status: "approved",
+      resolvedToGtin13: REAL,
+    });
+    expect(await qty(REAL)).toBe(3);
+    expect(await qty(PROV)).toBeNull();
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
+    expect(await qty(REAL)).toBe(3);
+  });
+
+  it("leaves a pending provisional with no resolution alone", async () => {
+    await pendingProvisionalWithStock(2);
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending" });
+    expect(await qty(PROV)).toBe(2);
   });
 });

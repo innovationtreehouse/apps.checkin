@@ -3,30 +3,34 @@
  * ReceivedInventoryDelta in the same transaction as the stock change. Real Postgres; describeDb
  * skips without one.
  */
-import { expect, it } from "vitest";
+import { buildProvisionalGtin13 } from "@checkin/gtin";
+import { expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
 import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createProvisionalResolutionRepository } from "../../lib/repositories/provisionalResolutionRepository";
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
-import { createProvisionalItemService } from "../../lib/services/provisionalItemService";
+import { createProvisionalItemService, type ProvisionalItemService } from "../../lib/services/provisionalItemService";
 import { createReceiptService } from "../../lib/services/receiptService";
 import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
 
 setupIntegrationDb();
 
-function makeReceiptService() {
+function makeReceiptService(overrides: Partial<ProvisionalItemService> = {}) {
   const inventoryRepo = createInventoryRepository(db);
   const provisionalRepo = createProvisionalItemRepository(db);
   return createReceiptService({
-    provisionalItemService: createProvisionalItemService({
-      provisionalRepo,
-      resolutionRepo: createProvisionalResolutionRepository(db),
-      inventoryRepo,
-      db,
-    }),
+    provisionalItemService: {
+      ...createProvisionalItemService({
+        provisionalRepo,
+        resolutionRepo: createProvisionalResolutionRepository(db),
+        inventoryRepo,
+        db,
+      }),
+      ...overrides,
+    },
     inventoryRepo,
     receiveQueueRepo: createReceiveQueueRepository(db),
     db,
@@ -34,6 +38,7 @@ function makeReceiptService() {
 }
 
 const GTIN = "0000000000017";
+const PROV = buildProvisionalGtin13(1);
 
 async function qty(orgId: string, gtin13 = GTIN) {
   return (await db.orgItem.findFirst({ where: { orgId, gtin13 } }))?.existingQuantity ?? 0;
@@ -149,5 +154,25 @@ describeDb("apply idempotency", () => {
     });
     expect(await qty(TEST_ORG_ID)).toBe(0);
     expect(await db.receivedInventoryDelta.count()).toBe(0);
+  });
+
+  it("a reconcile that throws after commit still reports success, and a retry is a replay", async () => {
+    const reconcileProvisionalOnCreate = vi.fn(async () => {
+      throw new Error("lock timeout");
+    });
+    const svc = makeReceiptService({ reconcileProvisionalOnCreate });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const lines = [{ gtin13: PROV, quantityDelta: 2, isProvisional: true, provisionalName: "Widget" }];
+
+    const first = await svc.applyReceipt(TEST_ORG_ID, "r-1", "Costco", lines);
+    const again = await svc.applyReceipt(TEST_ORG_ID, "r-1", "Costco", lines);
+
+    expect(reconcileProvisionalOnCreate).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalled();
+    expect(first).toMatchObject({ success: true, replayed: false, updatedItems: [{ gtin13: PROV, newQuantity: 2 }] });
+    expect(again).toEqual({ ...first, replayed: true });
+    expect(await qty(TEST_ORG_ID, PROV)).toBe(2);
+    expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ status: "applied", failureReason: null });
+    logged.mockRestore();
   });
 });

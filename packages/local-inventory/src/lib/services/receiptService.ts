@@ -134,6 +134,20 @@ export function createReceiptService({
   }
 
   /**
+   * Reconcile-on-ingest, run after commit since it issues its own transactions: if a catalog
+   * resolution for a new provisional GTIN already arrived (event-before-row), apply it now.
+   * The commit stands either way, so a failure is logged, not thrown; the daily org-event
+   * catch-up retries pending provisionals that have a stored resolution.
+   */
+  async function reconcileAfterCommit(orgId: string, gtin13: string): Promise<void> {
+    try {
+      await provisionalItemService.reconcileProvisionalOnCreate(orgId, gtin13);
+    } catch (err) {
+      console.error(`[local-inventory/receipt] reconcile of provisional ${gtin13} failed; catch-up retries it`, err);
+    }
+  }
+
+  /**
    * Apply a source's line items at most once per (org, source key). The guard row in
    * ReceivedInventoryDelta and every stock change commit in one transaction, so a failed apply
    * leaves nothing behind but a "failed" record, and a concurrent duplicate fails on the unique
@@ -230,11 +244,7 @@ export function createReceiptService({
       throw err;
     }
 
-    // Reconcile-on-ingest, after commit since it runs its own transactions: if a catalog
-    // resolution for a new provisional GTIN already arrived (event-before-row), apply it now.
-    for (const gtin13 of createdProvisionals) {
-      await provisionalItemService.reconcileProvisionalOnCreate(orgId, gtin13);
-    }
+    for (const gtin13 of createdProvisionals) await reconcileAfterCommit(orgId, gtin13);
     return result;
   }
 
@@ -298,9 +308,7 @@ export function createReceiptService({
         return { provisionalItem, orgItem };
       });
 
-      // Reconcile-on-ingest (after commit, since it issues its own writes/merge): if a catalog
-      // resolution for this provisional GTIN already arrived (event-before-row), apply it now.
-      await provisionalItemService.reconcileProvisionalOnCreate(orgId, data.provisionalGtin13);
+      await reconcileAfterCommit(orgId, data.provisionalGtin13);
 
       return result;
     },

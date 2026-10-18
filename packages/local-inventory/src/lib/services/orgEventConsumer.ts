@@ -68,11 +68,43 @@ export const orgEventConsumer = {
 };
 
 /**
- * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
- * window behind the cursor, skipping ids already in the ledger. The host's daily reconcile
- * cron step calls it. Capped; counts only.
+ * Apply stored resolutions to provisionals still pending: a resolution that arrived before its
+ * provisional row is otherwise applied only by the reconcile right after the creating commit.
+ * Idempotent, since reconcile skips a provisional that already left pending. Capped.
  */
-export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult, number>> {
+async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<number> {
+  // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
+  const pending = await db.inventoryProvisionalItem.findMany({
+    where: { orgId, status: "pending" },
+    select: { provisionalGtin13: true },
+  });
+  if (pending.length === 0) return 0;
+  const resolved = await db.inventoryProvisionalResolution.findMany({
+    where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13) } },
+    select: { provisionalGtin13: true },
+    orderBy: { id: "asc" },
+    take: limit,
+  });
+  const service = getServices().provisionalItemService;
+  let reconciled = 0;
+  for (const { provisionalGtin13 } of resolved) {
+    try {
+      await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
+      reconciled++;
+    } catch (err) {
+      console.error(`[local-inventory/org-events] reconcile of provisional ${provisionalGtin13} failed`, err);
+    }
+  }
+  return reconciled;
+}
+
+/**
+ * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
+ * window behind the cursor, skipping ids already in the ledger, then reconciles pending
+ * provisionals that have a stored resolution. The host's daily reconcile cron step calls it.
+ * Capped; counts only.
+ */
+export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled", number>> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
@@ -84,5 +116,5 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   const received = new Set(await repo.idsAfter(from));
   const fresh = (await getCatalogEventSource().eventsSince(orgId, from)).filter((e) => !received.has(e.id));
   for (const ev of fresh.slice(0, Math.max(0, limit - pending.length))) counts[await consumeOrgEvent(ev)]++;
-  return counts;
+  return { ...counts, reconciled: await reconcilePendingProvisionals(orgId, limit) };
 }
