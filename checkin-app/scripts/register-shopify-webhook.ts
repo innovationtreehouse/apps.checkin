@@ -9,7 +9,7 @@ import { config } from "../src/lib/config";
  *   npx tsx scripts/register-shopify-webhook.ts --url <https://host/api/webhooks/shopify> [--commit]
  *
  * Defaults to a DRY RUN (prints the create/update/noop decision, writes nothing).
- * Pass --commit to apply it. Reuses shopify.ts's token exchange and fetch wrapper —
+ * Pass --commit to apply it. Reuses lib/shopify/client.ts's token exchange and fetch wrapper —
  * no Prisma needed here, there's no DB write.
  *
  * Two Admin-API facts that matter (design §2/§3):

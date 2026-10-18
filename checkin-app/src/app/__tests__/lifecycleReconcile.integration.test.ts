@@ -16,8 +16,8 @@
  *    the negative-authz coverage authzRegistry.test.ts requires.
  *
  * Shopify is mocked (no network): the reconciler imports only adjustProgramInventory
- * + reportShopifyFailure from @/lib/shopify, so replacing the whole module with two
- * jest.fn()s is sufficient (SWC's non-configurable exports block jest.spyOn).
+ * (@/lib/shopify/stock) and reportShopifyFailure (@/lib/shopify/client), so replacing
+ * both modules with a jest.fn() each is sufficient (SWC's non-configurable exports block jest.spyOn).
  */
 import { reportShopifyFailure } from '@/lib/shopify/client';
 import { adjustProgramInventory } from '@/lib/shopify/stock';

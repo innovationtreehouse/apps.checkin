@@ -16,8 +16,8 @@ let tokenExpiresAt: number = 0;
 /**
  * Hard per-request deadline for every Shopify call. Without it a hung TCP connection
  * (established, no response) blocks the request worker until the platform timeout; during
- * a Shopify outage that exhausts workers, and the serial variant-creation chain below
- * stalls entirely on one hang. ~20s suits these interactive calls.
+ * a Shopify outage that exhausts workers, and the serial product-creation chain in
+ * products.ts stalls entirely on one hang. ~20s suits these interactive calls.
  */
 const SHOPIFY_FETCH_TIMEOUT_MS = 20_000;
 

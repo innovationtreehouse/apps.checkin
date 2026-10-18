@@ -1,7 +1,7 @@
 # Shopify Member-Segment Pricing
 
 **Status: PROPOSAL — not built.** Verified in tree: no customer/tag/segment code
-exists (`shopify.ts` creates only Products/Variants and consumes `orders/paid`).
+exists (`lib/shopify/` creates only Products/Variants and consumes `orders/paid`).
 The **interim** mechanism shipped instead (#930): single-pool capacity +
 per-enrollee server-minted single-use discount codes (`createShopifySingleVariantProgram`,
 `mintMemberDiscountCode`; see `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
