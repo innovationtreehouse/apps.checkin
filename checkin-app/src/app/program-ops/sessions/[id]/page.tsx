@@ -59,11 +59,11 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const { user: sessionUser, loading: authLoading, ready } = useRequireRole([]);
   const router = useRouter();
-  // Leads reach this screen from their My Programs inbox (?from=my-programs).
+  // Leads reach this screen from their Programs I Lead inbox (?from=programs-i-lead).
   // When they do, "back" and post-confirm return there instead of the board's
   // program-edit page. Board/program-ops flow (no param) is unchanged.
   const searchParams = useSearchParams();
-  const fromMyPrograms = searchParams.get('from') === 'my-programs';
+  const fromProgramsILead = searchParams.get('from') === 'programs-i-lead';
 
   const [eventData, setEventData] = useState<EventData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,10 +129,10 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
         body: JSON.stringify({ action: 'confirmAttendance' })
       });
       if (res.ok) {
-        // From the lead's inbox, the work is done → return to My Programs (the
+        // From the lead's inbox, the work is done → return to Programs I Lead (the
         // item drops off there). Board/program-ops flow stays on the page.
-        if (fromMyPrograms) {
-          router.push('/my-programs');
+        if (fromProgramsILead) {
+          router.push('/programs-i-lead');
           return;
         }
         notifications.show({ message: "Attendance confirmed successfully!" });
@@ -421,15 +421,15 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
             variant="default"
             onClick={() =>
               router.push(
-                fromMyPrograms
-                  ? '/my-programs'
+                fromProgramsILead
+                  ? '/programs-i-lead'
                   : eventData.program?.id
                     ? `/program-ops/programs/${eventData.program.id}`
                     : '/program-ops/programs',
               )
             }
           >
-            {fromMyPrograms ? '← Back to My Programs' : '← Back to Program'}
+            {fromProgramsILead ? '← Back to Programs I Lead' : '← Back to Program'}
           </Button>
         </Group>
 

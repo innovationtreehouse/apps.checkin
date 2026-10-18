@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
-import MyProgramsLayout from "../layout";
+import ProgramsILeadLayout from "../layout";
 
 const push = jest.fn();
-let mockPathname = "/my-programs";
+let mockPathname = "/programs-i-lead";
 let mockSession: { status: string; data?: { user: { id: number } } };
 let mockCounts: TodoCounts | null;
 
@@ -52,9 +52,9 @@ const renderLayout = (pathname: string, session: typeof mockSession, counts: Tod
   mockCounts = counts;
   return render(
     <MantineProvider>
-      <MyProgramsLayout>
+      <ProgramsILeadLayout>
         <div>{CHILD}</div>
-      </MyProgramsLayout>
+      </ProgramsILeadLayout>
     </MantineProvider>,
   );
 };
@@ -69,15 +69,15 @@ beforeEach(() => {
   push.mockClear();
 });
 
-describe("MyProgramsLayout lead gate", () => {
+describe("ProgramsILeadLayout lead gate", () => {
   it("admits a program lead mentor", () => {
-    renderLayout("/my-programs", { status: "authenticated" }, leadCounts);
+    renderLayout("/programs-i-lead", { status: "authenticated" }, leadCounts);
     expect(screen.getByText(CHILD)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 
   it("redirects an authenticated caller who leads no program (once counts resolve)", () => {
-    renderLayout("/my-programs", { status: "authenticated" }, noLeadCounts);
+    renderLayout("/programs-i-lead", { status: "authenticated" }, noLeadCounts);
     expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
     expect(push).toHaveBeenCalledWith("/");
   });
@@ -88,7 +88,7 @@ describe("MyProgramsLayout lead gate", () => {
       releasedLibraries: ["expense"],
       libraries: { expense: { approver: 1 } },
     } as unknown as TodoCounts;
-    renderLayout("/my-programs/expense-approvals", { status: "authenticated", data: { user: { id: 5 } } }, treasurerCounts);
+    renderLayout("/programs-i-lead/expense-approvals", { status: "authenticated", data: { user: { id: 5 } } }, treasurerCounts);
     expect(screen.getByText(CHILD)).toBeInTheDocument();
     expect(screen.getByText("Expense approvals")).toBeInTheDocument();
     expect(screen.queryByText("Attendance")).not.toBeInTheDocument();
@@ -96,7 +96,7 @@ describe("MyProgramsLayout lead gate", () => {
   });
 
   it("redirects unauthenticated callers", () => {
-    renderLayout("/my-programs", { status: "unauthenticated" }, null);
+    renderLayout("/programs-i-lead", { status: "unauthenticated" }, null);
     expect(push).toHaveBeenCalledWith("/");
   });
 });

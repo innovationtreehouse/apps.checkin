@@ -5,14 +5,14 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { redirect } from "next/navigation";
 import { resetRtl } from "@/test-helpers/rtl";
-import MyProgramsIndex from "../page";
+import ProgramsILeadIndex from "../page";
 
 beforeEach(() => resetRtl());
 
-describe("MyProgramsIndex", () => {
-  it("redirects to /my-programs/attendance", () => {
+describe("ProgramsILeadIndex", () => {
+  it("redirects to /programs-i-lead/attendance", () => {
     // Sync redirect-only server component (returns void) — call it, don't render as JSX.
-    MyProgramsIndex();
-    expect(redirect).toHaveBeenCalledWith("/my-programs/attendance");
+    ProgramsILeadIndex();
+    expect(redirect).toHaveBeenCalledWith("/programs-i-lead/attendance");
   });
 });

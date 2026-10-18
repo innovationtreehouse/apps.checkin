@@ -1,6 +1,6 @@
 // Pure nav-badge derivation, split out of AppFrame so it can be unit-tested
 // without pulling in React/Mantine. AppFrame imports navBadgeFor for rendering
-// and leadsAnyProgram for the staff "My Programs" visibility gate.
+// and leadsAnyProgram for the "Programs I Lead" visibility gate.
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { LibraryKey } from '@/lib/libraryRelease';
 import type { SectionLink } from '@/lib/nav/types';
@@ -39,7 +39,7 @@ export function sectionTabBadge(tabs: readonly SectionLink[], href: string, coun
   return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
 }
 
-/** True when the caller leads ≥1 program — gates the staff "My Programs" nav item. */
+/** True when the caller leads ≥1 program — gates the "Programs I Lead" nav item. */
 export function leadsAnyProgram(counts: TodoCounts | null): boolean {
   return !!counts?.lead && counts.lead.programs.length > 0;
 }
@@ -127,7 +127,7 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
         ...gray(finance, `${finance} program payment${finance === 1 ? '' : 's'} awaiting finance approval`),
       ];
     }
-    case '/my-programs': {
+    case '/programs-i-lead': {
       // Red conflicts first (left of green), then pending attendance the lead
       // must confirm — mirrors the Conflicts/Attendance subtab badges.
       const c = leadConflictCount(counts);

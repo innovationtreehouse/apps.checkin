@@ -145,7 +145,7 @@ export default function ParticipantEventsDashboard() {
                     </div>
                     <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
                       {rows.some((r) => r.isLead) && (
-                        <Badge color="indigo" variant="light">Lead Mentor</Badge>
+                        <Badge color="indigo" variant="light">Program Leader</Badge>
                       )}
                       {rows.some((r) => r.isVolunteer) && (
                         <Badge color="grape" variant="light">Volunteer</Badge>

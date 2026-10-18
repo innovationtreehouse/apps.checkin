@@ -25,6 +25,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: '/((?!api/).*)', headers: [{ key: 'Content-Security-Policy', value: "frame-ancestors 'self'" }] }];
   },
+  // The program-leader home's former path, kept working for bookmarks.
+  async redirects() {
+    return [{ source: '/my-programs/:path*', destination: '/programs-i-lead/:path*', permanent: true }];
+  },
 };
 
 export default nextConfig;

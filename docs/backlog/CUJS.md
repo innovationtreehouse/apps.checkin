@@ -61,7 +61,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 4. ⛔ Assign keyholder per event (manual by design)
 5. ✅ Assign 2nd volunteer (`ProgramVolunteer` join) — recruitment/comms itself is AT domain
 6. 🟡 Enrollment mgmt — lead can **remove** ✅, **cannot add** (`"Program leads cannot manually add participants"`, by design; only self/household-lead/board/sysadmin)
-7. 🟡 Attendance **inbox** ✅ (`my-programs/attendance`, bare `/my-programs` lands here) — full **roster+contact+CSV** read surface ❌ (`P20`, parked PR #964)
+7. 🟡 Attendance **inbox** ✅ (`programs-i-lead/attendance`, bare `/programs-i-lead` lands here) — full **roster+contact+CSV** read surface ❌ (`P20`, parked PR #964)
 8. 🟡 Volunteer hours = residual present-but-not-enrolled, **not** derived from `VolunteerDesignation` (`AT4`); no leader hour surface
 9. ❓ Approve expenses (household-COI flag) — finance domain, deferred to V5
 10. ❌ Copy program year-to-year (`P9`) — no copy/duplicate route; manual recreate

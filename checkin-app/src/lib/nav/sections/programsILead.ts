@@ -1,5 +1,5 @@
 /**
- * The program-leader home (/my-programs), distinct from the attendee "My
+ * The program-leader home (/programs-i-lead), distinct from the attendee "My
  * Programs" tab under My Activities. Lead status rides in on the todo-counts
  * payload. Expense approvals and in-kind gifts also admit program treasurers,
  * whose signal is the expense library's approver count.
@@ -13,13 +13,13 @@ import { leadsAnyProgram, libraryCount } from "@/components/navBadges";
 const leadsProgram: NavGate = (_u, c) => leadsAnyProgram(c);
 const expenseApprover: NavGate = (u, c) => (u?.programsLed?.length ?? 0) > 0 || libraryCount(c, "expense", "approver") > 0;
 
-export const MY_PROGRAMS: NavSection = {
-  id: "my-programs",
-  label: "My Programs",
-  href: "/my-programs",
+export const PROGRAMS_I_LEAD: NavSection = {
+  id: "programs-i-lead",
+  label: "Programs I Lead",
+  href: "/programs-i-lead",
   links: [
-    { name: "Attendance", href: "/my-programs/attendance", visible: leadsProgram },
-    { name: "Conflicts", href: "/my-programs/conflicts", visible: leadsProgram },
+    { name: "Attendance", href: "/programs-i-lead/attendance", visible: leadsProgram },
+    { name: "Conflicts", href: "/programs-i-lead/conflicts", visible: leadsProgram },
     {
       ...EXPENSE_TABS.approvals,
       library: "expense",
@@ -32,5 +32,5 @@ export const MY_PROGRAMS: NavSection = {
     { ...BUCKET_GIFTS_TAB, library: "bulk-donation", visible: expenseApprover },
   ],
   visible: signedIn,
-  hrefFor: (u, c) => (leadsAnyProgram(c) ? "/my-programs" : firstVisibleHref(MY_PROGRAMS, u, c)),
+  hrefFor: (u, c) => (leadsAnyProgram(c) ? "/programs-i-lead" : firstVisibleHref(PROGRAMS_I_LEAD, u, c)),
 };

@@ -13,7 +13,7 @@ import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
 import { MY_RECEIPTS } from '@/lib/nav/sections/myReceipts';
 import { RECEIPT_REVIEW } from '@/lib/nav/sections/receiptReview';
-import { MY_PROGRAMS } from '@/lib/nav/sections/myPrograms';
+import { PROGRAMS_I_LEAD } from '@/lib/nav/sections/programsILead';
 import { SHOP_OPS } from '@/lib/nav/sections/shopOps';
 import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { FACILITY_OPS } from '@/lib/nav/sections/facilityOps';
@@ -27,7 +27,7 @@ import { SETTINGS } from '@/lib/nav/sections/settings';
 
 const PUBLIC = everyone;
 const SIGNED_IN = signedIn;
-const LEADS_PROGRAM = linkGate(MY_PROGRAMS, '/my-programs/attendance');
+const LEADS_PROGRAM = linkGate(PROGRAMS_I_LEAD, '/programs-i-lead/attendance');
 const SAFETY_SECTION = SAFETY.visible;
 const SHOP = SHOP_OPS.visible;
 const CATALOG = linkGate(INVENTORY, '/catalog/items');
@@ -58,15 +58,13 @@ export const PAGES: PageEntry[] = [
   { href: '/my-household', label: 'My Household', section: 'Personal', visible: SIGNED_IN },
   { href: '/my-activities', label: 'My Activities', section: 'Personal', visible: MY_ACTIVITIES.visible },
   { href: '/my-activities/events', label: 'My Events', section: 'Personal', visible: linkGate(MY_ACTIVITIES, '/my-activities/events') },
-  { href: '/my-activities/programs', label: 'My Programs (as Participant)', section: 'Personal', visible: linkGate(MY_ACTIVITIES, '/my-activities/programs') },
+  { href: '/my-activities/programs', label: 'My Programs', section: 'Personal', visible: linkGate(MY_ACTIVITIES, '/my-activities/programs') },
   { href: '/profile', label: 'My Profile', section: 'Personal', visible: SIGNED_IN },
-  // Home for program lead mentors. Lead status rides in on the todo-counts
-  // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
-  // "My Programs" tab above.
-  { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
-  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: linkGate(MY_PROGRAMS, '/my-programs/expense-approvals') },
-  { href: '/my-programs/in-kind-gifts', label: 'In-kind gifts', section: 'Personal', keywords: 'in-kind donated goods gift program bucket', visible: linkGate(MY_PROGRAMS, '/my-programs/in-kind-gifts') },
-  { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: linkGate(MY_PROGRAMS, '/my-programs/conflicts') },
+  // Programs I Lead — the program-leader home, gated as its sidebar section.
+  { href: '/programs-i-lead/attendance', label: 'Programs I Lead', section: 'Programs I Lead', keywords: 'program leader attendance confirm', visible: LEADS_PROGRAM },
+  { href: '/programs-i-lead/expense-approvals', label: 'Expense approvals', section: 'Programs I Lead', keywords: 'program leader treasurer budget bucket sign-off approve expense reimbursement', visible: linkGate(PROGRAMS_I_LEAD, '/programs-i-lead/expense-approvals') },
+  { href: '/programs-i-lead/in-kind-gifts', label: 'In-kind gifts', section: 'Programs I Lead', keywords: 'program leader in-kind donated goods gift program bucket', visible: linkGate(PROGRAMS_I_LEAD, '/programs-i-lead/in-kind-gifts') },
+  { href: '/programs-i-lead/conflicts', label: 'Attendance Conflicts', section: 'Programs I Lead', keywords: 'program leader duplicate overlapping visit attendance', visible: linkGate(PROGRAMS_I_LEAD, '/programs-i-lead/conflicts') },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
   { href: '/membership', label: 'Membership Application', section: 'Personal', keywords: 'join intake', visible: SIGNED_IN },
@@ -234,7 +232,7 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/signin',                 // auth surface
   '/settings',               // redirects to /settings/membership
   '/attendance',             // redirects to /attendance/current
-  '/my-programs',            // redirects to /my-programs/attendance
+  '/programs-i-lead',        // redirects to /programs-i-lead/attendance
   '/expense',                // redirects to /expense/expenses
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev

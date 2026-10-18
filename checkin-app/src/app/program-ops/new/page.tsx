@@ -35,7 +35,7 @@ export default function CreateProgramPage() {
   const [submitted, setSubmitted] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Lead Mentor selection state (the EntityPicker owns the transient query/results)
+  // Program Leader selection state (the EntityPicker owns the transient query/results)
   const [leadMentorId, setLeadMentorId] = useState("");
   const [mentorSearch, setMentorSearch] = useState("");
 
@@ -117,11 +117,11 @@ export default function CreateProgramPage() {
               placeholder="e.g. FRC Robotics 2026"
             />
 
-            {/* Lead Mentor Selector */}
+            {/* Program Leader Selector */}
             <EntityPicker<ParticipantOption>
-              label="Lead Mentor / Program Coordinator"
+              label="Program Leader"
               required
-              description="The lead mentor will be able to manage this program's roster and events."
+              description="The program leader will be able to manage this program's roster and events."
               placeholder="Search by name, email, or ID..."
               selectedId={leadMentorId || null}
               selectedLabel={mentorSearch}

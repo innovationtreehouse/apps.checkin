@@ -11,14 +11,14 @@ import type { TodoCounts } from '@/lib/nav/todoCounts';
 type LedProgram = NonNullable<TodoCounts['lead']>['programs'][number];
 
 /**
- * Attendance-inbox subtab of staff "My Programs". Lists the programs the caller
+ * Attendance-inbox subtab of "Programs I Lead". Lists the programs the caller
  * runs and surfaces the same pending attendance the post-event email targets,
  * deep-linking to the existing confirm screen. Pure navigation + surfacing.
  *
  * Section chrome (title, subtabs) and the lead-gate / loading state live in
  * layout.tsx; this renders only the inbox content.
  */
-export default function MyProgramsHome() {
+export default function ProgramsILeadHome() {
   const { status } = useSession();
   const counts = useTodoCounts(status === 'authenticated');
   const [filter, setFilter] = useState('');

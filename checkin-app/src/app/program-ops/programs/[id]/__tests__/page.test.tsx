@@ -253,7 +253,7 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
-  it("switches to editing the lead mentor, selects a new one, then cancels back", async () => {
+  it("switches to editing the program leader, selects a new one, then cancels back", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
       "/api/programs/1/eligible-participants": {},
@@ -283,8 +283,8 @@ describe("ProgramDetailsPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
-    expect(screen.getByText("No Lead Mentor Assigned")).toBeInTheDocument();
-    expect(screen.getByText("*Only Administrators/Board Members can change the Lead Mentor.")).toBeInTheDocument();
+    expect(screen.getByText("No Program Leader Assigned")).toBeInTheDocument();
+    expect(screen.getByText("*Only Administrators/Board Members can change the Program Leader.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));

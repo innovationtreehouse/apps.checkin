@@ -269,7 +269,7 @@ describe('Nav todo-counts API', () => {
         // Only the ended-unconfirmed event — confirmed and future events excluded.
         expect(led.pending).toHaveLength(1);
         expect(led.pending[0]).toEqual(
-            expect.objectContaining({ href: `/program-ops/sessions/${pendingEventId}?from=my-programs` }),
+            expect.objectContaining({ href: `/program-ops/sessions/${pendingEventId}?from=programs-i-lead` }),
         );
     });
 

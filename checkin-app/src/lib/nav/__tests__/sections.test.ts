@@ -6,7 +6,7 @@ import { SAFETY } from "@/lib/nav/sections/safety";
 import { MY_ACTIVITIES } from "@/lib/nav/sections/myActivities";
 import { MY_RECEIPTS } from "@/lib/nav/sections/myReceipts";
 import { RECEIPT_REVIEW } from "@/lib/nav/sections/receiptReview";
-import { MY_PROGRAMS } from "@/lib/nav/sections/myPrograms";
+import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { SHOP_OPS } from "@/lib/nav/sections/shopOps";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
 import { FACILITY_OPS } from "@/lib/nav/sections/facilityOps";
@@ -20,7 +20,7 @@ import { SETTINGS } from "@/lib/nav/sections/settings";
 import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
 
 const SECTIONS: NavSection[] = [
-  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, MY_PROGRAMS, SHOP_OPS, INVENTORY, FACILITY_OPS,
+  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
   MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, EXPENSE_OPS, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
 ];
 

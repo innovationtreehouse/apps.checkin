@@ -99,12 +99,12 @@ export type TodoCounts = {
     // = ones they approved that still need a second reviewer (gray).
     review?: { canActOn: number; approvedAwaitingSecond: number };
     // Lead surface: programs the caller runs (program.leadMentorId). Present only
-    // when they lead ≥1 program — drives the "My Programs (as Volunteer)" nav item's
+    // when they lead ≥1 program — drives the "Programs I Lead" nav item's
     // visibility and its green badge (sum of pending attendance to confirm).
     // `pending` mirrors the post-event email's targets (ended events not yet
     // confirmed), deep-linked to the existing confirm screen. No new capability.
     // `conflicts` = overlapping-visit conflicts across the caller's led programs;
-    // drives the red badge on the "My Programs" nav item and the Conflicts subtab.
+    // drives the red badge on the "Programs I Lead" nav item and the Conflicts subtab.
     lead?: { programs: LedProgram[]; conflicts?: number };
     // Per-library pill counts from the providers in lib/navLibraryCounts.ts, keyed
     // by library then by count name. A library is absent when the viewer cannot see
@@ -364,7 +364,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
         items.push({
             key: `attendance-${e.id}`,
             label: `Confirm attendance for ${e.name}`,
-            href: `/program-ops/sessions/${e.id}?from=my-programs`,
+            href: `/program-ops/sessions/${e.id}?from=programs-i-lead`,
         });
         pendingByProgram.set(e.programId, items);
     }

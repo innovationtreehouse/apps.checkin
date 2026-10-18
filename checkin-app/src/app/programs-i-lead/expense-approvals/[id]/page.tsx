@@ -3,5 +3,5 @@ import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <ExpenseDetailPage id={decodeURIComponent(id)} listHref="/my-programs/expense-approvals" />;
+  return <ExpenseDetailPage id={decodeURIComponent(id)} listHref="/programs-i-lead/expense-approvals" />;
 }

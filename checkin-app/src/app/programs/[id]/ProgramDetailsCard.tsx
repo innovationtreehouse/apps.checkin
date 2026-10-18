@@ -21,7 +21,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
       <Title order={4} c="dimmed" mb="md">Details</Title>
       <Stack gap="sm">
         {program.leadMentor && (
-          <Text><strong>Lead Mentor:</strong> {program.leadMentor.name || 'Unnamed'}</Text>
+          <Text><strong>Program Leader:</strong> {program.leadMentor.name || 'Unnamed'}</Text>
         )}
         <Text><strong>Starts:</strong> {formatDateOnly(program.startAt)}</Text>
         <Text><strong>Ends:</strong> {formatDateOnly(program.endAt)}</Text>
