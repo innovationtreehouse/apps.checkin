@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { systemActor } from "@/lib/auditActor";
-import type { DbClient, TxClient } from "@/lib/db-client";
+import { isRootClient, type DbClient, type TxClient } from "@/lib/db-client";
 
 export type PaymentExceptionKind =
     | "PAID_WHILE_BLOCKED"
@@ -128,14 +128,14 @@ export async function recordReversal(shopifyOrderId: string, kind: PaymentExcept
 /**
  * True when the order's money went back: a reversal in the ledger, or an
  * unresolved reversal problem on it. A refunded order never activates a
- * membership; the Board decides instead. Takes the order's reversal lock, so a
- * refund recorded concurrently is either seen here or waits for this transaction
- * to commit (and then finds the process by the order id it wrote).
+ * membership; the Board decides instead. Inside a transaction it takes the
+ * order's reversal lock, so a refund recorded concurrently is either seen here or
+ * waits for the transaction to commit (and then finds the process by the order id it wrote).
  */
-export async function isOrderReversed(tx: TxClient, shopifyOrderId: string): Promise<boolean> {
-    await lockOrderReversal(tx, shopifyOrderId);
-    if (await ledgerRow(tx, shopifyOrderId)) return true;
-    const open = await tx.paymentException.findFirst({
+export async function isOrderReversed(db: DbClient, shopifyOrderId: string): Promise<boolean> {
+    if (!isRootClient(db)) await lockOrderReversal(db, shopifyOrderId);
+    if (await ledgerRow(db, shopifyOrderId)) return true;
+    const open = await db.paymentException.findFirst({
         where: { shopifyOrderId, kind: { in: REVERSAL_KINDS }, status: { not: "RESOLVED" } },
         select: { id: true },
     });
