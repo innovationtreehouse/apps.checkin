@@ -8,7 +8,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
-import { approveLine, assignOwner, financeAssign, raiseException, rejectException } from "../../services/approvalService";
+import { approveLine, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
 const LEADER = principal(2);
 const FINANCE = principal(3, { isFinance: true });
@@ -206,6 +206,12 @@ describeDb("the submitter's and reimbursee's households decide none of their lin
     const { id, approvalId } = await lineInApproval(100, "exception_raised");
     await expect(financeAssign(SUBMITTER_FINANCE, id, approvalId, 101)).rejects.toMatchObject({ status: 403 });
     await untouched(approvalId, "exception_raised");
+  });
+
+  it("resolving an unknown line's bucket", async () => {
+    const { id, approvalId } = await lineInApproval(null, "unknown");
+    await expect(resolveUnknown(SUBMITTER_FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
+    await untouched(approvalId, "unknown");
   });
 
   it("assigning a line's bucket, as a housemate or the reimbursee", async () => {

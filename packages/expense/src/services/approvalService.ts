@@ -259,8 +259,9 @@ export async function resolveUnknown(
   requireFinance(principal);
   const actor = actorOf(principal);
   await requireLiveBuckets([ownerId]);
-  const { approval } = await loadApproval(expenseId, approvalId);
+  const { expense, approval } = await loadApproval(expenseId, approvalId);
   requireStatus(approval, "unknown");
+  await refuseConflicted(principal, expense);
 
   const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   await db.$transaction(async (tx) => {
