@@ -176,8 +176,13 @@ describe("Participant PII minimization (M1, M2)", () => {
             expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
         });
 
-        it("returns the note to a sysadmin", async () => {
+        it("strips the note for a sysadmin who is not a lead", async () => {
             mockCaller({ isHouseholdLead: false, isSysadmin: true });
+            expect((await get()).intakeNotes).toBeNull();
+        });
+
+        it("returns the note to a sysadmin who leads the household", async () => {
+            mockCaller({ isHouseholdLead: true, isSysadmin: true });
             expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
         });
     });

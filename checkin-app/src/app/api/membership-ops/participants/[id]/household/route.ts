@@ -7,6 +7,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
@@ -141,7 +142,10 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
 
         invalidateAttendanceCache();
 
-        return NextResponse.json({ success: true, participant: updatedParticipant });
+        return NextResponse.json({
+            success: true,
+            participant: { ...updatedParticipant, household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user) },
+        });
     } catch (error) {
         if (error instanceof MergedPersonError) {
             return apiError(MERGED_PERSON_MESSAGE, 409);
