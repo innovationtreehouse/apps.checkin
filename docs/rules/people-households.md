@@ -154,8 +154,8 @@ Things the app takes as true because they are handled outside it.
 
 - Email identity is case-insensitive.  [Decision]
 
-- Where someone signs in with Google, the address they sign in with is the
-  address they are contacted at. There is no second one to diverge from it.  [Decision]
+- Where someone signs in through the outside sign-in service, the address they
+  sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
 
 - A member's email is not edited from the household card, by them or by a lead,
   once they have signed in or hold anything the board granted: a role, a program
@@ -163,13 +163,13 @@ Things the app takes as true because they are handled outside it.
   and the refusal says how to ask. A member with neither stays editable, and
   resending the unchanged address is not a change.  [Decision]
 
-- A Google account must have a verified email before it is first linked to a
-  person record; an account already linked keeps signing in unchanged.  [Decision]
+- An account with the sign-in service must have a verified email before it is
+  first linked to a person record; an account already linked keeps signing in unchanged.  [Decision]
 
-- A first Google sign-in links to the person whose email matches, or creates a
-  new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
+- A first sign-in through the sign-in service links to the person whose email
+  matches, or creates a new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
 
-- Changing a person's email unlinks their Google accounts.  [Decision — *Principle: fail closed*]
+- Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
 - A person's identifier is opaque, and its only job is to be unique and to stay
   unique. It is never reissued and never worked out from the people already on

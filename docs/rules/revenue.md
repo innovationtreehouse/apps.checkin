@@ -1,7 +1,7 @@
 # Finance and payments
 
 Fees, refunds, payment plans and reconciliation, plus money coming in through
-Shopify payouts (Income) and donations (Donations).
+online-store payouts (Income) and donations (Donations).
 
 ---
 
@@ -59,11 +59,11 @@ Things the app takes as true because they are handled outside it.
   conflict-of-interest rule on that vote, and the requirement that program money
   flows through the Treehouse.
 
-- Benevity sends each batch of gifts whole. A gift that turns up
+- The giving platform sends each batch of gifts whole. A gift that turns up
   after its batch is finished is rare, and finance books it by hand.
 
 - Gifts of goods received before the app started recording them stay in
-  QuickBooks only.
+  the books only.
 
 ---
 
@@ -192,19 +192,19 @@ Things the app takes as true because they are handled outside it.
 
 ### Income
 
-Income checks each Shopify payout against the deposits in QuickBooks.
+Income checks each online-store payout against the deposits in the books.
 
 - Finance and the board can see income. Only finance matches payouts and settles
   problems.  [Decision]
 
-- Every payout must match one deposit in QuickBooks. Finance settles any the app
+- Every payout must match one deposit in the books. Finance settles any the app
   can't match and records why.  [Decision]
 
 - Finance's own bookings come first. The app books only payouts newer than the
   last one finance booked by hand, and a payout nobody books is raised for
   finance.  [Decision]
 
-- The app never changes or deletes anything already in QuickBooks.  [Decision — deliberate limit]
+- The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
 - Sales are booked to the program or fund they belong to. Sales are booked as
   general Treehouse income only where finance chose that for the item. A payout
@@ -217,8 +217,8 @@ Income checks each Shopify payout against the deposits in QuickBooks.
 
 ### Donations
 
-Donations covers gifts through Benevity (employee gifts and employer matches,
-paid in batches) and gifts of goods (in-kind).
+Donations covers gifts through an outside giving platform (employee gifts and
+employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Finance and the board can see donations, and finance manages them. The person
   who submits a receipt for a gift of goods records its donor, and can say it
@@ -235,7 +235,7 @@ paid in batches) and gifts of goods (in-kind).
 - Finance allocates each gift as the donor's instructions or policy direct. Once
   recorded, the allocation can't be changed in the app.  [Decision]
 
-- A Benevity batch is finished only when every gift in it has a clear place in
+- A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
 
 - A gift of goods is handled as a donation, not as spending, even when it comes
