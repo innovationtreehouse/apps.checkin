@@ -63,7 +63,7 @@ const archivedRows = [
         bgClearedAt: null,
         paidAt: null,
         attestations: [],
-        orgMembership: { householdId: 4, isVolunteer: false, household: household("Archived Family", 4) },
+        orgMembership: { householdId: 4, isVolunteerFamily: false, household: household("Archived Family", 4) },
     },
 ];
 
@@ -79,7 +79,7 @@ const rows = [
         bgClearedAt: null,
         paidAt: null,
         attestations: [],
-        orgMembership: { householdId: 1, isVolunteer: false, household: household("Awaiting Family", 1) },
+        orgMembership: { householdId: 1, isVolunteerFamily: false, household: household("Awaiting Family", 1) },
     },
     {
         id: 2,
@@ -91,8 +91,8 @@ const rows = [
         bgConsentAt: "2026-01-02T00:00:00.000Z",
         bgClearedAt: null,
         paidAt: null,
-        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteer: false }],
-        orgMembership: { householdId: 2, isVolunteer: true, household: household("Payment Family", 2) },
+        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteerFamily: false }],
+        orgMembership: { householdId: 2, isVolunteerFamily: true, household: household("Payment Family", 2) },
     },
     {
         id: 3,
@@ -105,7 +105,7 @@ const rows = [
         bgClearedAt: null,
         paidAt: "2026-01-03T00:00:00.000Z",
         attestations: [],
-        orgMembership: { householdId: 3, isVolunteer: false, household: household("Blocked Family", 3) },
+        orgMembership: { householdId: 3, isVolunteerFamily: false, household: household("Blocked Family", 3) },
     },
 ];
 

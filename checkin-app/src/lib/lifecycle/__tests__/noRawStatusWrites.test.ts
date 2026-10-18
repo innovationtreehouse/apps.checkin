@@ -116,7 +116,7 @@ describe('no raw OrgMembership / OrgMembershipProcess status writes', () => {
 
     it('the scanner sees a status write and ignores a status read', () => {
         expect(setsStatus(`{ where: { id, status: "ACTIVE" }, data: { status: "REVOKED" } }`)).toBe(true);
-        expect(setsStatus(`{ where: { id, status: "ACTIVE" }, data: { isVolunteer: true } }`)).toBe(false);
+        expect(setsStatus(`{ where: { id, status: "ACTIVE" }, data: { isVolunteerFamily: true } }`)).toBe(false);
         expect(setsStatus(`{ where: { householdId }, create: { householdId }, update: {}, select: { id: true, status: true } }`)).toBe(false);
         expect(setsStatus(`{ data: { paidAt: now, ...payMeta, status: activating ? "ACTIVE" : "X" } }`)).toBe(true);
         expect(setsStatus(`{ data: { status } }`)).toBe(true);

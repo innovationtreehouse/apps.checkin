@@ -4,7 +4,7 @@ import { logBackendError } from "@/lib/logger";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
-import { applyVolunteerStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck, reviewTransaction } from "@/lib/membership/review";
+import { applyVolunteerFamilyStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck, reviewTransaction } from "@/lib/membership/review";
 
 /**
  * A participant merge moves the newer of the two `lastBackgroundCheck` dates onto
@@ -119,7 +119,7 @@ async function stampBgCleared(process: Candidate, householdId: number, actorId: 
                 newData: { bgClearedAt: true, ...source, reason: "still-valid background check carried in by participant merge" },
             },
         });
-        await applyVolunteerStatus(tx, process.orgMembershipId!, householdId, false);
+        await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, householdId, false);
         return true;
     });
 }

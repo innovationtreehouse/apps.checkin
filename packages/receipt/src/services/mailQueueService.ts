@@ -112,7 +112,7 @@ export const mailQueueService = {
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await auditClaim(tx, newId);
-    });
+    }, { mailAllowance: false });
     return { ...shown, status: "assigned", receiptId };
   },
 

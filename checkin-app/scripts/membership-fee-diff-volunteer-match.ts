@@ -6,8 +6,8 @@ import { canonicalizeEmail } from "../src/lib/emailNormalize";
 /**
  * MONEY-PATH SAFETY GATE for the volunteer-designation normalization change.
  *
- * applyVolunteerStatus (src/lib/membership/review.ts) sets Membership.isVolunteer
- * when a household lead's email matches a VolunteerDesignation — and isVolunteer
+ * applyVolunteerFamilyStatus (src/lib/membership/review.ts) sets Membership.isVolunteerFamily
+ * when a household lead's email matches a VolunteerDesignation — and isVolunteerFamily
  * DRIVES THE MEMBERSHIP FEE. The email-normalization rule used for that match changed from the
  * OLD review rule (strip dots on EVERY domain, keep +tag) to canonicalizeEmail
  * (Gmail-only dot-drop, strip +tag). Those two produce different match sets.
@@ -18,7 +18,7 @@ import { canonicalizeEmail } from "../src/lib/emailNormalize";
  * review required before merge.
  *
  * NOTE: only the designation-match path is modeled. The markedByReviewer path
- * (isVolunteer already true) is unaffected by normalization and out of scope.
+ * (isVolunteerFamily already true) is unaffected by normalization and out of scope.
  *
  *   npx tsx scripts/membership-fee-diff-volunteer-match.ts
  *
@@ -41,7 +41,7 @@ async function main() {
     try {
         const designations = (await prisma.volunteerDesignation.findMany({ select: { email: true } })).map((d) => d.email);
 
-        // Household leads with an email — mirrors applyVolunteerStatus's parent query:
+        // Household leads with an email — mirrors applyVolunteerFamilyStatus's parent query:
         // a person flagged isHouseholdLead leads their own household (a1).
         const leads = await prisma.person.findMany({
             where: { isHouseholdLead: true },
@@ -76,7 +76,7 @@ async function main() {
         if (changed.length === 0) {
             console.log("\n✅ EMPTY DIFF — normalization flip is match-equivalent on this data. Safe.");
         } else {
-            console.log("\n⚠️  NON-EMPTY DIFF — HUMAN REVIEW REQUIRED. Affected households (isVolunteer drives the membership fee):\n");
+            console.log("\n⚠️  NON-EMPTY DIFF — HUMAN REVIEW REQUIRED. Affected households (isVolunteerFamily drives the membership fee):\n");
             for (const c of changed) {
                 const verb = c.now ? "GAINS volunteer status" : "LOSES volunteer status";
                 console.log(`  household ${c.householdId}: ${verb} (old=${c.old} new=${c.now}) leads=[${c.parentEmails.join(", ")}]`);

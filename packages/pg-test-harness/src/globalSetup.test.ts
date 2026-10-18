@@ -5,7 +5,7 @@
  * consuming package's gate skips its integration suites). The container + migrate boundary is
  * mocked so both the happy lifecycle and the no-Docker path are asserted without Docker.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const m = vi.hoisted(() => ({ startPostgres: vi.fn(), applyMigrations: vi.fn() }));
 vi.mock("./container.js", () => ({ startPostgres: m.startPostgres }));
@@ -15,7 +15,12 @@ import { pgGlobalSetup } from "./globalSetup.js";
 
 const opts = { migrateCwd: "/pkg", envVar: "FOO_DATABASE_URL", provideKey: "fooUrl" };
 
-beforeEach(() => vi.clearAllMocks());
+// The suite itself may run under PG_TEST_HARNESS=off; each test sets the switch it needs.
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubEnv("PG_TEST_HARNESS", "");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("pgGlobalSetup", () => {
   it("boots, migrates, provides the url, and returns a teardown that stops the container", async () => {
@@ -53,5 +58,17 @@ describe("pgGlobalSetup", () => {
     await expect(teardown()).resolves.toBeUndefined(); // teardown is safe to call
 
     stderr.mockRestore();
+  });
+
+  it("when PG_TEST_HARNESS=off: starts no container, provides undefined, and returns a no-op teardown", async () => {
+    vi.stubEnv("PG_TEST_HARNESS", "off");
+    const provide = vi.fn();
+
+    const teardown = await pgGlobalSetup(opts)({ provide });
+
+    expect(m.startPostgres).not.toHaveBeenCalled();
+    expect(m.applyMigrations).not.toHaveBeenCalled();
+    expect(provide).toHaveBeenCalledWith("fooUrl", undefined);
+    await expect(teardown()).resolves.toBeUndefined();
   });
 });

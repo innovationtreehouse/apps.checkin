@@ -49,10 +49,10 @@ describe('own-household grant guards', () => {
     beforeAll(async () => {
         await wipe();
         const own = await prisma.household.create({
-            data: { name: `Own ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } },
+            data: { name: `Own ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteerFamily: false } } },
         });
         const other = await prisma.household.create({
-            data: { name: `Other ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } },
+            data: { name: `Other ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteerFamily: false } } },
         });
         ownHouseholdId = own.id;
         otherHouseholdId = other.id;
@@ -72,23 +72,29 @@ describe('own-household grant guards', () => {
         await prisma.$disconnect();
     });
 
-    describe('household isVolunteer PATCH', () => {
+    describe('household isVolunteerFamily PATCH', () => {
         it('refuses flagging the actor’s own household', async () => {
-            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: true }) as never, params(ownHouseholdId));
+            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteerFamily: true }) as never, params(ownHouseholdId));
             expect(res.status).toBe(403);
-            expect((await prisma.orgMembership.findUnique({ where: { householdId: ownHouseholdId } }))?.isVolunteer).toBe(false);
-            expect(await lastRefusal()).toEqual({ reason: 'own_household', table: 'OrgMembership', subject: { householdId: ownHouseholdId }, attempted: { isVolunteer: true } });
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: ownHouseholdId } }))?.isVolunteerFamily).toBe(false);
+            expect(await lastRefusal()).toEqual({ reason: 'own_household', table: 'OrgMembership', subject: { householdId: ownHouseholdId }, attempted: { isVolunteerFamily: true } });
         });
 
         it('allows an own-household edit that resends the unchanged flag', async () => {
-            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { name: `Own ${TAG} renamed`, isVolunteer: false }) as never, params(ownHouseholdId));
+            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { name: `Own ${TAG} renamed`, isVolunteerFamily: false }) as never, params(ownHouseholdId));
             expect(res.status).toBe(200);
         });
 
         it('allows flagging another household', async () => {
-            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: true }) as never, params(otherHouseholdId));
+            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteerFamily: true }) as never, params(otherHouseholdId));
             expect(res.status).toBe(200);
-            expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteer).toBe(true);
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(true);
+        });
+
+        it('accepts the pre-rename isVolunteer key from a stale client', async () => {
+            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: false }) as never, params(otherHouseholdId));
+            expect(res.status).toBe(200);
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(false);
         });
     });
 

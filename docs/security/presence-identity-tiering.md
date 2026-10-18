@@ -60,7 +60,7 @@ Returned only by 3 **stripped** registry routes: `trusted-adults/mine` (househol
 (`lib/trusted-adult/service.ts`) are internal service logic / email builders — not HTTP field
 surfaces. **No public/anon consumer → latent only.**
 
-### Membership `.status` / `.isVolunteer` (public)
+### Membership `.status` / `.isVolunteerFamily` (public)
 
 No route ships raw `Membership` rows to anon; consumers are internal payment/renewal/review
 libs + board `membership-ops`. **Latent only.**
@@ -78,7 +78,7 @@ libs + board `membership-ops`. **Latent only.**
   all** — the moment someone adds a public/kiosk route returning a Visit (easy: the
   attendance board is _already_ the pattern), the full who's-here-and-at-which-event
   association ships with zero stripping. Same shape for `TrustedAdultReview.householdId/kind`
-  and `Membership.status/isVolunteer`: safe only because no public route reaches the model
+  and `Membership.status/isVolunteerFamily`: safe only because no public route reaches the model
   yet.
 - **The inversion:** on one Visit row, `arrivedAt`/`departedAt` = `personal` but
   `participantId` = `public`. Knowing _when_ someone was present is gated; knowing _who_ is

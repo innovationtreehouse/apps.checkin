@@ -81,10 +81,10 @@ export async function grantCurrentYear(
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 
-    if (membership.status === "ACTIVE") {
+    const opened = membership.status === "ACTIVE" ? "active" : await openInitial(membership.id, householdId, actor);
+    if (opened === "active") {
         throw new PaymentError("wrong_phase", "This household is already an active member; there is no application to pay.");
     }
-    const opened = await openInitial(membership.id, householdId, actor);
     if (opened === "denied") return refuseDenied(householdId, actor.actorId);
     if (opened === "blocked") {
         throw new PaymentError("wrong_phase", "This household has a blocked application. Reset or override it before granting membership.");
@@ -94,20 +94,22 @@ export async function grantCurrentYear(
 
 /**
  * Open an INITIAL application at INTAKE, serialized on the membership row like
- * startIntake. The DENIED and BLOCKED checks sit under that row lock, so a deny or
- * a block that lands after the caller's pre-check still stops the open.
+ * startIntake. The DENIED, ACTIVE and BLOCKED checks sit under that row lock, so a
+ * deny, an activation or a block that lands after the caller's pre-check still
+ * stops the open: an active household only renews.
  */
 async function openInitial(
     orgMembershipId: number,
     householdId: number,
     actor: { actorId: number; reason: string },
-): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied" | "blocked"> {
+): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied" | "active" | "blocked"> {
     const findInFlight = (db: DbClient) =>
         db.orgMembershipProcess.findFirst({ where: { orgMembershipId, kind: "INITIAL", status: { in: [...IN_FLIGHT_INITIAL] } }, orderBy: { id: "desc" } });
     try {
         return await prisma.$transaction(async (tx) => {
             const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             if (locked?.status === "DENIED") return "denied" as const;
+            if (locked?.status === "ACTIVE") return "active" as const;
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId, ...householdApplicationOpenOrBlockedWhere },
                 orderBy: { id: "desc" },

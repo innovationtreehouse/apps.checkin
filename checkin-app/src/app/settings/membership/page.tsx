@@ -17,7 +17,9 @@ interface Settings {
   orgMembershipYearBoundary: string | null;
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
-  volunteerDiscountCode: string | null;
+  volunteerFamilyDiscountCode: string | null;
+  // Sent by a server still on the pre-rename release during a deploy.
+  volunteerDiscountCode?: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
@@ -82,7 +84,7 @@ export default function MembershipSettingsPage() {
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
           variantId: settings.orgMembershipVariantId ?? "",
           productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerDiscountCode ?? "",
+          discountCode: settings.volunteerFamilyDiscountCode ?? settings.volunteerDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
         setStandardFee(snap.standardFee);
@@ -131,7 +133,7 @@ export default function MembershipSettingsPage() {
           volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
           orgMembershipVariantId: variantId.trim() || null,
           orgMembershipProductUrl: productUrl.trim() || null,
-          volunteerDiscountCode: discountCode.trim() || null,
+          volunteerFamilyDiscountCode: discountCode.trim() || null,
           bgRecheckMonths: Math.round(parseInt(bgRecheckMonths || "0", 10)),
           scholarshipDenialGraceDays: scholarshipGraceDays.trim() === "" ? null : parseInt(scholarshipGraceDays.trim(), 10),
           // Dev instances only — the API rejects it elsewhere.
