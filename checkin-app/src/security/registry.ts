@@ -580,9 +580,10 @@ defineRoute({
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
-// be confirmed (lib/shopify/stock.ts parks it in Program.shopifyStockUnconfirmed), and
-// the per-program settle action ("Shopify has it" / "doesn't have it"). Board
-// only: no sysadmin, no finance. Rows are computed, all `internal`.
+// be confirmed (lib/shopify/stock.ts parks it in Program.shopifyStockParked;
+// legacy rows sit in shopifyStockUnconfirmed), and the per-program settle action
+// ("Shopify has it" / "doesn't have it"). Board only: no sysadmin, no finance.
+// Rows are computed, all `internal`.
 defineRoute({
     endpoint: 'GET /api/finance-ops/shopify-stock',
     authorize: { anyRole: ['isBoardMember'] },
