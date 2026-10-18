@@ -81,11 +81,11 @@ export async function approveLine(
   const actor = actorOf(principal);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "pending");
+  await refuseConflicted(principal, expense);
 
   let notes: string | null = null;
   if (!(await isBucketApprover(principal, approval.ownerId))) {
     if (!principal.isFinance) throw new ServiceError(403, "This line item is not in a bucket you approve");
-    await refuseConflicted(principal, expense);
     notes = overrideComment?.trim() || null;
     if (!notes) throw new ServiceError(400, "Override comment is required for finance approval");
   }

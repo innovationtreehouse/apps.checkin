@@ -194,9 +194,11 @@ describeDb("the submitter's and reimbursee's households decide none of their lin
     await untouched(approvalId, "exception_raised");
   });
 
-  it("approving with a finance override", async () => {
+  it("approving, with a finance override or as the bucket's approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [6] }, households: [[1, 6]] }) });
     const { id, approvalId } = await lineInApproval();
     await expect(approveLine(SUBMITTER_FINANCE, id, approvalId, "mine")).rejects.toMatchObject({ status: 403 });
+    await expect(approveLine(principal(6), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await untouched(approvalId, "pending");
   });
 
