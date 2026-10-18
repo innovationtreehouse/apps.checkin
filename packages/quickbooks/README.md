@@ -14,12 +14,13 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   `qboRealmFromEnv()` reads `QBO_ENVIRONMENT` + `QBO_REALM_ID` under the same guard.
 - Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
   `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`.
-  The one unwindowed read is `createdSince(entity, since)`: `Deposit`, `Purchase` or `Bill` entries
+  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase` or `Bill` entries
   QuickBooks created at or after `since` (`MetaData.CreateTime`), one page of 1,000, with `full: true`
   when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
   finds an app entry a dated window misses.
 - `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
-  null when finance has set none. It throws when the read fails or the date is malformed; nothing caches it.
+  null when finance has set none (absent or empty). It throws when the read fails or the date is malformed;
+  nothing caches it. It and the reference lists below are the other reads with no date window.
 - Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
   e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.
 - Reference lists for the FINANCE bootstrap: `accounts()`, `classes()`, `vendors()` (active entries).
@@ -65,7 +66,8 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - A failed request throws `QboRequestError`, whose `codes` are the fault's numeric codes.
 - `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
   `<name> (Vendor)`; an existing Vendor with the resulting name is returned as `found` with `via: "name"`.
-- `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
+- `qboString` / `qboDate` — how a caller's value enters a query: escaped / validated literals. The one
+  other literal is `createdSince`'s timestamp, built by the client from a validated `Date`.
 - Not on the main entry, because they read `QBO_CLIENT_SECRET` or token files and the app never
   holds either:
   - `@checkin/quickbooks/oauth` (`src/oauth.ts`): `oauthConfigFromEnv`, `authUrl`, `exchangeCode`,
@@ -146,12 +148,13 @@ amount-anchored vendor join.
 ## Sandbox checks
 
 `npm run sandbox-checks -w @checkin/quickbooks` confirms, against the sandbox only, what the gate
-relies on: `BookCloseDate` reads from Preferences, a create dated in a closed period fails with fault
-6200 in "Required password" closing mode, and `createdSince` returns an entry just created, by its
-key. First close the sandbox books (Settings → Account and settings → Advanced → Close the books)
-with a date before today and a password. It needs the consent token file, `QBO_ENVIRONMENT=sandbox`,
+relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
+and as the date once closed, a create dated in a closed period fails with fault 6200 in "Required
+password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
+first with the sandbox books open, then after closing them (Settings → Account and settings →
+Advanced → Close the books) with a date before today and a password. It needs the consent token file, `QBO_ENVIRONMENT=sandbox`,
 `QBO_SANDBOX_DEPOSIT_ACCOUNT_ID` and `QBO_SANDBOX_INCOME_ACCOUNT_ID`, and creates up to two
-`[checkin-test]` Deposits. Never run it against production.
+`[checkin-test]` Deposits per run. Never run it against production.
 
 ## Notes
 

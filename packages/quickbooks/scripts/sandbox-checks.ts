@@ -1,11 +1,13 @@
 // Live checks of what the closed-books gate relies on (docs/in-design/QB_CLOSED_BOOKS.md §2, §6).
-// Sandbox only. Before running, close the sandbox books the way finance does: Settings → Account and
-// settings → Advanced → Close the books, a closing date before today, "Required password".
+// Sandbox only. Run it twice: once with the sandbox books not closed (the unset read), then after closing
+// them the way finance does: Settings → Account and settings → Advanced → Close the books, a closing
+// date before today, "Required password" (the closed-period refusal).
 // Run: npm run sandbox-checks -w @checkin/quickbooks
 // Needs QBO_TOKEN_FILE (from `npm run consent`), QBO_ENVIRONMENT=sandbox,
 // QBO_SANDBOX_DEPOSIT_ACCOUNT_ID (a bank account) and QBO_SANDBOX_INCOME_ACCOUNT_ID (an income account).
-// Creates up to two [checkin-test] Deposits in the sandbox.
+// Creates up to two [checkin-test] Deposits in the sandbox per run.
 import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, type TxnWrite } from "../src/client";
+import type { QboPreferences } from "../src/types";
 import { CREATE } from "../src/internal";
 import { fileAccessTokenSource, loadTokens, tokenFileFromEnv } from "../src/local";
 
@@ -33,20 +35,26 @@ const report = (ok: boolean, what: string) => {
   if (!ok) failed = true;
 };
 
-// 1. The closing date is readable at Preferences.AccountingInfoPrefs.BookCloseDate.
+// 1. Preferences reads as a one-row array, and BookCloseDate is a date or, with the books open, unset.
+const rows = await client.query<QboPreferences>("SELECT * FROM Preferences");
+const raw = rows[0]?.AccountingInfoPrefs?.BookCloseDate;
+report(rows.length === 1, `Preferences reads as ${rows.length} row(s); raw BookCloseDate is ${JSON.stringify(raw) ?? "absent"}`);
 const closeDate = await client.bookCloseDate();
-report(closeDate !== null, `BookCloseDate reads as ${closeDate ?? "absent"}`);
-if (closeDate === null) process.exit(1);
 const today = new Date().toISOString().slice(0, 10);
-if (closeDate >= today) throw new Error(`Set the sandbox closing date before ${today}`);
 
-// 2. A create dated in the closed period is refused with fault 6200.
-try {
-  const { Id } = await client[CREATE](deposit(closeDate), qbKey("sandbox", `closed-${Date.now()}`));
-  report(false, `create dated ${closeDate} was accepted as Deposit ${Id}; is the closing mode "Required password"?`);
-} catch (e) {
-  const codes = e instanceof QboRequestError ? e.codes : [];
-  report(codes.includes("6200"), `create dated ${closeDate} refused with codes ${codes.join(",") || "none"} (${String(e)})`);
+if (closeDate === null) {
+  report(true, "books not closed: bookCloseDate() reads null; close the books and run again for the 6200 check");
+} else {
+  report(closeDate < today, `BookCloseDate reads as ${closeDate}, before ${today}`);
+
+  // 2. A create dated in the closed period is refused with fault 6200.
+  try {
+    const { Id } = await client[CREATE](deposit(closeDate), qbKey("sandbox", `closed-${Date.now()}`));
+    report(false, `create dated ${closeDate} was accepted as Deposit ${Id}; is the closing mode "Required password"?`);
+  } catch (e) {
+    const codes = e instanceof QboRequestError ? e.codes : [];
+    report(codes.includes("6200"), `create dated ${closeDate} refused with codes ${codes.join(",") || "none"} (${String(e)})`);
+  }
 }
 
 // 3. The created-since read returns an entry the app just created, by its key.

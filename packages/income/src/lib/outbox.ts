@@ -306,7 +306,9 @@ export async function postPayout(
           return { outcome: "waiting" as const, row: current };
       }
     },
-    // Three QuickBooks requests (window, closing date, create) of up to 30s each, plus one Retry-After wait.
+    // Covers the window read, closing-date read and create at their usual speed. A 429 retry or a paged
+    // window can overrun it; the rollback leaves the payout WAITING, and the next drain finds an
+    // applied create by its key.
     { timeout: 135_000 },
   );
 }

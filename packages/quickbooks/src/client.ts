@@ -339,12 +339,12 @@ export class QuickBooksClient {
     return { entries, full: entries.length >= PAGE_SIZE };
   }
 
-  /** The books closing date (YYYY-MM-DD), or null when finance has set none. Throws when the read fails. */
+  /** The books closing date (YYYY-MM-DD), or null when finance has set none (absent or empty). Throws when the read fails. */
   async bookCloseDate(): Promise<string | null> {
     const [prefs] = await this.query<QboPreferences>("SELECT * FROM Preferences");
     if (!prefs) throw new Error(`QBO Preferences read returned nothing (intuit_tid=${this.lastTid})`);
     const date = prefs.AccountingInfoPrefs?.BookCloseDate;
-    if (date === undefined) return null;
+    if (date === undefined || date === "") return null;
     parseDate(date);
     return date;
   }
