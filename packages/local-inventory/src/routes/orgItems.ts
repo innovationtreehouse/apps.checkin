@@ -22,7 +22,10 @@ const createSchema = z.object({
   locationId: locationRef.optional(),
   backstockLocationId: locationRef.optional(),
 });
-const updateSchema = createSchema.omit({ gtin13: true }).strict();
+const updateSchema = createSchema
+  .omit({ gtin13: true })
+  .extend({ expectedQuantity: quantity.optional() })
+  .strict();
 
 /** The filter shared by the list and its count, so page totals match rows. */
 async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput> {

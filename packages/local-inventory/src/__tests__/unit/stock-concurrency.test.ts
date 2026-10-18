@@ -112,6 +112,33 @@ describeDb("stock write concurrency", () => {
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 
+  it("an edit without a count, racing a receipt add, keeps the add", async () => {
+    const { inventory } = services();
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: GTIN, existingQuantity: 1 } });
+
+    let commit!: () => void;
+    const gate = new Promise<void>((r) => (commit = r));
+    let added!: () => void;
+    const rowAdded = new Promise<void>((r) => (added = r));
+    const receipt = db.$transaction(async (tx) => {
+      await applyQtyChangeIn(tx, TEST_ORG_ID, GTIN, 1, { userId: null, changeType: "received", receiptId: "p-1" });
+      added();
+      await gate;
+    });
+    await rowAdded;
+    const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4 }, 1);
+    await someoneBlocked();
+    commit();
+    await Promise.all([receipt, edit]);
+
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: GTIN } })).toMatchObject({
+      existingQuantity: 2, desiredQuantity: 4,
+    });
+    expect(await db.inventoryLog.findMany({ where: { gtin13: GTIN, changeType: "manual" } })).toMatchObject([
+      { fieldChanged: "desiredQuantity", valueBefore: "0", valueAfter: "4" },
+    ]);
+  });
+
   it("concurrent conflict resolves apply once", async () => {
     const { provisional } = services();
     await db.orgItem.createMany({
