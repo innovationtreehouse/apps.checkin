@@ -1,3 +1,4 @@
+import { defineRuntime, NotWiredError } from "@checkin/component-kit";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
@@ -8,14 +9,6 @@ import type {
   OrgIdentity,
   OwnerDirectory,
 } from "./contract";
-
-/** Thrown by an inert port: the crossing is declared but not bound yet. Callers retry later. */
-export class NotWiredError extends Error {
-  constructor(port: string) {
-    super(`${port} is not wired`);
-    this.name = "NotWiredError";
-  }
-}
 
 const INERT_OWNERS: OwnerDirectory = { list: async () => [] };
 const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async () => null };
@@ -35,36 +28,23 @@ const INERT_IN_KIND: InKindDirectory = {
   largeValueCents: async () => 50_000,
 };
 
-// Stored on globalThis so the boot chunk that configures and the route chunks that read see
-// one runtime (survives Turbopack HMR re-evaluation).
-const globalForRuntime = globalThis as typeof globalThis & { __bulkDonationRuntime?: BulkDonationConfig };
+export { NotWiredError };
 
-export function configureBulkDonation(config: BulkDonationConfig): void {
-  globalForRuntime.__bulkDonationRuntime = config;
-}
+export const bulkDonationRuntime = defineRuntime<BulkDonationConfig, BulkDonationPrincipal>("bulk-donation");
+const requireRuntime = bulkDonationRuntime.require;
 
-function requireRuntime(): BulkDonationConfig {
-  const runtime = globalForRuntime.__bulkDonationRuntime;
-  if (!runtime) {
-    throw new Error("bulk-donation runtime not configured — the host must call configureBulkDonation() at boot");
-  }
-  return runtime;
-}
+export const configureBulkDonation = bulkDonationRuntime.configure;
 
-/** The acting host user. Throws if absent: host admission runs before any route body. */
-export async function getPrincipal(): Promise<BulkDonationPrincipal> {
-  const principal = await requireRuntime().auth.getPrincipal();
-  if (!principal || !Number.isInteger(principal.id)) throw new Error("no bulk-donation principal — host admission should have rejected this request");
-  return principal;
-}
+/** The acting host user. A 401 if absent: host admission runs before any route body. */
+export const getPrincipal = bulkDonationRuntime.getPrincipal;
+
+/** The current request's org id, the scope of every donation row. */
+export const getOrgId = bulkDonationRuntime.getOrgId;
+
+export const assertOrg = bulkDonationRuntime.assertOrg;
 
 export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
-}
-
-/** The current request's org id, the scope of every donation row. */
-export async function getOrgId(): Promise<string> {
-  return (await getOrg()).id;
 }
 
 export function getOwnerDirectory(): OwnerDirectory {

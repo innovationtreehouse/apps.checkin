@@ -88,10 +88,10 @@ export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** A positive integer path or query id; `Number()` rejects trailing junk such as `12abc`. */
+/** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */
 export function parseId(raw: string | null | undefined, label = "id"): number {
   const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) throw httpError(400, `Invalid ${label}`);
+  if (!raw || !/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(n)) throw httpError(400, `Invalid ${label}`);
   return n;
 }
 
@@ -111,4 +111,76 @@ export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T>
 
 export function query(req: Request): URLSearchParams {
   return new URL(req.url).searchParams;
+}
+
+/** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
+export class NotWiredError extends Error {
+  constructor(port: string) {
+    super(`${port} is not wired`);
+    this.name = "NotWiredError";
+  }
+}
+
+/** The acting person id. A 401 on anything but an integer: Prisma drops an undefined `where` key. */
+export function callerId(principal: { id?: unknown } | null | undefined): number {
+  const id = principal?.id;
+  if (typeof id !== "number" || !Number.isInteger(id)) throw new ServiceError(401, "Unauthorized");
+  return id;
+}
+
+interface RuntimeShape<Principal> {
+  org?: () => Promise<{ id: string }>;
+  auth?: { getPrincipal(): Promise<Principal | null> };
+}
+
+/**
+ * One component's runtime: the host configures it once at boot, routes and services read it.
+ * Stored on globalThis so the instrumentation chunk and the route chunks share one runtime,
+ * and it survives dev HMR. Every accessor throws until the host has configured it.
+ */
+export function defineRuntime<Config extends RuntimeShape<Principal>, Principal extends { id: number }>(name: string) {
+  const key = Symbol.for(`@checkin/component-kit/runtime/${name}`);
+  const store = globalThis as typeof globalThis & Record<symbol, Config | undefined>;
+
+  function requireConfig(): Config {
+    const config = store[key];
+    if (!config) throw new Error(`${name} runtime not configured: the host must configure it at boot`);
+    return config;
+  }
+
+  async function getOrgId(): Promise<string> {
+    const org = requireConfig().org;
+    if (!org) throw new NotWiredError(`${name} org`);
+    return (await org()).id;
+  }
+
+  return {
+    configure(config: Config): void {
+      store[key] = config;
+    },
+    /** Forgets the configuration; tests only. */
+    reset(): void {
+      delete store[key];
+    },
+    require: requireConfig,
+    /** The configuration, or undefined: for a read that must not throw, such as one after a commit. */
+    configured(): Config | undefined {
+      return store[key];
+    },
+    /** The acting host user. A 401 when there is none or it has no integer id. */
+    async getPrincipal(): Promise<Principal> {
+      const auth = requireConfig().auth;
+      if (!auth) throw new NotWiredError(`${name} auth`);
+      const principal = await auth.getPrincipal();
+      if (!principal) throw new ServiceError(401, "Unauthorized");
+      callerId(principal);
+      return principal;
+    },
+    /** The current request's org id, the scope of every row. */
+    getOrgId,
+    /** Callee guard: a crossing payload must carry the injected org. */
+    async assertOrg(orgId: string): Promise<void> {
+      if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
+    },
+  };
 }

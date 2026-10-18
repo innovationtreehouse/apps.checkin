@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
 import type { CompletedReceipt } from "@checkin/receipt-types";
-import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbPosting, NotWiredError, otherLaneClaimedDepositIds } from "../../runtime";
+import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbPosting, NotWiredError, otherLaneClaimedDepositIds } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
 import { deriveTakeoverLine } from "../../lib/qb-match";
+import { donationClaimedDepositIds } from "../../lib/qb-poster";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -52,7 +53,7 @@ beforeEach(() => {
   configure();
 });
 afterEach(() => {
-  delete (globalThis as Record<string, unknown>).__bulkDonationRuntime;
+  bulkDonationRuntime.reset();
 });
 
 describe("X9 ingestInKind (callee)", () => {
@@ -106,6 +107,12 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
   });
 });
 
+describe("claimedDepositIds (callee)", () => {
+  it("refuses an orgId that is not the injected org", async () => {
+    await expect(donationClaimedDepositIds("other-org")).rejects.toThrow("orgId other-org is not this org");
+  });
+});
+
 describe("caller ports", () => {
   it("unbound ports are inert: empty reads, throwing writes", async () => {
     expect(await searchCatalog("drill")).toEqual([]);
@@ -127,8 +134,8 @@ describe("caller ports", () => {
   });
 
   it("an unconfigured runtime fails loudly", async () => {
-    delete (globalThis as Record<string, unknown>).__bulkDonationRuntime;
-    await expect(ingestInKind(receipt(ORG))).rejects.toThrow(/configureBulkDonation/);
+    bulkDonationRuntime.reset();
+    await expect(ingestInKind(receipt(ORG))).rejects.toThrow(/runtime not configured/);
   });
 });
 

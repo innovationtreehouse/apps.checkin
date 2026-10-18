@@ -1,3 +1,4 @@
+import { defineRuntime } from "@checkin/component-kit";
 import type { QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
@@ -76,35 +77,22 @@ export interface IncomeConfig {
   reconcileFrom?: Date;
 }
 
-// On globalThis so the instrumentation chunk that configures it and the route chunks that
-// read it share one runtime (and it survives dev HMR).
-const globalForRuntime = globalThis as typeof globalThis & { __incomeRuntime?: IncomeConfig };
+export const incomeRuntime = defineRuntime<IncomeConfig, IncomePrincipal>("income");
 
 export function configureIncome(next: IncomeConfig): void {
-  globalForRuntime.__incomeRuntime = { ...next };
+  incomeRuntime.configure({ ...next });
 }
 
-export function getIncomeConfig(): IncomeConfig {
-  return globalForRuntime.__incomeRuntime ?? {};
-}
+export const getIncomeConfig = incomeRuntime.require;
 
-/** The acting host user. Throws if absent: host admission has already run. */
-export async function getPrincipal(): Promise<IncomePrincipal> {
-  const auth = getIncomeConfig().auth;
-  if (!auth) throw new Error("income runtime not configured: the host must pass auth to configureIncome()");
-  const principal = await auth.getPrincipal();
-  if (!principal || !Number.isInteger(principal.id)) {
-    throw new Error("no income principal: host admission should have rejected this request");
-  }
-  return principal;
-}
+/** The acting host user. A 401 if absent: host admission has already run. */
+export const getPrincipal = incomeRuntime.getPrincipal;
 
 /** The current request's org id, the scope of every income row. */
-export async function getOrgId(): Promise<string> {
-  const org = getIncomeConfig().org;
-  if (!org) throw new Error("income runtime not configured: the host must pass org to configureIncome()");
-  return (await org()).id;
-}
+export const getOrgId = incomeRuntime.getOrgId;
+
+/** Callee guard: a crossing payload must carry the injected org. */
+export const assertOrg = incomeRuntime.assertOrg;
 
 /** YYYY-MM-DD in UTC, the format CSV payout dates and QB txnDates use. */
 export function isoDay(d: Date): string {

@@ -6,7 +6,7 @@ import { findOrCreate, qbKey, type FindOrCreateResult, type QboDeposit, type Qui
 import { db, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";
-import { getOwnerDirectory, getQbPosting, otherLaneClaimedDepositIds } from "../runtime";
+import { assertOrg, getOwnerDirectory, getQbPosting, otherLaneClaimedDepositIds } from "../runtime";
 import { QB_MATCH_STATE, benevityTakeoverLine, recordQbMatched, type QbMatchState } from "./qb-match";
 
 /** Days either side of the disbursement date a QuickBooks deposit may be dated. */
@@ -167,6 +167,7 @@ export function createdToday(handle: Tx, orgId: string): Promise<number> {
 
 /** Deposits this lane holds, for another lane to keep out of its own matching. */
 export async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
+  await assertOrg(orgId);
   const rows = await db.disbursementEvent.findMany({ where: { orgId, qbTxnId: { not: null } }, select: { qbTxnId: true } });
   return rows.flatMap((r) => (r.qbTxnId ? [r.qbTxnId] : []));
 }

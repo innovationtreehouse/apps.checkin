@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   ComponentHttpError,
+  NotWiredError,
   ServiceError,
+  callerId,
+  defineRuntime,
   httpError,
   isComponentHttpError,
   isServiceError,
@@ -74,7 +77,10 @@ describe("parseId", () => {
     expect(parseId("12")).toBe(12);
   });
 
-  it.each(["12abc", "abc", "", "0", "-3", "1.5", undefined, null])("rejects %p with a 400", (raw) => {
+  it.each([
+    "12abc", "abc", "", "0", "-3", "1.5", undefined, null,
+    "0x1f", "0b11", "0o7", "1e2", " 42", "42 ", "012", "+5", "Infinity", "9007199254740993",
+  ])("rejects %p with a 400", (raw) => {
     expect(() => parseId(raw, "item id")).toThrow(expect.objectContaining({ status: 400, message: "Invalid item id" }));
   });
 });
@@ -98,5 +104,75 @@ describe("parseBody", () => {
 describe("zodMessage", () => {
   it("falls back when there are no issues", () => {
     expect(zodMessage({ issues: [] })).toBe("Invalid request body");
+  });
+});
+
+describe("callerId", () => {
+  it("returns an integer id", () => {
+    expect(callerId({ id: 7 })).toBe(7);
+  });
+
+  it.each([null, undefined, {}, { id: "7" }, { id: 1.5 }, { id: Number.NaN }])("is a 401 for %p", (principal) => {
+    expect(() => callerId(principal)).toThrow(expect.objectContaining({ status: 401, message: "Unauthorized" }));
+  });
+});
+
+describe("defineRuntime", () => {
+  interface Principal {
+    id: number;
+    name: string | null;
+  }
+  interface Config {
+    org?: () => Promise<{ id: string }>;
+    auth?: { getPrincipal(): Promise<Principal | null> };
+    port?: string;
+  }
+  const runtime = defineRuntime<Config, Principal>("kit-test");
+  const configured = (over: Partial<Config> = {}) =>
+    runtime.configure({ org: async () => ({ id: "org-1" }), auth: { getPrincipal: async () => ({ id: 3, name: "A" }) }, ...over });
+
+  it("throws from every accessor until configured", async () => {
+    runtime.reset();
+    expect(() => runtime.require()).toThrow("kit-test runtime not configured");
+    await expect(runtime.getPrincipal()).rejects.toThrow("kit-test runtime not configured");
+    await expect(runtime.getOrgId()).rejects.toThrow("kit-test runtime not configured");
+    await expect(runtime.assertOrg("org-1")).rejects.toThrow("kit-test runtime not configured");
+  });
+
+  it("configured() reads without throwing", () => {
+    runtime.reset();
+    expect(runtime.configured()).toBeUndefined();
+    configured({ port: "bound" });
+    expect(runtime.configured()?.port).toBe("bound");
+  });
+
+  it("shares one configuration across copies of the module", () => {
+    configured({ port: "bound" });
+    expect(defineRuntime<Config, Principal>("kit-test").require().port).toBe("bound");
+  });
+
+  it("reads the principal and the org", async () => {
+    configured();
+    await expect(runtime.getPrincipal()).resolves.toEqual({ id: 3, name: "A" });
+    await expect(runtime.getOrgId()).resolves.toBe("org-1");
+  });
+
+  it("is a 401 for a missing principal or one without an integer id", async () => {
+    configured({ auth: { getPrincipal: async () => null } });
+    await expect(runtime.getPrincipal()).rejects.toMatchObject({ status: 401 });
+    configured({ auth: { getPrincipal: async () => ({ id: 1.5, name: null }) } });
+    await expect(runtime.getPrincipal()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("throws NotWiredError for unbound auth or org", async () => {
+    runtime.configure({});
+    await expect(runtime.getPrincipal()).rejects.toBeInstanceOf(NotWiredError);
+    await expect(runtime.getOrgId()).rejects.toBeInstanceOf(NotWiredError);
+  });
+
+  it("assertOrg passes the injected org and refuses any other", async () => {
+    configured();
+    await expect(runtime.assertOrg("org-1")).resolves.toBeUndefined();
+    await expect(runtime.assertOrg("org-2")).rejects.toThrow("orgId org-2 is not this org");
   });
 });
