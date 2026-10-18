@@ -32,7 +32,7 @@ function person(over: Record<string, unknown> = {}) {
         toolStatuses: [],
         programsLed: [],
         programVolunteers: [],
-        household: { orgMembership: { status: 'ACTIVE', isVolunteer: false } },
+        household: { orgMembership: { status: 'ACTIVE', isVolunteerFamily: false } },
         ...over,
     };
 }

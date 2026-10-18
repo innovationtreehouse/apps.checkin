@@ -56,7 +56,7 @@ jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
     raiseDeniedHouseholdActivity: jest.fn(),
 }));
-jest.mock('@/lib/membership/review', () => ({ applyVolunteerStatus: jest.fn() }));
+jest.mock('@/lib/membership/review', () => ({ applyVolunteerFamilyStatus: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const prisma = require('@/lib/prisma').default;
@@ -69,7 +69,7 @@ const { addHouseholdLead, HouseholdLeadLimitError, MAX_HOUSEHOLD_LEADS } = requi
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { householdBgIsFresh } = require('@/lib/membership/renewal');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { applyVolunteerStatus } = require('@/lib/membership/review');
+const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { advanceExternalIfComplete } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -630,7 +630,7 @@ describe('submitIntake', () => {
             where: { id: 11, status: 'INTAKE' },
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
-        expect(applyVolunteerStatus).not.toHaveBeenCalled();
+        expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
     it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist (#874)', async () => {
@@ -645,7 +645,7 @@ describe('submitIntake', () => {
         expect(prisma.auditLog.create).toHaveBeenCalled();
         // Fresh-check shortcut skips clearBackgroundCheck for the whole cycle, so
         // the designation allowlist must be matched here or never.
-        expect(applyVolunteerStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
+        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 

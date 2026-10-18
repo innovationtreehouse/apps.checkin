@@ -37,13 +37,13 @@ jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActiv
 
 jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
-    applyVolunteerStatus: jest.fn().mockResolvedValue(undefined),
+    applyVolunteerFamilyStatus: jest.fn().mockResolvedValue(undefined),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const prisma = require('@/lib/prisma').default;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { notifyReviewers, applyVolunteerStatus } = require('@/lib/membership/review');
+const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { advanceExternalIfComplete } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -277,7 +277,7 @@ describe('beginRenewal', () => {
             });
             // The advance's PENDING_PAYMENT transition matches the volunteer
             // allowlist (#874) and pings reviewers — beginRenewal does neither.
-            expect(applyVolunteerStatus).not.toHaveBeenCalled();
+            expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
 
@@ -295,7 +295,7 @@ describe('beginRenewal', () => {
                 where: { id: 5, status: 'PENDING_RENEWAL' },
                 data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
             });
-            expect(applyVolunteerStatus).not.toHaveBeenCalled();
+            expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             // Nothing to review until the member consents on Averity — the
             // advance (advanceExternalIfComplete) pings, same as INITIAL.
             expect(notifyReviewers).not.toHaveBeenCalled();
@@ -308,7 +308,7 @@ describe('beginRenewal', () => {
             await beginRenewal(5, 42);
 
             expect(mockTx.auditLog.create).not.toHaveBeenCalled();
-            expect(applyVolunteerStatus).not.toHaveBeenCalled();
+            expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
 

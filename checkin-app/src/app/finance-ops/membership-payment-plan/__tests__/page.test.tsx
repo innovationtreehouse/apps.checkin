@@ -15,7 +15,7 @@ const requests = [
     id: 1,
     stageEnteredAt: "2026-01-15T00:00:00.000Z",
     orgMembership: {
-      isVolunteer: false,
+      isVolunteerFamily: false,
       household: {
         id: 1,
         name: "Smith Family",

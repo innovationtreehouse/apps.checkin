@@ -7,7 +7,7 @@ import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWher
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { applyVolunteerStatus } from "@/lib/membership/review";
+import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { addHouseholdLead, HouseholdLeadLimitError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
@@ -498,7 +498,7 @@ export async function submitIntake(userId: number) {
 
         // Fresh-check shortcut ⇒ clearBackgroundCheck never runs this cycle, so match
         // the volunteer-designation allowlist here or it would never be applied (#874).
-        if (bgFresh) await applyVolunteerStatus(tx, process.orgMembershipId!, household.id, false);
+        if (bgFresh) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, household.id, false);
     });
 
     // The external actions (contract sign, BG consent) can already be satisfied the

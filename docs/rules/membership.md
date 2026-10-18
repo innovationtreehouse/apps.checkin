@@ -327,7 +327,7 @@ Procedure below is built on them.
 
 ### Membership fee
 
-- The membership fee has two rates, standard and volunteer household. The designation changes
+- The membership fee has two rates, standard and Volunteer Family. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
 - A volunteer designation matches on canonical email, so address variants cannot
