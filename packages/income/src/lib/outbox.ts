@@ -228,7 +228,7 @@ function holdingData(d: QbDeposit, origin: string): Partial<PayoutReconciliation
 
 /**
  * One payout's turn through the outbox, in three steps. Claim: a short transaction marks the
- * payout as being posted and stamps its first attempt. Call, outside any transaction: an
+ * payout as being posted and, when the gate lets it create, stamps its first attempt. Call, outside any transaction: an
  * attempted payout first looks for its own deposit by key; otherwise findOrCreate matches,
  * then creates when `gate` allows. Settle: a new transaction saves the result only while the
  * claim is still this post's. found → link (POSTED when it carries the payout's key);
@@ -282,9 +282,11 @@ export async function postPayout(
     if (!(await lockReconciliation(tx, orgId, wait))) return null;
     const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
     if (!postable(current) || isClaimed(current, claimedAt.getTime())) return { row: current, attempted: undefined };
+    // Only a post that may create marks the attempt: one that can only match leaves nothing to find later.
+    const mayLand = gate.mayCreate && current.payoutDate > gate.closedThrough;
     const claimed = await tx.payoutReconciliation.update({
       where: { id },
-      data: { postClaimedAt: claimedAt, qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? claimedAt },
+      data: { postClaimedAt: claimedAt, qbCreateAttemptedAt: current.qbCreateAttemptedAt ?? (mayLand ? claimedAt : null) },
     });
     return { row: claimed, attempted: current.qbCreateAttemptedAt };
   });

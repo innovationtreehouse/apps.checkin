@@ -311,7 +311,11 @@ call. It is set only while null and never moved, so every later lookup starts
 from the first attempt. It therefore marks every post attempt, including ones
 that end in a match and never send a create. A record that carries it is
 "attempted", whatever its state now; a lookup on one that never created simply
-finds nothing. The column is additive and ships in the lane's PR.
+finds nothing. Income marks only a post the gate lets create (`mayCreate`, dated
+after the closed line): a post that can only match leaves nothing to find, and an
+attempted payout is never matched by amount in reconcile, so marking every
+open-period payout would stop a later hand booking from matching on its own. The
+column is additive and ships in the lane's PR.
 
 **Income gets the same claim, call and settle.** Today income calls QuickBooks
 inside the database transaction that also settles, under its advisory lock and

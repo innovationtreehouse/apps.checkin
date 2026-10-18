@@ -212,6 +212,15 @@ describeDb("drainIncomeOutbox — switch-on and the open period", () => {
     expect(await rowFor(p)).toMatchObject({ status: "POSTED", depositTxnDate: "2026-06-10" });
   });
 
+  it("an open-period payout is never marked attempted, so a later hand booking matches on its own", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ kind: "NO_DEPOSIT", qbCreateAttemptedAt: null });
+    qbo.hand("H2", "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "MATCHED", depositId: "H2" });
+  });
+
   it("finance books an open-period payout; it still matches first and is never capped", async () => {
     await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 100 }, { userId: 9, isFinance: true, isBoard: false });
     const p = payout(2, "2026-06-28", 500);
@@ -270,7 +279,7 @@ describeDb("drainIncomeOutbox — closed books", () => {
     await switchOn();
     const p = payout(2, "2026-06-28", 500);
     await drain();
-    expect(await rowFor(p)).toMatchObject({ kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
+    expect(await rowFor(p)).toMatchObject({ kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE, qbCreateAttemptedAt: null });
 
     qbo.hand("H2", "2026-06-28", 500);
     await drain();
