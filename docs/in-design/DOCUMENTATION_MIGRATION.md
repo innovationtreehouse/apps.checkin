@@ -54,9 +54,9 @@ where a move breaks one of their pointers, that doc's session gets the new path
 
 | File | Action | Status |
 |---|---|---|
-| `ARCHITECT_IDEAS_o46.md` | Still-open items (#15 no error boundary, #17 no Zod, and any others still true) become backlog rows; delete | todo, PR 2 |
+| `ARCHITECT_IDEAS_o46.md` | Still-open items became backlog rows PL18–PL26; deleted | done, PR 2 |
 | `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to `docs/architecture/` (Q4) | todo, PR 4 |
-| `DESIGN.md` | Check each use case against the register; add any missing rule; delete | todo, PR 2 |
+| `DESIGN.md` | Use cases checked against the register; three missing rules added to `attendance-checkin.md` and `people-households.md`; deleted | done, PR 2 |
 | `PRODUCTION_PLAN.md` | The app is live, so only its deploy and rollback runbook moves, to `docs/ops/production-runbook.md`; unfinished follow-ups become issues; the launch checklist is dropped (Q7) | todo, PR 3 |
 | `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
@@ -80,7 +80,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 |---|---|---|
 | `checkin-app/docs/VOCABULARY.md` | Build conventions to `docs/conventions.md`; drop the migration log; domain facts to the register or cut where already there (§3.4) | todo, PR 6 |
 | `docs/rules/expenses.md`, `inventory.md` | No Policy section yet; check the policy corpus and add one, even if empty | todo, PR 7, after #2224 |
-| Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | todo, PR 2 and PR 8 |
+| Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | backlog pointer done, PR 2; source comments todo, PR 8 |
 | Root-vs-app split | Per Q6, still open | todo, PR 9 |
 | `AGENTS.md` "Design & product" block | Rewritten as an Operations block once its last entry moves | todo, PR 3 |
 
