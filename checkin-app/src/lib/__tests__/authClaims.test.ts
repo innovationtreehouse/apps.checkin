@@ -162,7 +162,7 @@ describe('assignParticipantClaims — Treehouse Volunteer inputs', () => {
 
     it('stamps program volunteer, volunteer family and active membership', () => {
         const token = {} as JWT;
-        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }));
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'ACTIVE', isVolunteerFamily: true } } }));
 
         expect(token.isProgramVolunteer).toBe(true);
         expect(token.isVolunteerFamily).toBe(true);
@@ -171,7 +171,7 @@ describe('assignParticipantClaims — Treehouse Volunteer inputs', () => {
 
     it('reads a lapsed membership as inactive', () => {
         const token = {} as JWT;
-        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'REVOKED', isVolunteer: true } } }));
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'REVOKED', isVolunteerFamily: true } } }));
 
         expect(token.isActiveOrgMember).toBe(false);
         expect(token.isVolunteerFamily).toBe(true);
@@ -179,7 +179,7 @@ describe('assignParticipantClaims — Treehouse Volunteer inputs', () => {
 
     it('forces every input false for a DENIED household', () => {
         const token = {} as JWT;
-        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'DENIED', isVolunteer: true } } }));
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'DENIED', isVolunteerFamily: true } } }));
 
         expect(token.isProgramVolunteer).toBe(false);
         expect(token.isVolunteerFamily).toBe(false);

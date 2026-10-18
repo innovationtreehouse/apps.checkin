@@ -14,6 +14,7 @@ import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { systemActor } from "@/lib/auditActor";
+import { specTrace } from "@/lib/specTrace";
 
 // GET is kiosk-first with distinct signature-failure semantics (403 on bad signature,
 // not 401), so it keeps its own kiosk plumbing rather than moving to withAuth. The one
@@ -304,6 +305,7 @@ export const POST = withAuth({}, async (req, auth) => {
             );
 
             invalidateAttendanceCache();
+            specTrace("WebCheckin", { p: participant.id, visitId: result.visit.id, t: result.visit.arrivedAt.getTime() });
             return NextResponse.json({ success: true, visit: result.visit });
         }
 

@@ -172,6 +172,14 @@ describe('payments that land on nothing awaiting them', () => {
         expect(emailHouseholdLeads).not.toHaveBeenCalled();
     });
 
+    it('an order on a paid application of a DENIED household is raised as DENIED, not nothing_due', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'PENDING_BG_CLEARANCE', paidAt: new Date() }));
+        household.status = 'DENIED';
+        expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
+    });
+
     it('a deny that lands before the household write leaves the process untouched', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({}));
         setHouseholdStatus.mockResolvedValue(false);

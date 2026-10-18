@@ -71,7 +71,7 @@ describe("self-grant writers", () => {
     const srcRoot = path.join(__dirname, "../../..");
     const WRITES_GRANT = [
         /volunteerDesignation\.(create|createMany|upsert|update|updateMany)\(/,
-        /data:\s*\{[^}]*\bisVolunteer\s*:/,
+        /data:\s*\{[^}]*\bisVolunteerFamily\s*:/,
         /\bupdateData\.lastBackgroundCheck\s*=|data:\s*\{[^}]*\blastBackgroundCheck\s*:/,
         /programVolunteer\.(create|createMany|upsert)\(|data:\s*\{[^}]*\bisCore\b/,
     ];

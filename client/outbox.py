@@ -12,6 +12,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+import spec_trace
+
 log = logging.getLogger("kiosk")
 
 # Start at the waker's Retry-After (~30s), exponential to a ~5 min cap.
@@ -307,6 +309,7 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
         # carries its close as a token, force_close_confirmed or shown_empty
         # instead, which the server reads the same way. Intent is the direction the kiosk
         # displayed; the server must not re-toggle from live state.
+        spec_trace.emit("DrainSend", cid=row.client_event_id)
         body, status, retry_after = send_fn(
             row.participant_id,
             force_close_token=row.force_close_token,
@@ -324,12 +327,14 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
 
         if outcome == "ack":
             outbox.ack(row.client_event_id)
+            spec_trace.emit("DrainResult", cid=row.client_event_id, status=status, type=body.get("type"))
             backoff = MIN_BACKOFF_SECONDS
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})
             sleep_fn(DRAIN_PACE_SECONDS)
         else:
             outbox.bump_attempt(row.client_event_id, status)
+            spec_trace.emit("DrainTimeout", cid=row.client_event_id, status=status)
             wait = _backoff_seconds(retry_after, backoff)
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
             sleep_fn(wait)

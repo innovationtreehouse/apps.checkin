@@ -55,14 +55,14 @@ export function membershipVariantIdSet(settings: {
  * non-volunteer family redeeming the volunteer code activated cleanly with no flag.
  *
  * True iff the order's mirrored coupon list carries the board-configured volunteer
- * code (BoardSettings.volunteerDiscountCode — the same code the checkout link
+ * code (BoardSettings.volunteerFamilyDiscountCode — the same code the checkout link
  * appends for volunteer households) while the membership is NOT volunteer. Compared
  * case-insensitively (Shopify codes are). An EMPTY discountCodes list is never
  * evidence of anything — rows synced before #1048 mirror no codes — so only a
  * non-empty list can flag. Other codes (promos) are Shopify's business, not ours.
  */
-export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: string | null | undefined, isVolunteer: boolean): boolean {
-    if (isVolunteer || !volunteerCode) return false;
+export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: string | null | undefined, isVolunteerFamily: boolean): boolean {
+    if (isVolunteerFamily || !volunteerCode) return false;
     const vc = volunteerCode.trim().toUpperCase();
     if (!vc) return false;
     return order.discountCodes.some((c) => c.trim().toUpperCase() === vc);
@@ -123,10 +123,20 @@ async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedPro
  * membership order (so a program pass may still claim it).
  */
 export async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> {
-    // Already recorded on a process? Then it is not a missed payment.
+    // Already recorded on a process, or refunded off one? Then it is not a missed payment.
+    // A re-payment overwrites the process's shopifyOrderId, so a refunded order is found by its refund's audit row.
     if (order.legacyId) {
         const known = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { id: true } });
         if (known) return true;
+        const refunded = await prisma.auditLog.findFirst({
+            where: {
+                tableName: "OrgMembershipProcess",
+                oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
+                newData: { path: ["refundRecorded"], equals: true },
+            },
+            select: { id: true },
+        });
+        if (refunded) return true;
     }
 
     const proc = await resolveMembershipProcess(order);
@@ -161,7 +171,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
             orgMembershipVariantId: true,
             standardMembershipFeeCents: true,
             volunteerMembershipFeeCents: true,
-            volunteerDiscountCode: true,
+            volunteerFamilyDiscountCode: true,
         },
     });
     const membershipVariantIds = membershipVariantIdSet(settings ?? null);
@@ -169,7 +179,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // Both branches below need the membership's volunteer flag: the amount-gate
     // fallback for the expected membership fee, the coupon entitlement check for volunteerOnly.
     const membership = proc.orgMembershipId
-        ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { isVolunteer: true } })
+        ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { isVolunteerFamily: true } })
         : null;
 
     if (lineVariantIds.length > 0) {
@@ -186,7 +196,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
         // impossible — fall back to the old membership fee amount gate, made discount-aware by
         // adding the coupon back so a couponed pre-backfill order compares its GROSS
         // figure to the gross membership fee and no longer false-raises AMOUNT_MISMATCH.
-        const expected = membership?.isVolunteer ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
+        const expected = membership?.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
         if (expected > 0 && order.totalCents + order.discountCents + AMOUNT_TOLERANCE_CENTS < expected) {
             await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: order.legacyId, processId: proc.id });
             return true;
@@ -198,7 +208,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // code on a non-volunteer membership → tell the board, do NOT activate (parity
     // with the NO_ITEM branch). Sits after both gates so a backfilled pre-#1048 row
     // with codes is covered too; pre-backfill rows mirror [] and pass through unjudged.
-    if (usesVolunteerCodeUnentitled(order, settings?.volunteerDiscountCode, membership?.isVolunteer ?? false)) {
+    if (usesVolunteerCodeUnentitled(order, settings?.volunteerFamilyDiscountCode, membership?.isVolunteerFamily ?? false)) {
         logger.warn(`[reconcile] volunteer discount code on non-volunteer order ${order.legacyId} (process ${proc.id})`);
         await raisePaymentException("DISCOUNT_UNAUTHORIZED", { shopifyOrderId: order.legacyId, processId: proc.id });
         return true;

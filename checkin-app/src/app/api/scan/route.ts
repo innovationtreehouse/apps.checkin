@@ -14,6 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
+import { specTrace } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { type ScanResult, toResponse } from "./scanResponse";
 
@@ -178,6 +179,11 @@ export const POST = withKiosk(
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
         const clockSuspect = body.clockSuspect === true;
+        const slot = auth.type !== 'kiosk' ? "web" : (isReplay || isDead) ? "replay" : "live";
+        specTrace("ScanRequest", {
+            slot, p: body.participantId, cid: clientEventId, intent, close: closeKind,
+            t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,
+        });
 
         // A version newer than this server refuses only the bodies that can be
         // misread — replay/dead rows, whose scannedAt semantics the newer
@@ -220,8 +226,10 @@ export const POST = withKiosk(
                 });
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
+                specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "duplicate" });
                 return toResponse({ kind: "duplicate" }, wire);
             }
+            specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "parked", reason: "unresolvable" });
             return toResponse({ kind: "parked", reason: "review" }, wire);
         };
         if (participantId === null) {
@@ -244,6 +252,7 @@ export const POST = withKiosk(
         const resolved = await resolveMergedPerson(participantId);
         if (resolved.kind !== "live") {
             if (isDead || isReplay) return await parkUnresolvable();
+            specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"
                 ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
                 : apiError(`Participant ${participantId} not found.`, 404);
@@ -502,6 +511,7 @@ export const POST = withKiosk(
                     where: { id: pullBackVisitId },
                     data: { departedAt: eventTime, departedVia: "SCANNER", facilityCloseId: null },
                 });
+                specTrace("VisitDepart", { p: participant.id, visitId: pullBackVisitId, via: "SCANNER", t: eventTime.getTime(), pulledBack: true });
                 await appendPresenceEvent(tx, {
                     personId: participant.id,
                     occurredAt: eventTime,
@@ -599,11 +609,18 @@ export const POST = withKiosk(
             // (e.g. the one-open-visit index) must 500 so the kiosk retries
             // instead of acking a scan whose rows just rolled back.
             if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
+                specTrace("ScanCommit", { slot, p: participant.id, cid: clientEventId, kind: "duplicate" });
                 await executePendingCloses();
                 return toResponse({ kind: "duplicate" }, wire);
             }
             throw err;
         }
+        specTrace("ScanCommit", {
+            slot, p: participant.id, cid: clientEventId, kind: result.kind,
+            reason: result.kind === "parked" ? result.reason : null,
+            closed: result.kind === "checkout" && result.closed,
+            held: result.kind === "checkout" && result.closeOffer?.reason === "unseen_checkins",
+        });
 
         // Every recorded close runs here, AFTER the per-participant transaction
         // commits and the advisory lock is released, so the facility-wide sweep

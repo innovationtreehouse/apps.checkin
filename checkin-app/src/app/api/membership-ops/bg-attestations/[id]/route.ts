@@ -56,7 +56,7 @@ export const DELETE = handler<{ id: string }>("DELETE /api/membership-ops/bg-att
                         subjectPersonId: attestation.subjectPersonId,
                         result: attestation.result,
                         note: attestation.note,
-                        isMarkedVolunteer: attestation.isMarkedVolunteer,
+                        isMarkedVolunteerFamily: attestation.isMarkedVolunteerFamily,
                         createdAt: attestation.createdAt,
                     },
                     newData: { reason },

@@ -26,6 +26,7 @@ import requests
 
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
+import spec_trace
 
 # The board's own roster GETs, proxied through this Pi.
 ROSTER_GET_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
@@ -1390,11 +1391,17 @@ def handle_scan(backend, state, outbox, participant_id):
         close=close, roster_as_of=roster_as_of,
     )
 
+    if spec_trace.on():
+        spec_trace.emit("KioskBadge", p=str(participant_id), cid=client_event_id, intent=intent, close=close,
+                        prompt=bool(others), queued=queue_only, t=scanned_at, rosterAsOf=roster_as_of,
+                        present=sorted(state.present_ids))
+
     if queue_only:
         show_queued(outbox.pending_count())
         log.info(f"Queued: participant {participant_id} {intent} close={close}")
         return
 
+    spec_trace.emit("KioskLiveSend", cid=client_event_id)
     try:
         body, status, retry_after = backend.post_scan(
             participant_id,
@@ -1416,6 +1423,8 @@ def handle_scan(backend, state, outbox, participant_id):
         # Unconfirmed: the row stays pending for the drain.
         outbox.release(client_event_id)
         show_queued(outbox.pending_count())
+        if spec_trace.on():
+            spec_trace.emit("KioskLiveFail", cid=client_event_id, status=status, localClose=state.local_close_participant)
         log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent} close={close}")
         return
 
@@ -1465,6 +1474,10 @@ def handle_scan(backend, state, outbox, participant_id):
                 with state.lock:
                     state.current_counts = att_data["counts"]
             state.push_event(event_payload)
+    if spec_trace.on():
+        spec_trace.emit("KioskLiveResult", cid=client_event_id, status=status, type=body.get("type"),
+                        facilityClosed=body.get("facilityClosed"), held=bool(close and body.get("closePrompt")),
+                        present=sorted(state.present_ids), localClose=state.local_close_participant)
 
 # ---------------------------------------------------------------------------
 # Main

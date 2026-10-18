@@ -74,7 +74,7 @@ export const classifications = {
         id: 'public',
         memberSince: 'public',
         status: 'public',
-        isVolunteer: 'public',
+        isVolunteerFamily: 'public',
         householdId: 'public',
     },
     OrgMembershipProcess: {
@@ -112,7 +112,7 @@ export const classifications = {
         subjectPersonId: 'public',
         result: 'internal',
         note: 'internal',
-        isMarkedVolunteer: 'internal',
+        isMarkedVolunteerFamily: 'internal',
         createdAt: 'public',
     },
     VolunteerDesignation: {
@@ -128,7 +128,7 @@ export const classifications = {
         orgMembershipYearBoundary: 'public',
         orgMembershipVariantId: 'internal',
         orgMembershipProductUrl: 'internal',
-        volunteerDiscountCode: 'internal',
+        volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
         devSigningTarget: 'internal',
         emailFromAddress: 'public',

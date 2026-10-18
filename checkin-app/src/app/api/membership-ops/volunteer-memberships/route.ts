@@ -9,7 +9,7 @@ import type { OrgMembershipStatus } from "@/generated/prisma/client";
 export const dynamic = "force-dynamic";
 
 /**
- * One volunteer roster row. Rows are HOUSEHOLD-grained because `isVolunteer`
+ * One volunteer roster row. Rows are HOUSEHOLD-grained because `isVolunteerFamily`
  * lives on OrgMembership (one per household) — volunteer status is a property of
  * the family's membership fee, not of a person.
  */
@@ -75,7 +75,7 @@ const isRevoked = (status: OrgMembershipStatus | undefined) => status === "REVOK
 export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async () => {
     const [memberships, designations] = await Promise.all([
         prisma.orgMembership.findMany({
-            where: { isVolunteer: true },
+            where: { isVolunteerFamily: true },
             select: {
                 status: true,
                 memberSince: true,
@@ -97,7 +97,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
     ]);
 
     // Resolve designated emails through the SAME rule that grants the fee —
-    // canonicalizeEmail against HOUSEHOLD LEADS (review.ts applyVolunteerStatus).
+    // canonicalizeEmail against HOUSEHOLD LEADS (review.ts applyVolunteerFamilyStatus).
     // Matching any looser (case-only, or any household member) would show a
     // standing the engine will never produce.
     //

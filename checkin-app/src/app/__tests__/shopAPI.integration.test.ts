@@ -79,8 +79,8 @@ describe('Shop API Integration Tests', () => {
             data: {
                 email: 'common-shop-api-test@example.com',
                 name: 'Common',
-                // Volunteer member: the household holds an ACTIVE, isVolunteer membership.
-                household: { create: { name: 'Test HH', orgMembership: { create: { status: 'ACTIVE', isVolunteer: true } } } }
+                // Volunteer member: the household holds an ACTIVE, isVolunteerFamily membership.
+                household: { create: { name: 'Test HH', orgMembership: { create: { status: 'ACTIVE', isVolunteerFamily: true } } } }
             }
         });
         commonId = commonUser.id;

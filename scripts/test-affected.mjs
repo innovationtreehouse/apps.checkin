@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// DRAFT, NOT ADOPTED: not wired into any package.json script, and --db / --flow
-// have never been run. It depends on two changes that are not made yet: the
-// PG_TEST_HARNESS=off opt-out in pg-test-harness and the FLOW_ARGS passthrough
-// on test:flow:standalone. See the rollout in docs/in-design/PER_LIBRARY_TESTING-migration.md.
-//
 // Local per-area test runner (docs/in-design/PER_LIBRARY_TESTING.md).
 // Maps the files changed against a base ref to areas and runs only the light
 // tiers for those areas, serially: tsc, eslint, vitest unit (no DB container),
@@ -23,37 +18,38 @@ const app = join(root, 'checkin-app');
 // security tests (src/security/__tests__/<key>-*.test.ts, tests/security/<key>Admission.test.ts).
 const LIBRARIES = [
   {
-    key: 'catalog', pkg: 'packages/global-catalog', flow: 'flow-tests/catalog.flow.test.ts',
+    key: 'catalog', pkg: 'packages/global-catalog', flows: ['flow-tests/catalog.flow.test.ts'],
     checkin: ['src/lib/catalog/', 'src/lib/catalogNav.ts', 'src/app/catalog/', 'src/app/api/catalog/',
       'src/security/registry/catalog.ts', 'src/security/catalogSyntheticClassifications.ts'],
   },
   {
-    key: 'inventory', pkg: 'packages/local-inventory', flow: 'flow-tests/local-inventory.flow.test.ts',
+    key: 'inventory', pkg: 'packages/local-inventory', flows: ['flow-tests/local-inventory.flow.test.ts'],
     checkin: ['src/lib/localInventory/', 'src/app/inventory/', 'src/app/api/inventory/',
       'src/security/registry/inventory.ts', 'src/security/inventorySyntheticClassifications.ts'],
   },
   {
-    key: 'income', pkg: 'packages/income',
+    key: 'income', pkg: 'packages/income', flows: ['flow-tests/income.flow.test.ts'],
     checkin: ['src/lib/income/', 'src/app/income/', 'src/app/api/income/',
       'src/security/registry/income.ts', 'src/security/incomeSyntheticClassifications.ts'],
   },
   {
-    key: 'expense', pkg: 'packages/expense',
+    key: 'expense', pkg: 'packages/expense', flows: ['flow-tests/expense.flow.test.ts'],
     checkin: ['src/lib/expense/', 'src/app/expense/', 'src/app/api/expense/',
       'src/security/registry/expense.ts', 'src/security/expenseSyntheticClassifications.ts'],
   },
   {
     key: 'receipt', pkg: 'packages/receipt',
+    flows: ['flow-tests/receipt.flow.test.ts', 'flow-tests/receipt-pipeline.flow.test.ts'],
     checkin: ['src/lib/receipt/', 'src/app/receipts/', 'src/app/api/receipts/',
       'src/security/registry/receipt.ts', 'src/security/receiptSyntheticClassifications.ts'],
   },
   {
-    key: 'workflow', pkg: 'packages/workflow-mapping',
+    key: 'workflow', pkg: 'packages/workflow-mapping', flows: ['flow-tests/workflow-mapping.flow.test.ts'],
     checkin: ['src/lib/workflowMapping/', 'src/app/api/workflow-mapping/',
       'src/security/registry/workflow.ts', 'src/security/workflowSyntheticClassifications.ts'],
   },
   {
-    key: 'donation', pkg: 'packages/bulk-donation',
+    key: 'donation', pkg: 'packages/bulk-donation', flows: ['flow-tests/bulk-donation.flow.test.ts'],
     checkin: ['src/lib/bulkDonation/', 'src/app/donations/', 'src/app/api/donations/',
       'src/security/registry/donation.ts', 'src/security/donationSyntheticClassifications.ts'],
   },
@@ -82,12 +78,19 @@ function die(msg) {
 }
 const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
 
+// Heavy tiers must reach a real database: drop the light-run switch and fail if none comes up.
+const requireDbEnv = () => {
+  const env = { ...process.env, REQUIRE_DB: '1' };
+  delete env.PG_TEST_HARNESS;
+  return env;
+};
+
 // ---- --all: the full suites, only on explicit confirmation
 if (opts.all) {
   console.log('Plan: npm run test:all (every jest unit test, every package and function vitest incl. DB containers).');
   if (!opts.yes) die('--all runs every suite on this machine. CI already does. Re-run with --all --yes to confirm.');
   if (opts.dry) process.exit(0);
-  process.exit(spawnSync('npm', ['run', 'test:all'], { cwd: root, stdio: 'inherit' }).status ?? 1);
+  process.exit(spawnSync('npm', ['run', 'test:all'], { cwd: root, env: requireDbEnv(), stdio: 'inherit' }).status ?? 1);
 }
 
 // ---- changed files: committed since the merge base, plus staged, unstaged and untracked
@@ -224,7 +227,7 @@ if (unit.length > UNIT_CAP && !opts.wide) {
 
 if (opts.db) {
   for (const l of libs) {
-    if (byDir.get(l.pkg)?.vitest) add(`vitest DB tier ${l.pkg} (Docker container)`, 'npx', ['vitest', 'run'], join(root, l.pkg));
+    if (byDir.get(l.pkg)?.vitest) add(`vitest DB tier ${l.pkg} (Docker container)`, 'npx', ['vitest', 'run'], join(root, l.pkg), requireDbEnv());
   }
   const integ = jestList('test:integration');
   if (integ.length > INTEGRATION_CAP && !opts.wide) {
@@ -236,7 +239,7 @@ if (opts.db) {
 }
 
 if (opts.flow) {
-  const flows = libs.map((l) => l.flow).filter(Boolean);
+  const flows = libs.flatMap((l) => l.flows);
   if (flows.length && process.env.FLOW_BASE_URL) {
     add(`flow ${flows.join(' ')} against ${process.env.FLOW_BASE_URL}`, 'npm', ['run', 'test:flow', '--', '--runTestsByPath', ...flows], app);
   } else if (flows.length) {
@@ -252,7 +255,7 @@ console.log(`Workspaces changed: ${[...touched].sort().join(', ') || '(none)'}`)
 console.log(`Fan-out consumers: ${[...fanOut].filter((d) => !touched.has(d)).sort().join(', ') || '(none)'}`);
 console.log(`Security tier: ${security ? 'yes' : 'no'}`);
 if (other.length) console.log(`Not mapped to a test (docs, CI, deploy, scripts): ${other.length} file(s)`);
-if (opts.flow && !libs.some((l) => l.flow)) console.log('--flow: no flow test is mapped to these areas; CI runs the flow suite.');
+if (opts.flow && !libs.some((l) => l.flows.length)) console.log('--flow: no flow test is mapped to these areas; CI runs the flow suite.');
 console.log('\nPlan:');
 steps.forEach((s, i) => {
   const args = s.args.length > 12 ? [...s.args.slice(0, 12), `… +${s.args.length - 12} more`] : s.args;

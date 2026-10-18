@@ -24,7 +24,7 @@ interface Attestation {
   id: number;
   result: string;
   subjectPersonId: number | null;
-  isMarkedVolunteer: boolean;
+  isMarkedVolunteerFamily: boolean;
 }
 interface ProcessRow {
   id: number;
@@ -39,7 +39,7 @@ interface ProcessRow {
   attestations: Attestation[];
   orgMembership: {
     householdId: number;
-    isVolunteer: boolean;
+    isVolunteerFamily: boolean;
     household: { name: string | null; householdMembers: Person[] } | null;
   } | null;
 }
@@ -421,7 +421,7 @@ function ApplicationsBoard() {
                   <Text fw={700} fz="lg">{householdLabel(r)}</Text>
                   <Text size="xs" c="dimmed">
                     {r.kind} · application #{r.id}
-                    {r.orgMembership?.isVolunteer && <Text component="span" c="green"> · volunteer</Text>}
+                    {r.orgMembership?.isVolunteerFamily && <Text component="span" c="green"> · volunteer</Text>}
                   </Text>
                 </div>
                 <StatusFilterBadge value={r.status} active={active} onToggle={toggle} color={statusColor(r.status)}>
