@@ -84,7 +84,11 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
 /** People this order activated who have since left (removed or withdrawn): their seat was claimed, so it is not unclaimed. */
 async function withdrawnAfterActivation(order: EntitlementOrder, programId: number, personIds: number[]): Promise<number> {
     if (!order.legacyId) return 0;
-    // The audit, not the row: a re-enrolment clears the row's order.
+    // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
+    const withdrawn = await prisma.programParticipant.findMany({
+        where: { programId, personId: { in: personIds }, status: "WITHDRAWN", shopifyOrderId: order.legacyId },
+        select: { personId: true },
+    });
     const left = await prisma.auditLog.findMany({
         where: {
             tableName: "ProgramParticipant",
@@ -103,7 +107,7 @@ async function withdrawnAfterActivation(order: EntitlementOrder, programId: numb
         },
         select: { affectedEntityId: true },
     });
-    return new Set(left.map((d) => d.affectedEntityId)).size;
+    return new Set([...withdrawn.map((w) => w.personId), ...left.map((d) => d.affectedEntityId)]).size;
 }
 
 /**
