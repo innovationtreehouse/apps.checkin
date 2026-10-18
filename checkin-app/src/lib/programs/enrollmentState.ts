@@ -102,8 +102,8 @@ export const STATES = {
         statuses: ['ACTIVE'] as const,
         flags: { inventoryHeldAt: false },
     }),
-    /** WITHDRAWN, held=null. Terminal present-row exit: the row stays as history
-     *  (#1462). No transition writes it yet. */
+    /** WITHDRAWN, held=null, endedAt set. The row stays as history of a person
+     *  who took part and left; re-enrollment reactivates it. */
     WITHDRAWN: mk({
         statuses: ['WITHDRAWN'] as const,
         flags: { inventoryHeldAt: false },
@@ -225,7 +225,11 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard' },
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
-    { event: 'T9 withdraw', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
-    { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts settleRestockedSeats → removeRefundedEnrollment — only children the order identifies, deleteMany scoped to the refunded order + audit row in one tx; no +1 (Shopify restocked); unidentified public seats taken back with -k' },
-    { event: 'T11 withdraw(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
+    { event: 'T9 remove', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
+    { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts settleRestockedSeats → removeRefundedEnrollment — only children the order identifies, deleteMany status:ACTIVE scoped to the refunded order (a WITHDRAWN row stays and the refund is recorded on it) + audit row in one tx; no +1 (Shopify restocked); unidentified public seats taken back with -k' },
+    { event: 'T11 remove(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
+    { event: 'T12 withdraw', from: 'ACTIVE', to: 'WITHDRAWN', actor: 'admin', guardSite: 'capacity.ts withdrawParticipant — CAS status:{not:WITHDRAWN} → WITHDRAWN, endedAt = atomicity boundary; +1 iff seatTakenWithoutSaleAt is set' },
+    { event: 'T13 withdraw(held)', from: 'PENDING_HELD', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS, then CAS held:{not:null}→null; +1 iff that clears a hold' },
+    { event: 'T14 re-enroll(paid)', from: 'WITHDRAWN', to: 'PENDING_UNPAID', actor: 'user/admin', guardSite: 'participants/route.ts POST — FOR UPDATE capacity lock; CAS status:WITHDRAWN, resets the last stint\'s fields' },
+    { event: 'T15 re-enroll(comp)', from: 'WITHDRAWN', to: 'ACTIVE', actor: 'user/admin', guardSite: 'participants/route.ts POST — CAS status:WITHDRAWN, resets the last stint\'s fields' },
 ] as const;

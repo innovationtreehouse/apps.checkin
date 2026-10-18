@@ -11,11 +11,13 @@ Generated from the machine’s `TRANSITIONS`. Do not hand-edit.
 
 ```mermaid
 stateDiagram-v2
+    ACTIVE --> WITHDRAWN: T12 withdraw
     ACTIVE --> [*]: T10 refund restocked
-    ACTIVE --> [*]: T11 withdraw(comp/approved)
+    ACTIVE --> [*]: T11 remove(comp/approved)
     PENDING_HELD --> ACTIVE: T5 approve
     PENDING_HELD --> PENDING_HELD_DENIED: T6 deny
-    PENDING_HELD --> [*]: T9 withdraw
+    PENDING_HELD --> WITHDRAWN: T13 withdraw(held)
+    PENDING_HELD --> [*]: T9 remove
     PENDING_HELD_DENIED --> PENDING_HELD: T3 re-apply
     PENDING_HELD_DENIED --> [*]: T8 grace expiry
     PENDING_HOLD_FAILED --> PENDING_HELD: T3m manual-hold
@@ -23,6 +25,8 @@ stateDiagram-v2
     PENDING_UNPAID --> PENDING_HELD: T3 apply(−1 ok)
     PENDING_UNPAID --> PENDING_HOLD_FAILED: T3f apply(−1 FAILS)
     PENDING_UNPAID --> [*]: T7 non-payment kick
+    WITHDRAWN --> ACTIVE: T15 re-enroll(comp)
+    WITHDRAWN --> PENDING_UNPAID: T14 re-enroll(paid)
     [*] --> ACTIVE: T2 enroll(comp)
     [*] --> PENDING_UNPAID: T1 enroll(paid)
     ACTIVE --> [*]
@@ -32,21 +36,21 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | T1 enroll(paid) | T10 refund restocked | T11 withdraw(comp/approved) | T2 enroll(comp) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(payment) | T5 approve | T6 deny | T7 non-payment kick | T8 grace expiry | T9 withdraw |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNENROLLED | PENDING_UNPAID | — | — | ACTIVE | — | — | — | — | — | — | — | — | — | — |
-| PENDING_UNPAID | — | — | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | ACTIVE | — | — | UNENROLLED | — | — |
-| PENDING_HOLD_FAILED | — | — | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — |
-| PENDING_HELD | — | — | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | UNENROLLED |
-| PENDING_HELD_DENIED | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — | UNENROLLED | — |
-| ACTIVE | — | UNENROLLED | UNENROLLED | — | — | — | — | — | — | — | — | — | — | — |
-| WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| state ╲ event | T1 enroll(paid) | T10 refund restocked | T11 remove(comp/approved) | T12 withdraw | T13 withdraw(held) | T14 re-enroll(paid) | T15 re-enroll(comp) | T2 enroll(comp) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(payment) | T5 approve | T6 deny | T7 non-payment kick | T8 grace expiry | T9 remove |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNENROLLED | PENDING_UNPAID | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | — | — | — |
+| PENDING_UNPAID | — | — | — | — | — | — | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | ACTIVE | — | — | UNENROLLED | — | — |
+| PENDING_HOLD_FAILED | — | — | — | — | — | — | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — |
+| PENDING_HELD | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | UNENROLLED |
+| PENDING_HELD_DENIED | — | — | — | — | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — | UNENROLLED | — |
+| ACTIVE | — | UNENROLLED | UNENROLLED | WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| WITHDRAWN | — | — | — | — | — | PENDING_UNPAID | ACTIVE | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Reachability
 
 - **Initial:** UNENROLLED
-- **Reachable (6):** ACTIVE, PENDING_HELD, PENDING_HELD_DENIED, PENDING_HOLD_FAILED, PENDING_UNPAID, UNENROLLED
-- **Terminal (no outbound edge):** WITHDRAWN
+- **Reachable (7):** ACTIVE, PENDING_HELD, PENDING_HELD_DENIED, PENDING_HOLD_FAILED, PENDING_UNPAID, UNENROLLED, WITHDRAWN
+- **Terminal (no outbound edge):** (none)
 - **Accepting (designated resting states):** ACTIVE
 - **Dead-ends (reachable terminal, not accepting):** (none)
-- **Unreachable (declared but no legal path from ∅):** WITHDRAWN
+- **Unreachable (declared but no legal path from ∅):** (none)

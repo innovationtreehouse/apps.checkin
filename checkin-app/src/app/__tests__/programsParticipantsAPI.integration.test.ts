@@ -8,7 +8,7 @@
 
 import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
-import { withdrawAndReleaseHold } from '@/lib/program/capacity';
+import { deleteAndReleaseHold } from '@/lib/program/capacity';
 import { getServerSession } from 'next-auth/next';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
@@ -1423,7 +1423,7 @@ describe('Program Participants API Integration Tests', () => {
                 update: { status: 'ACTIVE' },
             });
             try {
-                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
+                await expect(deleteAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
                     .rejects.toMatchObject({ code: 'P2025' });
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },

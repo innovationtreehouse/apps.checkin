@@ -51,7 +51,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
   const [pendingRemoveVolId, setPendingRemoveVolId] = useState<number | null>(null);
   const [confirmAddPartOpened, { open: openConfirmAddPart, close: closeConfirmAddPart }] = useDisclosure(false);
   const [confirmRemovePartOpened, { open: openConfirmRemovePart, close: closeConfirmRemovePart }] = useDisclosure(false);
-  const [pendingRemovePartId, setPendingRemovePartId] = useState<number | null>(null);
+  const [pendingRemovePart, setPendingRemovePart] = useState<Participant | null>(null);
 
   const sortedVolunteers = program.volunteers ? [...program.volunteers].sort((a, b) => (b.isCore ? 1 : 0) - (a.isCore ? 1 : 0)) : [];
   const activeParticipants = program.participants.filter(p => p.status === 'ACTIVE');
@@ -160,17 +160,18 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
     }
   };
 
-  const handleRemoveParticipant = (participantId: number) => {
-    setPendingRemovePartId(participantId);
+  const handleRemoveParticipant = (p: Participant) => {
+    setPendingRemovePart(p);
     openConfirmRemovePart();
   };
 
-  const confirmRemoveParticipant = async () => {
-    if (pendingRemovePartId === null) return;
+  // "remove" deletes a place nobody took up; "withdraw" keeps it as history.
+  const confirmRemoveParticipant = async (mode: 'remove' | 'withdraw') => {
+    if (pendingRemovePart === null) return;
     closeConfirmRemovePart();
-    const participantId = pendingRemovePartId;
-    setPendingRemovePartId(null);
-    const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify({ participantId }) });
+    const participantId = pendingRemovePart.personId;
+    setPendingRemovePart(null);
+    const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify({ participantId, mode }) });
     if (data) {
       if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
       if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
@@ -255,7 +256,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
                   <Text fw={700} c="blue">{p.person.name || 'Unnamed'}</Text>
-                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId)}>Remove</Button>
+                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
@@ -290,7 +291,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
                   <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}</Text>
-                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId)}>Remove</Button>
+                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
@@ -319,10 +320,11 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
       </Modal>
 
       <Modal opened={confirmRemovePartOpened} onClose={closeConfirmRemovePart} title={<Text span fw={700} fz="lg">Remove Participant</Text>} centered>
-        <Text mb="lg">Remove this participant?</Text>
+        <Text mb="lg">Did this participant take part? A withdrawal keeps their enrollment as history; removing deletes it as if they never enrolled.</Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmRemovePart}>Cancel</Button>
-          <Button color="red" onClick={confirmRemoveParticipant}>Remove</Button>
+          <Button color="red" variant={pendingRemovePart?.status === 'ACTIVE' ? 'light' : 'filled'} onClick={() => confirmRemoveParticipant('remove')}>Never took part: remove</Button>
+          <Button color="red" variant={pendingRemovePart?.status === 'ACTIVE' ? 'filled' : 'light'} onClick={() => confirmRemoveParticipant('withdraw')}>Withdrew: keep history</Button>
         </Group>
       </Modal>
     </Stack>

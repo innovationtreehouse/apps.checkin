@@ -878,6 +878,35 @@ describe("fast-path reversal webhook helper", () => {
         expect(takenBack()).toEqual([]);
     });
 
+    it("a restocked refund on a withdrawn paid place records the refund on the row and keeps it; the restock stands", async () => {
+        const oid = `${TAG}-330`;
+        const e = await makeOnSaleEnrollment({ email: `rs20-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: e.programId, personId: e.personId } },
+            data: { status: "WITHDRAWN", endedAt: new Date() },
+        });
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }]);
+        expect(await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }])).toBe(true);
+        const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId: e.programId, personId: e.personId } } });
+        expect(row?.status).toBe("WITHDRAWN");
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId, personId: e.personId } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", tableName: "ProgramParticipant", action: "EDIT", secondaryAffectedEntity: e.programId } })).toBe(1);
+        expect(takenBack()).toEqual([]);
+    });
+
+    it("a restocked refund on a withdrawn place whose withdrawal already returned the seat takes the extra unit back", async () => {
+        const oid = `${TAG}-331`;
+        const e = await makeOnSaleEnrollment({ email: `rs21-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: e.programId, personId: e.personId } },
+            data: { status: "WITHDRAWN", endedAt: new Date(), seatTakenWithoutSaleAt: new Date() },
+        });
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(takenBack()).toEqual([-1]);
+    });
+
     it("a refund without restock only flags; the enrollment stays", async () => {
         const oid = `${TAG}-311`;
         const e = await makeOnSaleEnrollment({ email: `rs2-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
