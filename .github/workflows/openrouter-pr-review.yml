@@ -65,7 +65,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@29a5faa6f3f6c4f8cf2f5d36a97060f0330fd21e # fork: upstream 26f990a + Gemini 4 signature and no-schema fixes (fork #1, #2)
+        uses: innovationtreehouse/openrouter-pr-review-action@217f98b998214680032bb3dee8ffb440cdb9343a # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
@@ -100,7 +100,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@29a5faa6f3f6c4f8cf2f5d36a97060f0330fd21e # fork: upstream 26f990a + Gemini 4 signature and no-schema fixes (fork #1, #2)
+        uses: innovationtreehouse/openrouter-pr-review-action@217f98b998214680032bb3dee8ffb440cdb9343a # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
