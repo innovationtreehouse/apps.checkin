@@ -37,6 +37,8 @@ ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
+# Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
+MIN_CREDIT_USD = 5.0
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
@@ -83,6 +85,28 @@ def jev(state, questions):
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
+
+
+def credit_left():
+    """Dollars left on the key's own limit (None = no limit set or unknown); never raises."""
+    try:
+        req = urllib.request.Request("https://openrouter.ai/api/v1/key",
+                                     headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)["data"].get("limit_remaining")
+    except Exception as e:
+        print(f"::warning::could not read the key's remaining credit ({e}); routing normally", file=sys.stderr)
+        return None
+
+
+def low_credit():
+    left = credit_left()
+    return left is not None and left < MIN_CREDIT_USD
+
+
+def out_of_credit(review):
+    """A lane in the posted review failed because the key ran out of credit."""
+    return re.search(r"failed-open[^\n]*OpenRouter HTTP 402", review or "") is not None
 
 
 def output_block(o, name, value):
@@ -148,6 +172,9 @@ def route_selftest():
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
+    assert not out_of_credit(None)
     print("route selftest ok")
 
 
@@ -262,6 +289,8 @@ def route():
         print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
         tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
+    if tier != ORDER[0] and low_credit():
+        tier, t_by = ORDER[0], f"key credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
     try:
@@ -296,6 +325,10 @@ def posted_review(repo, pr, url):
     return body + "\n\nInline comments:\n" + comments
 
 
+class OutOfCredit(Exception):
+    pass
+
+
 def adjudicate():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     tier, verdict = os.environ["TIER"], os.environ.get("VERDICT", "")
@@ -306,6 +339,8 @@ def adjudicate():
         try:
             _, state = pr_state(pr, repo)
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
+            if out_of_credit(review) or low_credit():
+                raise OutOfCredit
             m = re.search(r"\*\*Mode:\*\*\s*`(\w+)`", review)
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
@@ -323,6 +358,8 @@ def adjudicate():
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
             by = f"{JEV} complete={p:.2f}, rerun " + ", ".join(f"{k}={v:.2f}" for k, v in a["rerun_on"]["probabilities"].items())
+        except OutOfCredit:
+            by = "out of credit: a rerun would get HTTP 402 too"
         except Exception as e:
             print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
