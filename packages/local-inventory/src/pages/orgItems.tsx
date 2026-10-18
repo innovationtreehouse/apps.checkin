@@ -32,6 +32,8 @@ interface LogRow {
 }
 interface ItemForm {
   gtin13: string;
+  /** The on-hand count when the form was loaded; a changed count is checked against it. */
+  loadedQuantity: number;
   existingQuantity: number;
   desiredQuantity: number;
   locationId: string | null;
@@ -70,6 +72,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     setIsNew(item === null);
     setForm({
       gtin13: item?.gtin13 ?? "",
+      loadedQuantity: item?.existingQuantity ?? 0,
       existingQuantity: item?.existingQuantity ?? 0,
       desiredQuantity: item?.desiredQuantity ?? 0,
       locationId: item?.locationId ? String(item.locationId) : null,
@@ -82,23 +85,36 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     if (!form) return;
     setSaving(true);
     const body = {
-      existingQuantity: form.existingQuantity,
       desiredQuantity: form.desiredQuantity,
       locationId: toId(form.locationId),
       backstockLocationId: toId(form.backstockLocationId),
     };
+    const count = form.existingQuantity === form.loadedQuantity
+      ? {}
+      : { existingQuantity: form.existingQuantity, expectedQuantity: form.loadedQuantity };
     try {
       await (isNew
-        ? api("/org-items", { method: "POST", body: JSON.stringify({ gtin13: form.gtin13.replace(/\D/g, ""), ...body }) })
-        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(body) }));
+        ? api("/org-items", {
+          method: "POST",
+          body: JSON.stringify({ gtin13: form.gtin13.replace(/\D/g, ""), existingQuantity: form.existingQuantity, ...body }),
+        })
+        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify({ ...body, ...count }) }));
       notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
       setForm(null);
       reload();
     } catch (err) {
       notifications.show({ message: errorMessage(err), color: "red" });
+      if (!isNew) await reloadForm(form.gtin13);
     } finally {
       setSaving(false);
     }
+  }
+
+  /** Refresh the open form's on-hand count from the server, keeping the manager's other edits. */
+  async function reloadForm(gtin13: string) {
+    reload();
+    const fresh = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
+    if (fresh) setForm((f) => (f ? { ...f, loadedQuantity: fresh.existingQuantity, existingQuantity: fresh.existingQuantity } : f));
   }
 
   async function remove() {

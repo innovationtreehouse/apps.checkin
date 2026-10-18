@@ -119,11 +119,17 @@ export function createInventoryService({
       return inventoryRepo.findOneEnriched(orgId, data.gtin13);
     },
 
+    /**
+     * Write only the fields sent, against the row locked in this transaction. A count
+     * (existingQuantity) must carry the quantity the caller loaded; if stock moved since,
+     * the save is refused so neither the count nor the concurrent change is lost.
+     */
     async updateItem(
       orgId: string,
       gtin13: string,
       data: {
         existingQuantity?: number;
+        expectedQuantity?: number;
         desiredQuantity?: number;
         locationId?: number | null;
         backstockLocationId?: number | null;
@@ -131,37 +137,35 @@ export function createInventoryService({
       userId: number,
       username?: string,
     ) {
-      const existing = await inventoryRepo.findOne(orgId, gtin13);
-      if (!existing) throw new ServiceError(404, "Organization item not found");
-
-      const updates = {
-        existingQuantity: data.existingQuantity !== undefined ? data.existingQuantity : existing.existingQuantity,
-        desiredQuantity: data.desiredQuantity !== undefined ? data.desiredQuantity : existing.desiredQuantity,
-        locationId: data.locationId !== undefined ? data.locationId : existing.locationId,
-        backstockLocationId: data.backstockLocationId !== undefined ? data.backstockLocationId : existing.backstockLocationId,
-      };
-
-      const fieldMap: Array<{ field: string; oldVal: unknown; newVal: unknown }> = [
-        { field: "existingQuantity", oldVal: existing.existingQuantity, newVal: updates.existingQuantity },
-        { field: "desiredQuantity", oldVal: existing.desiredQuantity, newVal: updates.desiredQuantity },
-        { field: "locationId", oldVal: existing.locationId, newVal: updates.locationId },
-        { field: "backstockLocationId", oldVal: existing.backstockLocationId, newVal: updates.backstockLocationId },
-      ];
-      const changedFields = fieldMap.filter((f) => String(f.oldVal) !== String(f.newVal));
+      // Prisma skips undefined fields, so `updates` writes only what the caller sent.
+      const { expectedQuantity, ...updates } = data;
+      if (updates.existingQuantity !== undefined && expectedQuantity === undefined) {
+        throw new ServiceError(400, "expectedQuantity is required with existingQuantity");
+      }
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.orgItem.update({
-          where: { orgGtin: { orgId, gtin13 } },
-          data: updates,
-        });
-        for (const f of changedFields) {
+        await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${orgId} AND gtin13 = ${gtin13} FOR UPDATE`;
+        const existing = await tx.orgItem.findFirst({ where: { orgId, gtin13 } });
+        if (!existing) throw new ServiceError(404, "Organization item not found");
+        if (updates.existingQuantity !== undefined && existing.existingQuantity !== expectedQuantity) {
+          throw new ServiceError(409, "Stock changed since you loaded this page; recount.");
+        }
+
+        const changedFields = (Object.keys(updates) as Array<keyof typeof updates>)
+          .filter((field) => updates[field] !== undefined && String(existing[field]) !== String(updates[field]));
+        if (changedFields.length === 0) return;
+
+        await tx.orgItem.update({ where: { orgGtin: { orgId, gtin13 } }, data: updates });
+        for (const field of changedFields) {
+          const oldVal = existing[field];
+          const newVal = updates[field];
           await tx.inventoryLog.create({
             data: {
               orgId, userId, username: username ?? null, changedAt: now, changeType: "manual", gtin13,
-              fieldChanged: f.field,
-              valueBefore: f.oldVal !== null && f.oldVal !== undefined ? String(f.oldVal) : null,
-              valueAfter: f.newVal !== null && f.newVal !== undefined ? String(f.newVal) : null,
+              fieldChanged: field,
+              valueBefore: oldVal !== null ? String(oldVal) : null,
+              valueAfter: newVal !== null ? String(newVal) : null,
               receiptId: null,
             },
           });

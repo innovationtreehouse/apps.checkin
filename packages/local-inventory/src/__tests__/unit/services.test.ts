@@ -146,13 +146,35 @@ describeDb("InventoryService", () => {
   it("updates existing quantity and logs the change", async () => {
     const svc = makeInventoryService();
     await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000004", existingQuantity: 5 }, 1);
-    const updated = await svc.updateItem(TEST_ORG_ID, "1000000000004", { existingQuantity: 15 }, 1);
+    const updated = await svc.updateItem(TEST_ORG_ID, "1000000000004", { existingQuantity: 15, expectedQuantity: 5 }, 1);
     expect(updated?.existingQuantity).toBe(15);
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: "1000000000004", valueBefore: "5" } });
+    expect(log).toMatchObject({ fieldChanged: "existingQuantity", valueAfter: "15", changeType: "manual" });
+  });
+
+  it("refuses a count whose expected quantity is stale and leaves stock unchanged", async () => {
+    const svc = makeInventoryService();
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000008", existingQuantity: 5 }, 1);
+    await svc.applyQtyChange(TEST_ORG_ID, "1000000000008", 2, { userId: null, changeType: "received", receiptId: "r-8" });
+    await expect(
+      svc.updateItem(TEST_ORG_ID, "1000000000008", { existingQuantity: 3, desiredQuantity: 9, expectedQuantity: 5 }, 1),
+    ).rejects.toMatchObject({ status: 409, message: "Stock changed since you loaded this page; recount." });
+    const item = await svc.getItem(TEST_ORG_ID, "1000000000008");
+    expect(item).toMatchObject({ existingQuantity: 7, desiredQuantity: 0 });
+    expect(await db.inventoryLog.count({ where: { gtin13: "1000000000008", changeType: "manual", valueBefore: { not: null } } })).toBe(0);
+  });
+
+  it("requires the expected quantity with a count", async () => {
+    const svc = makeInventoryService();
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000009", existingQuantity: 5 }, 1);
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000009", { existingQuantity: 3 }, 1)).rejects.toMatchObject({
+      status: 400,
+    });
   });
 
   it("throws 404 updating a non-existent item", async () => {
     const svc = makeInventoryService();
-    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { existingQuantity: 1 }, 1)).rejects.toMatchObject({
+    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { desiredQuantity: 1 }, 1)).rejects.toMatchObject({
       status: 404,
     });
   });
