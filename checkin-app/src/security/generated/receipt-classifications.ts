@@ -90,6 +90,14 @@ export const classifications = {
         receiptId: 'internal',
         createdAt: 'internal',
     },
+    ReceiptIgnoredFile: {
+        id: 'internal',
+        orgId: 'internal',
+        fileHash: 'internal',
+        reason: 'internal',
+        addedByUserId: 'internal',
+        createdAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -112,6 +120,8 @@ export const relations = {
         lineItem: { model: 'ReceiptLineItem', isList: false },
     },
     ReceiptMailItem: {
+    },
+    ReceiptIgnoredFile: {
     },
 } as const;
 

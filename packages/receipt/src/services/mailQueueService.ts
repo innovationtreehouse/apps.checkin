@@ -1,7 +1,8 @@
 // The FINANCE mail queue (#1265 §2a): mailed receipts held for an unknown or unauthenticated
 // sender, and those deferred for a known sender over their daily upload limit. Finance assigns
 // each to a submitter, which runs it through the mailed intake as that person, releases a
-// deferred one as its sender now, or discards it with a reason. Every view and action is audited.
+// deferred one as its sender now, or discards it with a reason. Finance also keeps the ignore
+// list of files intake skips. Every view of a held file and every action is audited.
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
@@ -17,7 +18,11 @@ const AssignSchema = z.union([
   z.object({ email: z.string().trim().min(1).max(320) }).strict(),
   z.object({ release: z.literal(true) }).strict(),
 ]);
-const DiscardSchema = z.object({ reason: z.string().trim().min(1, "A reason is required").max(500) }).strict();
+const REASON = z.string().trim().min(1, "A reason is required").max(500);
+const DiscardSchema = z.object({ reason: REASON, ignoreFile: z.literal(true).optional() }).strict();
+const IgnoreSchema = z.object({ reason: REASON }).strict();
+
+const IGNORED_FIELDS = { id: true, orgId: true, fileHash: true, reason: true, addedByUserId: true, createdAt: true } as const;
 
 export const CANNOT_ASSIGN = "This receipt can't be assigned to that email";
 
@@ -28,6 +33,18 @@ const auditItem = (tx: Tx, actor: ReceiptPrincipal, itemId: number, action: stri
   tx.receiptAuditLog.create({
     data: { receiptId: null, userId: actor.id, username: actor.name, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
   });
+
+/** One audit row about the ignore list; it belongs to no receipt, so no receipt's audit view returns it. */
+const auditIgnored = (tx: Tx, actor: ReceiptPrincipal, action: string, fieldChanged: string, valueBefore: string, valueAfter: string) =>
+  tx.receiptAuditLog.create({ data: { receiptId: null, userId: actor.id, username: actor.name, action, fieldChanged, valueBefore, valueAfter } });
+
+/** Lists the file unless it already is; a new entry is audited against its source, `kind` and `sourceId`. */
+async function addIgnored(tx: Prisma.TransactionClient, actor: ReceiptPrincipal, fileHash: string, reason: string, kind: string, sourceId: string) {
+  const orgId = (await getOrg()).id;
+  const added = await tx.receiptIgnoredFile.createMany({ data: [{ orgId, fileHash, reason, addedByUserId: actor.id }], skipDuplicates: true });
+  if (added.count === 1) await auditIgnored(tx, actor, "file_ignored", kind, sourceId, reason);
+  return tx.receiptIgnoredFile.findUniqueOrThrow({ where: { orgId_fileHash: { orgId, fileHash } }, select: IGNORED_FIELDS });
+}
 
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
   const result = schema.safeParse(input);
@@ -116,15 +133,58 @@ export const mailQueueService = {
     return { ...shown, status: "assigned", receiptId };
   },
 
+  /**
+   * Discard a stored item with a reason. With `ignoreFile`, the same transaction lists its file
+   * and discards every other stored item with that file, each audited with the same reason.
+   */
   async discard(id: number, rawInput: unknown) {
     const actor = await requireActor();
-    const { reason } = parse(DiscardSchema, rawInput);
+    const { reason, ignoreFile } = parse(DiscardSchema, rawInput);
     const orgId = (await getOrg()).id;
     return db.$transaction(async (tx) => {
       const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded", fileBlob: null } });
       if (done.count !== 1) throw new ServiceError(404, "Mail item not found");
       await auditItem(tx, actor, id, "mail_discarded", reason);
-      return tx.receiptMailItem.findUniqueOrThrow({ where: { id }, select: ITEM_FIELDS });
+      const { attachmentHash, ...item } = await tx.receiptMailItem.findUniqueOrThrow({ where: { id }, select: { ...ITEM_FIELDS, attachmentHash: true } });
+      if (ignoreFile) {
+        await addIgnored(tx, actor, attachmentHash, reason, "mail_item", String(id));
+        const copies = await tx.receiptMailItem.updateManyAndReturn({
+          where: { orgId, attachmentHash, status: { in: STORED_STATUSES } },
+          data: { status: "discarded", fileBlob: null },
+          select: { id: true },
+        });
+        for (const copy of copies) await auditItem(tx, actor, copy.id, "mail_discarded", reason);
+      }
+      return item;
+    });
+  },
+
+  /** Ignore-list entries, newest first. */
+  async listIgnored() {
+    await requireActor();
+    return db.receiptIgnoredFile.findMany({ where: { orgId: (await getOrg()).id }, select: IGNORED_FIELDS, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
+  },
+
+  /** List a discarded receipt's file. Receipts already made from it are left as they are. */
+  async ignoreReceiptFile(receiptId: string, rawInput: unknown) {
+    const actor = await requireActor();
+    const { reason } = parse(IgnoreSchema, rawInput);
+    const receipt = await db.receipt.findFirst({ where: { id: receiptId, orgId: (await getOrg()).id }, select: { fileHash: true, details: { select: { state: true } } } });
+    if (!receipt) throw new ServiceError(404, "Receipt not found");
+    if (receipt.details?.state !== "discarded") throw new ServiceError(409, "Only a discarded receipt's file can be ignored");
+    return db.$transaction((tx) => addIgnored(tx, actor, receipt.fileHash, reason, "receipt", receiptId));
+  },
+
+  /** Remove an entry; intake reads that file again from its next run. Audited like an add. */
+  async removeIgnored(id: number) {
+    const actor = await requireActor();
+    const orgId = (await getOrg()).id;
+    return db.$transaction(async (tx) => {
+      const entry = await tx.receiptIgnoredFile.findFirst({ where: { id, orgId }, select: IGNORED_FIELDS });
+      const removed = entry && (await tx.receiptIgnoredFile.deleteMany({ where: { id, orgId } }));
+      if (!entry || removed?.count !== 1) throw new ServiceError(404, "Ignored file not found");
+      await auditIgnored(tx, actor, "file_unignored", "ignored_file", entry.fileHash, entry.reason);
+      return entry;
     });
   },
 };

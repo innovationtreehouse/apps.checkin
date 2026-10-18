@@ -73,6 +73,12 @@ export function lineItemId(raw: string): number {
   return id;
 }
 
+export function ignoredFileId(raw: string): number {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid ignored file id");
+  return id;
+}
+
 /**
  * A line row carries no owner column, and the stripper scopes each nested row by itself, so a
  * submitter's lines are stamped with their receipt's uploader or `their_own` strips them.

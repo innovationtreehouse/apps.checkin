@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import type { MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
@@ -8,6 +9,7 @@ import {
   MAIL_HELD_CAP,
   MAIL_HELD_CEILING,
   MAIL_TIME_BUDGET_MS,
+  INLINE_FLOOR_BYTES,
   readMailbox,
 } from "../../services/mailIntake";
 import { describeDb } from "../helpers/db";
@@ -111,25 +113,54 @@ describeDb("mail intake", () => {
     expect(await db.receiptMailItem.count()).toBe(0);
   });
 
-  it("takes the body as the receipt when there is no attachment, storing HTML as text", async () => {
-    send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5") } }] });
-    send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43</p>") } }] });
-    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+  it("takes a body holding a money amount as a receipt, storing HTML as text", async () => {
+    send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5.00") } }] });
+    send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43 total 7.50</p>") } }] });
+    expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
     const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob).toString()]);
-    expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5"], ["text/plain", "<p>Order 43</p>"]]));
+    expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5.00"], ["text/plain", "<p>Order 43 total 7.50</p>"]]));
   });
 
-  it("makes one receipt per accepted attachment and skips inline images and unaccepted types", async () => {
+  it("skips a trivial body, one with no money amount, and counts it ignored", async () => {
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("For the lathe, total $5") } }] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, ignored: 1 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("reads a non-trivial body beside the attachments, after them", async () => {
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 12.34") } }, attachment("a", pdf("a"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+    const items = await db.receiptMailItem.findMany({ orderBy: { id: "asc" }, select: { receiptId: true } });
+    const types = await Promise.all(items.map(async (i) => (await db.receipt.findUniqueOrThrow({ where: { id: i.receiptId ?? "" } })).mimeType));
+    expect(types).toEqual(["application/pdf", "text/plain"]);
+  });
+
+  it("reads inline images of an accepted type, skips those under the floor unread, and skips unaccepted types", async () => {
+    const gif = (n: number) => "GIF89a".padEnd(n, "x");
+    const inline = [{ name: "Content-Disposition", value: "inline" }];
     send("m1", {
       parts: [
-        { mimeType: "text/plain", body: { data: b64("two receipts") } },
+        { mimeType: "text/plain", body: { data: b64("see photos") } },
         attachment("a", pdf("a")),
-        attachment("b", pdf("b")),
-        attachment("logo", "\x89PNG\r\n\x1a\n", { mimeType: "image/png", filename: "logo.png", headers: [{ name: "Content-Disposition", value: "inline" }] }),
+        attachment("photo", gif(INLINE_FLOOR_BYTES), { mimeType: "image/gif", filename: "photo.gif", headers: inline }),
+        attachment("pasted", gif(INLINE_FLOOR_BYTES + 1), { mimeType: "image/gif", filename: undefined }),
+        attachment("logo", gif(16), { mimeType: "image/gif", filename: "logo.png", headers: inline }),
         attachment("doc", "PK", { mimeType: "application/zip", filename: "x.zip" }),
       ],
     });
-    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+    expect(await readMailbox()).toMatchObject({ receipts: 3, ignored: 2 });
+    expect(mail.downloads).not.toContain("logo");
+  });
+
+  it("skips a file on the org's ignore list, charges it like a rejected one, and writes no ledger row", async () => {
+    const logo = pdf("logo");
+    await db.receiptIgnoredFile.create({
+      data: { orgId: TEST_ORG_ID, fileHash: createHash("sha256").update(logo).digest("hex"), reason: "newsletter logo", addedByUserId: 1 },
+    });
+    for (let i = 0; i < MAIL_HELD_CAP + 1; i++) send(`n${i}`, { from: [`news${i}@example.org`], parts: [attachment(`att-n${i}`, logo)] });
+    send("member", { parts: [attachment("logo-from-alice", logo), attachment("real", pdf("real"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, ignored: MAIL_HELD_CAP + 1, deferred: 1 });
+    expect(await db.receiptMailItem.count()).toBe(1);
   });
 
   it("refuses a file whose content does not match its type", async () => {
@@ -274,7 +305,7 @@ describeDb("mail intake sender authentication", () => {
     send("m1", {
       from: ["stranger@example.org"],
       parts: [
-        { mimeType: "text/plain", body: { data: b64("fwd") } },
+        { mimeType: "text/plain", body: { data: b64("fwd total 9.99") } },
         {
           mimeType: "message/rfc822",
           headers: [{ name: "From", value: "alice@example.org" }],
@@ -283,7 +314,7 @@ describeDb("mail intake sender authentication", () => {
       ],
     });
     await heldAs("stranger@example.org");
-    expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd");
+    expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd total 9.99");
   });
 });
 

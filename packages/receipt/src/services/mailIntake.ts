@@ -46,6 +46,8 @@ export type MailIntakeResult =
       overCeiling: number;
       /** Messages not reached, past the time budget or with every cap spent; read again next run. */
       unread: number;
+      /** Files never receipts: inline images under the floor, trivial bodies, and files on the ignore list. */
+      ignored: number;
     };
 
 type Headers = { name: string; value: string }[];
@@ -197,23 +199,44 @@ const isAttachment = (p: MailPart) =>
 
 type MailFile = { declaredType: string; size: number; read: () => Promise<Buffer> };
 
-/** One file per attachment of an accepted type; with none, the body, stored as text. */
-export function mailFiles(msg: MailMessage, reader: MailboxReader): MailFile[] {
+// ponytail: a legible receipt image under the floor is skipped silently; lower it if one is ever found.
+/** Inline images under this declared size (tracking pixels, icons, small logos) are skipped without a download. */
+export const INLINE_FLOOR_BYTES = 5 * 1024;
+
+// ponytail: a body printing its total without cents reads as trivial; widen the pattern if one is found.
+/** A money amount: a number with two decimal places. A body without one is trivial. */
+const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
+
+/**
+ * A message's candidate files, read in this order: each attachment of an accepted type, each inline
+ * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
+ * holds no money amount. `ignored` counts the inline parts under the floor and a trivial body.
+ */
+export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number } {
   const parts = ownParts(msg.payload);
+  const typeOf = (p: MailPart) => p.mimeType.toLowerCase();
   const read = (p: MailPart) => async () =>
     p.body?.data !== undefined
       ? Buffer.from(p.body.data, "base64url")
       : p.body?.attachmentId
         ? reader.getAttachment(msg.id, p.body.attachmentId)
         : Buffer.alloc(0);
-  const attachments = parts.filter((p) => isAttachment(p) && ACCEPTED_TYPES.has(p.mimeType.toLowerCase()));
-  if (attachments.length > 0) {
-    return attachments.map((p) => ({ declaredType: p.mimeType.toLowerCase(), size: p.body?.size ?? 0, read: read(p) }));
-  }
-  const bodyPart = (type: string) => parts.find((p) => !isAttachment(p) && p.mimeType.toLowerCase() === type && p.body?.data);
+  const file = (p: MailPart, declaredType = typeOf(p)): MailFile => ({ declaredType, size: p.body?.size ?? 0, read: read(p) });
+
+  const attachments = parts.filter((p) => isAttachment(p) && ACCEPTED_TYPES.has(typeOf(p)));
+  const inline = parts.filter((p) => !isAttachment(p) && typeOf(p) !== "text/plain" && ACCEPTED_TYPES.has(typeOf(p)));
+  const sized = inline.filter((p) => (p.body?.size ?? 0) >= INLINE_FLOOR_BYTES);
+  let ignored = inline.length - sized.length;
+
+  const bodyPart = (type: string) => parts.find((p) => !isAttachment(p) && typeOf(p) === type && p.body?.data);
   // HTML is stored as its source text: a receipt file is never served as a page.
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
-  return body ? [{ declaredType: "text/plain", size: body.body?.size ?? 0, read: read(body) }] : [];
+  const files = [...attachments, ...sized].map((p) => file(p));
+  if (body) {
+    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push(file(body, "text/plain"));
+    else ignored++;
+  }
+  return { files, ignored };
 }
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
@@ -252,7 +275,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   const started = Date.now();
   const orgId = (await getOrg()).id;
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
-  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0 };
+  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
+  const ignoredHashes = new Set(
+    (await db.receiptIgnoredFile.findMany({ where: { orgId }, select: { fileHash: true } })).map((r) => r.fileHash),
+  );
   let heldFiles = 0;
   let heldBytes = 0;
   const capped = () => counts.receipts >= MAIL_CAP;
@@ -283,7 +309,8 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   }
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
-    const files = mailFiles(msg, reader);
+    const { files, ignored } = mailFiles(msg, reader);
+    counts.ignored += ignored;
     // Every file already in the ledger: nothing to download.
     if (files.length > 0 && (await db.receiptMailItem.count({ where: { gmailMessageId: msg.id } })) >= files.length) {
       counts.skipped += files.length;
@@ -306,12 +333,16 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       if (!sender && !roomToHold(file.size)) continue;
       const bytes = await file.read();
       if (!sender) chargeHold(file, bytes);
+      const key = { gmailMessageId: msg.id, attachmentHash: createHash("sha256").update(bytes).digest("hex") };
+      if (ignoredHashes.has(key.attachmentHash)) {
+        counts.ignored++;
+        continue;
+      }
       const check = checkReceiptFile(bytes, file.declaredType);
       if (!check.ok) {
         counts.rejected++;
         continue;
       }
-      const key = { gmailMessageId: msg.id, attachmentHash: createHash("sha256").update(bytes).digest("hex") };
       if (await db.receiptMailItem.findUnique({ where: { gmailMessageId_attachmentHash: key }, select: { id: true } })) {
         counts.skipped++;
         continue;

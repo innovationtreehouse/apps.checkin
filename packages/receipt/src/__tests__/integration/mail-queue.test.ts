@@ -1,21 +1,21 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
-import { intakeMailedReceipt } from "../../services/receiptService";
+import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
 let seq = 0;
-async function holdItem(status = "held", senderAddress = "stranger@elsewhere.test"): Promise<number> {
+async function holdItem(status = "held", senderAddress = "stranger@elsewhere.test", attachmentHash?: string): Promise<number> {
   const n = ++seq;
   const item = await db.receiptMailItem.create({
     data: {
       orgId: TEST_ORG_ID,
       gmailMessageId: `m${n}`,
-      attachmentHash: `h${n}`,
+      attachmentHash: attachmentHash ?? `h${n}`,
       receivedAt: new Date(),
       senderAddress,
       status,
@@ -159,5 +159,55 @@ describeDb("finance mail queue", () => {
     }
     await expect(intakeMailedReceipt(ALICE, Buffer.from(`%PDF-1.4 own ${Date.now()}`), "application/pdf", async () => {})).resolves.toEqual(expect.any(String));
     expect(await db.receipt.count({ where: { uploadedByUserId: ALICE.id } })).toBe(7);
+  });
+});
+
+describeDb("mailbox ignore list", () => {
+  const ignoreRows = () => db.receiptAuditLog.findMany({ where: { action: { in: ["file_ignored", "file_unignored"] } }, orderBy: { id: "asc" } });
+
+  it("discards with ignoreFile, lists the file, and discards every stored copy in the same step", async () => {
+    const id = await holdItem("held", "news@elsewhere.test", "logo");
+    const copy = await holdItem("deferred", "alice@example.org", "logo");
+    const other = await holdItem();
+    const shown = await mailQueueService.discard(id, { reason: "newsletter logo", ignoreFile: true });
+    expect(shown).toMatchObject({ id, status: "discarded" });
+    expect(shown).not.toHaveProperty("attachmentHash");
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: copy } })).toMatchObject({ status: "discarded", fileBlob: null });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: other } })).toMatchObject({ status: "held" });
+    expect(await mailQueueService.listIgnored()).toEqual([
+      expect.objectContaining({ orgId: TEST_ORG_ID, fileHash: "logo", reason: "newsletter logo", addedByUserId: FINANCE.id }),
+    ]);
+    const discards = await db.receiptAuditLog.findMany({ where: { action: "mail_discarded" } });
+    expect(discards.map((r) => r.valueBefore).sort()).toEqual([String(id), String(copy)].sort());
+    expect(await ignoreRows()).toEqual([
+      expect.objectContaining({ receiptId: null, userId: FINANCE.id, fieldChanged: "mail_item", valueBefore: String(id), valueAfter: "newsletter logo" }),
+    ]);
+  });
+
+  it("rejects an unknown discard field", async () => {
+    const id = await holdItem();
+    await expect(mailQueueService.discard(id, { reason: "x", ignoreFile: false })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("lists a discarded receipt's file, once, with no audit row on its receipt", async () => {
+    const r = { id: await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined) };
+    await expect(mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" })).rejects.toMatchObject({ statusCode: 409 });
+    await receiptService.discard(r.id, "finance");
+    const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
+    const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
+    expect(await mailQueueService.ignoreReceiptFile(r.id, { reason: "again" })).toMatchObject({ id: entry.id, reason: "logo" });
+    expect(await ignoreRows()).toEqual([expect.objectContaining({ receiptId: null, fieldChanged: "receipt", valueBefore: r.id, valueAfter: "logo" })]);
+    await expect(mailQueueService.ignoreReceiptFile("no-such-receipt", { reason: "logo" })).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("removes an entry, audited like an add", async () => {
+    const id = await holdItem("held", "news@elsewhere.test", "logo");
+    await mailQueueService.discard(id, { reason: "newsletter logo", ignoreFile: true });
+    const [entry] = await mailQueueService.listIgnored();
+    expect(await mailQueueService.removeIgnored(entry.id)).toMatchObject({ id: entry.id, fileHash: "logo" });
+    expect(await mailQueueService.listIgnored()).toEqual([]);
+    expect((await ignoreRows())[1]).toMatchObject({ receiptId: null, userId: FINANCE.id, action: "file_unignored", valueBefore: "logo", valueAfter: "newsletter logo" });
+    await expect(mailQueueService.removeIgnored(entry.id)).rejects.toMatchObject({ statusCode: 404 });
   });
 });
