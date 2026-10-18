@@ -193,17 +193,21 @@ const REFUND_RESTOCK_TABLE = "ShopifyRefundRestock";
  */
 async function recordRestock(refundId: string, orderLegacyId: string, restocked: RestockedLine[]): Promise<void> {
     if (restocked.length === 0) return;
-    // ponytail: check-then-insert without a lock; a redelivery racing the first adds duplicate rows, and the per-refund settlement claim still takes each seat back once.
-    const seen = await prisma.auditLog.findFirst({ where: { tableName: REFUND_RESTOCK_TABLE, newData: { path: ["refundId"], equals: refundId } }, select: { id: true } });
-    if (seen) return;
-    await prisma.auditLog.createMany({
-        data: restocked.map((l) => ({
-            ...systemActor("webhook:shopify-refund"),
-            action: "CREATE",
-            tableName: REFUND_RESTOCK_TABLE,
-            affectedEntityId: 0,
-            newData: { refundId, orderLegacyId, variantId: l.variantId, quantity: l.quantity },
-        })),
+    const key = `restock:${refundId}`;
+    // The lock serialises concurrent deliveries of one refund, so its lines are recorded once.
+    await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${REFUND_SETTLEMENT_ADVISORY_CLASS}::int, hashtext(${key}))`;
+        const seen = await tx.auditLog.findFirst({ where: { tableName: REFUND_RESTOCK_TABLE, newData: { path: ["refundId"], equals: refundId } }, select: { id: true } });
+        if (seen) return;
+        await tx.auditLog.createMany({
+            data: restocked.map((l) => ({
+                ...systemActor("webhook:shopify-refund"),
+                action: "CREATE",
+                tableName: REFUND_RESTOCK_TABLE,
+                affectedEntityId: 0,
+                newData: { refundId, orderLegacyId, variantId: l.variantId, quantity: l.quantity },
+            })),
+        });
     });
 }
 
@@ -217,6 +221,10 @@ function restockRow(data: Prisma.JsonValue): { refundId: string; variantId: stri
  * Take back off sale the public seats a refund restocked on an order that was
  * refused activation. Each refund is settled once per program, shared with
  * settleRestockedSeats. Returns the seats taken back.
+ *
+ * ponytail: reads only refunds already recorded; a refund webhook arriving after
+ * the refusal finds no enrolled row, so its restock stays on sale while the sale is
+ * open. The Board still has the CRITICAL flag.
  */
 export async function takeBackRestockedSeats(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }): Promise<number> {
     if (!program.shopifyVariantId) return 0;

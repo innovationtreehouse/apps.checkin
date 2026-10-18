@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { adjustProgramInventory } from "@/lib/shopify";
-import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { activateProgramEnrollment, publicStockDelta } from "../activateEnrollment";
 
@@ -19,6 +19,7 @@ jest.mock("@/lib/shopify", () => ({
 jest.mock("@/lib/finance/reconcile/exceptions", () => ({
     isOrderReversed: jest.fn().mockResolvedValue(false),
     raisePaymentException: jest.fn(),
+    recordReversal: jest.fn(),
 }));
 
 jest.mock("@/lib/finance/reconcile/reversals", () => ({
@@ -97,14 +98,16 @@ describe("activateProgramEnrollment public stock", () => {
         expect(adjustProgramInventory).not.toHaveBeenCalled();
     });
 
-    it("a reversed order activates nobody, raises each child CRITICAL and takes back the restocked seat", async () => {
+    it("a reversed order activates nobody, raises each pending child CRITICAL and takes back the restocked seat", async () => {
         (isOrderReversed as jest.Mock).mockResolvedValueOnce(true);
-        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "9", lines: [{ variantId: "pub", quantity: 2 }] });
+        (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValueOnce({ personId: 1 }).mockResolvedValueOnce({ personId: 2 }).mockResolvedValueOnce(null);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2, 3], shopifyOrderId: "9", lines: [{ variantId: "pub", quantity: 2 }] });
         expect(res).toEqual({ activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true });
         expect(prisma.programParticipant.updateMany).not.toHaveBeenCalled();
         expect(raisePaymentException).toHaveBeenCalledTimes(2);
         expect(raisePaymentException).toHaveBeenCalledWith("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId: "9", programId: 7, personId: 2, severity: "CRITICAL" });
         expect(takeBackRestockedSeats).toHaveBeenCalledWith("9", { id: 7, shopifyVariantId: "pub" });
+        expect(recordReversal).toHaveBeenCalledWith("9", "REVERSED_BEFORE_ACTIVATION");
         expect(adjustProgramInventory).not.toHaveBeenCalled();
     });
 });

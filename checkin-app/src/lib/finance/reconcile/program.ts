@@ -156,6 +156,11 @@ export async function reconcileForwardProgram(order: MirrorOrder): Promise<boole
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
     const lines = await mirror.orderLines(order.orderGid);
     const entitlement = await orderEntitlesEnrollment({ ...order, lines }, programId, personIds);
+    const { activateProgramEnrollment, refuseReversedActivation } = await import("@/lib/programs/activateEnrollment");
+    if (!entitlement.ok && entitlement.kind === "REVERSED_BEFORE_ACTIVATION" && order.legacyId) {
+        await refuseReversedActivation(programId, personIds, order.legacyId);
+        return true;
+    }
     if (!entitlement.ok) {
         if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
@@ -178,8 +183,8 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
         return true;
     }
 
-    const { activateProgramEnrollment } = await import("@/lib/programs/activateEnrollment");
     const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "", lines });
-    logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
+    if (res.reversed) logger.warn(`[reconcile] program order ${order.legacyId} was reversed (program ${programId}) — NOT activated, raised to the board`);
+    else logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
     return true;
 }

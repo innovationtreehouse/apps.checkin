@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 import { activateByProcessId } from "@/lib/membership/payment";
 import { withWebhook } from "@/lib/webhookAuth";
 import { config } from "@/lib/config";
-import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
+import { activateProgramEnrollment, refuseReversedActivation } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { membershipVariantIdSet, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
@@ -176,7 +176,10 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 if (entitlement.ok && entitlement.surplus) {
                     await raisePaymentException(entitlement.surplus.kind, { shopifyOrderId: orderId, programId, personId: entitlement.surplus.personId ?? participantIds[0] ?? null });
                 }
-                if (!entitlement.ok) {
+                if (!entitlement.ok && entitlement.kind === "REVERSED_BEFORE_ACTIVATION" && orderId) {
+                    await refuseReversedActivation(programId, participantIds, orderId);
+                    outcome = `program ${programId}: order reversed before activation — raised, not activated`;
+                } else if (!entitlement.ok) {
                     logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
                     if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: entitlement.personId ?? participantIds[0] ?? null });
                     outcome = entitlement.kind
