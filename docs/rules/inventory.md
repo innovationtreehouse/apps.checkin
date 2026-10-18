@@ -15,6 +15,46 @@ goods.
 How the pieces are built is described in
 `docs/designs/COMPONENT_ARCHITECTURE.md`.
 
+## Policy
+
+### Use of Treehouse property
+
+- Treehouse property and equipment are used only for Treehouse activities or
+  activities the Treehouse approves, never for personal purposes. — *Financial
+  Policy, Art. X §X.2*
+
+- Anyone who takes part in choosing or accepting equipment, materials or
+  supplies does not use them personally outside an approved program.
+  — *Procurement Policy, Art. II(3)*
+
+- Treehouse property is never used to make products for sale. — *Intellectual
+  Property Policy, Art. IX*
+
+- Treehouse materials leave a facility only after going through the signout
+  process, and the primary keyholder checks that they have. — *Event, Location
+  and Keyholder Policy, Art. VIII §VIII.5*
+
+- The licence and sale terms of an item bought, donated or otherwise acquired
+  are respected, including educational and resale restrictions.
+  — *Intellectual Property Policy, Art. VIII*
+
+### Donated goods
+
+- A donation of goods is reported to finance. — *Fundraising, Financial
+  Commitments and Approvals Policy, Art. VIII §VIII.2*
+
+- The Treehouse owns only computers and tablets that still receive security
+  updates, and does not accept a donated one that does not, unless the board
+  makes an exception. — *Technology Policy, Art. III*
+
+### Records and retirement
+
+- Inventories of products, materials and supplies, and their invoices, are
+  kept for seven years. — *Records Policy, Art. VI §VI.4.J*
+
+- Retiring a capital asset before it is fully depreciated needs board
+  approval. — *Financial Policy, Art. XIV §XIV.10*
+
 ## Assumptions
 
 - Checkin's role system decides who may curate the catalog: a sysadmin or board
@@ -74,7 +114,8 @@ How the pieces are built is described in
   inventory-log entry together with the change, naming who made it (or no one,
   for an automatic change); neither happens without the other. Removing an org
   item logs a copy of the removed row, so the count can be recovered. A change
-  must not add a stock write that skips the log. `[Decision]`
+  must not add a stock write that skips the log.
+  `[Decision — *Policy: Records Policy, Art. VI §VI.4.J*]`
 
 - A receive-queue line is never deleted. Cancelling it records who cancelled it
   and when, and logs it; a cancelled line can't be fulfilled. A line is
