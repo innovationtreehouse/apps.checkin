@@ -124,8 +124,8 @@ Things the app takes as true because they are handled outside it.
 - Nobody is moved into or out of a denied household, by the board's household
   move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
-- Only the board or a sysadmin moves someone into a household of their own. The
-  person becomes its lead, so a youth cannot be moved into one, and the new
+- Only the board or a sysadmin moves an existing person out to a new household of
+  their own. The person becomes its lead, so a youth cannot be moved into one, and the new
   household starts with no org membership: a membership stays with the household
   it belongs to.  [Decision]
 
