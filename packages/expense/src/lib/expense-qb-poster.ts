@@ -1,6 +1,6 @@
 // QB-2 write path: drains the ExpenseEvent outbox into QuickBooks, one entry per expense
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
-import { findOrCreate, qbKey, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
+import { findOrCreate, qbKey, qboDate, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
 import type { Expense } from "../db/schema";
@@ -71,7 +71,10 @@ async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise
     },
     select: { receiptDate: true },
   });
-  return rows.reduce((line, r) => (r.receiptDate! > line ? r.receiptDate! : line), takeoverDate);
+  return rows.reduce((line, r) => {
+    qboDate(r.receiptDate!);
+    return r.receiptDate! > line ? r.receiptDate! : line;
+  }, takeoverDate);
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
@@ -229,7 +232,8 @@ export type PostOptions = {
 
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
- * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
+ * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; on or before the takeover line, or
+ * covered by the QuickBooks books closing date (read before the create, or refused as fault 6200) →
  * BEFORE_LINE; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by
  * the drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
  * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line

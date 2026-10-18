@@ -179,6 +179,16 @@ describeDb("drainIncomeOutbox — the takeover line", () => {
     expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
   });
 
+  it("a books closing date before the payout still lets it be created", async () => {
+    handBooked(1, "2026-06-01", 970);
+    const p = payout(2, "2026-06-28", 500);
+    qbo.closeDate = "2026-06-15";
+
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts).toHaveLength(1);
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
+  });
+
   it("re-reads the books closing date before the create; a payout it covers waits, never created", async () => {
     handBooked(1, "2026-06-01", 970);
     const p = payout(2, "2026-06-28", 500);

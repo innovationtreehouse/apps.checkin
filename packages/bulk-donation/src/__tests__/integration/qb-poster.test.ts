@@ -215,6 +215,15 @@ describeDb("donation QuickBooks drain: outcomes", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("a books closing date before the disbursement still lets it be created", async () => {
+    await handMatched("2026-09-01");
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.closeDate = "2026-08-31";
+    expect(await postDisbursementToQb(e.id)).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+    expect((await stateOf(e.id)).qbMatchState).toBe("CREATED");
+  });
+
   it("re-reads the books closing date before the create and holds a disbursement it covers as BEFORE_LINE", async () => {
     await handMatched("2026-09-01");
     const e = await completed("TEST-D1", "2026-09-10");

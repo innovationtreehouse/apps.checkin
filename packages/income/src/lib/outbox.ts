@@ -1,4 +1,4 @@
-import { findOrCreate, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { findOrCreate, qboDate, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror } from "../contract";
@@ -67,6 +67,7 @@ export async function incomeTakeoverLine(orgId: string): Promise<string | null> 
   for (const e of events) {
     const after = JSON.parse(e.after ?? "{}") as Partial<Pick<PayoutReconciliation, "payoutDate" | "origin">>;
     if (typeof after.payoutDate !== "string") throw new Error("match audit event has no payoutDate");
+    qboDate(after.payoutDate);
     if (after.origin === RECON_ORIGIN.MATCHED && (line === null || after.payoutDate > line)) line = after.payoutDate;
   }
   return line;
@@ -179,7 +180,8 @@ async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: Pay
 /**
  * One payout's turn through the outbox: match before create via findOrCreate, then record
  * the outcome. found → link (POSTED when it carries the payout's key); created → POSTED;
- * ambiguous → finance's queue; failed → POST_FAILED; too old or no line → left as it is.
+ * ambiguous → finance's queue; failed → POST_FAILED; on or before the line, covered by the
+ * QuickBooks books closing date (or refused as fault 6200), or with no line → left as it is.
  * Returns null when another holder has the lock and `wait` is off. `problem` and `sales` are
  * the drain's own reads, read here when absent.
  */
@@ -304,7 +306,7 @@ export async function postPayout(
           return { outcome: "waiting" as const, row: current };
       }
     },
-    // Three QuickBooks requests (window, closing date, create), each with a 30s timeout and one Retry-After wait.
+    // Three QuickBooks requests (window, closing date, create) of up to 30s each, plus one Retry-After wait.
     { timeout: 135_000 },
   );
 }

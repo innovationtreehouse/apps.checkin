@@ -249,6 +249,16 @@ describeDb("QB-2 posting — match before create", () => {
     expect((await expenseRow(id)).qbMatchState).toBe("BEFORE_LINE");
   });
 
+  it("a books closing date before the expense still lets it be created", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.closeDate = "2026-08-31";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+
   it("re-reads the books closing date before the create and holds an expense it covers as BEFORE_LINE", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
