@@ -2,7 +2,7 @@ import { findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
-import { getIncomeConfig, isoDay } from "../runtime";
+import { assertOrg, getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
 
@@ -102,6 +102,7 @@ export async function otherLaneClaims(orgId: string): Promise<string[]> {
 
 /** Deposits income holds, for another lane to keep out of its own matching. */
 export async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
+  await assertOrg(orgId);
   const rows = await db.payoutReconciliation.findMany({
     where: { orgId, depositId: { not: null } },
     select: { depositId: true },

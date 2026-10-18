@@ -3,7 +3,8 @@
  * authorizes and strips the returned bag; a factory parses, calls a service, and names
  * each value by the model the host classifies it as.
  */
-import { httpError, mapServiceErrors, parseId, readJson } from "@checkin/component-kit";
+import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
+import { z } from "zod";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
 import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
@@ -11,17 +12,31 @@ import { RECON_STATUS, runReconcile } from "./lib/reconcile";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
 
-async function readBody(req: Request): Promise<Record<string, unknown>> {
-  const body = await readJson(req);
-  if (typeof body !== "object" || body === null || Array.isArray(body)) throw httpError(400, "Expected a JSON object");
-  return body as Record<string, unknown>;
-}
+const NOT_AN_OBJECT = "Expected a JSON object";
 
-function requiredString(body: Record<string, unknown>, key: string): string {
-  const v = body[key];
-  if (typeof v !== "string" || !v.trim()) throw httpError(400, `${key} is required`);
-  return v.trim();
-}
+const isJsonObject = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const requiredString = (key: string) =>
+  z.string({ error: `${key} is required` }).trim().min(1, { error: `${key} is required` });
+
+const resolveBody = z.discriminatedUnion(
+  "action",
+  [
+    z.object({ action: z.literal("match"), reason: z.string({ error: "reason must be a string" }).optional(), depositId: requiredString("depositId") }),
+    z.object({ action: z.literal("dismiss"), reason: requiredString("reason") }),
+    z.object({ action: z.literal("retry") }),
+  ],
+  { error: (issue) => (isJsonObject(issue.input) ? "action must be match, dismiss or retry" : NOT_AN_OBJECT) },
+);
+
+const positiveIntOrNull = { error: "budgetOwnerId must be a positive integer or null" };
+// null is finance's choice of general income.
+const setCategoryBody = z.object(
+  { budgetOwnerId: z.number(positiveIntOrNull).int(positiveIntOrNull).positive(positiveIntOrNull).nullable() },
+  { error: NOT_AN_OBJECT },
+);
+
+const excludeBody = z.object({ qbTxnId: requiredString("qbTxnId"), reason: requiredString("reason") }, { error: NOT_AN_OBJECT });
 
 async function actor(): Promise<Actor> {
   const p = await getPrincipal();
@@ -67,25 +82,9 @@ export const candidates: IncomeRouteHandler = async ({ params }) => {
   return { IncomeQbDepositView: await mapServiceErrors(() => reconciliationService.candidates(orgId, id)) };
 };
 
-function resolveAction(body: Record<string, unknown>): ResolveAction {
-  switch (body.action) {
-    case "match": {
-      const reason = body.reason;
-      if (reason !== undefined && typeof reason !== "string") throw httpError(400, "reason must be a string");
-      return { action: "match", depositId: requiredString(body, "depositId"), reason };
-    }
-    case "dismiss":
-      return { action: "dismiss", reason: requiredString(body, "reason") };
-    case "retry":
-      return { action: "retry" };
-    default:
-      throw httpError(400, "action must be match, dismiss or retry");
-  }
-}
-
 export const resolve: IncomeRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const action = resolveAction(await readBody(req));
+  const action: ResolveAction = await parseBody(req, resolveBody);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return { PayoutReconciliation: await mapServiceErrors(() => reconciliationService.resolve(orgId, id, action, who)) };
 };
@@ -111,11 +110,7 @@ function variantId(raw: string | undefined): string {
 
 export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const variant = variantId(params.variantId);
-  const budgetOwnerId = (await readBody(req)).budgetOwnerId;
-  // null is finance's choice of general income.
-  if (budgetOwnerId !== null && (typeof budgetOwnerId !== "number" || !Number.isInteger(budgetOwnerId) || budgetOwnerId <= 0)) {
-    throw httpError(400, "budgetOwnerId must be a positive integer or null");
-  }
+  const { budgetOwnerId } = await parseBody(req, setCategoryBody);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {
     IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.setCategory(orgId, variant, budgetOwnerId, who)),
@@ -133,9 +128,7 @@ export const listExclusions: IncomeRouteHandler = async () => ({
 });
 
 export const excludeDeposit: IncomeRouteHandler = async ({ req }) => {
-  const body = await readBody(req);
-  const qbTxnId = requiredString(body, "qbTxnId");
-  const reason = requiredString(body, "reason");
+  const { qbTxnId, reason } = await parseBody(req, excludeBody);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {
     IncomeQbMatchExclusion: await mapServiceErrors(() => reconciliationService.excludeDeposit(orgId, qbTxnId, reason, who)),

@@ -1,3 +1,4 @@
+import { defineRuntime } from "@checkin/component-kit";
 import {
   inertCatalogEventSource,
   inertCatalogReader,
@@ -55,13 +56,11 @@ export interface ExpenseRuntime {
   quickbooks: QuickBooksPorts;
 }
 
-// On globalThis so the instrumentation chunk that configures it and the route chunks that
-// read it share one runtime (and it survives dev HMR).
-const globalForRuntime = globalThis as typeof globalThis & { __expenseRuntime?: ExpenseRuntime };
+export const expenseRuntime = defineRuntime<ExpenseRuntime, ExpensePrincipal>("expense");
 
 /** Binds the host's ports. Touches no database. Unbound ports fall back to the inert adapters. */
 export function configureExpense(config: ExpenseConfig): void {
-  globalForRuntime.__expenseRuntime = {
+  expenseRuntime.configure({
     org: config.org,
     auth: config.auth ?? { getPrincipal: async () => null },
     budgetOwners: config.budgetOwners ?? inertOwnerDirectory,
@@ -75,34 +74,20 @@ export function configureExpense(config: ExpenseConfig): void {
       vendors: config.quickbooks?.vendors ?? inertQbVendors,
       posting: config.quickbooks?.posting ?? null,
     },
-  };
+  });
 }
 
-export function getExpenseRuntime(): ExpenseRuntime {
-  const runtime = globalForRuntime.__expenseRuntime;
-  if (!runtime) throw new Error("configureExpense() has not been called");
-  return runtime;
-}
+export const getExpenseRuntime = expenseRuntime.require;
 
 export function getOrg(): Promise<OrgIdentity> {
   return getExpenseRuntime().org();
 }
 
 /** The current request's org id, the scope of every expense row. */
-export async function getOrgId(): Promise<string> {
-  return (await getOrg()).id;
-}
+export const getOrgId = expenseRuntime.getOrgId;
 
 /** Callee guard: a crossing payload must carry the injected org. */
-export async function assertOrg(orgId: string): Promise<void> {
-  if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
-}
+export const assertOrg = expenseRuntime.assertOrg;
 
-/** The session principal. Throws if absent: host admission has already run. */
-export async function getPrincipal(): Promise<ExpensePrincipal> {
-  const principal = await getExpenseRuntime().auth.getPrincipal();
-  if (!principal || !Number.isInteger(principal.id)) {
-    throw new Error("no expense principal — host admission should have rejected this request");
-  }
-  return principal;
-}
+/** The session principal. A 401 if absent: host admission has already run. */
+export const getPrincipal = expenseRuntime.getPrincipal;

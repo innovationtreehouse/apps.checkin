@@ -194,6 +194,13 @@ missed a row stored at a different time of day.
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
 
+- **A library's runtime fails closed the same way everywhere.** Each library
+  builds its runtime with the kit's `defineRuntime`. Until the host configures
+  it, every accessor throws. A missing principal, or one without an integer id,
+  is a 401. An unbound port or accessor throws `NotWiredError` and never fakes
+  success. A callee that takes an `orgId` from its caller checks it with
+  `assertOrg` first.
+
 - **A duplicate the service expects is caught by the service.** A unique-key race
   it can tolerate is caught where it happens and re-read or thrown as
   `ServiceError(409)`. A P2002 that escapes uncaught is a bug and stays a 500,

@@ -593,12 +593,13 @@ describeDb("claims across lanes", () => {
     });
   });
 
-  it("lists the deposits income holds, per org, for the other lane", async () => {
+  it("lists the deposits income holds for the other lane, and refuses another org", async () => {
     payout("P1", "2026-06-01", 97);
     deposits = [dep("D1", "2026-06-02", 97)];
     await runReconcile(ORG_A, NOW);
+    configureIncome({ org: async () => ({ id: ORG_A, name: "A" }) });
     expect(await incomeClaimedDepositIds(ORG_A)).toEqual(["D1"]);
-    expect(await incomeClaimedDepositIds(ORG_B)).toEqual([]);
+    await expect(incomeClaimedDepositIds(ORG_B)).rejects.toThrow("is not this org");
   });
 });
 

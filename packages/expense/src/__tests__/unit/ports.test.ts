@@ -13,12 +13,12 @@ describe("callerId", () => {
     expect(callerId({ id: 12 })).toBe(12);
   });
 
-  it.each([undefined, null, { id: undefined }, { id: "12" }, { id: 1.5 }])("throws for %j", (p) => {
-    expect(() => callerId(p as never)).toThrow(/no person id/);
+  it.each([undefined, null, { id: undefined }, { id: "12" }, { id: 1.5 }])("is a 401 for %j", (p) => {
+    expect(() => callerId(p as never)).toThrow(expect.objectContaining({ status: 401 }));
   });
 
   it("an id-less session cannot approve, before any query runs", async () => {
-    await expect(approveLine({ id: undefined, name: null, isFinance: true, isBoard: false } as never, "e", 1, "x")).rejects.toThrow(/no person id/);
+    await expect(approveLine({ id: undefined, name: null, isFinance: true, isBoard: false } as never, "e", 1, "x")).rejects.toMatchObject({ status: 401 });
   });
 });
 

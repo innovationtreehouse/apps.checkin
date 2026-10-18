@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { configureIncome } from "../../runtime";
 import { matchWindow } from "../../lib/reconcile";
 import { DEFAULT_INCOME_SETTINGS, settingsChanges } from "../../services/settingsService";
@@ -30,7 +30,7 @@ describe("settingsChanges", () => {
 });
 
 describe("matchWindow", () => {
-  afterEach(() => configureIncome({}));
+  beforeEach(() => configureIncome({}));
 
   it("opens 2 days before the payout by default, for QuickBooks dates that run early", () => {
     expect(matchWindow("2026-06-10")).toEqual({ from: "2026-06-08", to: "2026-06-17" });

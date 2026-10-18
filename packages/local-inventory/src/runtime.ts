@@ -3,6 +3,7 @@
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
+import { defineRuntime } from "@checkin/component-kit";
 import { db } from "./lib/db";
 import { createInventoryRepository } from "./lib/repositories/inventoryRepository";
 import { createLocationRepository } from "./lib/repositories/locationRepository";
@@ -15,34 +16,13 @@ import { createProvisionalItemService } from "./lib/services/provisionalItemServ
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
 import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
 
-// On globalThis so the instrumentation chunk that configures it and the route
-// chunks that read it share one runtime (and it survives dev HMR).
-const globalForRuntime = globalThis as typeof globalThis & {
-  __localInventoryRuntime?: InventoryRuntimeConfig;
-};
+export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
+const requireRuntime = localInventoryRuntime.require;
 
-export function configureLocalInventory(config: InventoryRuntimeConfig): void {
-  globalForRuntime.__localInventoryRuntime = config;
-}
+export const configureLocalInventory = localInventoryRuntime.configure;
 
-function requireRuntime(): InventoryRuntimeConfig {
-  const runtime = globalForRuntime.__localInventoryRuntime;
-  if (!runtime) {
-    throw new Error(
-      "local-inventory runtime not configured — the host must call configureLocalInventory() at boot",
-    );
-  }
-  return runtime;
-}
-
-/** The acting host user. Throws if absent: host admission has already run. */
-export async function getPrincipal(): Promise<InventoryPrincipal> {
-  const principal = await requireRuntime().auth.getPrincipal();
-  if (!principal || !Number.isInteger(principal.id)) {
-    throw new Error("no inventory principal — host admission should have rejected this request");
-  }
-  return principal;
-}
+/** The acting host user. A 401 if absent: host admission has already run. */
+export const getPrincipal = localInventoryRuntime.getPrincipal;
 
 /** Org identity for the current request. */
 export function getOrg(): Promise<OrgIdentity> {
@@ -50,9 +30,7 @@ export function getOrg(): Promise<OrgIdentity> {
 }
 
 /** The current request's org id, the scope of every inventory row. */
-export async function getOrgId(): Promise<string> {
-  return (await getOrg()).id;
-}
+export const getOrgId = localInventoryRuntime.getOrgId;
 
 /** The S5 replay read the host bound, or the inert one. */
 export function getCatalogEventSource(): CatalogEventSource {

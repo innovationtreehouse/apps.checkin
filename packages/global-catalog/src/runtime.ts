@@ -4,53 +4,29 @@
  * single Next app. The host wires it once at boot (checkin instrumentation.ts);
  * routes and services read it through the accessors below.
  */
+import { defineRuntime } from "@checkin/component-kit";
 import { db as defaultDb } from "./db";
 import type { PrismaClient } from "./generated/prisma/client";
 import type { CatalogRuntimeConfig, CatalogPrincipal, OrgEventConsumer, OrgIdentity } from "./contract";
 
-// Stored on globalThis, not a module-scoped `let` — the same singleton pattern
-// the catalog Prisma client uses (`__gcPrisma`). It survives Turbopack HMR
-// re-evaluation in dev and removes any module-identity doubt in prod (the
-// instrumentation chunk that calls configureCatalog() and the route chunks that
-// read it must see one runtime).
-const globalForRuntime = globalThis as typeof globalThis & {
-  __gcRuntime?: CatalogRuntimeConfig;
-};
+export const catalogRuntime = defineRuntime<CatalogRuntimeConfig, CatalogPrincipal>("global-catalog");
 
-export function configureCatalog(config: CatalogRuntimeConfig): void {
-  globalForRuntime.__gcRuntime = config;
-}
-
-function requireRuntime(): CatalogRuntimeConfig {
-  const runtime = globalForRuntime.__gcRuntime;
-  if (!runtime) {
-    throw new Error(
-      "global-catalog runtime not configured — the host must call configureCatalog() at boot",
-    );
-  }
-  return runtime;
-}
+export const configureCatalog = catalogRuntime.configure;
 
 /**
- * The acting host user. Throws if absent: host admission runs before any route
+ * The acting host user. A 401 if absent: host admission runs before any route
  * body, so a factory reaching this has already passed the gate.
  */
-export async function getPrincipal(): Promise<CatalogPrincipal> {
-  const principal = await requireRuntime().auth.getPrincipal();
-  if (!principal) {
-    throw new Error("no catalog principal — host admission should have rejected this request");
-  }
-  return principal;
-}
+export const getPrincipal = catalogRuntime.getPrincipal;
 
-/** Registered S5 consumers; none when the host registered none (or has not configured). */
+/** Registered S5 consumers; none when unconfigured, since it runs after a commit and consumers replay from their cursors. */
 export function getOrgEventConsumers(): Record<string, OrgEventConsumer> {
-  return globalForRuntime.__gcRuntime?.orgEventConsumers ?? {};
+  return catalogRuntime.configured()?.orgEventConsumers ?? {};
 }
 
 /** Org identity for the current request (#1286 §6). */
 export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
+  return catalogRuntime.require().org();
 }
 
 /**
