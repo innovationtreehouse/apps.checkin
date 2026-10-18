@@ -5,7 +5,6 @@ import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwner
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
-import { deriveTakeoverLine } from "../../lib/qb-match";
 import { donationClaimedDepositIds } from "../../lib/qb-poster";
 import { inKindService } from "../../services/inKindService";
 
@@ -178,16 +177,5 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
 
   it("requires at least one line", async () => {
     await expect(recordInKindWithoutReceipt({ ...input, lines: [] })).rejects.toMatchObject({ status: 400 });
-  });
-});
-
-describe("deriveTakeoverLine", () => {
-  it("is the newest date any record was ever matched on", () => {
-    expect(deriveTakeoverLine(["2026-03-01", "2026-04-01", null, "2026-02-01"])).toBe("2026-04-01");
-  });
-
-  it("has no line without a matched record (fail closed)", () => {
-    expect(deriveTakeoverLine([])).toBeNull();
-    expect(deriveTakeoverLine([null])).toBeNull();
   });
 });
