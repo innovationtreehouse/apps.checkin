@@ -147,6 +147,8 @@ def prior_rounds(pr, repo, skip_id=None):
     base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
     comments = {}
     for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
+        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach Jev
+            continue
         comments.setdefault(c.get("pull_request_review_id"), []).append(
             {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
     rounds = []
