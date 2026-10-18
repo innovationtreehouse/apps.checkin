@@ -318,10 +318,13 @@ receipts in one window; widen the window or the cap if either happens.
 - **The sender's mailed-receipt limit depends on role** (owner ruling
   2026-10-17): 25 a day for a program lead (the lead mentor of a program not yet
   finished) or a Board member, 5 a day for everyone else. It counts only that
-  person's mailed receipts in the same rolling 24 hours as the other upload
-  limits; manual uploads keep their own limit, toward which mailed receipts
-  count. The byte limits apply to both alike. The role is read when the sender
-  is resolved, on each run.
+  person's own mailed receipts in the same rolling 24 hours as the other upload
+  limits. Manual uploads keep their own separate limit (30), which counts all of
+  that person's receipts, mailed ones included; it is not a combined ceiling on
+  mail. A held file finance assigns to a person is checked against that manual
+  limit, not the mail limit, and never counts toward the person's mail limit.
+  The byte limits apply to all alike. The role is read when the sender is
+  resolved, on each run.
 - **Over the sender's daily upload limit: deferred, not held** (owner ruling
   2026-10-16). The file is stored in the ledger as `deferred`, with its bytes, so
   it no longer depends on the 3-day window. Each run retries deferred files first,

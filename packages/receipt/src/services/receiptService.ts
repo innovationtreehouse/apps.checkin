@@ -230,13 +230,15 @@ async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Prom
  * insert, so the receipt and its mail-ledger row exist together or not at all. A file over the
  * OCR allowance lands in `ocr_failed`, where its uploader types the details. `uploadLimits: false`
  * skips the daily upload limits for this one file, for a deferred file finance releases.
+ * `mailAllowance: false` checks the manual upload limits in place of the mail limit, for a file
+ * finance assigns.
  */
 export async function intakeMailedReceipt(
   actor: ReceiptPrincipal,
   file: Buffer,
   mimeType: string,
   ledger: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>,
-  { uploadLimits = true }: { uploadLimits?: boolean } = {},
+  { uploadLimits = true, mailAllowance = true }: { uploadLimits?: boolean; mailAllowance?: boolean } = {},
 ): Promise<string> {
   const id = await insertReceipt({
     orgId: (await getOrg()).id,
@@ -248,7 +250,12 @@ export async function intakeMailedReceipt(
     lines: [],
     auditAction: "mail_intake",
     limits: uploadLimits ? limits() : undefined,
-    mailLimit: actor.raisedMailLimit ? limits().mailUploadsPerRaisedPersonPerDay : limits().mailUploadsPerPersonPerDay,
+    mailLimit:
+      uploadLimits && mailAllowance
+        ? actor.raisedMailLimit
+          ? limits().mailUploadsPerRaisedPersonPerDay
+          : limits().mailUploadsPerPersonPerDay
+        : undefined,
     afterInsert: ledger,
   });
   try {

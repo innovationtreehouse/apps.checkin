@@ -15,7 +15,7 @@ export interface ReceiptPrincipal {
   firstName: string;
   lastName: string;
   isAdult: boolean;
-  /** Mailed receipts get the raised daily limit (a program lead or Board member); set by mail intake's sender lookup. */
+  /** Mailed receipts get the raised daily limit (a program lead or Board member); set by the sender lookup. */
   raisedMailLimit?: boolean;
 }
 

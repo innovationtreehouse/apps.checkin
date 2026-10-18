@@ -43,7 +43,7 @@ export interface NewReceipt {
   auditAction: string;
   /** Enforce the daily upload limits for this insert (every upload; the FINANCE import has its own caps). */
   limits?: ReceiptLimits;
-  /** A mailed receipt: the per-person count is of mailed receipts only, against this limit. */
+  /** A mailed receipt: the per-person count is of the person's own mailed receipts only, against this limit. */
   mailLimit?: number;
   /** Runs inside the insert's transaction, so a failure rolls the receipt back with it. */
   afterInsert?: (tx: Prisma.TransactionClient, id: string) => Promise<unknown>;
@@ -100,7 +100,10 @@ async function enforceUploadLimits(
   const mailed = mailLimit !== undefined;
   await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${orgId}:upload-limits`}, 0))`;
   const [used] = await tx.$queryRaw<{ mineCount: number; mineBytes: number; allBytes: number }[]>`
-    SELECT count(*) FILTER (WHERE uploaded_by_user_id = ${personId} AND (NOT ${mailed} OR intake_source = 'email'))::int AS "mineCount",
+    SELECT count(*) FILTER (
+             WHERE uploaded_by_user_id = ${personId}
+               AND (NOT ${mailed} OR (intake_source = 'email' AND NOT EXISTS (
+                 SELECT 1 FROM receipt_audit_log a WHERE a.receipt_id = receipts.id AND a.action = 'mail_assigned'))))::int AS "mineCount",
            coalesce(sum(octet_length(file_blob)) FILTER (WHERE uploaded_by_user_id = ${personId}), 0)::float8 AS "mineBytes",
            coalesce(sum(octet_length(file_blob)), 0)::float8 AS "allBytes"
     FROM receipts

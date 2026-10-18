@@ -1,6 +1,7 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
+import { intakeMailedReceipt } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
 import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
@@ -131,7 +132,7 @@ describeDb("finance mail queue", () => {
   });
 
   it("releases a deferred item as its sender, outside their daily upload limit, and audits who released it", async () => {
-    configureQueue({ mailUploadsPerPersonPerDay: 0 });
+    configureQueue({ uploadsPerPersonPerDay: 0 });
     const id = await holdItem("deferred", "alice@example.org");
     await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ statusCode: 429 });
 
@@ -150,5 +151,13 @@ describeDb("finance mail queue", () => {
     await expect(mailQueueService.assign(own, { release: true })).rejects.toMatchObject({ statusCode: 403 });
     await expect(mailQueueService.assign(own, { release: false })).rejects.toMatchObject({ statusCode: 400 });
     expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("assigns past a member's mail limit, and leaves their own mail allowance untouched", async () => {
+    for (let i = 0; i < 6; i++) {
+      await expect(mailQueueService.assign(await holdItem(), { email: "alice@example.org" })).resolves.toMatchObject({ status: "assigned" });
+    }
+    await expect(intakeMailedReceipt(ALICE, Buffer.from(`%PDF-1.4 own ${Date.now()}`), "application/pdf", async () => {})).resolves.toEqual(expect.any(String));
+    expect(await db.receipt.count({ where: { uploadedByUserId: ALICE.id } })).toBe(7);
   });
 });

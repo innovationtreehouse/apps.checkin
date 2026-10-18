@@ -401,6 +401,13 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 2, overLimit: 1 });
   });
 
+  it("counts mailed receipts toward the manual upload limit", async () => {
+    withLimits({ uploadsPerPersonPerDay: 1 });
+    send("m1");
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ statusCode: 429 });
+  });
+
   it("counts only mailed receipts toward the mail limit", async () => {
     withLimits({ uploadsPerPersonPerDay: 2, mailUploadsPerPersonPerDay: 1 });
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });

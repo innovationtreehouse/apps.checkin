@@ -1,9 +1,9 @@
 // Daily intake limits. Each window is the rolling 24 hours before the request.
 
 export interface ReceiptLimits {
-  /** Uploads one person may make; mailed receipts count toward it. */
+  /** Uploads one person may make by hand, or be assigned by finance; counts all their receipts. */
   uploadsPerPersonPerDay: number;
-  /** Mailed receipts one person may add. */
+  /** Mailed receipts one person may add; counts only their own mailed receipts, not ones finance assigned. */
   mailUploadsPerPersonPerDay: number;
   /** Mailed receipts a program lead or Board member may add. */
   mailUploadsPerRaisedPersonPerDay: number;
