@@ -1,5 +1,5 @@
 /** Line decisions: associate (CI3), propose, non-inventory, the 409 rule, auto-proceed, actor attribution. */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import type { CatalogItemReferenceProposal, CatalogProvisionalItemProposal, CatalogReferenceConflict } from "@checkin/receipt-types";
 import { db } from "../../db";
 import type { CatalogReader, CatalogSubmissions, RefCheckResult } from "../../contract";
@@ -208,5 +208,26 @@ describeDb("a catalog remap after the manager's decision", () => {
     await orgEventConsumer.onOrgEvents([approved]);
     expect(await read(ls.id)).toEqual(remapped);
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
+  });
+
+  it("leaves a line re-proposed between the remap's read and write on its new provisional", async () => {
+    const { ls } = await proposedLine();
+    const P2 = "2000000000022";
+    const lines = db.receivedReceiptLineStatus;
+    const findMany = lines.findMany.bind(lines);
+    // The manager's re-propose commits after the remap reads its lines.
+    const readThenRepropose = async (args: Parameters<typeof findMany>[0]) => {
+      const found = await findMany(args);
+      await lines.update({ where: { id: ls.id }, data: { provisionalItemGtin13: P2 } });
+      return found;
+    };
+    const spy = vi.spyOn(lines, "findMany").mockImplementationOnce((args) =>
+      Object.assign(readThenRepropose(args), { [Symbol.toStringTag]: "PrismaPromise" as const }),
+    );
+    await orgEventConsumer.onOrgEvents([approved]);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "provisional", provisionalItemGtin13: P2, assignedGtin13: null });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 });

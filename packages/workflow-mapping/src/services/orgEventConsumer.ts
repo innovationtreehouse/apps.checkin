@@ -61,7 +61,12 @@ async function remapProvisional(
   });
   for (const line of lines) {
     const { count } = await db.receivedReceiptLineStatus.updateMany({
-      where: { id: line.id, recognitionStatus: "provisional", receivedReceipt: EDITABLE_RECEIPT_WHERE },
+      where: {
+        id: line.id,
+        recognitionStatus: "provisional",
+        provisionalItemGtin13: ev.provisionalGtin13,
+        receivedReceipt: EDITABLE_RECEIPT_WHERE,
+      },
       data: {
         recognitionStatus: "recognized",
         assignedGtin13: ev.realGtin13,
