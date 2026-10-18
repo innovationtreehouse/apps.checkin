@@ -24,8 +24,8 @@ const STATE_HELP: Record<string, string> = {
   AMBIGUOUS: "More than one QuickBooks deposit could be this disbursement, or its deposit is claimed twice and one needs voiding",
   UNBOOKED: "Not found in QuickBooks, and the app may not create it on its own; match the hand-booked deposit, book it, or dismiss it with a reason",
   BEFORE_LINE: "Not found in QuickBooks, and the app may not create it on its own; match the hand-booked deposit, book it, or dismiss it with a reason",
-  POST_FAILED: "Creating the deposit failed; the drain retries it",
-  NEEDS_FINANCE: "Out of automatic retries, or over the per-run cap",
+  POST_FAILED: "Creating the deposit failed; the drain retries it, or book it now",
+  NEEDS_FINANCE: "Out of automatic retries, over the per-run cap, or possibly booked already (see the note); match it, book it, or dismiss it",
   DRIFT: "Its booked QuickBooks deposit changed or disappeared; match it again, or dismiss it",
 };
 
@@ -72,11 +72,11 @@ function resolvedMessage(saved: unknown, fallback: string): string {
 /** One queued disbursement's actions: candidate deposits to match or exclude, retry, book, dismiss, or clear its note. */
 function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
   const base = `/disbursement-events/${encodeURIComponent(row.disbursementId)}`;
-  const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
+  const held = isIn(QB_HELD_STATES, row.qbMatchState);
+  const candidates = useLoad<Candidate[]>(held ? `${base}/qb-candidates` : null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const held = isIn(QB_HELD_STATES, row.qbMatchState);
   async function run(call: () => Promise<unknown>, ok: string | ((saved: unknown) => string)) {
     setBusy(true);
     await act(call, ok, onDone);

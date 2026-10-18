@@ -216,7 +216,11 @@ async function isPostable(tx: Tx, e: DisbursementEvent, now = Date.now()): Promi
   return POSTABLE.includes(e.qbMatchState as QbMatchState);
 }
 
-/** Move the record to `to`, with one audit event; a re-check that lands where it was writes none. */
+/**
+ * Move the record to `to`, with one audit event; a re-check that lands where it was writes none.
+ * Linking a Deposit answers the record's note unless a new one is given; a stray the note named
+ * and the link did not take is reported again by the next daily sweep.
+ */
 async function settle(
   tx: Tx,
   before: DisbursementEvent,
@@ -228,6 +232,7 @@ async function settle(
     where: { id: before.id },
     data: {
       qbMatchState: to,
+      ...(opts.qbTxnId !== undefined && { qbNote: null }),
       ...(opts.qbNote !== undefined && { qbNote: opts.qbNote }),
       ...(opts.qbTxnId !== undefined && { qbTxnId: opts.qbTxnId }),
       ...(opts.booked && { qbDepositTotalCents: opts.booked.totalCents, qbDepositTxnDate: opts.booked.txnDate }),
@@ -691,8 +696,7 @@ export async function sweepDonationQbStrays(
 /**
  * The drain, run from the daily cron. It switches the lane's posting on (once, for good) and reads
  * the books closing date once for the run. Then the drift check over the deposits already held,
- * the orphan sweep, and every completed disbursement not yet in QuickBooks, oldest
- * first. Stops at the per-run count and cents caps (measured on what it creates), the daily cap,
+ * every completed disbursement not yet in QuickBooks, oldest first, and last the orphan sweep. Stops at the per-run count and cents caps (measured on what it creates), the daily cap,
  * or MAX_CONSECUTIVE_FAILURES failures in a row; the rest waits for the next run. Counts only.
  */
 export async function runDonationQbPosting(orgId: string, now = new Date()): Promise<DrainCounts | "unbound"> {
@@ -703,7 +707,6 @@ export async function runDonationQbPosting(orgId: string, now = new Date()): Pro
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this run creates nothing: ${close.error}`);
   const drift = await checkDonationQbDrift(orgId, client, posting.bankAccountId, now);
-  const sweep = await sweepDonationQbStrays(orgId, client, posting.sweepIncomplete, now);
   const due = await db.disbursementEvent.findMany({
     where: { orgId, qbTxnId: null, qbMatchState: { in: [...POSTABLE, QB_MATCH_STATE.POSTING] } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -712,7 +715,7 @@ export async function runDonationQbPosting(orgId: string, now = new Date()): Pro
 
   const counts: DrainCounts = {
     posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0,
-    capped: null, stoppedAfterFailures: false, closeDateRead: close.ok, drift, sweep,
+    capped: null, stoppedAfterFailures: false, closeDateRead: close.ok, drift, sweep: { entries: 0, flagged: 0, full: false },
   };
   let postedCents = 0;
   let failuresInARow = 0;
@@ -742,5 +745,7 @@ export async function runDonationQbPosting(orgId: string, now = new Date()): Pro
       break;
     }
   }
+  // After the posts, so a record this run linked to its own Deposit is not reported as a stray.
+  counts.sweep = await sweepDonationQbStrays(orgId, client, posting.sweepIncomplete, now);
   return counts;
 }

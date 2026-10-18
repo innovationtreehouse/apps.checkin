@@ -857,12 +857,38 @@ describeDb("donation QuickBooks finance queue: book it", () => {
     expect((await stateOf(e.id)).qbMatchState).toBe("CREATED");
   });
 
-  it("books outside the per-run cents cap", async () => {
-    qbo.closeDate = "2026-08-31";
+  it("books a record the drain held as NEEDS_FINANCE for the per-run cents cap", async () => {
+    await live();
     const big = await completed("TEST-BIG", "2026-09-10", [{ donation: MAX_CREATE_CENTS_PER_RUN + 1 }]);
-    await db.disbursementEvent.update({ where: { id: big.id }, data: { qbMatchState: "UNBOOKED" } });
+    await runDonationQbPosting(orgId);
+    expect((await stateOf(big.id)).qbMatchState).toBe("NEEDS_FINANCE");
     await resolve("TEST-BIG", { action: "book" });
     expect((await stateOf(big.id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("a book QuickBooks fails answers 503 and leaves the record bookable, so a second book creates it once", async () => {
+    qbo.closeDate = "2026-08-31";
+    const e = await held("TEST-A", "UNBOOKED");
+    qbo.mode = "accept-then-drop";
+    await expect(resolve("TEST-A", { action: "book" })).rejects.toMatchObject({ status: 503 });
+    expect((await stateOf(e.id)).qbMatchState).toBe("POST_FAILED");
+
+    qbo.mode = "ok";
+    await resolve("TEST-A", { action: "book" });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "CREATED", qbTxnId: qbo.deposits[0].Id });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a refused book keeps the record's note; a booked one answers it", async () => {
+    qbo.closeDate = "2026-09-30";
+    const e = await held("TEST-A", "UNBOOKED");
+    await db.disbursementEvent.update({ where: { id: e.id }, data: { qbNote: "check this one" } });
+    await expect(resolve("TEST-A", { action: "book" })).rejects.toMatchObject({ status: 409 });
+    expect((await rowOf(e.id)).qbNote).toBe("check this one");
+
+    qbo.closeDate = "2026-08-31";
+    await resolve("TEST-A", { action: "book" });
+    expect(await rowOf(e.id)).toMatchObject({ qbMatchState: "CREATED", qbNote: null });
   });
 
   it("refuses a record in closed books, which stays UNBOOKED for a skip", async () => {
@@ -881,7 +907,7 @@ describeDb("donation QuickBooks finance queue: book it", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
-  it("never books a DRIFT or any other non-UNBOOKED record", async () => {
+  it("never books a DRIFT or AMBIGUOUS record", async () => {
     qbo.closeDate = "2026-08-31";
     await held("TEST-A", "DRIFT");
     await held("TEST-B", "AMBIGUOUS");
@@ -983,6 +1009,30 @@ describeDb("donation QuickBooks orphan sweep", () => {
     const [cleared] = await eventsOf("TEST-A", QB_EVENT.NOTE_CLEARED);
     expect(cleared.actorUserId).toBe(1);
     await expect(resolve("TEST-A", { action: "clear", reason: "again" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a record the drain links to its own Deposit in the same run is never reported as a stray", async () => {
+    await live();
+    const e = await completed("TEST-A", "2026-09-10");
+    qbo.mode = "accept-then-drop";
+    expect(await postDisbursementToQb(e.id)).toBe("failed");
+    qbo.mode = "ok";
+
+    expect(await runDonationQbPosting(orgId)).toMatchObject({ posted: 1, sweep: { flagged: 0 } });
+    expect(await rowOf(e.id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.deposits[0].Id, qbNote: null });
+    expect(await eventsOf("TEST-A", QB_EVENT.NOTED)).toHaveLength(0);
+  });
+
+  it("linking a Deposit answers a note the record already carried", async () => {
+    await live();
+    const e = await completed("TEST-A", "2026-09-10");
+    qbo.mode = "accept-then-drop";
+    await postDisbursementToQb(e.id);
+    qbo.mode = "ok";
+    await db.disbursementEvent.update({ where: { id: e.id }, data: { qbNote: `QuickBooks Deposit ${qbo.deposits[0].Id} carries this disbursement's key but is not linked to it; void it or link it` } });
+
+    expect(await postDisbursementToQb(e.id)).toBe("posted");
+    expect(await rowOf(e.id)).toMatchObject({ qbMatchState: "CREATED", qbNote: null });
   });
 
   it("alerts finance when the read fills a page, since some Deposits went unchecked", async () => {

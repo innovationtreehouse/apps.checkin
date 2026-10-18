@@ -7,5 +7,8 @@ export const QB_HELD_STATES: readonly QbMatchState[] = ["AMBIGUOUS", "UNBOOKED",
 /** Held states finance may hand back to the drain. UNBOOKED goes back only by "book it"; DRIFT is finance's to decide. */
 export const QB_RETRYABLE_STATES: readonly QbMatchState[] = ["AMBIGUOUS", "POST_FAILED", "NEEDS_FINANCE"];
 
-/** Held states finance may have the app book: not in QuickBooks, and not created on the drain's own. */
-export const QB_BOOKABLE_STATES: readonly QbMatchState[] = ["UNBOOKED", "BEFORE_LINE"];
+/**
+ * Held states finance may have the app book: not found in QuickBooks, or a post that failed or
+ * ran out of retries or over the per-run cap. Book still looks for the app's own Deposit first.
+ */
+export const QB_BOOKABLE_STATES: readonly QbMatchState[] = ["UNBOOKED", "BEFORE_LINE", "POST_FAILED", "NEEDS_FINANCE"];

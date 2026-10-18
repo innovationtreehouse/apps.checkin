@@ -246,11 +246,12 @@ async function dismiss(orgId: string, disbursementId: string, reason: string, ac
 /**
  * Finance's "book it": one post now with creating allowed, outside the per-run caps but inside
  * the daily one. It still looks for the app's own Deposit, matches first, and stops at the books
- * closing date, read now. Only an UNBOOKED record can be booked.
+ * closing date, read now. Only a record in QB_BOOKABLE_STATES can be booked. Anything short of a
+ * booked Deposit answers an error naming where the record now waits; its note stays until then.
  */
 async function book(orgId: string, disbursementId: string, actor: AuditContext): Promise<DisbursementEvent> {
   const e = await heldEvent(orgId, disbursementId);
-  if (!isState(QB_BOOKABLE_STATES, e.qbMatchState)) throw new ServiceError(409, "Only an unbooked disbursement can be booked");
+  if (!isState(QB_BOOKABLE_STATES, e.qbMatchState)) throw new ServiceError(409, "This disbursement cannot be booked from its state");
   const close = await readCloseDate(await connectedClient());
   if (!close.ok) throw new ServiceError(503, "The QuickBooks books closing date could not be read");
   if (close.date === null && (await qbPostingOnAt(orgId)) === null) {
@@ -259,7 +260,6 @@ async function book(orgId: string, disbursementId: string, actor: AuditContext):
   await db.$transaction(async (tx) => {
     const current = await lockedEvent(tx, e.id);
     if (!isState(QB_BOOKABLE_STATES, current.qbMatchState)) throw new ServiceError(409, "Already resolved");
-    await tx.disbursementEvent.update({ where: { id: e.id }, data: { qbNote: null } });
     await recordEvent(tx, {
       orgId,
       disbursementId,
@@ -280,8 +280,17 @@ async function book(orgId: string, disbursementId: string, actor: AuditContext):
     case "waiting":
       throw new ServiceError(409, "The disbursement is being posted; try again shortly");
   }
-  if (saved.qbMatchState === QB_MATCH_STATE.UNBOOKED) throw new ServiceError(409, "The disbursement is dated in closed books; it can only be skipped");
-  return saved;
+  switch (saved.qbMatchState) {
+    case QB_MATCH_STATE.CREATED:
+    case QB_MATCH_STATE.MATCHED:
+      return saved;
+    case QB_MATCH_STATE.UNBOOKED:
+      throw new ServiceError(409, "The disbursement is dated in closed books; it can only be skipped");
+    case QB_MATCH_STATE.POST_FAILED:
+      throw new ServiceError(503, "QuickBooks failed while booking; the disbursement waits as POST_FAILED and can be booked again");
+    default:
+      throw new ServiceError(409, `Not booked: the disbursement now waits as ${saved.qbMatchState}${saved.qbNote ? ` (${saved.qbNote})` : ""}`);
+  }
 }
 
 /** Answer a record's note without another action, for example after voiding a stray Deposit in QuickBooks. */
