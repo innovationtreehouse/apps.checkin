@@ -151,7 +151,7 @@ describeDb("racing decisions", () => {
     expect(decided).toBe(1);
   });
 
-  it("of two bucket assignments read against the same owner, one lands and the seats match its bucket", async () => {
+  it("a stale assignment never undoes a racing bucket move, and the seats match the bucket", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
     const { id, li, approvalId } = await lineInApproval(100);
     await db.expense.update({ where: { id }, data: { state: "assign_ownership" } });
@@ -164,12 +164,11 @@ describeDb("racing decisions", () => {
       () => assignOwner(principal(6, { isFinance: true }), id, approvalId, 101),
     );
 
-    expect([same.status, moved.status].sort()).toEqual(["fulfilled", "rejected"]);
-    expect(rejection(same, moved)).toMatchObject({ status: 409 });
-    const owner = (await approval(approvalId))!.ownerId;
-    expect(owner).toBe(same.status === "fulfilled" ? 100 : 101);
-    const seats = (await db.expenseLineSignoff.findMany({ where: { lineItemId: li } })).map((s) => s.seat).sort();
-    expect(seats).toEqual(owner === 100 ? ["PROGRAM_APPROVER", "SUBMITTER"] : ["SUBMITTER"]);
+    // The no-op assignment changes nothing, so the move lands after it; landing after the move, it is refused.
+    expect(moved.status).toBe("fulfilled");
+    if (same.status === "rejected") expect(same.reason).toMatchObject({ status: 409 });
+    expect((await approval(approvalId))!.ownerId).toBe(101);
+    expect((await db.expenseLineSignoff.findMany({ where: { lineItemId: li } })).map((s) => s.seat)).toEqual(["SUBMITTER"]);
   });
 });
 
