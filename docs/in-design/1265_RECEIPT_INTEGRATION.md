@@ -190,9 +190,10 @@ case of a body receipt:
     it is compared with every receipt the same message produced. If one has the
     same total and the same date, the body is discarded automatically, with the
     reason "same as attachment" and the matching receipt named in its audit row.
-    It stays visible as discarded, so finance can restart it if the match was
-    wrong. Any mismatch, or a reading missing either field, keeps the body as
-    its own receipt.
+    Any mismatch, or a reading missing either field, keeps the body as its own
+    receipt. A body discarded as the same as an attachment is final; it matched
+    that receipt's total and date, so the money is already on that receipt
+    (`[Decision — deliberate limit]`).
   - **Held mail:** a held item has no reading until finance assigns it, so the
     comparison cannot run at intake. A non-trivial body from an untrusted sender
     is held beside its attachments, and finance discards whichever is the copy.
