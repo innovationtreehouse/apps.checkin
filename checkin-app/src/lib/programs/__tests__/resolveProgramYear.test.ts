@@ -48,8 +48,18 @@ describe("resolveProgramYear", () => {
     });
 
     it("keeps a still-valid stated year across a date nudge, for anyone", async () => {
-        const r = await resolveProgramYear({ startAt: d("2026-06-08"), endAt: d("2026-10-08"), supplied: undefined, current: 2025, isBoardMember: false });
+        const r = await resolveProgramYear({ startAt: d("2026-06-08"), endAt: d("2026-10-08"), supplied: undefined, current: { appliesToYear: 2025, ...crossing }, isBoardMember: false });
         expect(r).toEqual({ ok: true, appliesToYear: 2025 });
+    });
+
+    it("never carries a derived year into a crossing", async () => {
+        const singleYear = { appliesToYear: 2025, startAt: d("2026-06-01"), endAt: d("2026-08-15") };
+        expect(await resolveProgramYear({ ...crossing, supplied: undefined, current: singleYear, isBoardMember: false }))
+            .toMatchObject({ ok: false, refusal: "forbidden" });
+        expect(await resolveProgramYear({ ...crossing, supplied: undefined, current: singleYear, isBoardMember: true }))
+            .toMatchObject({ ok: false, refusal: "invalid" });
+        expect(await resolveProgramYear({ ...crossing, supplied: 2025, current: singleYear, isBoardMember: true }))
+            .toEqual({ ok: true, appliesToYear: 2025 });
     });
 
     it("rejects a non-integer year", async () => {

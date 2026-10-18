@@ -198,6 +198,11 @@ describe('POST /api/programs — startAt/endAt date preservation', () => {
             expect(createdYear()).toBe(2025);
         });
 
+        it('rejects an inverted range before judging its year', async () => {
+            expect((await create({ startAt: '2026-10-01', endAt: '2026-06-01' })).status).toBe(400);
+            expect(mockProgramCreate).not.toHaveBeenCalled();
+        });
+
         it('sends a sysadmin creating a crossing program to the Board', async () => {
             const res = await create({ startAt: '2026-01-01', endAt: '2026-12-31', appliesToYear: 2025 });
             expect(res.status).toBe(403);

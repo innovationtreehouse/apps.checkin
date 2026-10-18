@@ -216,6 +216,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
             return apiError("Invalid start or end date", 400);
         }
+        if (startDate > endDate) {
+            return apiError("Start date must be on or before the end date", 400);
+        }
         const year = await resolveProgramYear({
             startAt: startDate,
             endAt: endDate,

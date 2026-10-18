@@ -84,7 +84,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   // Form States
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
-  const [appliesToYear, setAppliesToYear] = useState<number | null>(null);
+  const [yearChoice, setYearChoice] = useState<number | null>(null);
   const [offSaleAt, setOffSaleAt] = useState("");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
@@ -121,7 +121,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         setProgram(data);
         setStartAt(data.startAt.split('T')[0]);
         setEndAt(data.endAt.split('T')[0]);
-        setAppliesToYear(data.appliesToYear);
+        setYearChoice(null);
         setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
         setMinAge(data.minAge !== null ? String(data.minAge) : "");
         setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
@@ -165,15 +165,21 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   }, []);
 
   const canStateYear = !!sessionUser?.isBoardMember;
-  const years = formYearsTouched(useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember)), startAt, endAt);
+  const boundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const years = formYearsTouched(boundary, startAt, endAt);
   const crossing = years.length > 1;
+  // A stored year counts as stated only when the saved dates cross; a derived year is never pre-selected.
+  const statedYear = program && formYearsTouched(boundary, program.startAt.split('T')[0], program.endAt.split('T')[0]).length > 1
+    ? program.appliesToYear : null;
+  const candidateYear = yearChoice ?? statedYear;
+  const effectiveYear = candidateYear != null && years.includes(candidateYear) ? candidateYear : null;
 
   const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
     const statesYear = canStateYear && crossing;
     const paidPlaces = program?.participants.filter((p) => p.status === 'ACTIVE').length ?? 0;
-    if (statesYear && program?.appliesToYear != null && appliesToYear != null && appliesToYear !== program.appliesToYear && paidPlaces > 0
-      && !window.confirm(`${paidPlaces} paid place${paidPlaces === 1 ? ' was' : 's were'} priced against ${membershipYearLabel(program.appliesToYear)}. Changing the membership year to ${membershipYearLabel(appliesToYear)} does not reprice them; the Board settles any difference with those families. Save anyway?`)) {
+    if (statesYear && statedYear != null && effectiveYear != null && effectiveYear !== statedYear && paidPlaces > 0
+      && !window.confirm(`${paidPlaces} paid place${paidPlaces === 1 ? ' was' : 's were'} priced against ${membershipYearLabel(statedYear)}. Changing the membership year to ${membershipYearLabel(effectiveYear)} does not reprice them; the Board settles any difference with those families. Save anyway?`)) {
       return;
     }
     setSaving(true);
@@ -185,7 +191,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
-          ...(statesYear && { appliesToYear }),
+          ...(statesYear && { appliesToYear: effectiveYear }),
           // Sent only when edited, so an untouched date keeps following the start date.
           ...(offSaleAt !== (program?.offSaleAt?.split('T')[0] ?? "") && { offSaleAt: offSaleAt || null }),
           minAge: minAge ? parseInt(minAge) : null,
@@ -444,7 +450,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   <NumberInput label="Maximum Age (Optional)" value={maxAge} onChange={v => setMaxAge(String(v))} min={0} max={25} placeholder="e.g. 18" />
                 </SimpleGrid>
 
-                <ProgramYearField years={years} value={appliesToYear} onChange={setAppliesToYear} canEdit={canStateYear} />
+                <ProgramYearField years={years} value={effectiveYear} onChange={setYearChoice} canEdit={canStateYear} />
 
                 <div>
                   <NumberInput label="Max Participants (Optional)" value={maxParticipants} onChange={v => setMaxParticipants(String(v))} min={1} placeholder="Leave blank for unlimited" description="Sets the inventory limit on Shopify. Leave blank for unlimited enrollment." />
@@ -498,7 +504,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
                 {saveError && <Alert color="red" variant="light">{saveError}</Alert>}
                 <Group gap="sm">
-                  <Button type="submit" disabled={saving || !leadMentorIdInput} loading={saving}>
+                  <Button type="submit" disabled={saving || !leadMentorIdInput || (canStateYear && crossing && effectiveYear == null)} loading={saving}>
                     Save Settings
                   </Button>
                 </Group>

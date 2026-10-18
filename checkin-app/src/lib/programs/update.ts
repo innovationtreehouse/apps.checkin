@@ -70,14 +70,16 @@ export type ProgramYearResult =
 /**
  * The membership year a program with these dates runs in. Derived when the
  * dates fall inside one year; otherwise the supplied year, or a still-valid
- * current one, must be one the dates touch. Only a Board member supplies or
- * changes a stated year, because it is copied from the Board's budget approval.
+ * stated one, must be one the dates touch. A current year counts as stated only
+ * when the current dates already crossed; a derived year is never carried into
+ * a crossing. Only a Board member supplies or changes a stated year, because it
+ * is copied from the Board's budget approval.
  */
 export async function resolveProgramYear(input: {
     startAt: Date;
     endAt: Date;
     supplied: unknown;
-    current: number | null;
+    current: { appliesToYear: number | null; startAt: Date; endAt: Date } | null;
     isBoardMember: boolean;
 }): Promise<ProgramYearResult> {
     const { startAt, endAt, supplied, current, isBoardMember } = input;
@@ -93,15 +95,18 @@ export async function resolveProgramYear(input: {
     if (years.length === 1) return { ok: true, appliesToYear: years[0] };
 
     const askTheBoard = refuse("forbidden", "These dates cross the membership year boundary, so the program's membership year comes from its budget approval. Ask the Board to set it.");
+    const currentYear = current?.appliesToYear;
+    const keptYear = current && currentYear != null && years.includes(currentYear)
+        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? currentYear : null;
     const stated = supplied as number | null | undefined;
-    if (stated != null && stated !== current) {
+    if (stated != null && stated !== keptYear) {
         if (!isBoardMember) return askTheBoard;
         if (!years.includes(stated)) {
             return refuse("invalid", `The membership year must be one these dates touch: ${years.map(membershipYearLabel).join(" or ")}.`);
         }
         return { ok: true, appliesToYear: stated };
     }
-    if (current != null && years.includes(current)) return { ok: true, appliesToYear: current };
+    if (keptYear != null) return { ok: true, appliesToYear: keptYear };
     if (!isBoardMember) return askTheBoard;
     return refuse("invalid", `These dates cross the membership year boundary. Choose the membership year from the budget approval: ${years.map(membershipYearLabel).join(" or ")}.`);
 }
@@ -302,7 +307,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             startAt: effStartAt,
             endAt: effEndAt,
             supplied: patch.appliesToYear,
-            current: currentProgram.appliesToYear,
+            current: currentProgram,
             isBoardMember: actor.isBoardMember,
         });
         if (!year.ok) return year;

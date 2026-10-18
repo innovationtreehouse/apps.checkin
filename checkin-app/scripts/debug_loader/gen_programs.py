@@ -44,6 +44,8 @@ def explicit(dates):
 
 
 # --- program specs ----------------------------------------------------------
+# Each program stays inside one membership year (boundary 1 September): a program
+# that crosses it needs a Board-stated year, which this sysadmin loader cannot give.
 # (title, leadMentorName, session-plan, startTime, endTime, minAge, maxAge,
 #  memberPrice, nonMemberPrice)
 Y = 2026
@@ -53,9 +55,9 @@ SPECS = [
     ("3D Printing Studio",     "Tool Certifier",  weekly(date(Y, 7, 8),  [WED], 8),        "15:00", "17:00", 12, 18, None,    None),
     ("Robotics Club",          "Keyholder One",   weekly(date(Y, 7, 14), [TUE, THU], 6),   "16:00", "18:00", 11, 17, "20.00", "30.00"),
     ("Summer Art Camp",        "Parent Family",   explicit([date(Y, 7, 18), date(Y, 7, 19), date(Y, 7, 25), date(Y, 7, 26)]), "10:00", "14:00", 8, 14, "15.00", "25.00"),
-    ("Leatherworking",         "Keyholder Two",   weekly(date(Y, 8, 6),  [THU], 5),        "18:00", "20:00", 15, None, "30.00", "45.00"),
-    ("Electronics 101",        "BG Reviewer",     weekly(date(Y, 8, 3),  [MON], 7),        "16:30", "18:30", 12, 18, None,    None),
-    ("Sewing & Textiles",      "Parent2 Family",  explicit([date(Y, 8, 7), date(Y, 8, 21), date(Y, 9, 4)]),                     "13:00", "15:00", 10, 16, "18.00", "28.00"),
+    ("Leatherworking",         "Keyholder Two",   weekly(date(Y, 8, 6),  [THU], 4),        "18:00", "20:00", 15, None, "30.00", "45.00"),
+    ("Electronics 101",        "BG Reviewer",     weekly(date(Y, 7, 13), [MON], 7),        "16:30", "18:30", 12, 18, None,    None),
+    ("Sewing & Textiles",      "Parent2 Family",  explicit([date(Y, 8, 7), date(Y, 8, 14), date(Y, 8, 21)]),                     "13:00", "15:00", 10, 16, "18.00", "28.00"),
     ("CNC Fundamentals",       "Parent Family2",  weekly(date(Y, 9, 2),  [WED], 6),        "17:00", "19:00", 16, None, "40.00", "60.00"),
     ("Blacksmithing",          "Board Member",    weekly(date(Y, 9, 5),  [SAT], 5),        "09:00", "12:00", 16, None, "50.00", "75.00"),
     ("Screen Printing",        "Certified Adult", weekly(date(Y, 9, 14), [MON, WED], 8),   "16:00", "18:00", 13, 18, "22.00", "32.00"),
