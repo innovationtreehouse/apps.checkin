@@ -123,10 +123,20 @@ async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedPro
  * membership order (so a program pass may still claim it).
  */
 export async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> {
-    // Already recorded on a process? Then it is not a missed payment.
+    // Already recorded on a process, or refunded off one? Then it is not a missed payment.
+    // A re-payment overwrites the process's shopifyOrderId, so a refunded order is found by its refund's audit row.
     if (order.legacyId) {
         const known = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { id: true } });
         if (known) return true;
+        const refunded = await prisma.auditLog.findFirst({
+            where: {
+                tableName: "OrgMembershipProcess",
+                oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
+                newData: { path: ["refundRecorded"], equals: true },
+            },
+            select: { id: true },
+        });
+        if (refunded) return true;
     }
 
     const proc = await resolveMembershipProcess(order);
