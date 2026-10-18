@@ -181,7 +181,7 @@ async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: Pay
  * One payout's turn through the outbox: match before create via findOrCreate, then record
  * the outcome. found → link (POSTED when it carries the payout's key); created → POSTED;
  * ambiguous → finance's queue; failed → POST_FAILED; on or before the line, covered by the
- * QuickBooks books closing date (or refused as fault 6200), or with no line → left as it is.
+ * QuickBooks books closing date (or refused as fault 6210), or with no line → left as it is.
  * Returns null when another holder has the lock and `wait` is off. `problem` and `sales` are
  * the drain's own reads, read here when absent.
  */

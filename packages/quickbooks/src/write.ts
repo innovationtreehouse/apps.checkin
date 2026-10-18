@@ -21,13 +21,13 @@ export type FindOrCreateResult =
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
   | { kind: "failed"; error: string }
-  /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6200): never created. */
+  /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
   | { kind: "needs-finance" };
 
 /** QuickBooks' fault for a transaction dated in a closed period. */
-const CLOSED_PERIOD_FAULT = "6200";
+const CLOSED_PERIOD_FAULT = "6210";
 
 async function candidates(client: QuickBooksClient, write: TxnWrite, from: string, to: string): Promise<MatchCandidate[]> {
   switch (write.entity) {

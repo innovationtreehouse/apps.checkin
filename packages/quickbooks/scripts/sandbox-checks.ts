@@ -47,17 +47,17 @@ const closeDate = await client.bookCloseDate();
 const today = new Date().toISOString().slice(0, 10);
 
 if (closeDate === null) {
-  report(true, "books not closed: bookCloseDate() reads null; close the books and run again for the 6200 check");
+  report(true, "books not closed: bookCloseDate() reads null; close the books and run again for the 6210 check");
 } else {
   report(closeDate < today, `BookCloseDate reads as ${closeDate}, before ${today}`);
 
-  // 2. A create dated in the closed period is refused with fault 6200.
+  // 2. A create dated in the closed period is refused with fault 6210.
   try {
     const { Id } = await client[CREATE](deposit(closeDate), qbKey("sandbox", `closed-${Date.now()}`));
     report(false, `create dated ${closeDate} was accepted as Deposit ${Id}; is the closing mode "Required password"?`);
   } catch (e) {
     const codes = e instanceof QboRequestError ? e.codes : [];
-    report(codes.includes("6200"), `create dated ${closeDate} refused with codes ${codes.join(",") || "none"} (${String(e)})`);
+    report(codes.includes("6210"), `create dated ${closeDate} refused with codes ${codes.join(",") || "none"} (${String(e)})`);
   }
 }
 

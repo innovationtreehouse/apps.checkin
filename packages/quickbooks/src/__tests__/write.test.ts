@@ -388,11 +388,11 @@ describe("findOrCreate", () => {
     }
   });
 
-  it("a create QuickBooks refuses with fault 6200 is closed, not failed", async () => {
+  it("a create QuickBooks refuses with fault 6210 is closed, not failed", async () => {
     fetchMock
       .mockResolvedValueOnce(rows("Deposit", []))
       .mockResolvedValueOnce(prefs())
-      .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6200", Message: "closed period" }] } }, 400));
+      .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6210", Message: "closed period" }] } }, 400));
     await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "closed" });
   });
 

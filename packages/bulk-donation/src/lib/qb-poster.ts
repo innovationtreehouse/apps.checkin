@@ -283,7 +283,7 @@ function withClaim(id: number, claim: Claim, fn: (tx: Tx) => Promise<PostOutcome
 /**
  * One disbursement's turn. found by amount → MATCHED (moves the takeover line); found by key or
  * created → CREATED; ambiguous → AMBIGUOUS; on or before the line, or covered by the QuickBooks
- * books closing date (read before the create, or refused as fault 6200) → BEFORE_LINE; no line →
+ * books closing date (read before the create, or refused as fault 6210) → BEFORE_LINE; no line →
  * left as it is; a failure → POST_FAILED, then NEEDS_FINANCE after MAX_POST_ATTEMPTS. Over the per-run cents
  * cap it is matched only, and NEEDS_FINANCE when nothing matches.
  *

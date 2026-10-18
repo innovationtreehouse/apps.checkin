@@ -65,7 +65,7 @@ class FakeQbo {
       return json({ QueryResponse: list.length ? { Deposit: list } : {} });
     }
     if (!url.pathname.endsWith("/deposit")) throw new Error(`unexpected write ${url.pathname}`);
-    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6200" }] } }, 400);
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const body = JSON.parse(String(init?.body)) as PostedDeposit;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);

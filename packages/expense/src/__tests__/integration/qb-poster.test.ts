@@ -55,7 +55,7 @@ class FakeQbo {
       const list = (m[1] === "Purchase" ? this.purchases : this.bills).filter((t) => t.TxnDate >= m[2] && t.TxnDate <= m[3]);
       return json({ QueryResponse: list.length ? { [m[1]]: list } : {} });
     }
-    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6200" }] } }, 400);
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const entity = url.pathname.endsWith("/bill") ? "Bill" : "Purchase";
     const body = JSON.parse(String(init?.body)) as PostedTxn;
     this.posts.push({ entity, key: url.searchParams.get("requestid") ?? "", body });

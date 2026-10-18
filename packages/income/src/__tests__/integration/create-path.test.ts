@@ -54,7 +54,7 @@ class FakeQbo {
     }
     const body = JSON.parse(String(init?.body)) as PostedDeposit;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
-    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6200" }] } }, 400);
+    if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     if (this.mode === "reject" || this.rejectKeys.has(url.searchParams.get("requestid") ?? "")) return json({ Fault: { Error: [{ code: "6000" }] } }, 400);
     const Id = String(this.nextId++);
     const cents = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0);

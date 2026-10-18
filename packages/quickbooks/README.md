@@ -61,7 +61,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   before `closedThrough`), `needs-finance` (not found and `mayCreate` false), `created`, or `failed`
   (any error; nothing is retried here). Before a create it re-reads `bookCloseDate()` and gates on the
   later of that and `closedThrough`; a failed read is `failed`, and a create QuickBooks refuses with
-  fault 6200 (closed period) is `closed`. The created `TxnDate` must sit inside the window, so a crash
+  fault 6210 (closed period) is `closed`. The created `TxnDate` must sit inside the window, so a crash
   after QBO accepts is found by key next run.
 - A failed request throws `QboRequestError`, whose `codes` are the fault's numeric codes.
 - `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
@@ -149,7 +149,7 @@ amount-anchored vendor join.
 
 `npm run sandbox-checks -w @checkin/quickbooks` confirms, against the sandbox only, what the gate
 relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
-and as the date once closed, a create dated in a closed period fails with fault 6200 in "Required
+and as the date once closed, a create dated in a closed period fails with fault 6210 in "Required
 password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
 first with the sandbox books open, then after closing them (Settings → Account and settings →
 Advanced → Close the books) with a date before today and a password. It needs the consent token

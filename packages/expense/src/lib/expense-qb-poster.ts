@@ -233,7 +233,7 @@ export type PostOptions = {
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; on or before the takeover line, or
- * covered by the QuickBooks books closing date (read before the create, or refused as fault 6200) →
+ * covered by the QuickBooks books closing date (read before the create, or refused as fault 6210) →
  * BEFORE_LINE; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by
  * the drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
  * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line
