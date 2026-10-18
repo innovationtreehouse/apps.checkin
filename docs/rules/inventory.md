@@ -82,8 +82,7 @@ How the pieces are built is described in
   inventory-log entry together with the change, naming who made it (or no one,
   for an automatic change); neither happens without the other. Removing an org
   item logs a copy of the removed row, so the count can be recovered. A change
-  must not add a stock write that skips the log.
-  `[Decision — *Policy: Records Policy, Art. VI §VI.4.J*]`
+  must not add a stock write that skips the log. `[Decision]`
 
 - A receive-queue line is never deleted. Cancelling it records who cancelled it
   and when, and logs it; a cancelled line can't be fulfilled. A line is
