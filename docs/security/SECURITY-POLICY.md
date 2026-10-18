@@ -113,7 +113,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 Use `outboundCall` from `@/security/outbound`:
 
 ```ts
-// src/lib/shopify.ts
+// src/lib/shopify/products.ts
 import { outboundCall } from '@/security/outbound';
 export async function createShopifyOrder(participant, program) {
     return outboundCall('shopify.order.create',

@@ -580,7 +580,7 @@ defineRoute({
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
-// be confirmed (lib/shopify.ts parks it in Program.shopifyStockUnconfirmed), and
+// be confirmed (lib/shopify/stock.ts parks it in Program.shopifyStockUnconfirmed), and
 // the per-program settle action ("Shopify has it" / "doesn't have it"). Board
 // only: no sysadmin, no finance. Rows are computed, all `internal`.
 defineRoute({
