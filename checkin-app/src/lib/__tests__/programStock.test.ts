@@ -570,4 +570,22 @@ describe('parked (unconfirmed) stock writes', () => {
         expect(await settleUnconfirmedStock(42, 1, 'notLanded', 9)).toEqual({ refused: 'stale' });
         expect(after()).toEqual(clean);
     });
+
+    it('a re-arm that parks and clears a write in the same push reports success and asks the board for nothing', async () => {
+        setRow({ shopifyStockPendingWrite: pendingWrite({ sentAt: DAY_AGO() }) });
+        shopify({ ProgramStockRead: [readReply(3), readReply(4)], ProgramStockAdjust: [adjustOk] });
+
+        expect(await setProgramInventory(program, async () => 4, 're-arm')).toBe(true);
+
+        expect(after()).toEqual(clean);
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('the previous release\'s amount settles before a newer parked write of the same amount', async () => {
+        setRow({ shopifyStockUnconfirmed: -1 });
+        await park(pendingWrite({ key: 'program-42-new', sentAt: DAY_AGO() }));
+
+        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        expect(after()).toMatchObject({ unconfirmed: 0, parked: [['program-42-new', -1]] });
+    });
 });

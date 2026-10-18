@@ -865,6 +865,7 @@ async function drainStock(
                     console.log(`[SHOPIFY] Program ${programId} stock set from scratch (${reason}): cleared parked writes ${parkedWrites(row.shopifyStockParked).map((w) => w.key).join(", ")}`);
                 }
                 await bookStock(programId, token, { shopifyStockCarry: (await target()) - available, shopifyStockParked: null, shopifyStockUnconfirmed: 0 });
+                result.expiredKey = null;
                 target = undefined;
                 continue;
             }
@@ -1203,9 +1204,10 @@ export async function settleUnconfirmedStock(
                 where: { id: programId },
                 select: { shopifyStockParked: true, shopifyStockUnconfirmed: true },
             });
+            // The previous release's amount is listed first (it is the oldest), so it settles first.
             const parked = parkedWrites(before.shopifyStockParked);
-            const index = parked.findIndex((w) => w.delta === expected);
-            const legacy = index === -1 && before.shopifyStockUnconfirmed === expected;
+            const legacy = before.shopifyStockUnconfirmed === expected;
+            const index = legacy ? -1 : parked.findIndex((w) => w.delta === expected);
             if (index === -1 && !legacy) return null;
             const settledKey = legacy ? null : parked[index].key;
             const bookkeeping: Prisma.ProgramUpdateManyMutationInput = legacy

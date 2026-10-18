@@ -46,11 +46,14 @@ Every app-initiated stock change goes through ONE writer, `adjustProgramInventor
   (`orders/paid` activation) record the delta and push in the background, staying inside
   Shopify's 5 s webhook timeout.
 - **Only a key past its lifetime is unconfirmable.** Shopify keeps a key for 24 h. A write
-  still pending after 23 h is not resent, since it could apply twice. Its delta moves to
-  `shopifyStockUnconfirmed`, the board is emailed, and a board member checks Shopify and
-  settles it on Revenue Ops > Unconfirmed Shopify stock: "Shopify has it" clears it with no
-  Shopify call; "Shopify doesn't have it" moves it back into the carry for the next push.
-  Each settle is audited and refused if the amount changed since the page loaded.
+  still pending after 23 h is not resent, since it could apply twice. It is parked as its
+  own entry in `shopifyStockParked`, so parked writes of opposite sign never cancel; the
+  board is emailed, and a board member checks Shopify and settles each parked write on
+  Revenue Ops > Unconfirmed Shopify stock: "Shopify has it" clears it with no Shopify call;
+  "Shopify doesn't have it" moves it back into the carry for the next push. Each settle is
+  audited and refused if that write is no longer parked since the page loaded. Setting the
+  stock from scratch (re-arm, initial stock) clears parked writes, since Shopify's current
+  stock already shows whether each one landed.
 - **Never below 0.** A negative delta only takes stock down to 0, so an over-capacity
   program is held at 0 and the shortfall stays owed as a negative carry. Later positive deltas pay it
   down before any seat goes back on sale. The board is alerted when the shortfall grows. A
