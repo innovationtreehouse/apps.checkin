@@ -57,6 +57,21 @@ describeDb("S5 remap", () => {
     expect(await cursor()).toBe(5);
   });
 
+  it("leaves a recognized line that still carries the provisional GTIN alone", async () => {
+    const r = await makeReceipt({ state: "pending_review" });
+    const ls = await makeLineStatus(r.id, {
+      recognitionStatus: "recognized",
+      assignedGtin13: "0000000000024",
+      provisionalItemGtin13: PROV,
+    });
+    await orgEventConsumer.onOrgEvents([approved(5)]);
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
+      recognitionStatus: "recognized",
+      assignedGtin13: "0000000000024",
+    });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
+  });
+
   it("provisional_mapped_to_existing remaps the same way", async () => {
     const ls = await provisionalLine("pending_review");
     await orgEventConsumer.onOrgEvents([

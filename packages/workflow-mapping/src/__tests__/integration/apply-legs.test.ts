@@ -68,7 +68,7 @@ describeDb("per-leg applied state", () => {
       {
         appliedLegs: ["inventory"],
         before: expect.objectContaining({ recognitionStatus: "recognized", assignedGtin13: "0000000000017" }),
-        after: expect.objectContaining({ recognitionStatus: "non_inventory", assignedGtin13: "0000000000017" }),
+        after: expect.objectContaining({ recognitionStatus: "non_inventory", assignedGtin13: null }),
       },
     ]);
     const late = await db.workflowAuditLog.findFirstOrThrow({ where: { eventType: "line_edited_late" } });
