@@ -4,7 +4,8 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
-import { changeProgramStock } from "@/lib/shopify/stock";
+import { changeProgramStockWith } from "@/lib/shopify/stock";
+import type { TxClient } from "@/lib/db-client";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
@@ -115,58 +116,56 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // and reopen a resolved scholarship.
         // The request flag's false→true flip is the transition, claimed by one CAS so a
         // double-submit notifies once: the loser sees the flag already set and matches 0.
-        const flipped = await prisma.programParticipant.updateMany({
-            // From PENDING_UNPAID or PENDING_HELD_DENIED; their status clause is shared.
-            where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), isPaymentPlanRequested: false },
-            data: { isPaymentPlanRequested: true },
-        });
-        const holdResult = await prisma.programParticipant.updateMany({
-            // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
-            where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
-            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
-        });
-        let reCount = 0;
-        if (holdResult.count === 0) {
-            const re = await prisma.programParticipant.updateMany({
-                // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
-                where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
-                data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
+        // The flip, the hold stamp and the -1 commit in one transaction: a Board approval
+        // never sees the request flag without its hold, and the -1 is owed the moment the hold is.
+        const writes = async (tx: TxClient, stamp: boolean) => {
+            const flipped = await tx.programParticipant.updateMany({
+                // From PENDING_UNPAID or PENDING_HELD_DENIED; their status clause is shared.
+                where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), isPaymentPlanRequested: false },
+                data: { isPaymentPlanRequested: true },
             });
-            reCount = re.count;
+            if (!stamp) return { flipped: flipped.count, held: 0, re: 0 };
+            const holdResult = await tx.programParticipant.updateMany({
+                // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
+                where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
+                data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
+            });
+            let re = 0;
+            if (holdResult.count === 0) {
+                re = (await tx.programParticipant.updateMany({
+                    // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
+                    where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
+                    data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
+                })).count;
+            }
+            return { flipped: flipped.count, held: holdResult.count, re };
+        };
+
+        let outcome: { flipped: number; held: number; re: number };
+        let warning: string | undefined;
+        try {
+            outcome = (await changeProgramStockWith(participant.program, "scholarship-hold", async (tx) => {
+                const result = await writes(tx, true);
+                return { result, delta: result.held > 0 ? -1 : 0 };
+            }, { inRequest: true })).result;
+        } catch {
+            // The -1 could not be recorded (the stock writer has alerted the board), so
+            // neither was the hold. The request stands without one: PENDING_HOLD_FAILED { status: PENDING, inventoryHeldAt: null,
+            // isPaymentPlanRequested: true, paymentPlanDeniedAt: null } — a legitimate
+            // state, NOT a bug: the board finishes placing the hold (Shopify Hold
+            // Reconciliation queue → Confirm manual hold), and the 7-day non-payment
+            // sweep (which filters isPaymentPlanRequested:false) never auto-kicks it.
+            outcome = await writes(prisma, false);
+            // Applicant-facing: never tell them to retry — the request is
+            // recorded and the board finalizes it. Nothing is required of them.
+            warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
         }
         // fromWhere only narrows on `status` (PENDING) — both branches' where also match an
         // already-PENDING_HELD no-op re-POST, so a bare count>0 check would over-notify. Key
         // on the flip instead: true for exactly the two real transitions (fresh hold, re-request
         // after denial), false for both non-transitions (no-op re-POST, hold-failed retry whose
         // request was already recorded) and for the losing half of a double-submit.
-        const transitioned = flipped.count > 0 && (holdResult.count > 0 || reCount > 0);
-
-        let warning: string | undefined;
-        if (holdResult.count > 0 && participant.program) {
-            // Recorded = owed in the stock carry, so the -1 lands later even if this
-            // push failed: the hold stands. Only an unrecorded -1 rolls it back.
-            const stock = await changeProgramStock(participant.program, -1, "scholarship-hold", { inRequest: true });
-            if (!stock.recorded) {
-                // The seat was never taken out of Shopify — leaving inventoryHeldAt
-                // set would be a phantom hold whose later release (+1) credits a
-                // seat that was never removed (oversell). Roll the stamp back to
-                // null. The row now sits at PENDING_HOLD_FAILED { status: PENDING,
-                // inventoryHeldAt: null, isPaymentPlanRequested: true,
-                // paymentPlanDeniedAt: null } — a legitimate state, NOT a bug: the
-                // applicant's request STANDS and it is the board's job to finish
-                // placing the hold (Shopify Hold Reconciliation queue → Confirm
-                // manual hold). isPaymentPlanRequested stays true, so the 7-day
-                // non-payment sweep (which filters isPaymentPlanRequested:false)
-                // never auto-kicks it. The stock writer has already emailed the board.
-                await prisma.programParticipant.updateMany({
-                    where: { programId, personId: participantId, inventoryHeldAt: { not: null } },
-                    data: { inventoryHeldAt: null },
-                });
-                // Applicant-facing: never tell them to retry — the request is
-                // recorded and the board finalizes it. Nothing is required of them.
-                warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
-            }
-        }
+        const transitioned = outcome.flipped > 0 && (outcome.held > 0 || outcome.re > 0 || warning !== undefined);
 
         if (transitioned) {
             const base = config.baseUrl();

@@ -99,7 +99,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // A new capped variant starts sold out (0 available); lift it to capacity less the seats already taken.
         const max = updated.maxParticipants;
         const stockOk = !publicCreated || max === null
-            || await setProgramInventory(updated, async () => max - await countStockTakenSeats(programId), "initial-stock");
+            || await setProgramInventory(updated, async (db) => max - await countStockTakenSeats(programId, db), "initial-stock");
 
         const warning = claimantFailed
             ? "Public product created, but the reserved-seat product failed; checkout uses the public variant until you retry."

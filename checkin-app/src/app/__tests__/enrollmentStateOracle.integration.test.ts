@@ -22,11 +22,11 @@ import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import prisma from '@/lib/prisma';
 import * as shopify from '@/lib/shopify/stock';
 
-// Wrap only changeProgramStock (call-through) so one test can force a −1 that
+// Wrap only changeProgramStockWith (call-through) so one test can force a −1 that
 // could not be recorded; SWC exports are non-configurable getters, so no spyOn.
 jest.mock('@/lib/shopify/stock', () => {
     const actual = jest.requireActual('@/lib/shopify/stock');
-    return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
+    return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
 });
 import { classify, validate, toRow, type EnrollmentStateName } from '@/lib/programs/enrollmentState';
 
@@ -142,8 +142,8 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T3f apply (−1 FAILS): PENDING_UNPAID → PENDING_HOLD_FAILED', async () => {
         const prev = process.env.CHECKIN_ENV;
         delete process.env.CHECKIN_ENV;
-        // Only a −1 the stock writer could not even record rolls the hold back.
-        jest.mocked(shopify.changeProgramStock).mockResolvedValueOnce({ recorded: false, landed: false });
+        // Only a −1 the stock writer could not even record leaves the request without a hold.
+        jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new Error('stock carry could not be written'));
         try {
             await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
             mockSession.mockResolvedValue({ user: { id: selfId } });

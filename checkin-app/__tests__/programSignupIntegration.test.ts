@@ -18,6 +18,7 @@ jest.mock('@/lib/notifications', () => ({
 
 jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
     syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('@/lib/shopify/products', () => ({

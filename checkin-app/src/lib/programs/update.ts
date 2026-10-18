@@ -325,7 +325,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         // Changes skipped while the sale was ended are lost to a relative push;
         // set the absolute stock instead: capacity minus seats Shopify counts
         // as taken. Not clamped: an overfilled program keeps its shortfall owed.
-        if (!(await setProgramInventory(updatedProgram, async () => newMax - await countStockTakenSeats(programId), "re-arm"))) {
+        if (!(await setProgramInventory(updatedProgram, async (db) => newMax - await countStockTakenSeats(programId, db), "re-arm"))) {
             warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
         }
     } else if (oldMax !== newMax && hasShopifyVariant) {

@@ -11,7 +11,7 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { householdLeadship } from "@/lib/household/leads";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
-import { changeProgramStock } from "@/lib/shopify/stock";
+import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { apiError } from "@/lib/api-response";
 
@@ -185,16 +185,17 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 
-        // A comp takes its seat out of Shopify stock (below). The stamp goes in with the
-        // row, so a crash before the -1 is recorded leaves a stamp, not a lost seat.
+        // A comp takes its seat out of Shopify stock: the stamp, the row and the -1 commit in
+        // one transaction, so a crash leaves all three or none. What a crash can still leave is
+        // a recorded -1 not yet pushed; it stays owed in the carry and the daily heal lands it.
         const takesSeatWithoutSale = isExternalAdmin && override && currentProgram.maxParticipants !== null;
-        const enrollment = await prisma.$transaction(async (tx) => {
+        const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "comp", async (tx) => {
             // Re-check capacity under a row lock right before insert, so
             // concurrent enrollers can't both pass a stale count and overfill.
             if (enforceLimits) {
                 await lockProgramAndCheckCapacity(tx, programId, 1, currentProgram.maxParticipants);
             }
-            return tx.programParticipant.create({
+            const row = await tx.programParticipant.create({
                 data: {
                     programId,
                     personId: participantId,
@@ -202,7 +203,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                     ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
                 }
             });
-        });
+            return { result: row, delta: takesSeatWithoutSale ? -1 : 0 };
+        }, { inRequest: true });
 
         await prisma.auditLog.create({
             data: {
@@ -221,7 +223,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // A board/sysadmin comp (external admin, confirmed override) seats a
         // participant WITHOUT a Shopify checkout, so unlike a normal PENDING
         // enrollment nothing ever fires Shopify's own sale-time -1. Reconcile it
-        // here: -1 on the pool, exactly like a paid sale and like scholarship
+        // above: -1 on the pool, exactly like a paid sale and like scholarship
         // apply (request-payment-plan -1). Without it the roster takes a seat
         // the storefront still shows as available (oversell).
         //
@@ -233,25 +235,12 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // withdrawing the comp puts that seat back on sale (+1, see
         // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
-        // changeProgramStock additionally no-ops when no variant is wired.
+        // the stock writer additionally no-ops when no variant is wired.
+        // Enrollment and its -1 are committed above; on a push failure keep both and warn
+        // (the stock writer has logged + emailed the board), mirroring the cap-edit and withdraw siblings.
         let warning: string | undefined;
-        if (takesSeatWithoutSale) {
-            // Enrollment already committed above; on Shopify failure keep it and
-            // warn (the stock writer has logged + emailed the board),
-            // mirroring the cap-edit and withdraw siblings.
-            const stock = await changeProgramStock(currentProgram, -1, "comp", { inRequest: true });
-            // Recorded = owed in the carry, so it lands later even if this push failed and
-            // the stamp stands. Only an unrecorded -1 rolls the stamp back, so a withdrawal
-            // does not put back a seat that was never taken out.
-            if (!stock.recorded) {
-                await prisma.programParticipant.updateMany({
-                    where: { programId, personId: participantId, seatTakenWithoutSaleAt: { not: null } },
-                    data: { seatTakenWithoutSaleAt: null },
-                });
-            }
-            if (!stock.landed) {
-                warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
-            }
+        if (takesSeatWithoutSale && !stockLanded) {
+            warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
         }
 
         const responseObj: Record<string, unknown> = { success: true, enrollment };
