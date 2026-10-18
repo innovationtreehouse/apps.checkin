@@ -296,6 +296,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         const body = await req.json();
         const { participantId } = body;
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
         if (!participantId) {
             return apiError("participantId is required", 400);
@@ -320,14 +321,13 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // mid-request cannot slip through.
         const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
         // Same for an adult removing themselves: a paid place is not the household's
-        // to withdraw — the board, a sysadmin or the program's leader removes it.
+        // to withdraw — only the Board removes it.
         // "Paid" is decided on the place, not the program's price today: a place with
         // an order or an approved scholarship/payment plan stays paid even if the Board
         // later zeroes the price. A free program's never-paid place stays theirs.
         // ponytail: places paid before shopifyOrderId existed carry no order, so on a
         // still-priced program only PENDING goes; a backfill would let this drop isFree.
         const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
-        const isSelfOnly = isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
         // Staff removing a place in their own household (or their own) has a
         // conflict of interest (Ethics Policy Art. III §III.5): they keep only the
         // household's own unpaid withdrawal, and someone outside removes a paid place.
@@ -337,7 +337,11 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             : null;
         const isConflictedStaff = isStaff
             && (isSelfRemoval || await hasHouseholdConflict(prisma, currentUserId, subject?.householdId));
-        const unpaidOnly = isHouseholdLeadPath || isSelfOnly || isConflictedStaff;
+        // Only the Board removes a paid place, with a written reason (Standards of
+        // Conduct §XVI.3). The Board role is read from the database, not the session.
+        const isBoardRemoval = isStaff && !isConflictedStaff
+            && !!(await prisma.person.findUnique({ where: { id: currentUserId }, select: { isBoardMember: true } }))?.isBoardMember;
+        const unpaidOnly = !(isBoardRemoval && reason);
         const unpaidWhere: Prisma.ProgramParticipantWhereInput = isHouseholdLeadPath || !isFree
             ? { status: 'PENDING' }
             : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null }] };
@@ -374,6 +378,12 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
                     if (isConflictedStaff) {
                         return apiError("This place is paid and is in your own household; someone outside your household must remove it.", 403);
                     }
+                    if (isBoardRemoval) {
+                        return apiError("A written reason is required to remove a paid place.", 400);
+                    }
+                    if (isStaff) {
+                        return apiError("Only the Board removes a paid place.", 403);
+                    }
                     return apiError(isSelfRemoval
                         ? "Your place is paid; ask the board to withdraw you."
                         : "This child has paid; ask the board to withdraw them.", 403);
@@ -390,7 +400,8 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
                 tableName: 'ProgramParticipant',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                oldData: enrollment
+                oldData: enrollment,
+                ...(reason && { newData: { reason } }),
             }
         });
 

@@ -543,6 +543,46 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
+  const pricedProgram = { ...programData, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: "v1" };
+
+  it("disables removing a paid place for a sysadmin who is not on the Board", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": pricedProgram });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    // Volunteer (201), paid active participant (101), then the pending one (102).
+    const removeButtons = screen.getAllByRole("button", { name: "Remove" });
+    expect(removeButtons[1]).toBeDisabled();
+    expect(removeButtons[1]).toHaveAttribute("title", "Only the Board removes a paid place");
+    expect(removeButtons[2]).toBeEnabled();
+  });
+
+  it("asks a Board member for a written reason before removing a paid place", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ "/api/programs/1": pricedProgram });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    const confirm = within(modal).getByRole("button", { name: "Remove" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: " Family moved away " } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Family moved away" }) }),
+      ),
+    );
+  });
+
   it("surfaces the server error when removing a pending participant is rejected", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = routedFetch([

@@ -494,6 +494,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               programId={id}
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
+              isBoardMember={!!user?.isBoardMember}
               fetchProgram={fetchProgram}
             />
           </Tabs.Panel>
