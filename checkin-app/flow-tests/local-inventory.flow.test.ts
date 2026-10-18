@@ -126,7 +126,10 @@ describe("local inventory — manager journey", () => {
     expect((created.json as OrgItemRow).location?.name).toBe(`Bin ${stamp}`);
     expect((await send(m, "POST", "/api/inventory/org-items", { gtin13: gtin })).status).toBe(409);
 
-    const edited = await send(m, "PUT", `/api/inventory/org-items/${gtin}`, { existingQuantity: 5, desiredQuantity: 8 });
+    // A count carries the quantity the manager loaded; a missing or stale one never writes.
+    expect((await send(m, "PUT", `/api/inventory/org-items/${gtin}`, { existingQuantity: 5 })).status).toBe(400);
+    expect((await send(m, "PUT", `/api/inventory/org-items/${gtin}`, { existingQuantity: 5, expectedQuantity: 1 })).status).toBe(409);
+    const edited = await send(m, "PUT", `/api/inventory/org-items/${gtin}`, { existingQuantity: 5, expectedQuantity: 2, desiredQuantity: 8 });
     expect(edited.json).toMatchObject({ existingQuantity: 5, desiredQuantity: 8, locationId: binId });
 
     const log = await api<LogRow[]>(m, "/api/inventory/inventory-log?limit=5");
