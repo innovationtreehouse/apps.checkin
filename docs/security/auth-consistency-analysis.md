@@ -36,7 +36,7 @@ future change must not break, and the live frontier. It retired and replaced the
 Model `Participant`→`Person` / field `participantId`→`personId` was renamed repo-wide by #708; this
 document uses the live names. Grep the PRs for archaeology — code is the record now.
 
-**Old § map** (code comments and UNFINISHED.md still cite the pre-cut section numbers): **§4** = the
+**Old § map** (code comments still cite the pre-cut section numbers): **§4** = the
 target rule (the thesis above) · **§5.1a** = the un-migrated-read / edge-include risk (drift-guard
 rule 3, invariant 1) · **§7** (incl. §7.3–§7.5.1) = the scope-bindings conversion + its corrections
 ("Why scope bindings exist" / "Default-deny returns" / "Opt-out model") · **§9** = the execution plan
