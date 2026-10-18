@@ -52,6 +52,11 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
           });
 
     if (existing) {
+        if (existing.status !== "RESOLVED" && severity === "CRITICAL" && existing.severity !== "CRITICAL") {
+            await prisma.paymentException.update({ where: { id: existing.id }, data: { severity } });
+            await notifyBoardPaymentException(kind, severity, existing.id);
+            return;
+        }
         if (existing.status === "RESOLVED") {
             await prisma.paymentException.update({
                 where: { id: existing.id },
@@ -84,19 +89,27 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
 /** Problems that mean the order's money went back to the payer. */
 const REVERSAL_KINDS: PaymentExceptionKind[] = ["REFUND", "CANCELLED", "CHARGEBACK", "REVERSED_BEFORE_ACTIVATION"];
 
-/** Audit-log ledger of reversals that arrived before their order matched anything. */
-const UNMATCHED_REVERSAL_TABLE = "ShopifyOrderReversal";
+/** Audit-log ledger of every reversal seen on an order. The Board cannot resolve it away. */
+const REVERSAL_LEDGER_TABLE = "ShopifyOrderReversal";
+
+const ledgerRow = (db: DbClient, shopifyOrderId: string) =>
+    db.auditLog.findFirst({
+        where: { tableName: REVERSAL_LEDGER_TABLE, newData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
+        select: { id: true },
+    });
 
 /**
- * Remember a refund, cancel or dispute whose order matches no application or
- * enrollment yet, so a late orders/paid for that order is raised, not applied.
+ * Remember that an order was refunded, cancelled or disputed, once per order, so
+ * no later payment or clearance activates a membership on it.
  */
-export async function recordUnmatchedReversal(shopifyOrderId: string, kind: PaymentExceptionKind): Promise<void> {
+export async function recordReversal(shopifyOrderId: string, kind: PaymentExceptionKind): Promise<void> {
+    // ponytail: check-then-insert without a lock; a concurrent redelivery can add a second row, which the gate ignores.
+    if (await ledgerRow(prisma, shopifyOrderId)) return;
     await prisma.auditLog.create({
         data: {
             ...systemActor("webhook:shopify-refund"),
             action: "CREATE",
-            tableName: UNMATCHED_REVERSAL_TABLE,
+            tableName: REVERSAL_LEDGER_TABLE,
             affectedEntityId: 0,
             newData: { shopifyOrderId, kind },
         },
@@ -104,19 +117,15 @@ export async function recordUnmatchedReversal(shopifyOrderId: string, kind: Paym
 }
 
 /**
- * True when the order's money went back: an open reversal problem on it, or a
- * reversal recorded before the order matched anything. A refunded order never
- * activates a membership; the Board decides instead.
+ * True when the order's money went back: a reversal in the ledger, or an
+ * unresolved reversal problem on it. A refunded order never activates a
+ * membership; the Board decides instead.
  */
 export async function isOrderReversed(db: DbClient, shopifyOrderId: string): Promise<boolean> {
+    if (await ledgerRow(db, shopifyOrderId)) return true;
     const open = await db.paymentException.findFirst({
         where: { shopifyOrderId, kind: { in: REVERSAL_KINDS }, status: { not: "RESOLVED" } },
         select: { id: true },
     });
-    if (open) return true;
-    const early = await db.auditLog.findFirst({
-        where: { tableName: UNMATCHED_REVERSAL_TABLE, newData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
-        select: { id: true },
-    });
-    return !!early;
+    return !!open;
 }

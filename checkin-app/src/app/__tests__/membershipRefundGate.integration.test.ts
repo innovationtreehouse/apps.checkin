@@ -7,7 +7,7 @@
  * (payment-first) and a second approval after the refund (check-last).
  */
 
-import { attest } from '@/lib/membership/review';
+import { attest, overrideBlocked } from '@/lib/membership/review';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { raiseMembershipPaymentOutcome } from '@/lib/finance/reconcile/membership';
@@ -30,7 +30,7 @@ async function makePerson(label: string, extra: { isBackgroundCheckReviewer?: bo
 }
 
 /** A household with one lead, a NONE membership and an INITIAL process in the given state. */
-async function makeApplicant(data: { status: 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE'; paid?: boolean; bgCleared?: boolean; shopifyOrderId?: string }) {
+async function makeApplicant(data: { status: 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED'; paid?: boolean; bgCleared?: boolean; shopifyOrderId?: string }) {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG} ${Math.random()}` } });
     const lead = await prisma.person.create({ data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead', householdId: hh.id } });
     await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
@@ -71,13 +71,13 @@ async function wipe() {
 }
 
 describe('a refunded order never activates', () => {
-    let revA: number, revB: number;
+    let revA: number, revB: number, board: number;
 
     beforeAll(async () => {
         await wipe();
         revA = await makePerson('RevA', { isBackgroundCheckReviewer: true });
         revB = await makePerson('RevB', { isBackgroundCheckReviewer: true });
-        await makePerson('Board', { isBoardMember: true });
+        board = await makePerson('Board', { isBoardMember: true });
     });
     beforeEach(() => (sendEmail as jest.Mock).mockClear());
     afterAll(async () => {
@@ -123,6 +123,42 @@ describe('a refunded order never activates', () => {
         expect(proc?.bgClearedAt).toBeTruthy();
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
         expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId } })).toBe(1);
+    });
+
+    it('path B: the Board resolving the refund flag before clearance still does not activate', async () => {
+        const oid = orderId('Bres');
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
+
+        await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`);
+        await prisma.paymentException.updateMany({
+            where: { kind: 'REFUND', processId },
+            data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedById: board, resolutionNote: 'noted' },
+        });
+        (sendEmail as jest.Mock).mockClear();
+
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+        expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+        expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+        expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId, severity: 'CRITICAL' } })).toBe(1);
+        // Neither the welcome nor the payment-open notice goes to the family.
+        expect(emailed('Welcome to the Treehouse')).toBe(false);
+        expect(emailed('you can now pay your membership dues')).toBe(false);
+    });
+
+    it('a board override approve on a paid, blocked, refunded application holds instead of activating', async () => {
+        const oid = orderId('Blk');
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'BLOCKED', paid: true, shopifyOrderId: oid });
+
+        await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`);
+        await prisma.paymentException.updateMany({ where: { kind: 'REFUND', processId }, data: { status: 'RESOLVED', resolvedAt: new Date() } });
+
+        await overrideBlocked(processId, board, 'approve', [leadId]);
+
+        expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+        expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+        expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId, severity: 'CRITICAL' } })).toBe(1);
     });
 
     it('an unrefunded order still activates, on either path', async () => {

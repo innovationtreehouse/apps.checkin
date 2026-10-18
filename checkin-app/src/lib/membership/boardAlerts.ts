@@ -29,7 +29,7 @@ const EXCEPTION_BLURB: Record<string, string> = {
     PAID_WHILE_BLOCKED: "a household paid but its application is blocked at background check — a refund may be needed",
     NO_ITEM: "a paid order did not contain the membership/program product",
     UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, or a payment after the application was closed or certified)",
-    REFUND: "an active membership/enrollment's order was refunded",
+    REFUND: "a membership/enrollment's order was refunded (an application still waiting on its check is held, not activated)",
     CHARGEBACK: "a chargeback/dispute was filed against an active membership/enrollment's payment",
     CANCELLED: "an active membership/enrollment's order was cancelled",
     REVERSED_BEFORE_ACTIVATION: "a payment was refunded/cancelled before the family was activated",
@@ -44,8 +44,8 @@ const EXCEPTION_BLURB: Record<string, string> = {
 };
 
 /**
- * Escalate a payment reconciliation problem to the board. CRITICAL (a chargeback)
- * emails immediately; WARN-level problems are surfaced on the finance-ops payments
+ * Escalate a payment reconciliation problem to the board. CRITICAL (a chargeback,
+ * or a refund that stops an activation) emails immediately; WARN-level problems are surfaced on the finance-ops payments
  * dashboard + the red-dot count only, so a routine refund doesn't put mail in five
  * inboxes. The reconciler that raises these runs once daily, so the dashboard is
  * itself effectively a daily digest — a separate WARN digest email would just be

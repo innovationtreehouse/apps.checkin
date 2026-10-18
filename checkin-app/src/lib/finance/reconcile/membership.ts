@@ -4,7 +4,7 @@ import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId, type ActivateOutcome } from "@/lib/membership/payment";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import { raisePaymentException, type PaymentExceptionKind } from "./exceptions";
+import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
 
 // A recovered payment may come in a cent or two under the recorded membership fee (rounding,
@@ -154,7 +154,8 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
 
     // Paid then reversed before we ever activated — keep it PENDING, tell the board.
     if (isReversed(order)) {
-        await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId: order.legacyId, processId: proc.id });
+        if (order.legacyId) await recordReversal(order.legacyId, "REVERSED_BEFORE_ACTIVATION");
+        await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId: order.legacyId, processId: proc.id, severity: "CRITICAL" });
         return true;
     }
     if (!isPaid(order)) return true; // pending/authorized/etc — nothing to do yet, but it IS this family's order.
