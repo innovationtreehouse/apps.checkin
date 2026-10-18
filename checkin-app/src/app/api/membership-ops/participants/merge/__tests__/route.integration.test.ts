@@ -206,6 +206,35 @@ describe("Merge Participants API", () => {
         expect(merged?.email).toBe("merge@example.com");
     });
 
+    it("waits on a deny holding the merged-away household's membership row, then refuses", async () => {
+        const otherHh = await makeHousehold("Merge Test Deny In Flight Household", "NONE");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let lockHeld!: () => void;
+        const locked = new Promise<void>((r) => (lockHeld = r));
+        // Stands in for a deny with no BOARD rows to lock: it holds only the membership row.
+        const deny = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${otherHh} FOR UPDATE`;
+            lockHeld();
+            await released;
+            await tx.orgMembership.update({ where: { householdId: otherHh }, data: { status: "DENIED" } });
+        }, { timeout: 20_000 });
+        await locked;
+
+        let finished = false;
+        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(finished).toBe(false);
+        release();
+        await deny;
+
+        const res = await merge;
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain("DENIED");
+        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {

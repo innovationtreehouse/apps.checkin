@@ -4,6 +4,7 @@ import type { TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { bgSubjectKey } from "./guard";
@@ -146,7 +147,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const mergeId = merge.id;
 
     await prisma.$transaction(async (tx) => {
-        await lockAndRecheckKeeper(tx, keepId);
+        await lockAndRecheckKeeper(tx, keepId, [keep.householdId, merge.householdId]);
         await recheckSubjects(tx, keepId, mergeId, actor);
         await clearTombstoneIdentity(tx, mergeId, keepId);
         await applyKeeperChoices(tx, keepId, plan.keeperUpdate);
@@ -185,10 +186,13 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
 /**
  * The BOARD lock comes before any Person row lock, the order a role change
- * takes them in; the keeper's row is locked and re-checked live after it.
+ * takes them in. Both households' membership rows are locked next, the order a
+ * deny takes them in, so a deny serializes with the merge even with no BOARD
+ * rows to lock. The keeper's row is locked and re-checked live after them.
  */
-async function lockAndRecheckKeeper(tx: TxClient, keepId: number): Promise<void> {
+async function lockAndRecheckKeeper(tx: TxClient, keepId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
+    await lockAndFindDeniedHousehold(tx, householdIds);
     const [keeper] = await tx.$queryRaw<{ mergedIntoId: number | null }[]>`SELECT "mergedIntoId" FROM "Person" WHERE id = ${keepId} FOR UPDATE`;
     if (!keeper || keeper.mergedIntoId !== null) throw new AlreadyMergedError();
 }

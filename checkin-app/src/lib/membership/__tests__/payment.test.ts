@@ -22,6 +22,7 @@ jest.mock('@/lib/prisma', () => {
         paymentException: { findFirst: jest.fn().mockResolvedValue(null) },
         person: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn() },
         $queryRaw: jest.fn(),
+        $executeRaw: jest.fn().mockResolvedValue(0),
         $transaction: jest.fn(),
     };
     mock.$transaction.mockImplementation((cb: (tx: typeof mock) => unknown) => cb(mock));
@@ -179,6 +180,13 @@ describe('payments that land on nothing awaiting them', () => {
         expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
+    });
+
+    it('a redelivery of the recorded order on a DENIED household stays a noop', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'ACTIVE', paidAt: new Date(), shopifyOrderId: 'order-1' }));
+        household.status = 'DENIED';
+        expect((await activateByProcessId(PROCESS_ID, 'order-1', true)).outcome).toBe('noop');
+        expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
     });
 
     it('a deny that lands before the household write leaves the process untouched', async () => {

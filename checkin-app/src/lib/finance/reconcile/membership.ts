@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId, type ActivateOutcome } from "@/lib/membership/payment";
+import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
@@ -118,26 +119,30 @@ async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedPro
     return { ...pending[0], awaiting: true };
 }
 
+/** The Board recorded a refund of this order on this process (refund.ts writes the audit row). */
+async function refundRecordedOn(processId: number, orderLegacyId: string): Promise<boolean> {
+    const row = await prisma.auditLog.findFirst({
+        where: {
+            tableName: "OrgMembershipProcess",
+            affectedEntityId: processId,
+            oldData: { path: ["shopifyOrderId"], equals: orderLegacyId },
+            newData: { path: ["refundRecorded"], equals: true },
+        },
+        select: { id: true },
+    });
+    return !!row;
+}
+
 /**
  * Try to attribute one mirror order to a membership process and act on it. Returns
  * true if the order was claimed (recovered or raised), false if it is not a
  * membership order (so a program pass may still claim it).
  */
 export async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> {
-    // Already recorded on a process, or refunded off one? Then it is not a missed payment.
-    // A re-payment overwrites the process's shopifyOrderId, so a refunded order is found by its refund's audit row.
+    // Already recorded on a process? Then it is not a missed payment.
     if (order.legacyId) {
         const known = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { id: true } });
         if (known) return true;
-        const refunded = await prisma.auditLog.findFirst({
-            where: {
-                tableName: "OrgMembershipProcess",
-                oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
-                newData: { path: ["refundRecorded"], equals: true },
-            },
-            select: { id: true },
-        });
-        if (refunded) return true;
     }
 
     const proc = await resolveMembershipProcess(order);
@@ -146,9 +151,24 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
         await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
         return true;
     }
+    // Refunded off this process? A re-payment overwrites its shopifyOrderId, so the refund's audit row is the record.
+    if (order.legacyId && (await refundRecordedOn(proc.id, order.legacyId))) return true;
 
     if (!proc.awaiting) {
-        if (isPaid(order)) await raiseMembershipPaymentOutcome("nothing_due", { shopifyOrderId: order.legacyId, processId: proc.id });
+        if (!isPaid(order)) return true;
+        // Parity with settle(): money reaching a DENIED household goes to the Board as DENIED activity.
+        const membership = proc.orgMembershipId
+            ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { status: true, householdId: true } })
+            : null;
+        if (membership?.status === "DENIED") {
+            await raiseDeniedHouseholdActivity({
+                householdId: membership.householdId,
+                processId: proc.id,
+                what: `Shopify membership payment (order ${order.legacyId || "?"}) on application #${proc.id}, found by the nightly reconcile`,
+            });
+        } else {
+            await raiseMembershipPaymentOutcome("nothing_due", { shopifyOrderId: order.legacyId, processId: proc.id });
+        }
         return true;
     }
 
