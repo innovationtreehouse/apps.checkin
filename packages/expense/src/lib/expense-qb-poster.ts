@@ -285,9 +285,26 @@ const POSTABLE_APPROVALS = ["approved", "finance_assigned"];
 /** Why an expense may not post: an unknown reimbursee, an unfilled seat or Board authorization, or a line not approved. */
 async function postingHold(tx: Db, e: Expense): Promise<string | null> {
   if (reimburseeUnknown(e)) return "the reimbursee is unknown";
-  if ((await unsignedLines(tx, e)).size > 0) return "a line is missing a sign-off seat or the Board authorization";
+  const holds = new Set([...(await unsignedLines(tx, e)).values()].flat());
+  const board = holds.delete("BOARD_AUTHORIZATION");
+  const reasons = [...(holds.size > 0 ? ["a line is missing a sign-off seat"] : []), ...(board ? ["the Board authorization is missing"] : [])];
+  if (reasons.length > 0) return reasons.join(", and ");
   const unapproved = await tx.lineItemOwnerApproval.count({ where: { expenseId: e.id, status: { notIn: POSTABLE_APPROVALS } } });
   return unapproved > 0 ? "a line is not approved: it is pending, under exception, or rejected" : null;
+}
+
+/**
+ * Raises QB_POST_HELD with the hold's reason. A check-off covers that reason only: the same reason
+ * stays checked off on later drains, and a new one reopens the flag with it.
+ */
+async function flagHeld(tx: Db, expenseId: string, detail: string): Promise<void> {
+  const flag = await tx.expenseFlag.findFirst({ where: { expenseId, kind: "QB_POST_HELD" } });
+  if (!flag) return raiseFlag(expenseId, "QB_POST_HELD", detail, tx);
+  if (flag.detail === detail) return;
+  await tx.expenseFlag.update({
+    where: { id: flag.id },
+    data: { detail, raisedAt: new Date(), checkedOffAt: null, checkedOffByUserId: null, checkedOffByUsername: null, notes: null },
+  });
 }
 
 async function claimForPost(orgId: string, expenseId: string, posting: ExpensePosting, opts: PostOptions): Promise<PostOutcome | Claimed> {
@@ -300,9 +317,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
       // A closed expense takes no further sign-off or decision, so only finance can clear its hold.
-      // Raised once: a drain run does not reopen a flag finance checked off.
-      const flagged = await tx.expenseFlag.count({ where: { expenseId, kind: "QB_POST_HELD" } });
-      if (current.state === "qb_complete" && flagged === 0) await raiseFlag(expenseId, "QB_POST_HELD", `closed but not posted: ${held}`, tx);
+      if (current.state === "qb_complete") await flagHeld(tx, expenseId, `closed but not posted: ${held}`);
       return "waiting";
     }
 
