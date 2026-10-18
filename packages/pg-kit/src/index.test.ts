@@ -1,25 +1,9 @@
 /**
- * Unit tests for the Postgres kit, with no database: a fake pg Client answers the try-lock,
+ * Unit tests for the Postgres kit, with no database: a fake session answers the try-lock,
  * and `createLazyPrisma` is driven with a stub builder. Cross-session lock exclusion against
  * real Postgres lives in the monitoring-db and s-ingest-core integration tiers.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const client = vi.hoisted(() => ({
-  connect: vi.fn(),
-  query: vi.fn(),
-  end: vi.fn(),
-}));
-
-vi.mock("pg", () => ({
-  default: {
-    Client: class {
-      connect = client.connect;
-      query = client.query;
-      end = client.end;
-    },
-  },
-}));
 
 import {
   createLazyPrisma,
@@ -91,53 +75,49 @@ describe("Prisma error detection", () => {
 });
 
 describe("withAdvisoryLock", () => {
-  const URL = "postgresql://lock-test/db";
+  const session = { query: vi.fn(), end: vi.fn() };
+  const open = vi.fn(async () => session);
 
   beforeEach(() => {
     vi.clearAllMocks();
-    client.connect.mockResolvedValue(undefined);
-    client.end.mockResolvedValue(undefined);
+    session.end.mockResolvedValue(undefined);
   });
 
-  it("takes the session lock on its own connection, runs fn, and closes the connection", async () => {
-    client.query.mockResolvedValue({ rows: [{ locked: true }] });
+  it("takes the session lock on its own connection, runs fn, and ends the session", async () => {
+    session.query.mockResolvedValue({ rows: [{ locked: true }] });
     const fn = vi.fn().mockResolvedValue("ok");
 
-    expect(await withAdvisoryLock("k", fn, URL)).toBe("ok");
-    expect(client.query).toHaveBeenCalledOnce();
-    expect(client.query.mock.calls[0][0]).toContain("pg_try_advisory_lock");
-    expect(client.query.mock.calls[0][1]).toEqual(["k"]);
+    expect(await withAdvisoryLock("k", fn, open)).toBe("ok");
+    expect(open).toHaveBeenCalledOnce();
+    expect(session.query).toHaveBeenCalledOnce();
+    expect(session.query.mock.calls[0][0]).toContain("pg_try_advisory_lock");
+    expect(session.query.mock.calls[0][1]).toEqual(["k"]);
     expect(fn).toHaveBeenCalledOnce();
-    expect(client.end).toHaveBeenCalledOnce();
+    expect(session.end).toHaveBeenCalledOnce();
   });
 
-  it("throws ConcurrentRunError without running fn when the lock is held, and still closes", async () => {
-    client.query.mockResolvedValue({ rows: [{ locked: false }] });
+  it("throws ConcurrentRunError without running fn when the lock is held, and still ends", async () => {
+    session.query.mockResolvedValue({ rows: [{ locked: false }] });
     const fn = vi.fn();
-    const run = withAdvisoryLock("mykey", fn, URL);
+    const run = withAdvisoryLock("mykey", fn, open);
 
     await expect(run).rejects.toBeInstanceOf(ConcurrentRunError);
     await expect(run).rejects.toMatchObject({ lockKey: "mykey", name: "ConcurrentRunError" });
     expect(fn).not.toHaveBeenCalled();
-    expect(client.end).toHaveBeenCalledOnce();
+    expect(session.end).toHaveBeenCalledOnce();
   });
 
-  it("rethrows fn's error and closes the connection, which releases the lock", async () => {
-    client.query.mockResolvedValue({ rows: [{ locked: true }] });
+  it("rethrows fn's error and ends the session, which releases the lock", async () => {
+    session.query.mockResolvedValue({ rows: [{ locked: true }] });
 
-    await expect(withAdvisoryLock("k", vi.fn().mockRejectedValue(new Error("boom")), URL)).rejects.toThrow("boom");
-    expect(client.end).toHaveBeenCalledOnce();
+    await expect(withAdvisoryLock("k", vi.fn().mockRejectedValue(new Error("boom")), open)).rejects.toThrow("boom");
+    expect(session.end).toHaveBeenCalledOnce();
   });
 
-  it("returns fn's result even when closing the connection fails", async () => {
-    client.query.mockResolvedValue({ rows: [{ locked: true }] });
-    client.end.mockRejectedValue(new Error("socket gone"));
+  it("returns fn's result even when ending the session fails", async () => {
+    session.query.mockResolvedValue({ rows: [{ locked: true }] });
+    session.end.mockRejectedValue(new Error("socket gone"));
 
-    await expect(withAdvisoryLock("k", vi.fn().mockResolvedValue(7), URL)).resolves.toBe(7);
-  });
-
-  it("refuses to run without a connection string, naming the setting", async () => {
-    await expect(withAdvisoryLock("k", vi.fn(), "", "SOME_DATABASE_URL")).rejects.toThrow(/SOME_DATABASE_URL/);
-    expect(client.connect).not.toHaveBeenCalled();
+    await expect(withAdvisoryLock("k", vi.fn().mockResolvedValue(7), open)).resolves.toBe(7);
   });
 });

@@ -3,10 +3,11 @@
  * singleton, Prisma error detection, and the session-scoped advisory lock.
  *
  * Each package keeps its own generated Prisma client, so errors are matched by `code`,
- * never by `instanceof` on one client's error classes. This file has no relative imports:
- * Turbopack resolves only the package's `.` export, and NodeNext consumers need no `.js`.
+ * never by `instanceof` on one client's error classes. The kit imports no database driver,
+ * so the library boundary check lets component libraries depend on it. This file has no
+ * relative imports: Turbopack resolves only the package's `.` export, and NodeNext
+ * consumers need no `.js`.
  */
-import pg from "pg";
 
 /**
  * Lazy Prisma singleton for one database. `build` turns a connection string into a client
@@ -85,31 +86,31 @@ export class ConcurrentRunError extends Error {
   }
 }
 
+/** The slice of a dedicated Postgres connection the advisory lock needs (a connected `pg.Client` fits). */
+export interface AdvisoryLockSession {
+  query(sql: string, params: unknown[]): Promise<{ rows: Array<{ locked?: unknown }> }>;
+  end(): Promise<void>;
+}
+
 /**
  * Run `fn` while holding the Postgres advisory lock for `key`; throw {@link ConcurrentRunError}
  * immediately if another session holds it. A run can span many short transactions, so the
- * lock is session-scoped on its own pg connection, not the Prisma pool (where lock and unlock
- * could land on different connections). Closing the connection in `finally` releases it.
- * `envVar` only names the missing setting in the error.
+ * lock is session-scoped on a dedicated connection from `openSession`, not the Prisma pool
+ * (where lock and unlock could land on different connections). Ending the session in
+ * `finally` releases it.
  */
 export async function withAdvisoryLock<T>(
   key: string,
   fn: () => Promise<T>,
-  connectionString: string | undefined,
-  envVar = "connection string",
+  openSession: () => Promise<AdvisoryLockSession>,
 ): Promise<T> {
-  if (!connectionString) throw new Error(`${envVar} is not set; cannot open the advisory-lock connection.`);
-  const client = new pg.Client({ connectionString });
-  await client.connect();
+  const session = await openSession();
   try {
-    const { rows } = await client.query<{ locked: boolean }>(
-      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked",
-      [key],
-    );
+    const { rows } = await session.query("SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked", [key]);
     if (rows[0]?.locked !== true) throw new ConcurrentRunError(key);
     return await fn();
   } finally {
     // Ending the session releases the lock; a failed end means the session is already gone.
-    await client.end().catch(() => undefined);
+    await session.end().catch(() => undefined);
   }
 }

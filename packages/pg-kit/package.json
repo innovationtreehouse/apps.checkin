@@ -15,12 +15,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "pg": "^8.18.0"
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/pg": "^8.16.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
