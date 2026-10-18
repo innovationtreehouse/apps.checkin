@@ -278,7 +278,10 @@ def route():
         chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
-    if os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true" and first_round(pr, repo):
+    # A high-ladder PR (risky profile, several profiles, very large) keeps normal routing: later
+    # rounds only verify, so the first round is its only full sweep.
+    if (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
+            and suggested != "high" and first_round(pr, repo)):
         tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
     else:
         try:
