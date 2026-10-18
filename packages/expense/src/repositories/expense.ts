@@ -128,9 +128,9 @@ export function createExpenseRepository(db: Db) {
           expenseId: { not: excludeExpenseId },
           lineItem: { gtin13, expense: { orgId } },
         },
-        select: { id: true, expenseId: true, lineItemId: true },
+        select: { id: true, expenseId: true, lineItemId: true, expense: { select: { submitterId: true, reimburseePersonId: true } } },
       });
-      return rows.map((r) => ({ approvalId: r.id, expenseId: r.expenseId, lineItemId: r.lineItemId }));
+      return rows.map((r) => ({ approvalId: r.id, expenseId: r.expenseId, lineItemId: r.lineItemId, ...r.expense }));
     },
 
     async listSameExpenseUnassignedApprovalsByGtin13(expenseId: string, gtin13: string, excludeApprovalId: number) {

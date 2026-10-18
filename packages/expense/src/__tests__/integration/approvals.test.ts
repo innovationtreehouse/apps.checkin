@@ -219,4 +219,18 @@ describeDb("the submitter's and reimbursee's households decide none of their lin
     expect((await approval(approvalId))!.ownerId).toBeNull();
     expect((await approval(paidApproval))!.ownerId).toBeNull();
   });
+
+  it("a permanent mapping leaves a sibling line on a conflicted expense unassigned", async () => {
+    bindPorts({ signoff: directory({ households: [[1, 6]] }) });
+    const target = await seedExpense({ state: "assign_ownership", submitterId: 4 });
+    const targetApproval = await seedApproval(target, await seedLineItem(target, { gtin13: "0000000000017" }), { ownerId: null });
+    const household = await lineInApproval(null);
+    const stranger = await seedExpense({ state: "assign_ownership", submitterId: 4 });
+    const strangerApproval = await seedApproval(stranger, await seedLineItem(stranger, { gtin13: "0000000000017" }), { ownerId: null });
+
+    await assignOwner(HOUSEMATE_FINANCE, target, targetApproval, 100, true);
+
+    expect((await approval(household.approvalId))!.ownerId).toBeNull();
+    expect((await approval(strangerApproval))!.ownerId).toBe(100);
+  });
 });

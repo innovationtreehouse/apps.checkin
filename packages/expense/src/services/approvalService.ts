@@ -200,12 +200,16 @@ export async function assignOwner(
 
   const lineItem = await expenseRepo.findLineItemById(approval.lineItemId);
   const gtin13 = permanent ? (lineItem?.gtin13 ?? null) : null;
-  const [sameExpense, siblings] = gtin13
+  const [sameExpense, listed] = gtin13
     ? await Promise.all([
         expenseRepo.listSameExpenseUnassignedApprovalsByGtin13(expenseId, gtin13, approvalId),
         expenseRepo.listSiblingApprovals(expense.orgId, gtin13, expenseId),
       ])
     : [[], []];
+  // A sibling on an expense the caller is conflicted on stays unassigned for someone else.
+  const caller = callerId(principal);
+  const conflicted = await Promise.all(listed.map(async (s) => (await conflictedParties(s)).includes(caller)));
+  const siblings = listed.filter((_, i) => !conflicted[i]);
 
   const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   const now = new Date();
