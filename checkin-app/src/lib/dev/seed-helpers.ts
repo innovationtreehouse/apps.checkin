@@ -283,6 +283,34 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         create: { householdId: memberPricingLead.householdId, status: "ACTIVE" },
     });
 
+    // Two lead + non-lead adult households for flow tests: an ACTIVE member household
+    // the renewal journey drives, and one the household-lead journey manages.
+    for (const { name, lead, partner, active } of [
+        { name: "Renewal Family", lead: "renewal.lead", partner: "renewal.partner", active: true },
+        { name: "Lead Family", lead: "household.lead", partner: "household.partner", active: false },
+    ]) {
+        let household = await prisma.household.findFirst({ where: { name } });
+        if (!household) household = await prisma.household.create({ data: { name, line1: "1 Flow Test Road" } });
+        const leadPerson = await prisma.person.upsert({
+            where: { email: `${lead}@example.com` },
+            update: { householdId: household.id },
+            create: { email: `${lead}@example.com`, name: `${name} Lead`, isDeclaredAdult: true, householdId: household.id },
+        });
+        await prisma.person.upsert({
+            where: { email: `${partner}@example.com` },
+            update: { householdId: household.id },
+            create: { email: `${partner}@example.com`, name: `${name} Partner`, isDeclaredAdult: true, householdId: household.id },
+        });
+        await addHouseholdLead(prisma, household.id, leadPerson.id);
+        if (active) {
+            await prisma.orgMembership.upsert({
+                where: { householdId: household.id },
+                update: { status: "ACTIVE" },
+                create: { householdId: household.id, status: "ACTIVE" },
+            });
+        }
+    }
+
     // 4. Tools & certifications
     const tableSaw = await prisma.tool.upsert({
         where: { id: 1 },
