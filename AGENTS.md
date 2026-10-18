@@ -70,6 +70,17 @@ the Vitest tier (`package-tests` job) as separate path-filtered lanes. Jest's
 `rootDir` is `checkin-app/`, so it never collects a sibling workspace's
 `.test.ts` — a Vitest file cannot leak into the Jest run.
 
+## Local testing for agents
+
+Locally, run `npm run test:affected` from the repo root and nothing broader. It
+tests only the areas your diff touches and needs no database or Docker. The
+heavy tiers (the full jest suite, the integration suite, flow tests, and every
+package's database tier) come from CI. Do not run them locally to "make sure".
+To run a heavy tier for your area (`--db`, `--flow`), first ask your coordinator
+or user, and wait for a yes: any Docker-backed or database-backed run needs
+one. Never run `--all` or `--wide` unasked. What each flag runs, and how a
+changed file maps to tests: `docs/ops/per-library-testing.md`.
+
 ## Test classes
 
 There are **three** classes of tests. Run all commands from `checkin-app/`.
