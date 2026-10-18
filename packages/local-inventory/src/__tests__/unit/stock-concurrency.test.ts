@@ -177,3 +177,74 @@ describeDb("reconcile-on-create conversion factor", () => {
     expect(await qty(REAL)).toBe(12);
   });
 });
+
+describeDb("merge after a concurrent resolution", () => {
+  const provisionalItem = (conversionFactor: number) =>
+    db.inventoryProvisionalItem.create({
+      data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, name: "Widget", usageBehavior: "Unknown", conversionFactor },
+    });
+
+  it("a merge that read the status before a reconcile renamed the provisional does nothing", async () => {
+    const { provisional: reconcile } = services();
+    await provisionalItem(2);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 } });
+
+    // The call-out reads the provisional as pending, then waits while the reconcile renames it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let read!: () => void;
+    const statusRead = new Promise<void>((r) => (read = r));
+    const repo = createProvisionalItemRepository(db);
+    const stale = createProvisionalItemService({
+      provisionalRepo: {
+        ...repo,
+        findByGtin: async (orgId, gtin13) => {
+          const row = await repo.findByGtin(orgId, gtin13);
+          read();
+          await gate;
+          return row;
+        },
+      },
+      resolutionRepo: createProvisionalResolutionRepository(db),
+      inventoryRepo: createInventoryRepository(db),
+      db,
+    });
+    const callOut = stale.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 5, 1);
+    await statusRead;
+    await reconcile.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 5, 1);
+    release();
+    await callOut;
+
+    expect(await qty(REAL)).toBe(4);
+    expect(await db.inventoryMergeConflict.count()).toBe(0);
+    expect(await db.provisionalItemLog.count()).toBe(1);
+  });
+
+  it("a queued provisional line with an open unit conflict lands on the provisional GTIN", async () => {
+    const { queue } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(2)).id },
+      data: { status: "mapped_to_existing", resolvedToGtin13: REAL },
+    });
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4 },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 6 },
+      ],
+    });
+    await db.inventoryMergeConflict.create({
+      data: {
+        orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch",
+        provisionalConversionFactor: 2, existingConversionFactor: 1, sourceEventId: 11,
+      },
+    });
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 1, conversionFactor: 2, receiptId: "d-1", lineItemId: 1 },
+    });
+
+    await queue.fulfill(line.id, TEST_ORG_ID, 1);
+
+    expect(await qty(PROVISIONAL)).toBe(6);
+    expect(await qty(REAL)).toBe(6);
+  });
+});

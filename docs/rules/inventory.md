@@ -90,6 +90,11 @@ How the pieces are built is described in
   carried, even when the event arrives before the provisional item.
   `[Decision]`
 
+- When provisional stock lands on a real item the organisation holds none of,
+  it keeps its received count as is: the person who received it counted it.
+  The factor must match only when merging into existing stock.
+  `[Decision — owner]`
+
 ### Receiving
 
 - Receiving is the only way a receipt's goods reach stock, and only after every
