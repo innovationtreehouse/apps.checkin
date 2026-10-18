@@ -8,7 +8,7 @@ import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
@@ -125,7 +125,7 @@ export async function GET(req: Request) {
                 ...PUBLIC_PROGRAM_SELECT,
                 _count: {
                     select: {
-                        participants: { where: { person: LIVE_PERSON } },
+                        participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } },
                         volunteers: { where: { person: LIVE_PERSON } },
                         events: true
                     }
@@ -155,7 +155,7 @@ export async function GET(req: Request) {
             const counts = await Promise.race([
                 prisma.program.findMany({
                     where: { id: { in: staticRows.map((prg) => prg.id) } },
-                    select: { id: true, _count: { select: { participants: { where: { person: LIVE_PERSON } }, volunteers: { where: { person: LIVE_PERSON } }, events: true } } },
+                    select: { id: true, _count: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } }, volunteers: { where: { person: LIVE_PERSON } }, events: true } } },
                 }).catch(() => null),
                 new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), 2_500); t.unref?.(); }),
             ]);

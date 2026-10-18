@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { calculateAge, orgCalendarDay } from "@/lib/time";
 import { renewalWindow } from "@/lib/membership/renewal";
-import { LIVE_PERSON, recentProgramWhere } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, LIVE_PERSON, recentProgramWhere } from "@/lib/person/filters";
 import { personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -162,7 +162,7 @@ export function autoPopulationWhere(now: Date) {
         isHouseholdLead: false,
         household: { orgMembership: { status: "ACTIVE" as const } },
         OR: [
-            { programParticipants: { some: { program } } },
+            { programParticipants: { some: { program, ...ENROLLED_PARTICIPANT } } },
             { programVolunteers: { some: { program } } },
             { programsLed: { some: program } },
         ],

@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import type { Session } from "next-auth";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { activityMembers } from "@/lib/household/activityMembers";
 import { apiError } from "@/lib/api-response";
 
@@ -20,7 +21,7 @@ export const GET = withAuth({}, async (_req, auth) => {
         // Which household members are tied to which programs (enrolled, volunteering, or leading).
         const [enrolled, volunteers, ledPrograms] = await Promise.all([
             prisma.programParticipant.findMany({
-                where: { personId: { in: householdMemberIds } },
+                where: { personId: { in: householdMemberIds }, ...ENROLLED_PARTICIPANT },
                 select: { personId: true, programId: true }
             }),
             prisma.programVolunteer.findMany({
