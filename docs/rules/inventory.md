@@ -17,43 +17,11 @@ How the pieces are built is described in
 
 ## Policy
 
-### Use of Treehouse property
-
-- Treehouse property and equipment are used only for Treehouse activities or
-  activities the Treehouse approves, never for personal purposes. — *Financial
-  Policy, Art. X §X.2*
-
-- Anyone who takes part in choosing or accepting equipment, materials or
-  supplies does not use them personally outside an approved program.
-  — *Procurement Policy, Art. II(3)*
-
-- Treehouse property is never used to make products for sale. — *Intellectual
-  Property Policy, Art. IX*
-
-- Treehouse materials leave a facility only after going through the signout
-  process, and the primary keyholder checks that they have. — *Event, Location
-  and Keyholder Policy, Art. VIII §VIII.5*
-
-- The licence and sale terms of an item bought, donated or otherwise acquired
-  are respected, including educational and resale restrictions.
-  — *Intellectual Property Policy, Art. VIII*
-
-### Donated goods
-
-- A donation of goods is reported to finance. — *Fundraising, Financial
-  Commitments and Approvals Policy, Art. VIII §VIII.2*
-
-- The Treehouse owns only computers and tablets that still receive security
-  updates, and does not accept a donated one that does not, unless the board
-  makes an exception. — *Technology Policy, Art. III*
-
-### Records and retirement
-
 - Inventories of products, materials and supplies, and their invoices, are
   kept for seven years. — *Records Policy, Art. VI §VI.4.J*
 
-- Retiring a capital asset before it is fully depreciated needs board
-  approval. — *Financial Policy, Art. XIV §XIV.10*
+- No policy governs the catalog itself or how stock is counted and received;
+  the rules below are Assumptions and Procedure.
 
 ## Assumptions
 
