@@ -632,6 +632,9 @@ export async function changeProgramStock(
     return { recorded: true, landed: await pushProgramStock(program.id, variantId, reason, capMs, carryBefore) };
 }
 
+/** The stock delta could not be written to the carry, so the transaction (row change included) rolled back. The board has been alerted. */
+export class StockNotRecordedError extends Error {}
+
 /**
  * Change the rows that move a program's taken seats and record the stock delta
  * they cause in ONE transaction under the Program row lock, then push. The row
@@ -639,7 +642,7 @@ export async function changeProgramStock(
  * takes the same lock) never counts a change whose delta is not yet owed, a
  * reader never sees the change without its delta, and a crash cannot keep one
  * without the other. `change` returns the delta; a failure rolls both back and
- * throws (a failed carry write also alerts the board). Returns whether the push landed (a recorded
+ * throws. A failed carry write alerts the board and throws {@link StockNotRecordedError}. Returns whether the push landed (a recorded
  * delta that did not land stays owed and flagged, as with {@link changeProgramStock}).
  */
 export async function changeProgramStockWith<T>(
@@ -662,7 +665,7 @@ export async function changeProgramStockWith<T>(
             return { result, delta, carryBefore: shopifyStockCarry - delta };
         } catch (error) {
             await alertStockPush(program.id, variantId, reason, error);
-            throw error;
+            throw new StockNotRecordedError(`stock change for program ${program.id} could not be recorded`, { cause: error });
         }
     });
     if (!variantId || delta === 0) return { result, landed: true };

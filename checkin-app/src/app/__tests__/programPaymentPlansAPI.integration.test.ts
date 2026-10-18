@@ -1250,7 +1250,7 @@ describe('Program payment-plan routes', () => {
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
             // Only a −1 the stock writer could not even record takes the failure branch.
-            jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new Error('stock carry could not be written'));
+            jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new shopify.StockNotRecordedError('stock carry could not be written'));
             try {
                 await prisma.programParticipant.create({
                     data: { programId: p.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },
