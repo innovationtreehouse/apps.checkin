@@ -169,6 +169,14 @@ export default function ReceiptDetailPage() {
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted")}>Restart</Button>
                 )}
+                {r.state === "discarded" && (
+                  <Group align="end">
+                    <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
+                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on")}>
+                      Ignore this file from now on
+                    </Button>
+                  </Group>
+                )}
                 {r.state === "receipt_finalized" && !r.pushedAt && (
                   <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent")}>Send downstream</Button>
                 )}

@@ -15,7 +15,7 @@ import {
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
-import { financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
+import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -268,6 +268,31 @@ export async function intakeMailedReceipt(
   // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
   await applyOcr(id, actor).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
   return id;
+}
+
+/**
+ * Discard a mailed body receipt when its reading has the same total and date as a receipt from
+ * the same message; a reading missing either keeps it. A system step, audited naming the match.
+ */
+export async function discardBodyCopy(id: string, siblingIds: string[]): Promise<boolean> {
+  const orgId = (await getOrg()).id;
+  const row = await receiptRepo.find(id, orgId);
+  if (!row || row.receiptTotalCents == null || !row.receiptDate || row.pushedAt || siblingIds.length === 0) return false;
+  const siblings = await receiptRepo.list({ id: { in: siblingIds }, orgId });
+  const match = siblings.find((s) => s.receiptTotalCents === row.receiptTotalCents && s.receiptDate === row.receiptDate);
+  if (!match) return false;
+  try {
+    assertLegalTransition(row.state, { type: "DISCARD" });
+  } catch (e) {
+    transitionError(e);
+  }
+  // The audit row marks the copy for checkDuplicate, so it commits with the state change.
+  return db.$transaction(async (tx) => {
+    const moved = await tx.receiptDetail.updateMany({ where: { id, state: row.state }, data: { state: "discarded" } });
+    if (moved.count !== 1) return false;
+    await audit(tx, id, null, { action: BODY_COPY_DISCARDED, valueAfter: `same as attachment ${match.id}` });
+    return true;
+  });
 }
 
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {

@@ -190,9 +190,10 @@ case of a body receipt:
     it is compared with every receipt the same message produced. If one has the
     same total and the same date, the body is discarded automatically, with the
     reason "same as attachment" and the matching receipt named in its audit row.
-    It stays visible as discarded, so finance can restart it if the match was
-    wrong. Any mismatch, or a reading missing either field, keeps the body as
-    its own receipt.
+    Any mismatch, or a reading missing either field, keeps the body as its own
+    receipt. A body discarded as the same as an attachment is final; it matched
+    that receipt's total and date, so the money is already on that receipt
+    (`[Decision — deliberate limit]`).
   - **Held mail:** a held item has no reading until finance assigns it, so the
     comparison cannot run at intake. A non-trivial body from an untrusted sender
     is held beside its attachments, and finance discards whichever is the copy.
@@ -206,9 +207,10 @@ case of a body receipt:
   manual upload would be refused.
 
 **Files that are never receipts.** Two filters run on every candidate file,
-before the ledger lookup, and each match is counted under a new `ignored` count
-in the run result. Neither writes a ledger row: the next run repeats the check
-instead.
+and each match is counted under a new `ignored` count in the run result. The
+size floor writes no ledger row; the next run repeats it without a download. An
+ignore-list match writes a discarded ledger row with no file, so the next run
+skips its message before any download, and the file is charged only once.
 
 - **A size floor for inline images.** An inline image under 5 KB is skipped
   without downloading it; the part's declared size is enough. That drops tracking
@@ -242,9 +244,9 @@ instead.
   - **Removing an entry.** Finance can remove one (owner ruling 2026-10-16): a
     mistaken entry drops that exact file from every future email, leaving only a
     count, so it must be undoable. The mail-queue page lists the entries with a
-    remove action, audited like adding. Removal applies from the next run; mail
-    it already skipped inside the window is read again then, since a skip writes
-    no ledger row.
+    remove action, audited like adding. Removal applies to mail that arrives
+    after it; a file already skipped has a discarded ledger row and is not read
+    again.
   - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
     or resizes the same logo produces a new hash, and that copy arrives as a
     candidate until someone ignores it too. This is the ceiling, stated plainly:

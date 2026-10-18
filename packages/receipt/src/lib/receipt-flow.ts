@@ -84,8 +84,12 @@ export async function getOrgSettings(orgId: string, client: Db | Prisma.Transact
   return client.receiptOrgSettings.findUniqueOrThrow({ where: { orgId } });
 }
 
+/** The audit action of a mailed body discarded as a copy of a receipt from its own message. */
+export const BODY_COPY_DISCARDED = "body_copy_discarded";
+
 /**
- * The receipt this one duplicates, or null. The file-hash suspect is the one stored at insert
+ * The receipt this one duplicates, or null. A body discarded as a copy of its message's other
+ * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
  * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
  * person has cleared the flag, the receipt is never re-flagged.
  */
@@ -93,7 +97,7 @@ export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
   if (row.duplicateFlagClearedAt) return null;
   if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
   const { orgId, retailer, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
-  const notSelf = { id: { not: id } };
+  const notSelf = { id: { not: id }, receipt: { auditLogs: { none: { action: BODY_COPY_DISCARDED } } } };
 
   const composite = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptDate, receiptTotalCents, ...notSelf } });
   if (composite) return composite.id;
