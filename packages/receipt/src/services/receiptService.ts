@@ -270,6 +270,27 @@ export async function intakeMailedReceipt(
   return id;
 }
 
+/**
+ * Discard a mailed body receipt when its reading has the same total and date as a receipt from
+ * the same message; a reading missing either keeps it. A system step, audited naming the match.
+ */
+export async function discardBodyCopy(id: string, siblingIds: string[]): Promise<boolean> {
+  const orgId = (await getOrg()).id;
+  const row = await receiptRepo.find(id, orgId);
+  if (!row || row.receiptTotalCents == null || !row.receiptDate || row.pushedAt || siblingIds.length === 0) return false;
+  const siblings = await receiptRepo.list({ id: { in: siblingIds }, orgId });
+  const match = siblings.find((s) => s.receiptTotalCents === row.receiptTotalCents && s.receiptDate === row.receiptDate);
+  if (!match) return false;
+  try {
+    assertLegalTransition(row.state, { type: "DISCARD" });
+    await receiptRepo.update(id, { detail: { state: "discarded" } }, row.state);
+  } catch (e) {
+    transitionError(e);
+  }
+  await audit(db, id, null, { action: "discarded", valueAfter: `same as attachment ${match.id}` });
+  return true;
+}
+
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);

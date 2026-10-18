@@ -9,7 +9,7 @@ import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { getOrg, mailbox, ports } from "../runtime";
-import { intakeMailedReceipt } from "./receiptService";
+import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
@@ -197,7 +197,7 @@ function ownParts(part: MailPart): MailPart[] {
 const isAttachment = (p: MailPart) =>
   !!p.filename && !/^\s*inline/i.test(headerValues(p.headers, "Content-Disposition")[0] ?? "");
 
-type MailFile = { declaredType: string; size: number; read: () => Promise<Buffer> };
+type MailFile = { declaredType: string; size: number; read: () => Promise<Buffer>; body?: true };
 
 // ponytail: a legible receipt image under the floor is skipped silently; lower it if one is ever found.
 /** Inline images under this declared size (tracking pixels, icons, small logos) are skipped without a download. */
@@ -233,7 +233,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
   if (body) {
-    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push(file(body, "text/plain"));
+    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push({ ...file(body, "text/plain"), body: true });
     else ignored++;
   }
   return { files, ignored };
@@ -308,6 +308,20 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     return true;
   }
 
+  /** A body read beside its message's other receipts is discarded when its reading repeats one of them. */
+  async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise<void> {
+    const siblings = await db.receiptMailItem.findMany({
+      where: { gmailMessageId, receiptId: { not: null }, NOT: { receiptId } },
+      select: { receiptId: true },
+    });
+    try {
+      await discardBodyCopy(receiptId, siblings.flatMap((s) => (s.receiptId ? [s.receiptId] : [])));
+    } catch (err) {
+      // The body stays its own receipt; finance discards it the ordinary way.
+      console.error("[receipt] body copy check failed for one receipt:", err);
+    }
+  }
+
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored } = mailFiles(msg, reader);
     counts.ignored += ignored;
@@ -351,10 +365,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       try {
         if (sender) {
           try {
-            await intakeMailedReceipt(sender, bytes, check.mimeType, (tx, receiptId) =>
-              tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId } }),
+            const receiptId = await intakeMailedReceipt(sender, bytes, check.mimeType, (tx, newId) =>
+              tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId: newId } }),
             );
             counts.receipts++;
+            if (file.body) await discardIfCopy(msg.id, receiptId);
             continue;
           } catch (err) {
             // Over the sender's daily upload limit: stored to retry on a later run.

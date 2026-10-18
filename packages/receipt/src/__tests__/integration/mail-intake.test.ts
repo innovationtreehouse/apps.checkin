@@ -127,12 +127,38 @@ describeDb("mail intake", () => {
     expect(await db.receiptMailItem.count()).toBe(0);
   });
 
-  it("reads a non-trivial body beside the attachments, after them", async () => {
-    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 12.34") } }, attachment("a", pdf("a"))] });
-    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+  /** The message's receipts in ledger order, as [mimeType, state]. */
+  const messageReceipts = async () => {
     const items = await db.receiptMailItem.findMany({ orderBy: { id: "asc" }, select: { receiptId: true } });
-    const types = await Promise.all(items.map(async (i) => (await db.receipt.findUniqueOrThrow({ where: { id: i.receiptId ?? "" } })).mimeType));
-    expect(types).toEqual(["application/pdf", "text/plain"]);
+    return Promise.all(
+      items.map(async (i) => {
+        const r = await db.receipt.findUniqueOrThrow({ where: { id: i.receiptId ?? "" } });
+        return [r.id, r.mimeType, await stateOf(r.id)];
+      }),
+    );
+  };
+
+  it("reads a body after the attachments, and discards it when its reading repeats one", async () => {
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 5.00") } }, attachment("a", pdf("a"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+    const [[pdfId, pdfType], [bodyId, bodyType, bodyState]] = await messageReceipts();
+    expect([pdfType, bodyType, bodyState]).toEqual(["application/pdf", "text/plain", "discarded"]);
+    expect(await stateOf(pdfId as string)).not.toBe("discarded");
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: bodyId as string, action: "discarded" } })).toMatchObject({
+      userId: null,
+      valueAfter: `same as attachment ${pdfId}`,
+    });
+  });
+
+  it("keeps a body whose reading differs from every attachment's", async () => {
+    configure({
+      ocr: { extract: (file, mimeType) => okOcr(mimeType === "text/plain" ? { receiptTotal: 9 } : {}).extract(file, mimeType) },
+      mailbox: mail.reader,
+      people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
+    });
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 9.00") } }, attachment("a", pdf("a"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: 2 });
+    expect((await messageReceipts()).map(([, , state]) => state)).not.toContain("discarded");
   });
 
   it("reads inline images of an accepted type, skips those under the floor unread, and skips unaccepted types", async () => {
