@@ -41,11 +41,14 @@ ships.
   sentence as a principle, "The app books only what is newer than what finance
   has booked by hand." It needs the same rewrite before it merges.
 
-Relies on, unchanged: *Fail closed* (an unreadable or unset closing date never
-widens what the app books), *Apply once* (every path still matches before it
-creates, and a record whose create may have landed looks for its own entry
-first, section 6), *Accountability* (every skip names who and why), and "the app never
-changes or deletes anything already in QuickBooks".
+Relies on: *Fail closed* (an unreadable or unset closing date never widens what
+the app books), *Apply once* (every path still matches before it creates),
+*Accountability* (every skip names who and why), and "the app never changes or
+deletes anything already in QuickBooks".
+
+Adds to *Apply once*: a record whose create may already have landed in
+QuickBooks looks for its own entry before anything creates, matches, skips or
+dismisses it (section 6).
 
 ---
 
@@ -128,7 +131,8 @@ after the match and just before it creates, and gates on the later of that date
 and `closedThrough`. That costs one read per create, which is cheap next to the
 create itself, and it shrinks the window in which finance can close a period
 while a run is under way. If that read fails, the record is not created and
-waits for the next run, as when the start-of-run read fails.
+the post ends as a failed post. Expense and donation retry it on the next drain
+run. Income parks it as `POST_FAILED` for finance, as it does any failed post.
 
 **Failing closed:**
 
@@ -299,9 +303,33 @@ The rules below close them in all three lanes.
 
 **Mark the attempt.** Each lane's record gains one nullable timestamp,
 `qbCreateAttemptedAt`, on `Expense`, `PayoutReconciliation` and
-`DisbursementEvent`. The post path writes it, once, before it sends a create
-call. A record that carries it is "attempted", whatever its state now. The
-column is additive and ships in the lane's PR.
+`DisbursementEvent`. `findOrCreate` decides inside itself whether to create,
+and the shared package has no database, so the lane writes the mark when it
+claims the record, in the claim transaction that commits before any QuickBooks
+call. It is set only while null and never moved, so every later lookup starts
+from the first attempt. It therefore marks every post attempt, including ones
+that end in a match and never send a create. A record that carries it is
+"attempted", whatever its state now; a lookup on one that never created simply
+finds nothing. The column is additive and ships in the lane's PR.
+
+**Income gets the same claim, call and settle.** Today income calls QuickBooks
+inside the database transaction that also settles, under its advisory lock and
+a 90-second budget sized for two requests. A mark written there rolls back with
+everything else when that transaction dies after QuickBooks applied the create,
+and the reads this design adds overrun the budget. The income lane PR gives
+income's post path the shape expense and donation already have:
+
+1. **Claim.** A short transaction marks the payout as being posted, with the
+   claim time, sets `qbCreateAttemptedAt` while null, and commits.
+2. **Call.** The match, lookup, closing-date re-read and create run outside any
+   transaction.
+3. **Settle.** A new transaction checks the claim is still this post's, then
+   saves the result. A claim older than 10 minutes can be reclaimed, as in the
+   other lanes.
+
+The advisory lock stays for reconcile only, and reconcile leaves a claimed
+payout alone. With that in place, the marker, timeout and lost-claim rules
+below hold for income too.
 
 **Looking up the key.** For an attempted record, the lookup reads every entry of
 the lane's entity that QuickBooks created since the attempt:
@@ -326,7 +354,8 @@ The outcome of the lookup:
 
 | Lookup finds | Then |
 |---|---|
-| exactly one entry with the key | it is the app's own entry: link it as `CREATED`; a date or amount finance changed shows up as drift, like any edited entry |
+| exactly one entry with the key, held by no other record | it is the app's own entry: link it as `CREATED`; a date or amount finance changed shows up as drift, like any edited entry |
+| exactly one entry with the key, already held by another record | finance's queue with the note "app entry X is held by record Y"; never linked, never created |
 | no entry with the key | the normal match and gate run, and may create |
 | more than one entry with the key, a full page (more may exist), or the read fails | finance's queue with a note that the app may already have booked this record; nothing is created |
 
@@ -340,12 +369,14 @@ and "book it".
 
 **A lost claim after a create raises a flag.** A post that stalls long enough
 for another worker to reclaim its record can still create its entry. Both posts
-then create, and the stalled one settles to find its claim gone. Today it only
-logs that. Instead, when a settle finds its claim lost after a `created` result,
-the lane tells finance that the app's entry may need voiding, with the entry's
-id. Expense raises its `QB_POST_FAILED` flag, and donation and income put the
-note on the record in finance's queue. The same-lane conflict path already does
-this.
+then create, and the stalled one settles to find its claim gone. Today expense
+only logs that, and donation returns "waiting" without a word; income has no
+claim until its lane PR adds one. Instead, when a settle finds its claim lost
+after a `created` result, the lane tells finance that the app's entry may need
+voiding, with the entry's id. Expense raises its `QB_POST_FAILED` flag, and
+donation and income put the note on the record in finance's queue. Expense's
+and donation's same-lane conflict paths already raise this warning; income
+gains it with its claim.
 
 **Finance's actions look first.** Before finance matches, dismisses or skips an
 attempted record, the route runs the lookup:
@@ -353,6 +384,8 @@ attempted record, the route runs the lookup:
 - **The app's entry is found.** The record is linked to it as `CREATED`, the
   action is not applied, and the response tells finance which entry the app had
   already booked.
+- **The app's entry is held by another record.** The action is refused with
+  "app entry X is held by record Y", and nothing changes.
 - **Nothing is found.** The action goes ahead.
 - **The lookup reads more than one keyed entry, fills a page, or fails.** The
   action is refused, and nothing changes. A failed read answers 503.
@@ -375,7 +408,9 @@ Once a day the `qbo-posting` cron runs a sweep for each lane:
 - **One read per lane.** It runs the section 6 created-since query from the
   oldest `qbCreateAttemptedAt` in the lane within the last 30 days. It reads at
   most 1,000 entries, the same cap as the lookup; a full page alerts finance that
-  the sweep could not see every entry.
+  the sweep could not see every entry. The read also returns finance's own
+  entries, so once a lane is live a full page may alert every day; at this
+  organisation's volume that is acceptable.
 - **Match the keys.** It reads the `[checkin:<key>]` marker from each entry's
   memo and finds the lane's record with that key.
 - **Report what does not fit.** An app-keyed entry whose record does not link
@@ -390,22 +425,23 @@ the entry. A stalled post's stray entry therefore reaches finance within a day.
 
 ## Related fixes
 
-Checking this design turned up four faults in today's posting code. This design
-does not change them, and none depends on it. Each ships as its own PR, and the
-order is scheduled separately.
+Checking this design turned up three faults in today's posting code that it
+does not need. Each ships as its own PR, and the order is scheduled separately.
+A fourth, that expense drift never compares the entry's date, is part of the
+expense lane PR, because section 6 relies on drift catching a re-dated entry.
 
-- **Income and donation can both hold one hand-booked deposit.** Each lane's
-  settle checks only its own lane's holdings. A payout and a disbursement with
-  the same net, into the same bank account, can both match one deposit. The fix
-  is a claim table unique across lanes.
-- **Expense drift ignores the date.** A change finance makes to an entry's date
-  is never reported. The fix stores the entry's date and compares it.
+- **Income and donation can both hold one hand-booked deposit.** Each lane
+  already keeps the other lane's held deposits out of its matching, so runs one
+  after the other cannot double-hold. The gap is two runs at the same moment: a
+  payout and a disbursement with the same net, into the same bank account, can
+  each match one deposit before either settles. The fix is a claim table unique
+  across lanes.
 - **Expense takes its drift baseline from a separate read.** An edit between
   the match read and the baseline read, or a failed baseline read that the first
   drift check fills in later, becomes the baseline unreported. The fix takes the
   baseline from the entry the match itself saw.
-- **Donation pins the booked date late.** After a match by amount the booked
-  date stays empty, and the first drift check pins whatever date the deposit
+- **Donation pins the booked date late.** After any match the booked date stays
+  empty, and the first drift check pins whatever date the deposit
   has by then. The fix stores the date at settle, from the read that matched.
 
 ---
@@ -429,15 +465,15 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, `BEFORE_LINE` read as
    `UNBOOKED` (section 5, expand), the `qb-resolve` route and its screen, the
    self-set stamp, the key lookup, the lost-claim flag and the lookup before
-   finance's match and skip (section 6), the daily sweep (section 7), and its
-   migration (the switch-on and
+   finance's match and skip (section 6), date drift (the entry's date stored and
+   compared), the daily sweep (section 7), and its migration (the switch-on and
    create-attempt columns).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
-   the self-set stamp, the NEEDS_MAPPING ordering, the key lookup, the
-   lost-claim note and the lookup before finance's match and dismiss
-   (section 6), the daily sweep (section 7), and its switch-on and
-   create-attempt columns.
+   the self-set stamp, the NEEDS_MAPPING ordering, the claim, call and settle
+   restructure, the key lookup, the lost-claim note and the lookup before
+   finance's match and dismiss (section 6), the daily sweep (section 7), and
+   its switch-on, claim and create-attempt columns.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, the self-set
    Benevity stamp, `BEFORE_LINE` read as `UNBOOKED` (section 5, expand), the key
    lookup, the lost-claim note and the lookup before finance's match and dismiss
@@ -446,13 +482,13 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
    column). In-kind has no posting lane yet; its column comes
    with that lane (#2182).
 6. **Rules:** `revenue.md` and, if it has merged, the `principles.md` line from
-   #2210.
+   #2210, plus the *Apply once* addition above.
 7. **Cleanup, a release after 3 and 5 have rolled out:** the data migration
    that rewrites `BEFORE_LINE` to `UNBOOKED` in expense and donation, and the
    removal of `BEFORE_LINE` from both lanes' code (section 5, contract).
 
 Each lane keeps its own Prisma schema and migrations, so each lane's migration
-ships with that lane's code. The four related fixes are separate PRs, outside
+ships with that lane's code. The three related fixes are separate PRs, outside
 this split.
 
 Only PR 1 changes the security boundary. The new columns and
