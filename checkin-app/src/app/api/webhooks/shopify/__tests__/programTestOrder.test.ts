@@ -3,7 +3,8 @@
  */
 /**
  * POST /api/webhooks/shopify, program branch: a Shopify test order activates no
- * seat and moves no stock, and is still acked 200; a real order still activates.
+ * seat, gives back the stock Shopify took, and is still acked 200; a real order
+ * still activates.
  */
 import crypto from 'crypto';
 import { POST } from '../route';
@@ -11,6 +12,7 @@ import prisma from '@/lib/prisma';
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import { adjustProgramInventory } from '@/lib/shopify';
 import { orderEntitlesEnrollment } from '@/lib/finance/reconcile/program';
+import { returnTestOrderStock } from '@/lib/finance/reconcile/reversals';
 
 jest.mock('@/lib/programs/activateEnrollment', () => ({
     activateProgramEnrollment: jest.fn(),
@@ -25,6 +27,9 @@ jest.mock('@/lib/finance/reconcile/program', () => ({
 jest.mock('@/lib/finance/reconcile/exceptions', () => ({
     ...jest.requireActual('@/lib/finance/reconcile/exceptions'),
     raisePaymentException: jest.fn(),
+}));
+jest.mock('@/lib/finance/reconcile/reversals', () => ({
+    returnTestOrderStock: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('@/lib/shopify', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
@@ -81,13 +86,14 @@ beforeEach(() => {
 });
 
 describe('POST /api/webhooks/shopify — program test orders', () => {
-    it('a test order activates no program seat and moves no stock, but is acked', async () => {
+    it('a test order activates no program seat and gives back its stock, but is acked', async () => {
         const res = await POST(signedReq(JSON.stringify({ ...PROGRAM_ORDER, test: true })));
         expect(res.status).toBe(200);
         expect((await res.json()).success).toBe(true);
         expect(entitles).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
         expect(adjustProgramInventory).not.toHaveBeenCalled();
+        expect(returnTestOrderStock).toHaveBeenCalledWith('777001', [{ variantId: '5551', quantity: 1 }]);
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: true, outcome: 'test order for program 7 — ignored' });
     });
 
@@ -95,6 +101,7 @@ describe('POST /api/webhooks/shopify — program test orders', () => {
         const res = await POST(signedReq(JSON.stringify(PROGRAM_ORDER)));
         expect(res.status).toBe(200);
         expect(activate).toHaveBeenCalledWith(expect.objectContaining({ programId: 7, personIds: [41], shopifyOrderId: '777001' }));
+        expect(returnTestOrderStock).not.toHaveBeenCalled();
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: false, outcome: 'program 7: activated 1 of 1 participant(s)' });
     });
 });

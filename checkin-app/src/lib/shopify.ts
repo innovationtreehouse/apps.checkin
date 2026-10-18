@@ -11,7 +11,7 @@ import { redactSecrets } from "@checkin/utils";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
-import { saleStockDelta } from "@/lib/programs/saleState";
+import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { programVariantIds } from "@/lib/programs/variants";
 
 let cachedToken: string | null = null;
@@ -780,6 +780,19 @@ async function sendBooked(gql: Gql, programId: number, token: string, write: Pen
     await bookStock(programId, token, { shopifyStockCarry: { increment: stillOwed(write, "applied") }, shopifyStockPendingWrite: null });
 }
 
+/**
+ * A +delta that settled as applied after the sale ended (the off-sale date passed
+ * while it was booked, in flight, or pending a resend) is owed back as -delta, so
+ * the drain takes it straight back off sale.
+ */
+async function takeBackAfterSale(programId: number, token: string, write: PendingStockWrite): Promise<void> {
+    if (write.delta <= 0) return;
+    const sale = await prisma.program.findUnique({ where: { id: programId }, select: { startAt: true, offSaleAt: true, saleEndedAt: true } });
+    if (!sale || !isSaleEnded(sale)) return;
+    console.log(`[SHOPIFY] Program ${programId} sale ended while +${write.delta} (${write.key}) was in flight: taking it back off sale`);
+    await bookStock(programId, token, { shopifyStockCarry: { increment: -write.delta } });
+}
+
 interface DrainResult {
     error: unknown;
     expiredKey: string | null;
@@ -824,7 +837,9 @@ async function drainStock(
                         shopifyStockPendingWrite: null,
                     });
                 } else {
+                    // ponytail: the resend settles whether the +1 landed; if it did, it sits on sale until the -1 right after.
                     await sendBooked(gql, programId, token, pending, deadline);
+                    await takeBackAfterSale(programId, token, pending);
                     console.log(`[SHOPIFY] Program ${programId} settled pending stock write ${pending.key}`);
                 }
                 continue;
@@ -873,6 +888,7 @@ async function drainStock(
             };
             await bookStock(programId, token, { shopifyStockCarry: { increment: -total }, shopifyStockPendingWrite: JSON.stringify(write) });
             await sendBooked(gql, programId, token, write, deadline);
+            await takeBackAfterSale(programId, token, write);
             console.log(`[SHOPIFY] Program ${programId} stock ${available} -> ${available + delta} (${reason}, key ${write.key})`);
             // Held at 0: what's left is the over-capacity shortfall, nothing more to write.
             if (delta !== total) break;

@@ -11,7 +11,7 @@
 import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
-import { raiseReversalByOrderId } from "@/lib/finance/reconcile/reversals";
+import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
 jest.mock("@/lib/email", () => ({
@@ -175,7 +175,7 @@ afterAll(async () => {
     const programIds = programs.map((p) => p.id);
     if (programIds.length) {
         await prisma.paymentException.deleteMany({ where: { programId: { in: programIds } } });
-        await prisma.auditLog.deleteMany({ where: { actorSystem: "webhook:shopify-refund", secondaryAffectedEntity: { in: programIds } } });
+        await prisma.auditLog.deleteMany({ where: { actorSystem: { in: ["webhook:shopify-refund", "webhook:shopify-order"] }, secondaryAffectedEntity: { in: programIds } } });
         await prisma.programParticipant.deleteMany({ where: { programId: { in: programIds } } });
         await prisma.program.deleteMany({ where: { id: { in: programIds } } });
     }
@@ -835,6 +835,31 @@ describe("fast-path reversal webhook helper", () => {
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(0);
         expect(takenBack()).toEqual([-1]);
+    });
+
+    it("a restocked refund after the sale has ended on an order no row records takes the seat back off sale, once", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs16-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: `${TAG}-326-paid` });
+        await prisma.program.update({ where: { id: e.programId }, data: { saleEndedAt: new Date() } });
+        const oid = `${TAG}-326`;
+        expect(await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }])).toBe(false);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(takenBack()).toEqual([-1]);
+    });
+
+    it("a restocked refund before the sale has ended on an order no row records leaves the seat on sale", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs17-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: `${TAG}-327-paid` });
+        await refund(`${TAG}-327`, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(takenBack()).toEqual([]);
+    });
+
+    it("a test order gives back the public seats Shopify took, once per order", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs18-${TAG}@ex.com`, status: "ACTIVE" });
+        const oid = `${TAG}-328`;
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }, { variantId: "variant-unrelated", quantity: 1 }]);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        expect(takenBack()).toEqual([2]);
     });
 
     it("a redelivered refund that removed a named sibling takes nothing back", async () => {

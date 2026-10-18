@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { systemActor } from "@/lib/auditActor";
+import { systemActor, type SystemActorName } from "@/lib/auditActor";
 import { programVariantIds } from "@/lib/programs/variants";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
@@ -62,43 +62,102 @@ export async function raiseReversalByOrderId(
         matched = true;
     }
     if (kind === "REFUND" && refundId) {
-        for (const programId of new Set(enrolls.map((e) => e.programId))) {
+        const programIds = new Set(enrolls.map((e) => e.programId));
+        for (const programId of programIds) {
             const onProgram = enrolls.filter((e) => e.programId === programId);
             if (!(await claimRefundSettlement(refundId, orderLegacyId, programId))) continue;
             await settleRestockedSeats(orderLegacyId, programId, onProgram[0].program, onProgram.map((e) => e.personId), restocked);
         }
+        await settleUnrecordedRestock(orderLegacyId, refundId, programIds, restocked);
     }
     return matched;
 }
 
+/** Seats on `program`'s public variant among these lines. */
+function publicSeats(program: { shopifyVariantId: string | null }, lines: { variantId: string; quantity: number }[]): number {
+    return lines.filter((l) => program.shopifyVariantId && l.variantId === program.shopifyVariantId).reduce((n, l) => n + l.quantity, 0);
+}
+
+/**
+ * A restocking refund on an order no row records (withdrawn before it was paid, or
+ * a stranger's order): after the program's sale has ended its restocked public
+ * seats still go back off sale. Before then they stay on sale, as no child holds them.
+ */
+async function settleUnrecordedRestock(orderLegacyId: string, refundId: string, recorded: Set<number>, restocked: RestockedLine[]): Promise<void> {
+    if (restocked.length === 0) return;
+    const programs = await prisma.program.findMany({
+        where: { shopifyVariantId: { in: restocked.map((l) => l.variantId) }, id: { notIn: [...recorded] } },
+        select: { id: true, shopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+    });
+    for (const program of programs) {
+        if (!isSaleEnded(program)) continue;
+        if (!(await claimRefundSettlement(refundId, orderLegacyId, program.id))) continue;
+        await takeBackAfterSale(orderLegacyId, program, publicSeats(program, restocked));
+    }
+}
+
+async function takeBackAfterSale(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }, k: number): Promise<void> {
+    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${k} seat(s) of program ${program.id} after its sale ended: taking them back off sale`);
+    await adjustProgramInventory(program, -k, "refund-after-sale", { deferred: true });
+}
+
+/**
+ * Shopify takes stock for a test-mode order like any other, but a test order moves
+ * no stock in the app's books: give back the public seats it took, once per order
+ * and program (Shopify redelivers webhooks). The claimant variant tracks no stock.
+ */
+export async function returnTestOrderStock(orderLegacyId: string, lines: { variantId: string; quantity: number }[]): Promise<void> {
+    if (lines.length === 0) return;
+    const programs = await prisma.program.findMany({
+        where: { shopifyVariantId: { in: lines.map((l) => l.variantId) } },
+        select: { id: true, shopifyVariantId: true },
+    });
+    for (const program of programs) {
+        const k = publicSeats(program, lines);
+        if (k === 0) continue;
+        if (!(await claimOnce(TEST_ORDER_STOCK_TABLE, "webhook:shopify-order", `test-order:${orderLegacyId}:${program.id}`, program.id, { orderLegacyId, programId: program.id }))) continue;
+        logger.info(`[reconcile] test order ${orderLegacyId} took ${k} seat(s) of program ${program.id}: giving them back`);
+        await adjustProgramInventory(program, k, "test-order", { deferred: true });
+    }
+}
+
 const REFUND_SETTLEMENT_TABLE = "ShopifyRefundSettlement";
+const TEST_ORDER_STOCK_TABLE = "ShopifyTestOrderStock";
 /** Two-argument advisory-lock class, apart from per-person 1-arg locks and FACILITY_ADVISORY_CLASS. */
 export const REFUND_SETTLEMENT_ADVISORY_CLASS = 2;
 
 /**
  * Record that this refund's restock is being settled for this program; false when
- * an earlier delivery already did. The advisory lock serialises concurrent
- * deliveries of the same refund between the check and the insert.
+ * an earlier delivery already did.
  */
-async function claimRefundSettlement(refundId: string, orderLegacyId: string, programId: number): Promise<boolean> {
+function claimRefundSettlement(refundId: string, orderLegacyId: string, programId: number): Promise<boolean> {
     const key = `${refundId}:${programId}`;
+    return claimOnce(REFUND_SETTLEMENT_TABLE, "webhook:shopify-refund", key, programId, { refundId, orderLegacyId, programId });
+}
+
+/**
+ * Record a one-time stock settlement under `key`; false when an earlier delivery
+ * already did. The advisory lock serialises concurrent deliveries between the
+ * check and the insert.
+ */
+async function claimOnce(tableName: string, actor: SystemActorName, key: string, programId: number, data: Record<string, string | number>): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${REFUND_SETTLEMENT_ADVISORY_CLASS}::int, hashtext(${key}))`;
         const seen = await tx.auditLog.findFirst({
-            where: { tableName: REFUND_SETTLEMENT_TABLE, secondaryAffectedEntity: programId, newData: { path: ["key"], equals: key } },
+            where: { tableName, secondaryAffectedEntity: programId, newData: { path: ["key"], equals: key } },
             select: { id: true },
         });
         if (seen) return false;
         // ponytail: claimed before settling, so a crash mid-settlement leaves the rest to
-        // the board's REFUND flags rather than risking a second take-back.
+        // the board's REFUND flags rather than risking a second stock change.
         await tx.auditLog.create({
             data: {
-                ...systemActor("webhook:shopify-refund"),
+                ...systemActor(actor),
                 action: "CREATE",
-                tableName: REFUND_SETTLEMENT_TABLE,
+                tableName,
                 affectedEntityId: programId,
                 secondaryAffectedEntity: programId,
-                newData: { key, refundId, orderLegacyId, programId },
+                newData: { key, ...data },
             },
         });
         return true;
@@ -124,7 +183,7 @@ async function settleRestockedSeats(
     restocked: RestockedLine[],
 ): Promise<void> {
     const lines = restocked.filter((l) => program.shopifyVariantId && l.variantId === program.shopifyVariantId);
-    const k = lines.reduce((n, l) => n + l.quantity, 0);
+    const k = publicSeats(program, restocked);
     if (k === 0) return;
 
     // ponytail: the payload doesn't carry earlier refunds, so "every seat" compares
@@ -148,8 +207,7 @@ async function settleRestockedSeats(
     }
     const variant = { id: programId, shopifyVariantId: program.shopifyVariantId };
     if (isSaleEnded(program)) {
-        logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${k} seat(s) of program ${programId} after its sale ended: taking them back off sale`);
-        await adjustProgramInventory(variant, -k, "refund-after-sale", { deferred: true });
+        await takeBackAfterSale(orderLegacyId, variant, k);
         return;
     }
     if (unmatched === 0) return;
