@@ -230,7 +230,25 @@ export const classifications = {
         sourceLineItemId: 'internal',
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
+        sourceDonatedLineId: 'internal',
         seeded: 'internal',
+        createdAt: 'internal',
+    },
+    DonatedCapitalLine: {
+        id: 'internal',
+        orgId: 'internal',
+        giftSource: 'internal',
+        giftId: 'internal',
+        giftLineId: 'internal',
+        description: 'internal',
+        quantity: 'internal',
+        costCents: 'internal',
+        acquisitionDate: 'internal',
+        budgetOwnerId: 'internal',
+        isCapital: 'internal',
+        depreciationYears: 'internal',
+        reviewedByUserId: 'internal',
+        reviewedAt: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbMatchExclusion: {
@@ -339,6 +357,8 @@ export const relations = {
     ExpenseReceivedOrgEvent: {
     },
     CapitalAsset: {
+    },
+    DonatedCapitalLine: {
     },
     ExpenseQbMatchExclusion: {
     },

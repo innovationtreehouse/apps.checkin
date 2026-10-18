@@ -4,6 +4,7 @@ import type {
   BulkDonationPrincipal,
   CatalogLookup,
   DonationQbPosting,
+  InKindCapital,
   InKindDirectory,
   InventoryApply,
   OrgIdentity,
@@ -27,6 +28,9 @@ const INERT_IN_KIND: InKindDirectory = {
   bucketsApprovedBy: async () => [],
   largeValueCents: async () => 50_000,
 };
+
+/** Unbound, no line goes to capital review and none waits on it. */
+const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [] };
 
 export { NotWiredError };
 
@@ -57,6 +61,10 @@ export function getCatalogLookup(): CatalogLookup {
 
 export function getInKindDirectory(): InKindDirectory {
   return requireRuntime().inKind ?? INERT_IN_KIND;
+}
+
+export function getInKindCapital(): InKindCapital {
+  return requireRuntime().capital ?? INERT_CAPITAL;
 }
 
 export function getInventoryApply(): InventoryApply {

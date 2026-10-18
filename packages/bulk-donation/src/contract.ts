@@ -104,6 +104,26 @@ export interface InKindDirectory {
   largeValueCents(): Promise<number>;
 }
 
+/** An accepted gift line as capital review takes it; its cost includes its share of tax and shipping. */
+export interface CapitalReviewLine {
+  giftSource: "receipt" | "manual";
+  giftId: number;
+  giftLineId: number;
+  description: string;
+  quantity: number;
+  costCents: number;
+  acquisitionDate: string | null;
+  budgetOwnerId: number;
+}
+
+/** Donations → the expense library's capital review, for donated equipment. */
+export interface InKindCapital {
+  /** Sends an accepted gift's lines; the callee keeps those at or over its capital thresholds. A resend does nothing. */
+  submit(orgId: string, lines: CapitalReviewLine[]): Promise<void>;
+  /** The gifts with a line still waiting on capital review. */
+  awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
+}
+
 export interface BulkDonationConfig {
   auth: BulkDonationAuth;
   /** Called once per request: the host may resolve it from its own store, so never at boot. */
@@ -114,6 +134,7 @@ export interface BulkDonationConfig {
   qb?: DonationQbPosting;
   otherLaneClaims?: OtherLaneClaims;
   inKind?: InKindDirectory;
+  capital?: InKindCapital;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */
