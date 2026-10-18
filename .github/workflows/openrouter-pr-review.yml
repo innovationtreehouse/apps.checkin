@@ -63,13 +63,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       - id: review
-        if: steps.route.outputs.model != ''
+        if: always()
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@7bec5bf32e0d9ab6613f0f2cb00769c94b8ba498 # fork: upstream 26f990a + Gemini 4 signature fix (FlyOverCoderKY#44)
+        uses: innovationtreehouse/openrouter-pr-review-action@a3b84780b18b90ad5acb6db104dcba81d01d5761 # TEST: argon budget repro
         with:
           pr_number: ${{ github.event.pull_request.number }}
-          models: ${{ steps.route.outputs.model }}
-          max_tool_turns: ${{ steps.route.outputs.max_tool_turns }}
+          models: google/gemini-4-argon
+          max_tool_turns: 1
           max_diff_kb: ${{ steps.route.outputs.max_diff_kb }}
           effort: ${{ steps.route.outputs.effort }}
           custom_instructions: ${{ steps.route.outputs.instructions }}
@@ -95,9 +95,9 @@ jobs:
           VERDICT: ${{ steps.review.outputs.verdict }}
           REVIEW_URL: ${{ steps.review.outputs.review_url }}
       - id: rerun
-        if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
+        if: false && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@7bec5bf32e0d9ab6613f0f2cb00769c94b8ba498 # fork: upstream 26f990a + Gemini 4 signature fix (FlyOverCoderKY#44)
+        uses: innovationtreehouse/openrouter-pr-review-action@a3b84780b18b90ad5acb6db104dcba81d01d5761 # TEST: argon budget repro
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
