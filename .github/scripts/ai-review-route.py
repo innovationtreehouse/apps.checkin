@@ -40,7 +40,6 @@ COMPLETE_THRESHOLD = 0.2
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
-DIFF_BYTES = 200_000  # over ~32 KB Jev uses its slower long-context mode
 INSTRUCTIONS_MAX = 16_000  # the action's custom_instructions limit, in UTF-8 bytes
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 BOT = "github-actions[bot]"
@@ -101,11 +100,16 @@ def gh(*args):
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+def api(repo, path):
+    return [x for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/{path}")) for x in page]
+
+
 def pr_state(pr, repo):
     meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
     files = [f["path"] for f in meta["files"]]
+    # Jev always gets the whole diff: it is cheap, and over ~32 KB it only switches to a slower long-context mode.
     try:
-        diff = gh("pr", "diff", pr, "-R", repo)[:DIFF_BYTES]
+        diff = gh("pr", "diff", pr, "-R", repo)
     except Exception as e:
         print(f"::warning::could not read the diff ({e}); deciding on the file list", file=sys.stderr)
         diff = ""
@@ -113,6 +117,47 @@ def pr_state(pr, repo):
     return files, {"untrusted_pr_title": meta["title"], "changed_files": files,
                    "changed_lines": meta["additions"] + meta["deletions"], "file_count": len(files),
                    "untrusted_diff": diff}
+
+
+def round_pairs(shas, base):
+    """The (from, to) range each review round covered: base branch to round 1, then each previous round to the next."""
+    return list(zip([base] + shas[:-1], shas))
+
+
+def prior_rounds(pr, repo, skip_id=None):
+    """Every earlier AI review round, oldest first: body and inline comments verbatim with their markers,
+    plus the complete diff that round reviewed."""
+    base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
+    reviews = sorted((r for r in api(repo, f"pulls/{pr}/reviews?per_page=100")
+                      if r["user"]["login"] == BOT and str(r["id"]) != skip_id),
+                     key=lambda r: r.get("submitted_at") or "")
+    comments = {}
+    for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
+        comments.setdefault(c.get("pull_request_review_id"), []).append(
+            {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
+    rounds = []
+    for n, (r, (a, b)) in enumerate(zip(reviews, round_pairs([r["commit_id"] for r in reviews], base)), 1):
+        entry = {"round": n, "reviewed_commit": b, "submitted_at": r.get("submitted_at"),
+                 "review_body": r.get("body") or "", "inline_comments": comments.get(r["id"], [])}
+        if a == b:
+            entry["diff"], entry["diff_note"] = "", "same commit as the previous round: no new changes"
+        else:
+            try:
+                entry["diff"] = gh("api", f"repos/{repo}/compare/{a}...{b}", "-H", "Accept: application/vnd.github.diff")
+                entry["diff_range"] = f"{a}...{b}"
+            except subprocess.CalledProcessError as e:
+                entry["diff_unavailable"] = f"compare {a}...{b} failed: {e.stderr.strip()}"
+        rounds.append(entry)
+    return rounds
+
+
+def with_prior_rounds(state, pr, repo, skip_id=None):
+    # Earlier rounds are PR-derived text: data for Jev, never instructions.
+    try:
+        return dict(state, untrusted_prior_review_rounds=prior_rounds(pr, repo, skip_id))
+    except Exception as e:
+        print(f"::warning::could not read prior review rounds ({e}); deciding without them", file=sys.stderr)
+        return state
 
 
 def pick(probs, rungs):
@@ -148,6 +193,8 @@ def route_selftest():
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    assert round_pairs(["a", "b", "b", "c"], "main") == [("main", "a"), ("a", "b"), ("b", "b"), ("b", "c")]
+    assert round_pairs([], "main") == []
     print("route selftest ok")
 
 
@@ -168,12 +215,10 @@ def _clean(text, limit):
 def review_history(pr, repo, head_sha, budget):
     """Earlier review comments aligned to the diff, then review summaries, within the byte budget.
     Only repo members, collaborators and the review bot are included: anyone can comment on a public PR."""
-    def api(path):
-        return [x for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/{path}")) for x in page]
     head7 = head_sha[:7]
 
     threads = {}
-    for c in api(f"pulls/{pr}/comments?per_page=100"):
+    for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
         if _trusted(c):
             threads.setdefault(c.get("in_reply_to_id") or c["id"], []).append(c)
     inline = []  # (newest activity, text)
@@ -191,13 +236,13 @@ def review_history(pr, repo, head_sha, budget):
         inline.append((cs[-1]["created_at"], f"- {where}\n```diff\n{hunk}\n```\n{talk}"))
 
     summaries = []
-    for r in api(f"pulls/{pr}/reviews?per_page=100"):
+    for r in api(repo, f"pulls/{pr}/reviews?per_page=100"):
         body = _clean(r.get("body"), 1500)
         if _trusted(r) and body:
             at = str(r.get("commit_id"))[:7]
             rel = "current head" if at == head7 else f"head is now {head7}"
             summaries.append((r["submitted_at"], f"- {r['user']['login']} ({r['state'].lower()}) on commit {at}, {rel}:\n{body}"))
-    for c in api(f"issues/{pr}/comments?per_page=100"):
+    for c in api(repo, f"issues/{pr}/comments?per_page=100"):
         body = _clean(c.get("body"), 800)
         if _trusted(c) and body and "openrouter-pr-review-status" not in (c.get("body") or ""):
             summaries.append((c["created_at"], f"- PR comment by {c['user']['login']}: {body}"))
@@ -232,6 +277,7 @@ def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
     files, state = pr_state(pr, repo)
+    state = with_prior_rounds(state, pr, repo)
     hits = matched_profiles(profiles, files)
 
     try:
@@ -305,12 +351,14 @@ def adjudicate():
     if higher:
         try:
             _, state = pr_state(pr, repo)
+            m = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL") or "")
+            state = with_prior_rounds(state, pr, repo, m and m.group(1))
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
             m = re.search(r"\*\*Mode:\*\*\s*`(\w+)`", review)
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
                          review_verdict=verdict or "missing (the review failed)", review_mode=mode,
-                         untrusted_review_output=review[:60_000])
+                         untrusted_review_output=review)
             qs = {"complete": {"type": "noul",
                                "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
                                "criteria": {"true": "Initial: thorough for this change with evidenced findings. Verify: every earlier finding is marked fixed, not fixed or disputed with evidence, and the new commit was checked.",
