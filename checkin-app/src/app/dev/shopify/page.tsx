@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * ENV GATE: LOCAL ONLY. Stand-in for a Shopify orders/paid webhook (see
- * docs/designs/SHOPIFY_DEV_STORE_WEBHOOK.md §6). Lists the membership processes
+ * docs/ops/shopify-dev-store.md §6). Lists the membership processes
  * AND program enrollments currently awaiting payment and fires a
  * synthesized-but-real webhook for the chosen one. 404s on dev AND prod
  * (shopifyMockActive() is true iff CHECKIN_ENV=local) — dev/prod pay through
