@@ -3,6 +3,8 @@ import { logger } from "@/lib/logger";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
+import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -17,6 +19,9 @@ import { saleStockDelta } from "@/lib/programs/saleState";
  *
  * Callers must first establish the order pays for these people
  * (orderEntitlesEnrollment in lib/finance/reconcile/program.ts); this function does not.
+ *
+ * A refunded, cancelled or disputed order activates nobody: each child is raised
+ * to the Board (CRITICAL) and any seat the refund restocked is taken back off sale.
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -32,6 +37,8 @@ export interface ActivateEnrollmentResult {
     activatedCount: number;
     releasedHoldCount: number;
     claimantSeatCount: number;
+    /** True when the order was reversed, so nobody was activated. */
+    reversed?: boolean;
 }
 
 /**
@@ -54,6 +61,16 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         where: { id: programId },
         select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
     });
+
+    // ponytail: checked before the per-row flips, not under a lock; a refund landing in between finds the activated rows by order id and is raised there.
+    if (shopifyOrderId && (await isOrderReversed(prisma, shopifyOrderId))) {
+        logger.warn(`[enroll] order ${shopifyOrderId} was reversed before program ${programId} activated — NOT activated, raised to the board`);
+        for (const personId of personIds) {
+            await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId, programId, personId, severity: "CRITICAL" });
+        }
+        await takeBackRestockedSeats(shopifyOrderId, { id: programId, shopifyVariantId: program?.shopifyVariantId ?? null });
+        return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
+    }
 
     let activatedCount = 0;
     let releasedHoldCount = 0;

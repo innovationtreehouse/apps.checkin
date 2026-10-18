@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import { adjustProgramInventory } from "@/lib/shopify";
+import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { activateProgramEnrollment, publicStockDelta } from "../activateEnrollment";
 
 jest.mock("@/lib/prisma", () => ({
@@ -12,6 +14,15 @@ jest.mock("@/lib/prisma", () => ({
 
 jest.mock("@/lib/shopify", () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("@/lib/finance/reconcile/exceptions", () => ({
+    isOrderReversed: jest.fn().mockResolvedValue(false),
+    raisePaymentException: jest.fn(),
+}));
+
+jest.mock("@/lib/finance/reconcile/reversals", () => ({
+    takeBackRestockedSeats: jest.fn().mockResolvedValue(0),
 }));
 
 const program = {
@@ -83,6 +94,17 @@ describe("activateProgramEnrollment public stock", () => {
         (prisma.program.findUnique as jest.Mock).mockResolvedValue({ ...program, maxParticipants: null });
         seat(false);
         await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "1", lines: [{ variantId: "claim", quantity: 1 }] });
+        expect(adjustProgramInventory).not.toHaveBeenCalled();
+    });
+
+    it("a reversed order activates nobody, raises each child CRITICAL and takes back the restocked seat", async () => {
+        (isOrderReversed as jest.Mock).mockResolvedValueOnce(true);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "9", lines: [{ variantId: "pub", quantity: 2 }] });
+        expect(res).toEqual({ activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true });
+        expect(prisma.programParticipant.updateMany).not.toHaveBeenCalled();
+        expect(raisePaymentException).toHaveBeenCalledTimes(2);
+        expect(raisePaymentException).toHaveBeenCalledWith("REVERSED_BEFORE_ACTIVATION", { shopifyOrderId: "9", programId: 7, personId: 2, severity: "CRITICAL" });
+        expect(takeBackRestockedSeats).toHaveBeenCalledWith("9", { id: 7, shopifyVariantId: "pub" });
         expect(adjustProgramInventory).not.toHaveBeenCalled();
     });
 });

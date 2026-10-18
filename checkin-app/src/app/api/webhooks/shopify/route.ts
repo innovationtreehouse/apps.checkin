@@ -190,14 +190,16 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                     // Shared choke point — same path the reconciler uses to recover a
                     // MISSED webhook (lib/programs/activateEnrollment). Idempotent; the
                     // inventory side effects are non-fatal (Shopify retries on a non-2xx).
-                    const { activatedCount } = await activateProgramEnrollment({
+                    const { activatedCount, reversed } = await activateProgramEnrollment({
                         programId,
                         personIds: participantIds,
                         shopifyOrderId: orderId ?? "",
                         lines: facts.lines,
                     });
 
-                    outcome = `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)${entitlement.surplus ? `; ${entitlement.surplus.kind} flagged` : ""}`;
+                    outcome = reversed
+                        ? `program ${programId}: order reversed before activation — raised, not activated`
+                        : `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)${entitlement.surplus ? `; ${entitlement.surplus.kind} flagged` : ""}`;
                 }
             }
         } else {

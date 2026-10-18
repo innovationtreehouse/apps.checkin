@@ -271,6 +271,10 @@ Things the app takes as true because they are handled outside it.
 - A refund on the reserved-seat item is raised for the board and puts nothing
   back on sale; only a public-item refund restocks.  [Decision — deliberate limit]
 
+- A refunded order never activates a program place; the app stops and raises it
+  to the Board. A seat that refund put back on sale is taken back off sale until
+  the Board decides.  [Decision — *Principle: people decide about people*]
+
 - The public item keeps its counted stock for people buying straight from the
   store. A change to a program's full price goes to both store items. A member
   price does not, because members pay through their discount code. A full price

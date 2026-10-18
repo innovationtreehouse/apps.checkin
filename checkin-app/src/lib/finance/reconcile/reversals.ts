@@ -6,6 +6,7 @@ import { adjustProgramInventory } from "@/lib/shopify";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
+import type { Prisma } from "@/generated/prisma/client";
 import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isReversed } from "./orderStatus";
 import { AMOUNT_TOLERANCE_CENTS, usesVolunteerCodeUnentitled } from "./membership";
@@ -45,6 +46,7 @@ export async function raiseReversalByOrderId(
     refundId: string | null = null,
 ): Promise<boolean> {
     await recordReversal(orderLegacyId, kind);
+    if (kind === "REFUND" && refundId) await recordRestock(refundId, orderLegacyId, restocked);
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
     if (proc) {
@@ -181,6 +183,60 @@ async function claimOnce(tableName: string, actor: SystemActorName, key: string,
         });
         return true;
     });
+}
+
+const REFUND_RESTOCK_TABLE = "ShopifyRefundRestock";
+
+/**
+ * Remember what a refund put back in stock, one row per restocked line, so an
+ * activation that arrives after the refund can take those seats back off sale.
+ */
+async function recordRestock(refundId: string, orderLegacyId: string, restocked: RestockedLine[]): Promise<void> {
+    if (restocked.length === 0) return;
+    // ponytail: check-then-insert without a lock; a redelivery racing the first adds duplicate rows, and the per-refund settlement claim still takes each seat back once.
+    const seen = await prisma.auditLog.findFirst({ where: { tableName: REFUND_RESTOCK_TABLE, newData: { path: ["refundId"], equals: refundId } }, select: { id: true } });
+    if (seen) return;
+    await prisma.auditLog.createMany({
+        data: restocked.map((l) => ({
+            ...systemActor("webhook:shopify-refund"),
+            action: "CREATE",
+            tableName: REFUND_RESTOCK_TABLE,
+            affectedEntityId: 0,
+            newData: { refundId, orderLegacyId, variantId: l.variantId, quantity: l.quantity },
+        })),
+    });
+}
+
+function restockRow(data: Prisma.JsonValue): { refundId: string; variantId: string; quantity: number } | null {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    const { refundId, variantId, quantity } = data;
+    return typeof refundId === "string" && typeof variantId === "string" && typeof quantity === "number" ? { refundId, variantId, quantity } : null;
+}
+
+/**
+ * Take back off sale the public seats a refund restocked on an order that was
+ * refused activation. Each refund is settled once per program, shared with
+ * settleRestockedSeats. Returns the seats taken back.
+ */
+export async function takeBackRestockedSeats(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }): Promise<number> {
+    if (!program.shopifyVariantId) return 0;
+    const rows = await prisma.auditLog.findMany({
+        where: { tableName: REFUND_RESTOCK_TABLE, newData: { path: ["orderLegacyId"], equals: orderLegacyId } },
+        select: { newData: true },
+    });
+    const byRefund = new Map<string, number>();
+    for (const row of rows) {
+        const r = restockRow(row.newData);
+        if (r && r.variantId === program.shopifyVariantId) byRefund.set(r.refundId, (byRefund.get(r.refundId) ?? 0) + r.quantity);
+    }
+    let k = 0;
+    for (const [refundId, seats] of byRefund) {
+        if (await claimRefundSettlement(refundId, orderLegacyId, program.id)) k += seats;
+    }
+    if (k === 0) return 0;
+    logger.warn(`[reconcile] refunded order ${orderLegacyId} restocked ${k} seat(s) of program ${program.id} before activation: taking them back off sale, the board decides`);
+    await adjustProgramInventory(program, -k, "refund-before-activation", { deferred: true });
+    return k;
 }
 
 /**
