@@ -624,16 +624,16 @@ describeDb("item assignment", () => {
   ])("refuses a bucket %s", async (_label, owner, active, status) => {
     owners = [owner];
     activeClasses = active;
-    await expect(assign(7)).rejects.toMatchObject({ statusCode: status });
+    await expect(assign(7)).rejects.toMatchObject({ status: status });
     expect(await db.incomeItemCategory.count()).toBe(0);
   });
 
   it("refuses a bucket while QuickBooks can't be reached, but still takes general income", async () => {
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
     bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
-    await expect(assign(7)).rejects.toMatchObject({ statusCode: 503 });
+    await expect(assign(7)).rejects.toMatchObject({ status: 503 });
     bind({ classes: undefined });
-    await expect(assign(7)).rejects.toMatchObject({ statusCode: 503 });
+    await expect(assign(7)).rejects.toMatchObject({ status: 503 });
     expect(await assign(null)).toMatchObject({ budgetOwnerId: null });
   });
 });
