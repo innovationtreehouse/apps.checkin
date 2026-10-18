@@ -84,6 +84,10 @@ Things the app takes as true because they are handled outside it.
 - Payment-plan terms are agreed within the limits policy sets. The app records
   that a plan was approved, not its schedule.
 
+- What a core volunteer has authority to decide in running a program is set by
+  the organisation. The app records who is core and opens the information that
+  role needs; it does not define the role's authority.
+
 ---
 
 ## Procedure

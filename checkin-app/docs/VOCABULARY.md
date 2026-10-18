@@ -8,8 +8,9 @@ through*. The same human legitimately carries several names at once — a kid is
 screen. That is not a collision to "fix"; it is the model working as intended.
 
 Terms are **product-owner decided**. Where the code hasn't caught up yet an entry
-is marked *(rename pending)* and tracked in the followup ledger,
-[designs/UNFINISHED.md](designs/UNFINISHED.md).
+is marked *(rename pending)*; open follow-ups are tracked under issue #1322.
+How to apply these words in code is in
+[../../docs/conventions.md](../../docs/conventions.md).
 
 ## The core rule
 
@@ -59,14 +60,14 @@ Rules (the no-bare-member rule above applies throughout):
 | **Treehouse Volunteer** | umbrella: a BG-checked, board-approved adult who volunteers — **program-optional** (a bookkeeper is one, with no program) | — | "volunteer" |
 | **Volunteer Family** | a Member Family with **no youth/student enrolled**, whose adults volunteer → **reduced membership fee** | `OrgMembership.isVolunteerFamily` (rate) + `VolunteerDesignation` (email pre-auth) — **one concept** | "Volunteer-only family"; ops nav and roster: "Volunteer Families" |
 | **Program Volunteer** | a Treehouse Volunteer assigned to a **specific program** | `ProgramVolunteer` (`isCore` → **Core Volunteer**) | "Volunteer" / "Core Volunteer" |
-| **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance | "Volunteers/Adults" |
+| **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance, by age, not enrollment | "Volunteers/Adults" |
 
 Program roles (all Treehouse Volunteers):
 
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
-| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's legal-authority rules are organizational (out of software scope) |
+| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](../../docs/rules/programs.md), Assumptions) |
 | **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
@@ -76,7 +77,7 @@ Program roles (all Treehouse Volunteers):
 - **Keyholder** (`isKeyholder`) — a **board-anointed policy role**: a Member who can open a Treehouse Facility; carries facility-rules/emergency responsibility. A standing role, not a presence status (attendance code merely reads it).
 - **Board Member** (`isBoardMember`) — a governance role; **distinct from the OrgMembership "Treehouse Member"** (a Board Member need not be a Treehouse Member). Not the bare-`member` this dictionary bans.
 - **Treehouse Account** — an internal org-domain (`@innovationtreehouse.org`) account; not a real Member Family. `isTreehouseAccount` *(rename pending from `isStaffAccount`; also `STAFF_ENTERED`)*.
-- **Admin** — ⚠️ **UNRESOLVED / do not rely on.** "admin" is a loose derived label (no `isAdmin` column) that means `isSysadmin` in some files and `isSysadmin || isBoardMember` in others. Security-sensitive; deferred to its own discussion (UNFINISHED.md).
+- **Admin** — ⚠️ **UNRESOLVED / do not rely on.** "admin" is a loose derived label (no `isAdmin` column) that means `isSysadmin` in some files and `isSysadmin || isBoardMember` in others. Security-sensitive; deferred to its own discussion (issue #1551).
 - **Review / Reviewer** — the BG-reviewer role, the membership review queue, and `BackgroundCheckAttestation.reviewer` are **one concept**, defined under [Background check](#background-check). Trusted-adult review keeps its own **review** + **decider** (`TrustedAdultReview.decidedBy`) — one board member's decision with recorded reasoning, not a two-of-N attestation. **Scholarship Review Team** (see Money) is a third, unrelated.
 
 ## Shop & Certification
@@ -96,8 +97,7 @@ Rules:
 - **Canonical top label = "Tool Certifier"** *(retire "Shop Certifier")*.
 - **`instructor` is tool-only** — "program instructor" is banned.
 - **Enum rank ≠ declaration order** — real rank is `BASIC < CERTIFIED < DOF < INSTRUCTOR < MAY_CERTIFY_OTHERS`; make it explicit in the enum *(pending)*.
-- **Tool Certifier is per-tool for *granting*** (you may only certify others on a tool you certify); treated as a global flag for *nav/visibility* only — accepted (small group).
-- **Age gates + tool categories are policy-enforced outside the software** today (aspirational to model).
+- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools. The rules are in [../../docs/rules/tools-certification.md](../../docs/rules/tools-certification.md).
 
 ## Money
 
@@ -173,7 +173,7 @@ One activity, a pipeline of distinct stages — name each; keep the scoped verbs
 ## Supervision terms (safety vocabulary)
 
 - **Tripod** — the presence of **3 Members, each ≥ 9 years old**, in an area that is **Observable and Interruptible**; lets a Certified (Green) work solo. *(policy term; not modeled in code)*
-- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the attendance keyholder/volunteer buckets implement this)*
+- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets — see [../../docs/rules/attendance-checkin.md](../../docs/rules/attendance-checkin.md), Procedure › Supervision)*
 - **Observable and Interruptible** — no locked doors; another adult can see or hear and could enter. *(not modeled)*
 - **"dedicated" (DOF/Instructor)** — "actively watching you use the tool" (not wandering). **Not software-enforceable — ignore in code.**
 
@@ -224,23 +224,7 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 `Event` is unchanged — the Instance layer is inserted **above** it, not in its place.
 
-## Reference facts
+## Reference terms
 
-- **Membership Year** = **Sept 1 – Aug 31** (policy); `membershipYearBoundary` stays configurable by design.
-- **Single facility** — check-in happens only at the one Treehouse Facility; multi-location is not on the roadmap (`RawBadgeLog.location` free-text is fine).
-- **Integration vendors** — **Averity** (background check; aka "VERITY"), **Zoho** (e-sign), **Shopify** (payment).
+- **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](../../docs/rules/membership.md).
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).
-
-## Coding conventions
-
-- **Code identifiers AND comments/prose** use the canonical word. No `minor`, no loose `dependent`, no bare sense-B `member`, in identifiers *or* comments. **`child` is allowed** — a valid relationship term (offspring); use `youth` only for the under-18 age.
-- **API wire keys are a contract**, not a free rename. A serialized request/response key changes only in the change that owns that contract, all consumers moved together. Rename surrounding vars freely; leave the key until then.
-- **Age is always derived from `dateOfBirth` via `isYouth`** — never re-implement an age check inline.
-
-## Migration status
-
-The core term-by-term migration (person / member / participant / youth / OrgMembership) is **complete and shipped**. What's left is the followup ledger — the renames the *(rename pending)* entries above imply, plus open decisions — in [designs/UNFINISHED.md](designs/UNFINISHED.md).
-
-> **Pattern for big Prisma model renames** (learned from `Participant`→`Person`): a model rename is *atomic* — tsc is red until every accessor/type flips, so it can't merge half-done. Pull everything NOT tied to the model name (local types, then per-model FK renames — Prisma allows `person Participant @relation(fields:[personId])`) into small green PRs first, leaving a final purely-mechanical name flip. See git history #680–#708 (Person) and #735 (OrgMembership).
-
-The shipped-vs-pending status of each term is the dictionary itself: an entry with no *(rename pending)* tag is done. The remaining followups, and the decisions deliberately **not** taken (e.g. the attendance volunteer/youth buckets stay age-derived, not enrollment-derived), live in [designs/UNFINISHED.md](designs/UNFINISHED.md).

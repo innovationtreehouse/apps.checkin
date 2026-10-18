@@ -70,6 +70,10 @@ Things the app takes as true because they are handled outside it.
   requirement and the enhanced tripod are enforced by the people present. The app
   records who is certified, not who is watching.
 
+- The age minimum for each level, and which tools fall in each category, are
+  enforced in the shop. The app records the level granted; it does not check the
+  person's age against it, and it holds no tool categories.
+
 ---
 
 ## Procedure
