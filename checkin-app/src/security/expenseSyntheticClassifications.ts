@@ -71,7 +71,7 @@ export const classifications = {
     name: "pii",
   },
   // A donated gift line in capital review: the gift's value and finance's
-  // decision. Carries no donor field.
+  // decision. The reviewer's id is `pii`; there is no donor field.
   DonatedCapitalLineView: {
     id: "internal",
     orgId: "internal",
@@ -85,7 +85,7 @@ export const classifications = {
     budgetOwnerId: "internal",
     isCapital: "internal",
     depreciationYears: "internal",
-    reviewedByUserId: "internal",
+    reviewedByUserId: "pii",
     reviewedAt: "internal",
   },
 } as const;

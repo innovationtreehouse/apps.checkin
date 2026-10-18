@@ -62,6 +62,8 @@ defineRoute({ endpoint: 'GET /api/expense/received-expense-payloads', authorize:
 defineRoute({ endpoint: 'GET /api/expense/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
+// Donated gift lines at or over the capital thresholds, in or past capital review.
+defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/flags', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Records what the Board authorized for a non-Everyday card charge. The library
@@ -95,9 +97,7 @@ defineRoute({ endpoint: 'PUT /api/expense/qb-accounts/[id]', authorize: 'finance
 defineRoute({ endpoint: 'DELETE /api/expense/qb-accounts/[id]', authorize: 'finance', envelope: null, orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/ownership-map', authorize: 'finance', envelope: null, returns: ['PartOwnerMap'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'finance', envelope: null, returns: ['ExpenseCapitalSeedResult'], orderedView: FINANCE_VIEW });
-// Capital review of donated equipment: gift lines at or over the capital
-// thresholds, and finance's decision on each. No donor field is returned.
-defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_VIEW });
+// Finance's capital decision on a donated gift line. No donor field is returned.
 defineRoute({ endpoint: 'POST /api/expense/donated-capital/[id]/review', authorize: 'finance', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_VIEW });
 // QuickBooks matching per expense: the expense's candidates, and pick one.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
