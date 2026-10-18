@@ -4,9 +4,10 @@ import type { CatalogItemReferenceProposal, CatalogProvisionalItemProposal, Cata
 import { db } from "../../db";
 import type { CatalogReader, CatalogSubmissions, RefCheckResult } from "../../contract";
 import { lineItemService } from "../../services/lineItemService";
+import { orgEventConsumer } from "../../services/orgEventConsumer";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { MANAGER, OTHER_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
+import { MANAGER, OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 const noRef = { exists: false, gtin13: null, id: null, conversionFactor: 1, conversionVersion: 1 };
 let refCheck: RefCheckResult;
@@ -157,5 +158,55 @@ describeDb("an id-less session is unauthenticated", () => {
     ];
     for (const call of calls) await expect(call()).rejects.toMatchObject({ status: 401 });
     expect(await db.workflowAuditLog.count()).toBe(0);
+  });
+});
+
+describeDb("a catalog remap after the manager's decision", () => {
+  const PROV = "2000000000015";
+  const REAL = "0000000000031";
+  const approved = {
+    id: 9,
+    orgId: TEST_ORG_ID,
+    eventType: "provisional_approved",
+    payload: JSON.stringify({ version: 1, provisionalGtin13: PROV, realGtin13: REAL, name: "Widget", conversionFactor: 6, conversionVersion: 2 }),
+  };
+
+  // Two lines, so the open second line keeps the receipt editable.
+  async function proposedLine() {
+    const { r, lines } = await pendingWithLines(2);
+    await lineItemService.proposeProvisionalItem(r.id, lines[0].id, {
+      proposedName: "Widget",
+      proposedCategoryId: 1,
+      proposedSubcategoryId: 2,
+      proposedUsageBehavior: "Durable",
+    });
+    return { r, ls: lines[0] };
+  }
+  const read = (id: number) => db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id } });
+
+  it("keeps the manager's link", async () => {
+    const { r, ls } = await proposedLine();
+    await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000017" });
+    await orgEventConsumer.onOrgEvents([approved]);
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
+  });
+
+  it("keeps the manager's not-inventory decision", async () => {
+    const { r, ls } = await proposedLine();
+    await lineItemService.markNonInventory(r.id, ls.id);
+    await orgEventConsumer.onOrgEvents([approved]);
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
+  });
+
+  it("remaps a line that is still provisional, and a replay changes nothing", async () => {
+    const { ls } = await proposedLine();
+    await orgEventConsumer.onOrgEvents([approved]);
+    const remapped = await read(ls.id);
+    expect(remapped).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: REAL, conversionFactor: 6, conversionVersion: 2 });
+    await orgEventConsumer.onOrgEvents([approved]);
+    expect(await read(ls.id)).toEqual(remapped);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
   });
 });

@@ -136,6 +136,7 @@ export const lineItemService = {
     await updateEditableLine(edit, {
       recognitionStatus: "recognized",
       assignedGtin13: gtin13,
+      provisionalItemGtin13: null,
       conversionFactor,
       conversionVersion: 1,
     }, actor);
@@ -212,7 +213,7 @@ export const lineItemService = {
     const edit = await loadEditableLine(receiptId, lineId);
     const { received } = edit;
 
-    await updateEditableLine(edit, { recognitionStatus: "non_inventory" }, actor);
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", provisionalItemGtin13: null }, actor);
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
