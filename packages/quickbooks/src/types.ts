@@ -89,7 +89,7 @@ export interface QboBillPayment {
 
 /** The company's Preferences; BookCloseDate is absent when no closing date is set. */
 export interface QboPreferences {
-  AccountingInfoPrefs?: { BookCloseDate?: string };
+  AccountingInfoPrefs?: { BookCloseDate?: string | null };
 }
 
 export interface QboAccount {

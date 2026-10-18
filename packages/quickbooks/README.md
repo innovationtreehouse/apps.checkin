@@ -19,7 +19,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
   finds an app entry a dated window misses.
 - `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
-  null when finance has set none (absent or empty). It throws when the read fails or the date is malformed;
+  null when finance has set none (absent, null or empty). It throws when the read fails or the date is malformed;
   nothing caches it. It and the reference lists below are the other reads with no date window.
 - Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
   e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.

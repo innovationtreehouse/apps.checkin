@@ -202,10 +202,12 @@ describe("bookCloseDate", () => {
     expect(sql(0)).toBe("SELECT * FROM Preferences");
   });
 
-  it("is null when no closing date is set, absent or empty", async () => {
+  it("is null when no closing date is set, absent, null or empty", async () => {
     respond("Preferences", [{ AccountingInfoPrefs: {} }]);
     await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
     respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: null } }]);
     await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
     respond("Preferences", [{}]);
     await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
