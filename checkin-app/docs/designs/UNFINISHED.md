@@ -19,7 +19,7 @@ resolves to **different role sets** in different files:
 
 | Site | "admin" means |
 |---|---|
-| [shopNav.ts:29](../../src/lib/shopNav.ts#L29) | `isSysadmin \|\| isBoardMember` (either) |
+| [shopOps.ts:13](../../src/lib/nav/sections/shopOps.ts#L13) | `isSysadmin \|\| isBoardMember` (either) |
 | [orgAccount.ts:9](../../src/lib/orgAccount.ts#L9) | reads as both-required |
 | [api/roles/route.ts:7](../../src/app/api/roles/route.ts#L7) | gate `['isSysadmin','isBoardMember']` (either) |
 | [settings/roles/page.tsx](../../src/app/settings/roles/page.tsx) | Sysadmin / Board Member as **separate** columns |
@@ -286,7 +286,7 @@ here rather than graduating.
   differently from the wire key is **intentional**, not a mismatch — do not "fix" it.
 - **Certifier "any-tool → global" widening — ACCEPTED (2026-07-02), not a security
   issue.** Certifiers are a small group; the `isCertifier` nav/access checks that
-  fire on holding `MAY_CERTIFY_OTHERS` on **any** tool (`shopNav`,
+  fire on holding `MAY_CERTIFY_OTHERS` on **any** tool (`shopOps`,
   `access-resolvers`, `pageRegistry`, `AppFrame`, `ToolManagementPanel`) are
   intended convenience, not an over-grant. The **grant action itself stays
   per-tool** ([shop/certifications/route.ts](../../src/app/api/shop/certifications/route.ts)) —

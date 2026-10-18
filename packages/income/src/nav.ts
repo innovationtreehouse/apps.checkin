@@ -17,3 +17,5 @@ export const INCOME_NAV_LINKS: readonly IncomeNavLink[] = [
   { name: "QB Exclusions", href: "/income/exclusions", icon: "🚫" },
 ];
 
+/** The host-level tab that opens the income screens. */
+export const INCOME_TAB: IncomeNavLink = { name: "Income", href: "/income", icon: "💵" };

@@ -7,9 +7,12 @@
  */
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { PAGES } from '@/components/pageRegistry';
-import { isCatalogViewerClient } from '@/lib/catalogNav';
-import { EXPENSE_OPS_SECTION_ROLES, INVENTORY_LIBRARY_TABS, REVENUE_OPS_LIBRARY_TABS, hasAnyRole, type LibraryTab } from '@/lib/libraryNav';
-import { canSubmitReceipts } from '@/lib/volunteer';
+import type { NavSection } from '@/lib/nav/types';
+import { linkGate } from '@/lib/nav/gates';
+import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
+import { INVENTORY } from '@/lib/nav/sections/inventory';
+import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
+import { canSeeCatalog, canSubmitReceipts } from '@/lib/volunteer';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { LIBRARY_KEYS, type LibraryKey } from '@/lib/libraryRelease';
 import { ORG_DOMAIN } from '@/lib/config';
@@ -103,7 +106,7 @@ const counts = (library: LibraryKey): ClientGate => {
 const page = (href: string): ClientGate => {
     const entry = PAGES.find((p) => p.href === href);
     if (!entry) throw new Error(`${href} is not in pageRegistry PAGES`);
-    return (user) => entry.visible(user, true, countsFor(user));
+    return (user) => entry.visible(user, countsFor(user));
 };
 
 /** A registered route's own Authorize, read from the registry so the pair cannot drift from it. */
@@ -113,11 +116,10 @@ const routeToken = (endpoint: string): Authorize => {
     return route.authorize;
 };
 
-/** A library tab's own `visible` for `href`, with every library released. */
-const tab = (slot: readonly LibraryTab[], href: string): ClientGate => {
-    const entry = slot.find((t) => t.href === href);
-    if (!entry) throw new Error(`${href} is not a registered library tab`);
-    return (user) => entry.visible(user, countsFor(user));
+/** A section tab's gate for `href`, with every library released. */
+const tab = (section: NavSection, href: string): ClientGate => {
+    const gate = linkGate(section, href);
+    return (user) => gate(user, countsFor(user));
 };
 
 export type GatePair = {
@@ -130,17 +132,17 @@ export type GatePair = {
 
 /** Count providers pair as `counts:<library>`; gateEquality fails on a provider with no pair. */
 export const GATE_PAIRS: GatePair[] = [
-    { name: 'catalogNav isCatalogViewerClient', client: isCatalogViewerClient, token: 'catalog-viewer' },
+    { name: 'volunteer canSeeCatalog', client: canSeeCatalog, token: 'catalog-viewer' },
     { name: 'page /catalog', client: page('/catalog'), token: 'catalog-viewer' },
     { name: 'page /inventory/org-items', client: page('/inventory/org-items'), token: 'catalog-viewer' },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
-    { name: 'tab /inventory/receiving', client: tab(INVENTORY_LIBRARY_TABS, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
+    { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
-    { name: 'Expense Ops section', client: (u) => hasAnyRole(u, EXPENSE_OPS_SECTION_ROLES), token: 'finance-or-board' },
+    { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
-    { name: 'tab /income', client: tab(REVENUE_OPS_LIBRARY_TABS, '/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/payouts') },
     { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
     { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },

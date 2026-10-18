@@ -57,7 +57,7 @@ None of this is visible yet because nothing reads instances. P2 handles it (§4)
 ### Consumers of the program tier that the phases must move
 
 - **Security boundary (`src/security/`):** `access-resolvers.ts` (`buildCallerContext`; `program-lead-mentor` / `program-core-volunteer` cases), `core.ts`, `scopes.ts` (`programsLed`), `scopeBindings.ts` (`their_program_participants` / `their_program_households`), `registry.ts`, `generated/classifications.ts` (regenerated).
-- **The `programsLed` claim and its readers:** `lib/auth-options.ts`, `lib/authClaims.ts`, `types/next-auth.d.ts`, `program-ops/layout.tsx`, `lib/libraryNav.ts`, `lib/volunteer.ts`.
+- **The `programsLed` claim and its readers:** `lib/auth-options.ts`, `lib/authClaims.ts`, `types/next-auth.d.ts`, `program-ops/layout.tsx`, `lib/nav/sections/myPrograms.ts`, `lib/volunteer.ts`.
 - **The `Person.programsLed` relation (Prisma, not the claim):** `lib/person/filters.ts`, `lib/receipt/configure.ts`, `lib/membership/personAgreementTriggers.ts`, `api/household/member/route.ts`, `api/membership-audit/compliance/route.ts`. These move to `Person.instancesLed` with the reads in P3.
 - **Capacity:** `lib/program/capacity.ts` locks `SELECT id FROM "Program" … FOR UPDATE`.
 - **Store and sale:** `lib/shopify.ts` (product create, claimant product, stock writer, price sync, off-sale, `mintMemberDiscountCode`), `lib/programs/variants.ts`, `lib/programs/memberDiscountCode.ts`, `lib/programs/saleSweep.ts`, `lib/programs/saleState.ts`, `lib/programs/activateEnrollment.ts`, `api/programs/[id]/sync-shopify`, `api/programs/[id]/discount-code`, the `orders/paid` webhook, `lib/finance/reconcile.ts`, `lib/finance/matchAudit.ts`.

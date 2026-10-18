@@ -6,7 +6,8 @@ import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Center, Container, Loader, Title } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { SHOP_NAV_LINKS, shopRoles } from "@/lib/shopNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { SHOP_OPS } from "@/lib/nav/sections/shopOps";
 
 export default function ShopLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
@@ -27,10 +28,8 @@ export default function ShopLayout({ children }: { children: React.ReactNode }) 
 
   if (status === "unauthenticated") return null;
 
-  const roles = shopRoles(session?.user);
-
-  // General access gate (admin ⊂ certifier), mirroring the original page.
-  if (!roles.isCertifier) {
+  // General access gate (admin ⊂ certifier).
+  if (!SHOP_OPS.visible(session?.user, null)) {
     return (
       <Container size="sm" py="xl">
         <Card withBorder radius="md" padding="xl">
@@ -44,13 +43,13 @@ export default function ShopLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  const visibleLinks = SHOP_NAV_LINKS.filter((link) => link.visible(roles));
-  const active = visibleLinks.find((link) => pathname === link.href)?.href ?? null;
+  const links = visibleLinks(SHOP_OPS, session?.user, null);
+  const active = links.find((link) => pathname === link.href)?.href ?? null;
 
   // Per-tab gate: a known shop tab the viewer may not see (e.g. /shop/create for
   // a non-admin certifier hitting the URL directly).
   const onHiddenTab =
-    SHOP_NAV_LINKS.some((link) => link.href === pathname) && !active;
+    SHOP_OPS.links.some((link) => link.href === pathname) && !active;
   if (onHiddenTab) {
     return (
       <Container size="sm" py="xl">
@@ -65,7 +64,7 @@ export default function ShopLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <PageContainer>
-      <SectionTabs links={visibleLinks} mb="md" />
+      <SectionTabs links={links} mb="md" />
       {children}
     </PageContainer>
   );

@@ -4,16 +4,11 @@ import { Box } from "@mantine/core";
 import { usePathname } from "next/navigation";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { SYSTEM_STATUS_NAV_LINKS } from "@/lib/systemStatusNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { SYSTEM_STATUS, SYSTEM_STATUS_ROLES, UNSYNCED_REVIEW_ROLES } from "@/lib/nav/sections/systemStatus";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import type { BusinessRole } from "@/types/auth";
 
 import { PageLoader } from "@/components/ui/PageLoader";
-
-// Q15: keyholders review parked scans. #1633: operations do not — aggregate
-// attendance only. Other System Status tabs stay board/sysadmin.
-const ADMIN: BusinessRole[] = ["isSysadmin", "isBoardMember"];
-const REVIEWERS: BusinessRole[] = ["isSysadmin", "isBoardMember", "isKeyholder"];
 
 function isUnsyncedPath(pathname: string | null) {
   return (
@@ -25,7 +20,7 @@ function isUnsyncedPath(pathname: string | null) {
 export default function SystemStatusLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const unsynced = isUnsyncedPath(pathname);
-  const { loading, ready, user } = useRequireRole(unsynced ? REVIEWERS : ADMIN);
+  const { loading, ready, user } = useRequireRole(unsynced ? UNSYNCED_REVIEW_ROLES : SYSTEM_STATUS_ROLES);
 
   if (loading) {
     return (
@@ -35,10 +30,7 @@ export default function SystemStatusLayout({ children }: { children: React.React
 
   if (!ready) return null;
 
-  const admin = user?.isSysadmin === true || user?.isBoardMember === true;
-  const links = admin
-    ? SYSTEM_STATUS_NAV_LINKS
-    : SYSTEM_STATUS_NAV_LINKS.filter((l) => l.href === "/system-status/unsynced-scans");
+  const links = visibleLinks(SYSTEM_STATUS, user, null);
 
   return (
     <PageContainer>

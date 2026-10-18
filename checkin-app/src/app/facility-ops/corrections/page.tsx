@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Group, SegmentedControl, Stack, Switch, Table, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { FACILITY_RECORD_ROLES } from "@/lib/facilityNav";
+import { FACILITY_RECORD_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_ROWS } from "@/lib/corrections";

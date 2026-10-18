@@ -7,7 +7,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -33,7 +33,7 @@ type MembershipPaymentPlanRequest = {
 
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
 
   const ownHousehold = (req: MembershipPaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.orgMembership.household.id);
