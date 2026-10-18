@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import type { Session } from "next-auth";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { activityMembers } from "@/lib/household/activityMembers";
 import { apiError } from "@/lib/api-response";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
@@ -18,7 +19,7 @@ export const GET = withAuth({}, async (_req, auth) => {
         const householdMemberIds = householdMembers.map(m => m.id);
 
         const enrollments = await prisma.programParticipant.findMany({
-            where: { personId: { in: householdMemberIds } },
+            where: { personId: { in: householdMemberIds }, ...ENROLLED_PARTICIPANT },
             select: {
                 programId: true,
                 personId: true,

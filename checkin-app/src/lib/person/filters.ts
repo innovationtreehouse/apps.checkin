@@ -59,7 +59,7 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
     const program = recentProgramWhere(now);
     return {
         OR: [
-            { programParticipants: { some: { program } } },
+            { programParticipants: { some: { program, ...ENROLLED_PARTICIPANT } } },
             { programVolunteers: { some: { program } } },
             { programsLed: { some: program } },
         ],

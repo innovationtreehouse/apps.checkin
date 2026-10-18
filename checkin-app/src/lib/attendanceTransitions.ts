@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { LIVE_VISIT } from "@/lib/visit/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { specTrace } from "@/lib/specTrace";
 
@@ -13,7 +14,7 @@ import { specTrace } from "@/lib/specTrace";
 async function getRelevantProgramIds(participantId: number, db: DbClient = prisma): Promise<number[]> {
     const [participantPrograms, volunteerPrograms, leadPrograms] = await Promise.all([
         db.programParticipant.findMany({
-            where: { personId: participantId },
+            where: { personId: participantId, ...ENROLLED_PARTICIPANT },
             select: { programId: true }
         }),
         db.programVolunteer.findMany({

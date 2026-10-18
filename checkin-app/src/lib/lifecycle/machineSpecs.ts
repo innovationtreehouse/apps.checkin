@@ -39,6 +39,7 @@ const ENROLLMENT: MachineSpec = {
         'PENDING_HELD',
         'PENDING_HELD_DENIED',
         'ACTIVE',
+        'WITHDRAWN',
     ],
     initials: ['UNENROLLED'],
     accepting: ['ACTIVE'],

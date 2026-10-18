@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -86,7 +86,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                 },
             },
             participants: {
-                where: { person: LIVE_PERSON },
+                where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
                 select: {
                     programId: true,
                     personId: true,
@@ -136,7 +136,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                 },
             },
             leadMentor: { select: { id: true, name: true, email: true } },
-            _count: { select: { participants: { where: { person: LIVE_PERSON } }, volunteers: { where: { person: LIVE_PERSON } } } },
+            _count: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } }, volunteers: { where: { person: LIVE_PERSON } } } },
         },
     });
 

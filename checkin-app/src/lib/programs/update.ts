@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
 import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@checkin/money";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
@@ -114,7 +114,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0) {
             return refuse("invalid", "maxParticipants must be a positive integer");
         }
-        const enrolled = await prisma.programParticipant.count({ where: { programId, person: LIVE_PERSON } });
+        const enrolled = await prisma.programParticipant.count({ where: { programId, person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } });
         if (maxParticipants < enrolled) {
             return refuse("invalid", `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
         }
@@ -372,7 +372,7 @@ async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): 
     if (before.minAge === after.minAge && before.maxAge === after.maxAge && before.startAt.getTime() === after.startAt.getTime()) return;
     const rule = (p: Program) => ({ minAge: p.minAge, maxAge: p.maxAge, asOf: p.startAt });
     const enrolled = await prisma.programParticipant.findMany({
-        where: { programId: after.id, person: LIVE_PERSON },
+        where: { programId: after.id, person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
         select: { status: true, person: { select: { name: true, dateOfBirth: true, isDeclaredAdult: true } } },
     });
     const misfits = enrolled.flatMap(({ status, person }) => {
