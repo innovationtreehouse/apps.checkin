@@ -128,6 +128,9 @@ Things the app takes as true because they are handled outside it.
   leader can.  [Unsettled — who withdraws a paid
   place is open with the board]
 
+- The board, a sysadmin and the program's leader remove a paid place except for
+  a place in their own household, which someone outside the household removes.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - Being refused for an unknown age is not a dead end. Someone with no age on file
   is asked to record one and may then enroll themselves; a brand-new adult is
   their own household lead and has nobody else to ask.  [Decision]
