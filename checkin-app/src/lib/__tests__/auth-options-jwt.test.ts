@@ -219,7 +219,7 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         const result = await callRefresh({ hd: 'x', emailVerified: true, signedInAt });
 
         expect(mockFindUnique).not.toHaveBeenCalled();
-        expect(result).toEqual({ hd: 'x', emailVerified: true, signedInAt });
+        expect(result).toEqual({ email: 'p@example.com', hd: 'x', emailVerified: true, signedInAt });
     });
 });
 
