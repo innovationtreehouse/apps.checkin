@@ -748,6 +748,12 @@ function parkedWrites(column: string | null): ParkedStockWrite[] {
     return column ? (JSON.parse(column) as ParkedStockWrite[]) : [];
 }
 
+/** Now, or 1 ms after the latest parked write: `parkedAt` names the write on the board's settle screen. */
+function uniqueParkedAt(earlier: ParkedStockWrite[]): string {
+    const latest = Math.max(0, ...earlier.map((w) => Date.parse(w.parkedAt)));
+    return new Date(Math.max(Date.now(), latest + 1)).toISOString();
+}
+
 function parkedColumn(writes: ParkedStockWrite[]): string | null {
     return writes.length > 0 ? JSON.stringify(writes) : null;
 }
@@ -833,7 +839,8 @@ async function drainStock(
                     // Shopify may have forgotten the key, so a resend could apply twice: a person settles it.
                     // Kept as its own entry: writes of opposite sign must not cancel before anyone settles them.
                     result.expiredKey = pending.key;
-                    const parked = [...parkedWrites(row.shopifyStockParked), { key: pending.key, delta: pending.delta, parkedAt: new Date().toISOString() }];
+                    const earlier = parkedWrites(row.shopifyStockParked);
+                    const parked = [...earlier, { key: pending.key, delta: pending.delta, parkedAt: uniqueParkedAt(earlier) }];
                     await bookStock(programId, token, {
                         shopifyStockCarry: { increment: pending.owedPart - pending.delta },
                         shopifyStockParked: parkedColumn(parked),
@@ -1132,7 +1139,7 @@ export interface UnconfirmedStockRow {
     programName: string;
     unconfirmed: number;
     carry: number;
-    /** When the write was parked; null for an amount the previous release parked. */
+    /** When the write was parked, unique per program: the settle names the write by it. Null for an amount the previous release parked. */
     unconfirmedSince: Date | null;
     /** Shopify's `available` now; null when it can't be read within a few seconds. */
     shopifyAvailable: number | null;
@@ -1180,16 +1187,18 @@ const SETTLE_LEASE_MS = 10_000;
 
 /**
  * A board member settles one of a program's parked stock writes after checking
- * Shopify by hand. Under the program's stock lease, in one transaction: settles
- * the oldest parked write of amount `expected` (refused as stale when none is
- * left, e.g. a re-arm resolved it), adds it to the carry for "notLanded", and
- * writes the AuditLog row. Writes of the same amount are interchangeable here.
+ * Shopify by hand. The write is named by the row the page showed: its `parkedAt`
+ * and amount, or `parkedAt` null for the previous release's amount. Under the
+ * program's stock lease, in one transaction: refuses as stale when that write is
+ * no longer parked (settled from another tab, or a re-arm resolved it), else
+ * removes it, adds it to the carry for "notLanded", and writes the AuditLog row.
  * "landed" makes no Shopify call; "notLanded" then nudges a push so the carry
  * lands as a keyed delta.
  */
 export async function settleUnconfirmedStock(
     programId: number,
     expected: number,
+    parkedAt: string | null,
     choice: UnconfirmedStockChoice,
     actorId: number,
 ): Promise<SettleUnconfirmedOutcome> {
@@ -1204,10 +1213,9 @@ export async function settleUnconfirmedStock(
                 where: { id: programId },
                 select: { shopifyStockParked: true, shopifyStockUnconfirmed: true },
             });
-            // The previous release's amount is listed first (it is the oldest), so it settles first.
             const parked = parkedWrites(before.shopifyStockParked);
-            const legacy = before.shopifyStockUnconfirmed === expected;
-            const index = legacy ? -1 : parked.findIndex((w) => w.delta === expected);
+            const legacy = parkedAt === null && before.shopifyStockUnconfirmed === expected;
+            const index = parkedAt === null ? -1 : parked.findIndex((w) => w.parkedAt === parkedAt && w.delta === expected);
             if (index === -1 && !legacy) return null;
             const settledKey = legacy ? null : parked[index].key;
             const bookkeeping: Prisma.ProgramUpdateManyMutationInput = legacy

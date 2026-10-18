@@ -524,6 +524,9 @@ describe('healProgramStock (daily reconcile-shopify)', () => {
 describe('parked (unconfirmed) stock writes', () => {
     const DAY_AGO = () => new Date(Date.now() - 25 * 60 * 60_000).toISOString();
 
+    /** The parked-at time the settle screen shows for a parked write. */
+    const since = (key: string) => (JSON.parse(db.__state.row!.shopifyStockParked as string) as { key: string; parkedAt: string }[]).find((w) => w.key === key)!.parkedAt;
+
     /** Park the pending write on the row: a push finds it past its key's lifetime. */
     async function park(pending: string) {
         db.__state.row!.shopifyStockPendingWrite = pending;
@@ -536,7 +539,7 @@ describe('parked (unconfirmed) stock writes', () => {
         shopify({ ProgramStockRead: [readReply(3)] });
 
         expect(await listUnconfirmedStock()).toEqual([expect.objectContaining({ programId: 42, unconfirmed: -1, shopifyAvailable: 3 })]);
-        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        expect(await settleUnconfirmedStock(42, -1, since('program-42-comp-old'), 'landed', 9)).toEqual({ carry: 0 });
         expect(after()).toMatchObject({ carry: 0, unconfirmed: 0, parked: [] });
     });
 
@@ -550,9 +553,9 @@ describe('parked (unconfirmed) stock writes', () => {
         expect((await listUnconfirmedStock()).map((r) => r.unconfirmed)).toEqual([-1, 1]);
 
         // The board finds the −1 landed and the +1 did not: one seat is owed back.
-        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        expect(await settleUnconfirmedStock(42, -1, since('program-42-comp-a'), 'landed', 9)).toEqual({ carry: 0 });
         db.__state.row!.shopifyVariantId = null; // nothing to nudge
-        expect(await settleUnconfirmedStock(42, 1, 'notLanded', 9)).toEqual({ carry: 1 });
+        expect(await settleUnconfirmedStock(42, 1, since('program-42-comp-b'), 'notLanded', 9)).toEqual({ carry: 1 });
         expect(after()).toMatchObject({ carry: 1, parked: [] });
     });
 
@@ -561,13 +564,14 @@ describe('parked (unconfirmed) stock writes', () => {
         await park(pendingWrite({ key: 'program-42-release', delta: 1, owedPart: 1, sentAt: DAY_AGO() }));
         expect(after().parked).toEqual([['program-42-release', 1]]);
 
+        const parkedAt = since('program-42-release');
         // The board reopens: 4 seats free, the store shows 3 (the +1 is not there).
         const s = shopify({ ProgramStockRead: [readReply(3), readReply(4)], ProgramStockAdjust: [adjustOk] });
         expect(await setProgramInventory(program, async () => 4, 're-arm')).toBe(true);
         expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: 1 });
         expect(after()).toEqual(clean);
 
-        expect(await settleUnconfirmedStock(42, 1, 'notLanded', 9)).toEqual({ refused: 'stale' });
+        expect(await settleUnconfirmedStock(42, 1, parkedAt, 'notLanded', 9)).toEqual({ refused: 'stale' });
         expect(after()).toEqual(clean);
     });
 
@@ -581,11 +585,19 @@ describe('parked (unconfirmed) stock writes', () => {
         expect(sendEmail).not.toHaveBeenCalled();
     });
 
-    it('the previous release\'s amount settles before a newer parked write of the same amount', async () => {
+    it('two writes parked in the same millisecond still get distinct parked-at times', async () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-18T10:00:00.000Z'));
+        await park(pendingWrite({ key: 'program-42-x', sentAt: '2026-10-17T00:00:00.000Z' }));
+        await park(pendingWrite({ key: 'program-42-y', sentAt: '2026-10-17T00:00:00.000Z' }));
+        now.mockRestore();
+        expect(since('program-42-x')).not.toBe(since('program-42-y'));
+    });
+
+    it('the previous release\'s amount is settled by amount, apart from a parked write of the same amount', async () => {
         setRow({ shopifyStockUnconfirmed: -1 });
         await park(pendingWrite({ key: 'program-42-new', sentAt: DAY_AGO() }));
 
-        expect(await settleUnconfirmedStock(42, -1, 'landed', 9)).toEqual({ carry: 0 });
+        expect(await settleUnconfirmedStock(42, -1, null, 'landed', 9)).toEqual({ carry: 0 });
         expect(after()).toMatchObject({ unconfirmed: 0, parked: [['program-42-new', -1]] });
     });
 });

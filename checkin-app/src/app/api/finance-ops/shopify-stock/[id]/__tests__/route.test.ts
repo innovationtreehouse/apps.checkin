@@ -149,7 +149,7 @@ it('"Shopify doesn\'t have it" moves the amount back into the carry and audits i
 it('refuses a stale amount with 409 and changes nothing', async () => {
     const res = await post({ choice: 'notLanded', expected: -1 });
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/changed since the page loaded/);
+    expect((await res.json()).error).toMatch(/settled or cleared since the page loaded/);
     expect(db.__state.row).toMatchObject({ shopifyStockUnconfirmed: -2, shopifyStockCarry: 1, shopifyStockLeaseToken: null });
     expect(db.auditLog.create).not.toHaveBeenCalled();
 });
@@ -165,4 +165,28 @@ it('refuses while a stock push holds the lease', async () => {
 it('rejects a bad choice or a zero amount', async () => {
     expect((await post({ choice: 'maybe', expected: -2 })).status).toBe(400);
     expect((await post({ choice: 'landed', expected: 0 })).status).toBe(400);
+    expect((await post({ choice: 'landed', expected: -2, since: 5 })).status).toBe(400);
+});
+
+describe('parked writes are settled by the row the page showed', () => {
+    const A = { key: 'k-a', delta: -1, parkedAt: '2026-10-12T10:00:00.000Z' };
+    const B = { key: 'k-b', delta: -1, parkedAt: '2026-10-13T10:00:00.000Z' };
+    beforeEach(() => {
+        db.__state.row!.shopifyStockUnconfirmed = 0;
+        db.__state.row!.shopifyStockParked = JSON.stringify([A, B]);
+    });
+
+    it('a second settle of the same row (stale page, second tab) is refused and leaves the other same-amount write parked', async () => {
+        expect((await post({ choice: 'landed', expected: -1, since: A.parkedAt })).status).toBe(200);
+        const again = await post({ choice: 'landed', expected: -1, since: A.parkedAt });
+        expect(again.status).toBe(409);
+        expect(JSON.parse(db.__state.row!.shopifyStockParked as string)).toEqual([B]);
+        expect(db.__state.row!.shopifyStockCarry).toBe(1);
+        expect(db.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('a parked row cannot be settled by amount alone', async () => {
+        expect((await post({ choice: 'landed', expected: -1 })).status).toBe(409);
+        expect(JSON.parse(db.__state.row!.shopifyStockParked as string)).toEqual([A, B]);
+    });
 });

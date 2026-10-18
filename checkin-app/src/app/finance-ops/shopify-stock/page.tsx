@@ -60,7 +60,7 @@ export default function UnconfirmedShopifyStockPage() {
       const res = await fetch(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice, expected: row.unconfirmed }),
+        body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
       if (res.ok) {
         fetchRows();
