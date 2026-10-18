@@ -19,7 +19,7 @@ vi.mock("@checkin/s-ingest-core", () => ({
 
 const cfg = {
   shop: "shop.myshopify.com",
-  endpoint: "https://shop.myshopify.com/admin/api/2025-07/graphql.json",
+  endpoint: "https://shop.myshopify.com/admin/api/2026-04/graphql.json",
   clientId: "cid",
   clientSecret: "csecret",
 } as ShopifyConfig;

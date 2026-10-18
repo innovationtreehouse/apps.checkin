@@ -42,8 +42,8 @@ describe("loadShopifyConfig", () => {
 
   it("defaults SHOPIFY_API_VERSION when unset", () => {
     const cfg = loadShopifyConfig(base);
-    expect(cfg.apiVersion).toBe("2025-07");
-    expect(cfg.endpoint).toContain("/2025-07/");
+    expect(cfg.apiVersion).toBe("2026-04");
+    expect(cfg.endpoint).toContain("/2026-04/");
   });
 
   it("throws when a required Shopify credential is missing", () => {

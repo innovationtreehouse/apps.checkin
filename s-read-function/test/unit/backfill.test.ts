@@ -6,7 +6,7 @@
  *   tracked + COMPLETED → download + ingest, advance watermark, clear state, INGESTED
  *   COMPLETED, no url    → clear state, INGESTED with 0 (no ingest, no watermark move)
  *   FAILED/CANCELED/EXPIRED → clear state, FAILED with errorCode
- *   tracked op gone/replaced → clear state, NONE
+ *   tracked op unknown to Shopify → clear state, NONE
  *
  * withSyncRun, the cursor/bulk-state core fns, the bulk lifecycle module, and the
  * payout/balance streams are all mocked so only the state machine is under test.
@@ -28,7 +28,7 @@ vi.mock("@checkin/s-ingest-core", () => ({
 
 vi.mock("../../src/shopify/bulk.js", () => ({
   startOrdersBackfill: vi.fn(),
-  getCurrentBulkOperation: vi.fn(),
+  getBulkOperation: vi.fn(),
   downloadBulkJsonl: vi.fn(),
 }));
 
@@ -39,7 +39,7 @@ vi.mock("../../src/sync/streams.js", () => ({
 
 import { runBackfill } from "../../src/sync/backfill.js";
 import { getBulkState, setBulkState, ingestBulkOrders, advanceWatermark, ObjectType } from "@checkin/s-ingest-core";
-import { startOrdersBackfill, getCurrentBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
+import { startOrdersBackfill, getBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
 import { fakeClient } from "../helpers/fakeClient.js";
 import { prismaSentinel } from "../helpers/fakePrisma.js";
 
@@ -66,18 +66,19 @@ it("starts a bulk op when none is tracked and returns STARTED", async () => {
     bulkOperationId: "gid://op/1",
     bulkStatus: "CREATED",
   });
-  expect(getCurrentBulkOperation).not.toHaveBeenCalled();
+  expect(getBulkOperation).not.toHaveBeenCalled();
   // payouts + balance still pulled in the same run
   expect(res).toMatchObject({ payouts: 3, balanceTransactions: 5 });
 });
 
 it("polls a tracked op still running and returns RUNNING with objectCount", async () => {
   vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "RUNNING", objectCount: "1234" });
+  vi.mocked(getBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "RUNNING", objectCount: "1234" });
 
   const res = await run();
 
   expect(res.ordersBulk).toEqual({ action: "RUNNING", status: "RUNNING", objectCount: "1234" });
+  expect(vi.mocked(getBulkOperation).mock.calls[0][1]).toBe("gid://op/1");
   expect(startOrdersBackfill).not.toHaveBeenCalled();
   expect(setBulkState).not.toHaveBeenCalled();
 });
@@ -85,7 +86,7 @@ it("polls a tracked op still running and returns RUNNING with objectCount", asyn
 it("downloads + ingests a COMPLETED op, advances the watermark, clears state, returns INGESTED", async () => {
   const maxOccurredAt = new Date("2026-03-15T00:00:00Z");
   vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "COMPLETED", url: "https://storage.googleapis.com/shopify-bulk/result.jsonl" });
+  vi.mocked(getBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "COMPLETED", url: "https://storage.googleapis.com/shopify-bulk/result.jsonl" });
   vi.mocked(downloadBulkJsonl).mockResolvedValue('{"id":"gid://shopify/Order/1"}\n');
   vi.mocked(ingestBulkOrders).mockResolvedValue({ exportId: 7n, recordCount: 1, ingested: 1, badLineCount: 0, maxOccurredAt });
 
@@ -108,7 +109,7 @@ it("downloads + ingests a COMPLETED op, advances the watermark, clears state, re
 
 it("clears state without ingesting when COMPLETED carries no url", async () => {
   vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "COMPLETED", url: null });
+  vi.mocked(getBulkOperation).mockResolvedValue({ id: "gid://op/1", status: "COMPLETED", url: null });
 
   const res = await run();
 
@@ -120,7 +121,7 @@ it("clears state without ingesting when COMPLETED carries no url", async () => {
 
 it.each(["FAILED", "CANCELED", "EXPIRED"])("clears state and returns FAILED for a %s op", async (status) => {
   vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue({ id: "gid://op/1", status, errorCode: "ACCESS_DENIED" });
+  vi.mocked(getBulkOperation).mockResolvedValue({ id: "gid://op/1", status, errorCode: "ACCESS_DENIED" });
 
   const res = await run();
 
@@ -131,22 +132,9 @@ it.each(["FAILED", "CANCELED", "EXPIRED"])("clears state and returns FAILED for 
   expect(res.ordersBulk).toEqual({ action: "FAILED", status, errorCode: "ACCESS_DENIED" });
 });
 
-it("clears state and returns NONE when the current op no longer matches the tracked id", async () => {
+it("clears state and returns NONE when Shopify no longer knows the tracked op", async () => {
   vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue({ id: "gid://op/2", status: "RUNNING" });
-
-  const res = await run();
-
-  expect(setBulkState).toHaveBeenCalledWith(prismaSentinel, "store-1", ObjectType.ORDER, {
-    bulkOperationId: null,
-    bulkStatus: null,
-  });
-  expect(res.ordersBulk).toEqual({ action: "NONE" });
-});
-
-it("clears state and returns NONE when there is no current op at all", async () => {
-  vi.mocked(getBulkState).mockResolvedValue({ bulkOperationId: "gid://op/1", bulkStatus: "RUNNING" });
-  vi.mocked(getCurrentBulkOperation).mockResolvedValue(null);
+  vi.mocked(getBulkOperation).mockResolvedValue(null);
 
   const res = await run();
 

@@ -29,7 +29,7 @@ const shopifySchema = z
     SHOPIFY_ADMIN_TOKEN: z.string().min(1).optional(),
     SHOPIFY_CLIENT_ID: z.string().min(1).optional(),
     SHOPIFY_CLIENT_SECRET: z.string().min(1).optional(),
-    SHOPIFY_API_VERSION: z.string().min(1).default("2025-07"),
+    SHOPIFY_API_VERSION: z.string().min(1).default("2026-04"),
     CUTOVER_DATE: z.string().min(1, "CUTOVER_DATE is required"),
   })
   .refine((v) => Boolean(v.SHOPIFY_ADMIN_TOKEN) || Boolean(v.SHOPIFY_CLIENT_ID && v.SHOPIFY_CLIENT_SECRET), {
