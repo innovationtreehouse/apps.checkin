@@ -11,6 +11,9 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 export const LIVE_PERSON: Prisma.PersonWhereInput = { mergedIntoId: null };
 
+/** An enrollment that still counts: a WITHDRAWN row is kept for history only. */
+export const ENROLLED_PARTICIPANT: Prisma.ProgramParticipantWhereInput = { status: { not: "WITHDRAWN" } };
+
 /**
  * A person whose email is sign-in-verified: they have a linked sign-in, which the
  * provider verified for that address, and member-side edits cannot change a linked
