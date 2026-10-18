@@ -1,6 +1,7 @@
 /**
- * The no-receipt in-kind entry: ops picks catalog items (X10) with a quantity and value, the
- * donation is stored with its donor, and its goods load into inventory keyed `donation:<id>` (X11).
+ * The no-receipt in-kind entry: ops picks catalog items (X10) with a quantity and an optional
+ * suggested value, the donation is stored with its donor, and its goods load into inventory keyed
+ * `donation:<id>` (X11). Finance sets the value later, when accepting it.
  */
 import { it, expect, beforeEach, vi } from "vitest";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
@@ -22,8 +23,8 @@ const input: ManualInKindInput = {
   donor: { firstName: "Jane", lastName: "Donor", companyName: "Acme" },
   donationDate: "2026-10-01",
   lines: [
-    { gtin13: DRILL, quantity: 2, valueCents: 15000 },
-    { gtin13: BITS, quantity: 10, valueCents: 2500 },
+    { gtin13: DRILL, quantity: 2, description: "Cordless drill, boxed", suggestedValueCents: 15000 },
+    { gtin13: BITS, quantity: 10, description: null, suggestedValueCents: 2500 },
   ],
 };
 
@@ -64,24 +65,25 @@ describeDb("recordInKindWithoutReceipt", () => {
       recordedByUsername: "testops",
     });
     expect(row.inventoryLoadedAt).not.toBeNull();
-    expect(row.lines.map(({ gtin13, quantity, valueCents }) => ({ gtin13, quantity, valueCents }))).toEqual(input.lines);
+    expect(row.lines.map(({ gtin13, quantity, description, suggestedValueCents }) => ({ gtin13, quantity, description, suggestedValueCents }))).toEqual(input.lines);
+    expect(row.lines.map((l) => l.valueCents)).toEqual([null, null]);
 
     expect(applied).toHaveLength(1);
     expect(applied[0]).toMatchObject({ receiptId: `donation:${id}`, orgId: TEST_ORG_ID, retailer: null });
-    expect(applied[0].lineItems.map((l) => [l.gtin13, l.quantityDelta])).toEqual([
-      [DRILL, 2],
-      [BITS, 10],
+    expect(applied[0].lineItems.map((l) => [l.gtin13, l.quantityDelta, l.provisionalName])).toEqual([
+      [DRILL, 2, "Cordless drill, boxed"],
+      [BITS, 10, BITS],
     ]);
 
     const [event] = await db.workflowEvent.findMany({ where: { orgId: TEST_ORG_ID } });
     expect(event).toMatchObject({ entityType: "manual_in_kind", entityId: String(id), eventType: "MANUAL_IN_KIND_RECORDED", actorUserId: 1 });
-    expect(JSON.parse(event.payload ?? "{}")).toEqual({ lineCount: 2, totalValueCents: 17500 });
+    expect(JSON.parse(event.payload ?? "{}")).toEqual({ lineCount: 2, suggestedTotalCents: 17500 });
     for (const donorField of ["Jane", "Donor", "Acme"]) expect(event.payload).not.toContain(donorField);
   });
 
   it("rejects an item that is not in the catalog, recording nothing", async () => {
     await expect(
-      recordInKindWithoutReceipt({ ...input, lines: [{ gtin13: "0099999999999", quantity: 1, valueCents: 100 }] }),
+      recordInKindWithoutReceipt({ ...input, lines: [{ gtin13: "0099999999999", quantity: 1 }] }),
     ).rejects.toMatchObject({ status: 400 });
     expect(await db.manualInKindDonation.count()).toBe(0);
     expect(applied).toHaveLength(0);
@@ -101,8 +103,38 @@ describeDb("recordInKindWithoutReceipt", () => {
     expect(await db.manualInKindDonation.count()).toBe(1);
   });
 
+  it("records a gift with no suggested value", async () => {
+    const { id } = await recordInKindWithoutReceipt({ ...input, lines: [{ gtin13: DRILL, quantity: 1 }] });
+    const row = await db.manualInKindDonation.findUniqueOrThrow({ where: { id }, include: { lines: true } });
+    expect(row.lines.map(({ valueCents, suggestedValueCents, description }) => ({ valueCents, suggestedValueCents, description }))).toEqual([
+      { valueCents: null, suggestedValueCents: null, description: null },
+    ]);
+  });
+
   it("does not load another org's donation", async () => {
     const { id } = await recordInKindWithoutReceipt(input);
     await expect(manualInKindService.loadInventory("other-org", id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describeDb("manualInKindService.list donor reads", () => {
+  const reader = { actorUserId: 1, actorUsername: "testfinance", route: "GET /api/donations/in-kind/manual" };
+
+  it("records one donor read per record returned, not one per list call", async () => {
+    const a = await recordInKindWithoutReceipt(input);
+    const b = await recordInKindWithoutReceipt(input);
+    await db.workflowEvent.deleteMany({});
+    await manualInKindService.list(TEST_ORG_ID, reader);
+    const reads = await db.workflowEvent.findMany({ where: { orgId: TEST_ORG_ID, eventType: "DONOR_DATA_READ" } });
+    expect(reads.map((r) => r.entityId).sort()).toEqual([String(a.id), String(b.id)].sort());
+    expect(reads.every((r) => r.entityType === "manual_in_kind")).toBe(true);
+  });
+
+  it("selects no donor and records no read without a reader", async () => {
+    await recordInKindWithoutReceipt(input);
+    await db.workflowEvent.deleteMany({});
+    const [row] = await manualInKindService.list(TEST_ORG_ID, null);
+    expect(row).not.toHaveProperty("donorLastName");
+    expect(await db.workflowEvent.count({ where: { eventType: "DONOR_DATA_READ" } })).toBe(0);
   });
 });

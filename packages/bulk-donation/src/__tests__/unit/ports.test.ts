@@ -3,13 +3,13 @@ import { ZodError } from "zod";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbPosting, NotWiredError, otherLaneClaimedDepositIds } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
-import { MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
+import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
 import { deriveTakeoverLine } from "../../lib/qb-match";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
-  inKindService: { recordMoney: vi.fn(), recordDonor: vi.fn(), withdraw: vi.fn(), listQueue: vi.fn() },
+  inKindService: { recordMoney: vi.fn(), recordDonor: vi.fn(), withdraw: vi.fn(), settle: vi.fn() },
 }));
 
 const ORG = "00000000-0000-0000-0000-000000000001";
@@ -67,7 +67,12 @@ describe("X9 ingestInKind (callee)", () => {
 
   it("records this org's money side", async () => {
     await ingestInKind(receipt(ORG));
-    expect(inKindService.recordMoney).toHaveBeenCalledWith(ORG, RECEIPT_ID, { receiptTotalCents: 1000, receiptDate: "2026-09-01" });
+    expect(inKindService.recordMoney).toHaveBeenCalledWith(ORG, RECEIPT_ID, {
+      receiptTotalCents: 1000,
+      receiptDate: "2026-09-01",
+      uploadedByUserId: 7,
+      lines: [{ receiptLineItemId: 1, lineNumber: 1, description: "Drill", gtin13: null, quantity: 1, valueCents: 1000 }],
+    });
   });
 
   it("reads the org at call time, not at import", async () => {
@@ -128,7 +133,7 @@ describe("caller ports", () => {
 });
 
 describe("no-receipt in-kind entry: input bounds (rejected before any catalog or DB call)", () => {
-  const line = { gtin13: "0011111111116", quantity: 1, valueCents: 100 };
+  const line: ManualInKindInput["lines"][number] = { gtin13: "0011111111116", quantity: 1, suggestedValueCents: 100 };
   const input: ManualInKindInput = { donor: { firstName: "Jane", lastName: "Doe", companyName: null }, donationDate: "2026-10-01", lines: [line] };
   const rejects = (over: Partial<ManualInKindInput>, lineOver: Partial<typeof line> = {}) =>
     expect(recordInKindWithoutReceipt({ ...input, ...over, lines: [{ ...line, ...lineOver }] })).rejects.toMatchObject({ status: 400 });
@@ -147,10 +152,21 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
     await rejects({}, { quantity: MAX_IN_KIND_LINE_QUANTITY + 1 });
   });
 
-  it("bounds value to non-negative integer cents under the cap", async () => {
-    await rejects({}, { valueCents: -1 });
-    await rejects({}, { valueCents: 9.99 });
-    await rejects({}, { valueCents: MAX_IN_KIND_LINE_VALUE_CENTS + 1 });
+  it("bounds the suggested value to non-negative integer cents under the cap", async () => {
+    await rejects({}, { suggestedValueCents: -1 });
+    await rejects({}, { suggestedValueCents: 9.99 });
+    await rejects({}, { suggestedValueCents: MAX_IN_KIND_LINE_VALUE_CENTS + 1 });
+  });
+
+  it("caps the line count and the suggested total", async () => {
+    const many = Array.from({ length: MAX_IN_KIND_LINES + 1 }, () => line);
+    await expect(recordInKindWithoutReceipt({ ...input, lines: many })).rejects.toMatchObject({ status: 400 });
+    const big = { ...line, suggestedValueCents: MAX_IN_KIND_LINE_VALUE_CENTS };
+    await expect(recordInKindWithoutReceipt({ ...input, lines: [big, big] })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("bounds a line's description", async () => {
+    await rejects({}, { description: "x".repeat(501) });
   });
 
   it("requires at least one line", async () => {

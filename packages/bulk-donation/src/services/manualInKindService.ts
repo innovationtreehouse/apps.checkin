@@ -1,15 +1,20 @@
 // In-kind donations entered without a receipt (FR5): ops picks catalog items (X10) with a quantity
-// and value each; the goods then load into inventory under `donation:<id>` (X11).
+// and, optionally, a suggested value each; finance sets the value when accepting. The goods load
+// into inventory under `donation:<id>` (X11).
 import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
 import { getCatalogLookup, getInventoryApply } from "../runtime";
-import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "@checkin/component-kit";
 
 export const MAX_IN_KIND_LINE_QUANTITY = 100_000;
 export const MAX_IN_KIND_LINE_VALUE_CENTS = 100_000_000;
+export const MAX_IN_KIND_LINES = 200;
+/** A ceiling on a gift's suggested total ($1,000,000); the large-value warning is separate. */
+export const MAX_IN_KIND_TOTAL_CENTS = 100_000_000;
+export const MAX_IN_KIND_DESCRIPTION = 500;
 
 export const ManualInKindInputSchema = z.object({
   donor: InKindDonorSchema,
@@ -19,11 +24,17 @@ export const ManualInKindInputSchema = z.object({
       z.object({
         gtin13: z.string().min(1),
         quantity: z.number().int().positive().max(MAX_IN_KIND_LINE_QUANTITY),
-        /** The line's total value, not per unit. */
-        valueCents: z.number().int().nonnegative().max(MAX_IN_KIND_LINE_VALUE_CENTS),
+        /** What was given; never the donor. */
+        description: z.string().trim().max(MAX_IN_KIND_DESCRIPTION).nullable().optional(),
+        /** Ops' suggestion for the line's total value, not per unit; finance decides the value. */
+        suggestedValueCents: z.number().int().nonnegative().max(MAX_IN_KIND_LINE_VALUE_CENTS).nullable().optional(),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(MAX_IN_KIND_LINES)
+    .refine((lines) => lines.reduce((sum, l) => sum + (l.suggestedValueCents ?? 0), 0) <= MAX_IN_KIND_TOTAL_CENTS, {
+      message: "The suggested total is over the limit",
+    }),
 });
 export type ManualInKindInput = z.infer<typeof ManualInKindInputSchema>;
 
@@ -34,15 +45,15 @@ const LIST_SELECT = {
   recordedByUsername: true,
   recordedAt: true,
   inventoryLoadedAt: true,
-  lines: { select: { id: true, gtin13: true, quantity: true, valueCents: true }, orderBy: { id: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true }, orderBy: { id: "asc" } },
 } as const;
 
 const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
 
 export const manualInKindService = {
   /**
-   * Newest first. Donor fields are selected, and the read audited, only when `reader` is given:
-   * the caller passes one only for a viewer allowed to see donor identity.
+   * Newest first. Donor fields are selected, and each returned record's read audited, only when
+   * `reader` is given: the caller passes one only for a viewer allowed to see donor identity.
    */
   async list(orgId: string, reader: DonorReadContext | null, page?: { skip: number; take: number }) {
     const rows = await db.manualInKindDonation.findMany({
@@ -51,7 +62,7 @@ export const manualInKindService = {
       orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
       ...page,
     });
-    if (reader) await recordDonorDataRead(db, orgId, "manual_in_kind", reader, { count: rows.length });
+    if (reader) await recordDonorDataReads(db, orgId, "manual_in_kind", reader, rows.map((r) => String(r.id)));
     return rows;
   },
 
@@ -79,7 +90,14 @@ export const manualInKindService = {
           donationDate,
           recordedByUserId: audit.actorUserId,
           recordedByUsername: audit.actorUsername ?? null,
-          lines: { create: lines },
+          lines: {
+            create: lines.map((l) => ({
+              gtin13: l.gtin13,
+              quantity: l.quantity,
+              description: l.description || null,
+              suggestedValueCents: l.suggestedValueCents ?? null,
+            })),
+          },
         },
       });
       // Donor fields are pii; the audit payload carries counts and totals only.
@@ -89,7 +107,7 @@ export const manualInKindService = {
         entityId: row.id,
         eventType: "MANUAL_IN_KIND_RECORDED",
         ...audit,
-        payload: { lineCount: lines.length, totalValueCents: lines.reduce((sum, l) => sum + l.valueCents, 0) },
+        payload: { lineCount: lines.length, suggestedTotalCents: lines.reduce((sum, l) => sum + (l.suggestedValueCents ?? 0), 0) },
       });
       return row;
     });
@@ -115,6 +133,7 @@ export const manualInKindService = {
       lineItems: donation.lines.map((l) => ({
         lineItemId: l.id,
         gtin13: l.gtin13,
+        provisionalName: l.description ?? l.gtin13,
         quantityDelta: l.quantity,
         isDelayed: false,
         conversionFactor: 1,

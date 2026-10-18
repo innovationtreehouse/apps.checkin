@@ -11,7 +11,9 @@ import { getServerSession } from 'next-auth/next';
 import { configureBulkDonation, manualInKindService } from '@checkin/bulk-donation';
 import { GET, POST } from '../manual/route';
 import { POST as LOAD } from '../manual/[id]/load-inventory/route';
-import { OWN_HOUSEHOLD_DONOR_MESSAGE, surname } from '@/lib/bulkDonation/donorSelfGuard';
+import { OWN_HOUSEHOLD_DONOR_MESSAGE } from '@/lib/bulkDonation/donorSelfGuard';
+import { householdMembersOf, householdsSharingSurname, surname } from '@/lib/bulkDonation/donorSurname';
+import prisma from '@/lib/prisma';
 
 type PersonRow = { id: number; householdId: number; name: string; mergedIntoId?: number };
 const people: PersonRow[] = [
@@ -27,9 +29,12 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: {
             findUnique: jest.fn(async ({ where }: { where: { id: number } }) => people.find((p) => p.id === where.id) ?? null),
-            findMany: jest.fn(async ({ where }: { where: { householdId: number; mergedIntoId?: null } }) =>
-                people.filter((p) => p.householdId === where.householdId && (where.mergedIntoId !== null || p.mergedIntoId === undefined)),
-            ),
+            findMany: jest.fn(async ({ where }: { where: { id?: number | { in: number[] }; householdId?: number | { in: number[] }; mergedIntoId?: null } }) => {
+                const hit = (v: number, w: number | { in: number[] } | undefined) => w === undefined || (typeof w === 'number' ? v === w : w.in.includes(v));
+                return people.filter(
+                    (p) => hit(p.id, where.id) && hit(p.householdId, where.householdId) && (where.mergedIntoId !== null || p.mergedIntoId === undefined),
+                );
+            }),
         },
         // Deferred: jest.mock is hoisted above mockAuditCreate's initialisation.
         auditLog: { create: (arg: unknown) => mockAuditCreate(arg) },
@@ -63,7 +68,7 @@ const post = (body: unknown) =>
 const valid = (lastName: string) => ({
     donor: { firstName: 'Pat', lastName, companyName: null },
     donationDate: '2026-10-01',
-    lines: [{ gtin13: '0000000000017', quantity: 2, valueCents: 1500 }],
+    lines: [{ gtin13: '0000000000017', quantity: 2, suggestedValueCents: 1500 }],
 });
 
 const donationRow = {
@@ -76,7 +81,7 @@ const donationRow = {
     donorFirstName: 'Pat',
     donorLastName: 'Rivera',
     donorCompanyName: 'Rivera Tools',
-    lines: [{ id: 11, gtin13: '0000000000017', quantity: 2, valueCents: 1500 }],
+    lines: [{ id: 11, gtin13: '0000000000017', description: 'Drill', quantity: 2, valueCents: null, suggestedValueCents: 1500 }],
 };
 
 let list: jest.SpyInstance;
@@ -118,7 +123,7 @@ describe('GET /api/donations/in-kind/manual', () => {
         expect(row).not.toHaveProperty('donorFirstName');
         expect(row).not.toHaveProperty('donorLastName');
         expect(row).not.toHaveProperty('donorCompanyName');
-        expect(row.lines).toEqual([{ id: 11, gtin13: '0000000000017', quantity: 2, valueCents: 1500 }]);
+        expect(row.lines).toEqual([{ id: 11, gtin13: '0000000000017', description: 'Drill', quantity: 2, valueCents: null, suggestedValueCents: 1500 }]);
         expect(list.mock.calls[0][1]).toBeNull();
     });
 
@@ -234,5 +239,24 @@ describe('surname', () => {
         ['--', ''],
     ])('%s → %s', (name, expected) => {
         expect(surname(name)).toBe(expected);
+    });
+});
+
+describe('in-kind household reads (the accept step\'s conflict rule and surname warning)', () => {
+    it('matches a donor surname against anyone live in each person\'s household, in one batch', async () => {
+        const checks = [
+            { personId: 7, lastName: 'Okafor' },
+            { personId: 7, lastName: 'Lee' },
+            { personId: 9, lastName: 'Okafor' },
+            { personId: 9, lastName: 'Varga' },
+            { personId: 7, lastName: 'Jr' },
+        ];
+        await expect(householdsSharingSurname(prisma, checks)).resolves.toEqual([true, true, false, false, false]);
+    });
+
+    it('lists each person\'s live household, the person included', async () => {
+        const households = await householdMembersOf(prisma, [7, 9]);
+        expect(households.get(7)?.sort()).toEqual([7, 8]);
+        expect(households.get(9)).toEqual([9]);
     });
 });

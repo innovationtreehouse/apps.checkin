@@ -65,6 +65,7 @@ export const PAGES: PageEntry[] = [
   // "My Programs" tab above.
   { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
   { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: linkGate(MY_PROGRAMS, '/my-programs/expense-approvals') },
+  { href: '/my-programs/in-kind-gifts', label: 'In-kind gifts', section: 'Personal', keywords: 'in-kind donated goods gift program bucket', visible: linkGate(MY_PROGRAMS, '/my-programs/in-kind-gifts') },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: linkGate(MY_PROGRAMS, '/my-programs/conflicts') },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
