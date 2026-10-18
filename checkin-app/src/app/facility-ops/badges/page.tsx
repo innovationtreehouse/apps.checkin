@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FACILITY_RECORD_ROLES } from '@/lib/facilityNav';
+import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useOrgTime } from '@/components/TimezoneProvider';

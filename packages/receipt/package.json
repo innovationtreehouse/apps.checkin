@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
+    "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",

@@ -7,7 +7,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -31,7 +31,7 @@ type Target = { programId: number; participantId: number } | null;
 
 export default function ShopifyHoldsPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
   // Conflict of interest mirrors the scholarship queue: no actor may approve/deny
   // their OWN household's request (server enforces; this is UX). It does NOT gate
   // the manual-hold action — that confers no benefit.

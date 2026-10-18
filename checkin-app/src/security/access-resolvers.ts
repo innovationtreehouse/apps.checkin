@@ -19,7 +19,7 @@ import { config, isStagingAccessAllowed } from '@/lib/config';
 import { householdLeadship } from '@/lib/household/leads';
 import type { AuthResult } from '@/types/auth';
 import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
-import { LIVE_PERSON } from '@/lib/person/filters';
+import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
 
@@ -86,7 +86,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         needs.programs
             ? prisma.program.findMany({
                   where: { leadMentorId: auth.user.id },
-                  select: { id: true, participants: { select: { personId: true } } },
+                  select: { id: true, participants: { where: ENROLLED_PARTICIPANT, select: { personId: true } } },
               })
             : [],
         needs.programs
@@ -94,7 +94,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
                   where: { personId: auth.user.id, isCore: true, person: LIVE_PERSON },
                   select: {
                       programId: true,
-                      program: { select: { participants: { select: { personId: true } } } },
+                      program: { select: { participants: { where: ENROLLED_PARTICIPANT, select: { personId: true } } } },
                   },
               })
             : [],

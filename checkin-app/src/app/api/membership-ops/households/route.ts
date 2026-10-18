@@ -11,7 +11,7 @@ import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
 import { lockBoardRoles } from "@/lib/roles";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 
 export const dynamic = 'force-dynamic';
@@ -54,6 +54,7 @@ export const GET = withAuth(
                                 // Program enrollments for the household detail view. Extra field the
                                 // Edit Info modal (same endpoint) simply ignores.
                                 programParticipants: {
+                                    where: ENROLLED_PARTICIPANT,
                                     select: { status: true, program: { select: { id: true, name: true } } },
                                     orderBy: { program: { name: "asc" } },
                                 },

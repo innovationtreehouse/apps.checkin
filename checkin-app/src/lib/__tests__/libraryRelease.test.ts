@@ -1,5 +1,8 @@
 import { isLibraryKey, isLibraryVisible } from "@/lib/libraryRelease";
-import { inventoryAreaLinks } from "@/lib/catalogNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { INVENTORY } from "@/lib/nav/sections/inventory";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
+import type { NavUser } from "@/lib/nav/types";
 import { PAGES } from "@/components/pageRegistry";
 
 describe("isLibraryVisible", () => {
@@ -27,8 +30,9 @@ describe("isLibraryKey", () => {
 });
 
 describe("inventory section tabs", () => {
-  const keyholder = { id: 1, isKeyholder: true } as Parameters<typeof inventoryAreaLinks>[0];
-  const released = (releasedLibraries: string[]) => ({
+  const keyholder = { id: 1, isKeyholder: true };
+  const inventoryAreaLinks = (u: NavUser, c: TodoCounts) => visibleLinks(INVENTORY, u, c);
+  const released = (releasedLibraries: string[]): TodoCounts => ({
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
     buildingHousehold: 0,
@@ -45,7 +49,7 @@ describe("inventory section tabs", () => {
   });
 
   it("keeps every tab for a board member", () => {
-    const board = { id: 2, isBoardMember: true } as Parameters<typeof inventoryAreaLinks>[0];
+    const board = { id: 2, isBoardMember: true };
     const hrefs = inventoryAreaLinks(board, released([])).map((l) => l.href);
     expect(hrefs.some((h) => h.startsWith("/catalog"))).toBe(true);
     expect(hrefs.some((h) => h.startsWith("/inventory"))).toBe(true);
@@ -64,8 +68,8 @@ describe("index directory", () => {
   const orgItems = PAGES.find((p) => p.href === "/inventory/org-items");
 
   it("lists a library's pages for a non-board viewer only once released", () => {
-    expect(orgItems?.visible({ isKeyholder: true }, true, counts([]))).toBe(false);
-    expect(orgItems?.visible({ isKeyholder: true }, true, counts(["local-inventory"]))).toBe(true);
-    expect(orgItems?.visible({ isBoardMember: true }, true, counts([]))).toBe(true);
+    expect(orgItems?.visible({ isKeyholder: true }, counts([]))).toBe(false);
+    expect(orgItems?.visible({ isKeyholder: true }, counts(["local-inventory"]))).toBe(true);
+    expect(orgItems?.visible({ isBoardMember: true }, counts([]))).toBe(true);
   });
 });

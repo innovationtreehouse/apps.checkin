@@ -5,7 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { redirect } from "next/navigation";
 import { resetRtl } from "@/test-helpers/rtl";
-import { MEMBERSHIP_OPS_NAV_LINKS } from "@/lib/membershipOpsNav";
+import { MEMBERSHIP_OPS } from "@/lib/nav/sections/membershipOps";
 import MembershipOpsIndex from "../page";
 
 beforeEach(() => resetRtl());
@@ -13,6 +13,6 @@ beforeEach(() => resetRtl());
 describe("membership-ops index page", () => {
   it("redirects to the first nav link", () => {
     MembershipOpsIndex();
-    expect(redirect).toHaveBeenCalledWith(MEMBERSHIP_OPS_NAV_LINKS[0].href);
+    expect(redirect).toHaveBeenCalledWith(MEMBERSHIP_OPS.links[0].href);
   });
 });

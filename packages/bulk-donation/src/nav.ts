@@ -1,7 +1,7 @@
 /**
- * Nav descriptors for bulk donation (#1280 §5). The library declares its
- * screens; the host places them in its /donations section tabs and hides the
- * whole section from anyone without FINANCE or BOARD.
+ * Nav descriptors for bulk donation. The library declares its screens; the host
+ * places them: `DONATIONS_TAB` and `IN_KIND_TAB` as section tabs, and
+ * `DONATION_NAV_LINKS` as the /donations second tab row.
  */
 
 export interface DonationNavLink {
@@ -25,3 +25,9 @@ export const DONATION_NAV_LINKS: readonly DonationNavLink[] = [
   { name: "Account Map", href: "/donations/account-map", icon: "🗺️" },
   { name: "QB Exclusions", href: "/donations/qb-exclusions", icon: "🚫" },
 ];
+
+/** The host-level tab that opens the donation screens. */
+export const DONATIONS_TAB = { name: "Donations", href: "/donations", icon: "🎁" } as const;
+
+/** The no-receipt in-kind gift screen, placed under the host's Inventory section. */
+export const IN_KIND_TAB = { name: "In-kind gifts", href: "/inventory/in-kind", icon: "🎁" } as const;

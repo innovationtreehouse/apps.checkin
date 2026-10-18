@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PageLoader } from "@/components/ui/PageLoader";
-import { CATALOG_TOP_NAV } from "@/lib/catalogNav";
+import { CATALOG_TOP_NAV } from "@checkin/global-catalog/nav";
 
 /** /catalog has no content of its own — it redirects to the first tab (Items).
  *  The layout enforces access. */

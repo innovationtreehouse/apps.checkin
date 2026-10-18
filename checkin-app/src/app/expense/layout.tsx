@@ -3,7 +3,8 @@
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { EXPENSE_OPS_SECTION_ROLES, expenseOpsTabs } from "@/lib/libraryNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { EXPENSE_OPS, EXPENSE_OPS_ROLES } from "@/lib/nav/sections/expenseOps";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { sectionTabBadge } from "@/components/navBadges";
@@ -11,7 +12,7 @@ import { TabBadge } from "@/components/ui/CountBadge";
 
 /** Expense Ops chrome, shared by /expense and /budgets. Admits FINANCE or BOARD. */
 export default function ExpenseOpsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, ready } = useRequireRole(EXPENSE_OPS_SECTION_ROLES);
+  const { user, loading, ready } = useRequireRole(EXPENSE_OPS_ROLES);
   const counts = useTodoCounts(ready);
 
   if (loading) {
@@ -27,7 +28,7 @@ export default function ExpenseOpsLayout({ children }: { children: React.ReactNo
 
   if (!ready) return null;
 
-  const links = expenseOpsTabs(user, counts);
+  const links = visibleLinks(EXPENSE_OPS, user, counts);
   return (
     <PageContainer>
       <SectionTabs

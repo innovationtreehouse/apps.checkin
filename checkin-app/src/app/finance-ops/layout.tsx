@@ -3,7 +3,8 @@
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { REVENUE_OPS_SECTION_ROLES, revenueOpsTabs } from "@/lib/financeNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { REVENUE_OPS, REVENUE_OPS_ROLES } from "@/lib/nav/sections/revenueOps";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { sectionTabBadge } from "@/components/navBadges";
@@ -15,7 +16,7 @@ import { TabBadge } from "@/components/ui/CountBadge";
  * Board-only finance page enforces its own Board gate.
  */
 export default function RevenueOpsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, ready } = useRequireRole(REVENUE_OPS_SECTION_ROLES);
+  const { user, loading, ready } = useRequireRole(REVENUE_OPS_ROLES);
   const counts = useTodoCounts(ready);
 
   if (loading) {
@@ -31,7 +32,7 @@ export default function RevenueOpsLayout({ children }: { children: React.ReactNo
 
   if (!ready) return null;
 
-  const links = revenueOpsTabs(user, counts);
+  const links = visibleLinks(REVENUE_OPS, user, counts);
   return (
     <PageContainer>
       <SectionTabs

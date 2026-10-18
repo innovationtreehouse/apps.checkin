@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Tabs } from "@mantine/core";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { useConfirmNav } from "@/components/UnsavedChangesProvider";
+import type { NavLink } from "@/lib/nav/types";
 
 /**
  * The one shared section-tab bar. Owns the active-tab computation, the single
@@ -13,10 +14,8 @@ import { useConfirmNav } from "@/components/UnsavedChangesProvider";
  *
  * Auth/loading gates stay in each layout (different hooks, different copy).
  */
-export type SectionTabLink = { name: string; href: string; icon?: string };
-
 interface SectionTabsProps {
-  links: readonly SectionTabLink[];
+  links: readonly NavLink[];
   /** Match sub-routes (/foo/123) to their parent tab via longest-prefix. Default: exact match. */
   prefixMatch?: boolean;
   /** Optional right-aligned content (e.g. a count badge) for a given tab href. */

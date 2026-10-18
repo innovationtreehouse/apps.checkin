@@ -117,7 +117,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         await netRestockAgainstShortfall(restocked);
         outcome = matched
             ? `${topic}: raised ${kind} for order ${orderId}`
-            : `${topic}: order ${orderId} not tied to any membership/enrollment — ignored`;
+            : `${topic}: order ${orderId} not tied to any membership/enrollment yet — recorded`;
         logger.info(`[SHOPIFY REVERSAL] ${outcome}`);
     }
 

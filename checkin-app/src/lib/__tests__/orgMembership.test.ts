@@ -10,7 +10,7 @@
  *   - isActiveOrgMemberThrough: does a person's membership cover a program
  *     running through a given date.
  *   - programCoverageDate: the date a program's member pricing must be valid
- *     through (endAt, else startAt, else null).
+ *     through (the boundary closing its stated year, else endAt).
  * Prisma mocked — no DB. nextBoundary/renewalSeasonWindow run for real (from
  * @/lib/membership/renewal) so the boundary arithmetic is exercised, not stubbed.
  */
@@ -258,8 +258,40 @@ describe('isMembershipFeeSettledThrough fail-open when no coverage horizon is co
 });
 
 describe('programCoverageDate', () => {
-    it('returns endAt', () => {
-        const endAt = new Date('2026-06-01');
-        expect(programCoverageDate({ endAt })).toBe(endAt);
+    const SEPT_1 = new Date(Date.UTC(2000, 8, 1));
+    const day = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
+    // The two horizons a household can hold in membership year 2026-2027: settled
+    // (to the boundary closing it) or not (to the boundary opening it).
+    const cycle = membershipYearCycle(SEPT_1, day(2026, 10, 1));
+    const horizons = [coveredThrough(cycle, true), coveredThrough(cycle, false)];
+    const admits = (horizon: Date, through: Date) => horizon.getTime() >= through.getTime();
+
+    beforeEach(() => prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: SEPT_1 }));
+
+    it('no stated year → the end date, without reading the boundary', async () => {
+        const endAt = day(2027, 3, 1);
+        expect(await programCoverageDate({ endAt, appliesToYear: null })).toBe(endAt);
+        expect(prisma.boardSettings.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('a program inside one year admits exactly the households the end-date rule does', async () => {
+        for (const endAt of [day(2026, 9, 2), day(2027, 3, 1), day(2027, 9, 1)]) {
+            const through = await programCoverageDate({ endAt, appliesToYear: 2026 });
+            expect(through).toEqual(day(2027, 9, 1));
+            for (const h of horizons) expect(admits(h, through)).toBe(admits(h, endAt));
+        }
+    });
+
+    it('a crossing program stated as the earlier year admits a household covered to that year', async () => {
+        const endAt = day(2027, 10, 1);
+        const settled = coveredThrough(cycle, true); // 2027-09-01
+        expect(admits(settled, await programCoverageDate({ endAt, appliesToYear: 2026 }))).toBe(true);
+        expect(admits(settled, await programCoverageDate({ endAt, appliesToYear: 2027 }))).toBe(false);
+    });
+
+    it('no boundary configured → the end date', async () => {
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+        const endAt = day(2027, 10, 1);
+        expect(await programCoverageDate({ endAt, appliesToYear: 2026 })).toBe(endAt);
     });
 });

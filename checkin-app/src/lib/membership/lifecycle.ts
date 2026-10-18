@@ -375,6 +375,8 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
     { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE)" },
+    // A refunded order holds a cleared, paid application for the board instead of activating it.
+    { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid on a refunded order)", legacy: true },
     // Reject → BLOCKED (§5 #9)
     { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
     { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE (parallel review)" },
@@ -385,6 +387,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
     { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
     { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked approve", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid on a refunded order)" },
     // Refund recorded by the board: money undone, background check untouched. On a
     // paid BLOCKED row it only clears paidAt (flag-only, no status edge).
     { from: "PENDING_BG_CLEARANCE", to: "PENDING_PAYMENT", event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" },

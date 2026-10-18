@@ -1,5 +1,5 @@
-import { REVENUE_OPS_LIBRARY_TABS, visibleLibraryTabs } from "../libraryNav";
-import { revenueOpsTabs, FINANCE_NAV_LINKS } from "../financeNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
@@ -29,28 +29,28 @@ const hrefs = (tabs: { href: string }[]) => tabs.map((t) => t.href);
 describe("Revenue Ops Income tab", () => {
   it("shows to FINANCE and Board", () => {
     for (const u of [finance, board]) {
-      expect(hrefs(visibleLibraryTabs(REVENUE_OPS_LIBRARY_TABS, u, released))).toContain("/income");
+      expect(hrefs(visibleLinks(REVENUE_OPS, u, released))).toContain("/income");
     }
   });
 
   it("hides from sysadmin, a program lead and a plain member", () => {
     for (const u of [sysadmin, lead, member]) {
-      expect(revenueOpsTabs(u, released)).toEqual([]);
+      expect(visibleLinks(REVENUE_OPS, u, released)).toEqual([]);
     }
   });
 
   it("sits after the Board-only legacy tabs; FINANCE lands on it", () => {
-    expect(hrefs(revenueOpsTabs(board, released))).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income", "/donations"]);
-    expect(hrefs(revenueOpsTabs(finance, released))[0]).toBe("/income");
+    expect(hrefs(visibleLinks(REVENUE_OPS, board, released))).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income", "/donations"]);
+    expect(hrefs(visibleLinks(REVENUE_OPS, finance, released))[0]).toBe("/income");
   });
 
   it("hides from FINANCE until income is released", () => {
     const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "income"));
-    expect(hrefs(revenueOpsTabs(finance, unreleased))).not.toContain("/income");
+    expect(hrefs(visibleLinks(REVENUE_OPS, finance, unreleased))).not.toContain("/income");
   });
 
   it("badges open reconciliation items", () => {
-    const income = REVENUE_OPS_LIBRARY_TABS.find((t) => t.href === "/income");
+    const income = REVENUE_OPS.links.find((t) => t.href === "/income");
     const c = counts([...LIBRARY_KEYS], { income: { openReconciliation: 3 } });
     expect(income?.badge?.(c)).toEqual({ count: 3, color: "red", label: "3 open income reconciliation items" });
     expect(income?.badge?.(released)).toBeNull();
@@ -78,5 +78,19 @@ describe("income count provider", () => {
     } finally {
       if (saved !== undefined) process.env.INCOME_DATABASE_URL = saved;
     }
+  });
+});
+
+describe("Revenue Ops Donations tab", () => {
+  const c = counts([...LIBRARY_KEYS], { "bulk-donation": { unassignedQueue: 2, disbursementHolds: 1 } });
+
+  it("shows FINANCE the Donations tab once bulk-donation is released, with unassigned + holds as its pill", () => {
+    const tab = visibleLinks(REVENUE_OPS, finance, c).find((t) => t.name === "Donations");
+    expect(tab?.href).toBe("/donations");
+    expect(tab?.badge?.(c)?.count).toBe(3);
+  });
+
+  it("hides it from a non-finance user", () => {
+    expect(visibleLinks(REVENUE_OPS, { isKeyholder: true }, c)).toEqual([]);
   });
 });

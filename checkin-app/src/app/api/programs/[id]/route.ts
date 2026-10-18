@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -30,9 +30,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const auth = await authenticateRequest(req);
     if (auth.type !== 'session') return res;
 
-    const body = (await res.json()) as { startAt: string; endAt: string };
-    const coverageDate = programCoverageDate({
+    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number | null };
+    const coverageDate = await programCoverageDate({
         endAt: new Date(body.endAt),
+        appliesToYear: body.appliesToYear ?? null,
     });
     // viewerIsMember answers "is this household a Treehouse Member" (ACTIVE only);
     // viewerMemberPricingEligible answers the pricing question, which also covers a
@@ -62,6 +63,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
             leadMentorId: true,
             startAt: true,
             endAt: true,
+            appliesToYear: true,
             offSaleAt: true,
             phase: true,
             enrollmentStatus: true,
@@ -86,7 +88,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                 },
             },
             participants: {
-                where: { person: LIVE_PERSON },
+                where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
                 select: {
                     programId: true,
                     personId: true,
@@ -136,7 +138,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                 },
             },
             leadMentor: { select: { id: true, name: true, email: true } },
-            _count: { select: { participants: { where: { person: LIVE_PERSON } }, volunteers: { where: { person: LIVE_PERSON } } } },
+            _count: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } }, volunteers: { where: { person: LIVE_PERSON } } } },
         },
     });
 

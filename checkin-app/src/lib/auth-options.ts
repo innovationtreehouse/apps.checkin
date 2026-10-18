@@ -478,6 +478,12 @@ export const authOptions: NextAuthOptions = {
                     return {} as JWT;
                 }
 
+                // A changed email unlinks the person's sign-ins, so a session minted under
+                // the old address ends too.
+                if (normalizeEmail(dbParticipant.email ?? "") !== normalizeEmail(token.email ?? "")) {
+                    return {} as JWT;
+                }
+
                 // Re-stamp claims on every request so a board "Deny Membership" takes effect
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.

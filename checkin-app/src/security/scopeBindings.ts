@@ -224,6 +224,11 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // grants: the uploader and recorder ids feed the accept screen's conflict
     // warnings, and no uploader-facing view reads the queue.
     'InKindQueueItemView',
+    // In-kind receipt gifts gain an uploader id (the accept step), which makes the
+    // model scopable, but every route that returns it is finance-or-board with
+    // everyones grants: the uploader id feeds the accept step's conflict check, and
+    // no uploader-facing view reads it.
+    'InKindDonation',
     // Shopify-mirror response rows (registry/shopifyRead.ts). Their `personId` makes
     // them scopable, but every route is board-only with everyones grants: the payment
     // queue and the match audit are board bookkeeping, with no person-facing view.
