@@ -2,7 +2,7 @@ import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { configureIncome, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
+import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
 import { runReconcile } from "../../lib/reconcile";
 import { CLOSED_NOTE, drainIncomeOutbox, runIncomeOrphanSweep } from "../../lib/outbox";
@@ -443,6 +443,11 @@ describeDb("runIncomeOrphanSweep", () => {
     for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
     expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
+  });
+
+  it("answers unbound, never throws, while the host has not configured income", async () => {
+    incomeRuntime.reset();
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toEqual({ status: "unbound" });
   });
 
   it("reads nothing when no payout was attempted in the last 30 days", async () => {

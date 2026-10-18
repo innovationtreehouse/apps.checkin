@@ -2,7 +2,7 @@ import { appKeyOf, findOrCreate, type FindOrCreateResult, type QuickBooksClient,
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
-import { getIncomeConfig, isoDay, type IncomePosting } from "../runtime";
+import { getIncomeConfig, incomeRuntime, isoDay, type IncomePosting } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
 import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
@@ -506,10 +506,11 @@ export const SWEEP_DAYS = 30;
  * The daily orphan sweep: one read of every deposit QuickBooks created since the oldest
  * attempt in the last SWEEP_DAYS, and a queue note on each payout whose key an entry carries
  * but which does not hold that entry. A full page alerts finance that some entries went
- * unseen. Reads QuickBooks only; finance voids or links what it reports.
+ * unseen. Reads QuickBooks only; finance voids or links what it reports. Unconfigured or
+ * unbound, it reads nothing.
  */
 export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()): Promise<SweepResult> {
-  const { posting, alerts } = getIncomeConfig();
+  const { posting, alerts } = incomeRuntime.configured() ?? {};
   if (!posting || !alerts) return { status: "unbound" };
   const oldest = await db.payoutReconciliation.findFirst({
     where: { orgId, qbCreateAttemptedAt: { gte: new Date(now.getTime() - SWEEP_DAYS * 86_400_000) } },
