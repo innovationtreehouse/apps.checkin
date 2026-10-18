@@ -75,6 +75,9 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
+          # Re-reviews only: cached brief of a long PR body and overflowing history.
+          compaction: auto
+          compaction_model: z-ai/glm-5.3
           # Continue the review loop only on new commits; label and reopen start fresh.
           review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
         env:
@@ -107,6 +110,8 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
+          compaction: auto
+          compaction_model: z-ai/glm-5.3
           # The escalated rerun is a fresh review, not a verify round of the one the judge rejected.
           review_mode: initial
         env:
