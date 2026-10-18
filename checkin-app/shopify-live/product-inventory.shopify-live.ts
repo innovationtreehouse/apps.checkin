@@ -39,7 +39,8 @@ jest.mock("@/lib/prisma", () => {
 });
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 
-import { createShopifySingleVariantProgram, adjustProgramInventory } from "@/lib/shopify";
+import { createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import {
     ensureLiveStore,
     testRunName,

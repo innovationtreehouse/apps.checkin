@@ -13,7 +13,7 @@ import { POST } from '@/app/api/programs/[id]/discount-code/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
-import * as shopify from '@/lib/shopify';
+import * as shopify from '@/lib/shopify/discounts';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -21,8 +21,8 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 // other export (including its own callees like config) stays real — SWC compiles
 // this module's named exports as non-configurable getters, so jest.spyOn can't
 // redefine the property directly; jest.fn(actual) preserves call-through.
-jest.mock('@/lib/shopify', () => {
-    const actual = jest.requireActual('@/lib/shopify');
+jest.mock('@/lib/shopify/discounts', () => {
+    const actual = jest.requireActual('@/lib/shopify/discounts');
     return { ...actual, mintMemberDiscountCode: jest.fn(actual.mintMemberDiscountCode) };
 });
 

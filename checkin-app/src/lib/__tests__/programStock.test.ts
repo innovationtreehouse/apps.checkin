@@ -1,4 +1,5 @@
-import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, resetTokenCache, setProgramInventory, settleUnconfirmedStock, SHOPIFY_INVENTORY_API_VERSION } from '../shopify';
+import { resetTokenCache, SHOPIFY_INVENTORY_API_VERSION } from '../shopify/client';
+import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 

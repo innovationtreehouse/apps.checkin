@@ -13,7 +13,7 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 
 import crypto from "crypto";
-import { getAccessToken, shopifyFetch } from "@/lib/shopify";
+import { getAccessToken, shopifyFetch } from "@/lib/shopify/client";
 import { ensureLiveStore, testRunName, trackProduct, cleanupTracked } from "./helpers";
 
 const API_VERSION = "2026-04";

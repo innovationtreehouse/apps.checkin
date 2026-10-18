@@ -1,6 +1,6 @@
 # Shopify live contract tests
 
-The suite in `checkin-app/shopify-live/` drives the app's real `lib/shopify.ts`
+The suite in `checkin-app/shopify-live/` drives the app's real `lib/shopify/`
 functions against a real Shopify **dev store**, with no fetch mocks. It runs
 nightly, never in PR CI.
 

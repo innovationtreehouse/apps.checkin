@@ -4,7 +4,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Canonical prefix of a program's minted member-discount code. Single home for the
- * format: the minter (mintMemberDiscountCode in lib/shopify.ts) builds codes with it
+ * format: the minter (mintMemberDiscountCode in lib/shopify/discounts.ts) builds codes with it
  * and the entitlement check below matches on it, so the encoder and decoder cannot
  * drift. A minted code is `PRG{programId}-H{householdId}-XXXXXXXX`, always uppercase:
  * the household it was minted for is part of the code.

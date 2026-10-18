@@ -13,7 +13,7 @@
  * hitting the real Admin API — same explicit env gate PR #888 established.
  *
  * NOTE (Q13): this route has NO empty/mis-categorized-category detection. An
- * IntegrationErrorLog row is written only inside the shopify.ts creation
+ * IntegrationErrorLog row is written only inside the lib/shopify/products.ts creation
  * functions' catch on a REAL Shopify API failure, which the mock branch never
  * reaches; the route's own catch writes a BackendErrorLog (logBackendError),
  * not an IntegrationErrorLog. So the "empty-category warning surface" is a

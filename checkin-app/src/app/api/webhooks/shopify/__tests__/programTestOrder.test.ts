@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { POST } from '../route';
 import prisma from '@/lib/prisma';
 import { activateProgramEnrollment, refuseReversedActivation } from '@/lib/programs/activateEnrollment';
-import { adjustProgramInventory } from '@/lib/shopify';
+import { adjustProgramInventory } from '@/lib/shopify/stock';
 import { orderEntitlesEnrollment } from '@/lib/finance/reconcile/program';
 import { returnTestOrderStock } from '@/lib/finance/reconcile/reversals';
 
@@ -32,7 +32,7 @@ jest.mock('@/lib/finance/reconcile/exceptions', () => ({
 jest.mock('@/lib/finance/reconcile/reversals', () => ({
     returnTestOrderStock: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('@/lib/logger', () => ({

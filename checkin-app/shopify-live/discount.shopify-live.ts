@@ -13,7 +13,8 @@
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 
-import { createShopifySingleVariantProgram, mintMemberDiscountCode } from "@/lib/shopify";
+import { createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { mintMemberDiscountCode } from "@/lib/shopify/discounts";
 import { CITEST_PROGRAM_ID_BASE } from "./guard";
 import {
     ensureLiveStore,

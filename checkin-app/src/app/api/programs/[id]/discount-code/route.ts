@@ -3,14 +3,14 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
-import { mintMemberDiscountCode } from "@/lib/shopify";
+import { mintMemberDiscountCode } from "@/lib/shopify/discounts";
 import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdLeadship } from "@/lib/household/leads";
 
 // Server-minted, single-use member discount code for a single-pool program's
-// checkout link (see mintMemberDiscountCode in lib/shopify.ts), bound to the
+// checkout link (see mintMemberDiscountCode in lib/shopify/discounts.ts), bound to the
 // caller's household. Recomputes membership from the session server-side — never
 // trusts a client-supplied "I'm a member" flag for a pricing decision.
 //

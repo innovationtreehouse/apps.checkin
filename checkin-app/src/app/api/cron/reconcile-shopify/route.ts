@@ -6,7 +6,7 @@ import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
 import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp } from "@checkin/expense";
-import { healProgramStock } from "@/lib/shopify";
+import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
 import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@checkin/receipt";

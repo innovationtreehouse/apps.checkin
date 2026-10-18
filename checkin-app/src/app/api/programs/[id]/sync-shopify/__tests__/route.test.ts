@@ -4,7 +4,7 @@
 import { POST } from '../route';
 import { getServerSession } from 'next-auth/next';
 import prisma from '@/lib/prisma';
-import { createClaimantProduct, createShopifySingleVariantProgram } from '@/lib/shopify';
+import { createClaimantProduct, createShopifySingleVariantProgram } from '@/lib/shopify/products';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -23,10 +23,13 @@ jest.mock('@/lib/prisma', () => ({
         }),
     },
 }));
-jest.mock('@/lib/shopify', () => ({
-    ...jest.requireActual('@/lib/shopify'),
+jest.mock('@/lib/shopify/products', () => ({
+    ...jest.requireActual('@/lib/shopify/products'),
     createShopifySingleVariantProgram: jest.fn(),
     createClaimantProduct: jest.fn(),
+}));
+jest.mock('@/lib/shopify/stock', () => ({
+    ...jest.requireActual('@/lib/shopify/stock'),
     setProgramInventory: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('@/lib/logger', () => ({ logBackendError: jest.fn() }));

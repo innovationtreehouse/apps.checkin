@@ -5,7 +5,8 @@ import { emailBoardMembers } from "@/lib/emailRecipients";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { orgCalendarDay } from "@/lib/time";
-import { reportShopifyFailure, setProgramProductOffSale } from "@/lib/shopify";
+import { reportShopifyFailure } from "@/lib/shopify/client";
+import { setProgramProductOffSale } from "@/lib/shopify/stock";
 
 // A week, less half a day so the daily run's start-time jitter can't push it to day 8.
 const NOTIFY_AFTER_MS = 6.5 * 24 * 60 * 60 * 1000;

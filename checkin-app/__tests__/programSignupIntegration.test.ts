@@ -16,8 +16,11 @@ jest.mock('@/lib/notifications', () => ({
     sendNotification: jest.fn(),
 }));
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/shopify/products', () => ({
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
@@ -26,7 +29,6 @@ jest.mock('@/lib/shopify', () => ({
         claimantShopifyProductId: 'mock-claimant-product-id',
         claimantShopifyVariantId: 'mock-claimant-variant-id',
     }),
-    syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock Prisma

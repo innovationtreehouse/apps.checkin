@@ -17,12 +17,12 @@ import { POST as ManualHoldPost } from '@/app/api/finance-ops/payment-plans/manu
 import { POST as RequestPost } from '@/app/api/programs/[id]/request-payment-plan/route';
 import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
-import * as shopify from '@/lib/shopify';
+import * as shopify from '@/lib/shopify/stock';
 
 // Wrap only changeProgramStock (call-through) so one test can force a −1 that
 // could not be recorded; SWC exports are non-configurable getters, so no spyOn.
-jest.mock('@/lib/shopify', () => {
-    const actual = jest.requireActual('@/lib/shopify');
+jest.mock('@/lib/shopify/stock', () => {
+    const actual = jest.requireActual('@/lib/shopify/stock');
     return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
 });
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';

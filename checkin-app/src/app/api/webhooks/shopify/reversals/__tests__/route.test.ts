@@ -9,13 +9,13 @@
 import crypto from 'crypto';
 import { POST } from '../route';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
-import { nudgeProgramStock } from '@/lib/shopify';
+import { nudgeProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
 
 jest.mock('@/lib/finance/reconcile/reversals', () => ({
     raiseReversalByOrderId: jest.fn().mockResolvedValue(true),
 }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     nudgeProgramStock: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('@/lib/prisma', () => ({

@@ -1,4 +1,7 @@
-import { createShopifySingleVariantProgram, createClaimantProduct, syncProgramPrice, setProgramProductOffSale, mintMemberDiscountCode, resetTokenCache } from '../shopify';
+import { resetTokenCache } from '../shopify/client';
+import { createShopifySingleVariantProgram, createClaimantProduct } from '../shopify/products';
+import { syncProgramPrice, setProgramProductOffSale } from '../shopify/stock';
+import { mintMemberDiscountCode } from '../shopify/discounts';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
