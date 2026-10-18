@@ -76,7 +76,7 @@ jobs:
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
           # Re-reviews only: cached brief of a long PR body and overflowing history.
-          compaction: auto
+          # compaction defaults to auto; `off` stops only this brief, not history compaction.
           compaction_model: nvidia/nemotron-3.5-super-vl:free
           # Continue the review loop only on new commits; label and reopen start fresh.
           review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
