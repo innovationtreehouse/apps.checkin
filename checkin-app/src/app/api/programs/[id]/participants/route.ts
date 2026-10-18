@@ -328,7 +328,16 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // still-priced program only PENDING goes; a backfill would let this drop isFree.
         const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
         const isSelfOnly = isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
-        const unpaidOnly = isHouseholdLeadPath || isSelfOnly;
+        // Staff removing a place in their own household (or their own) has a
+        // conflict of interest (Ethics Policy Art. III §III.5): they keep only the
+        // household's own unpaid withdrawal, and someone outside removes a paid place.
+        const isStaff = isLeadMentor || isSysAdminOrBoard;
+        const subject = isStaff && !isSelfRemoval
+            ? await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } })
+            : null;
+        const isConflictedStaff = isStaff
+            && (isSelfRemoval || await hasHouseholdConflict(prisma, currentUserId, subject?.householdId));
+        const unpaidOnly = isHouseholdLeadPath || isSelfOnly || isConflictedStaff;
         const unpaidWhere: Prisma.ProgramParticipantWhereInput = isHouseholdLeadPath || !isFree
             ? { status: 'PENDING' }
             : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null }] };
@@ -362,6 +371,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
                     select: { status: true },
                 });
                 if (row?.status === 'ACTIVE') {
+                    if (isConflictedStaff) {
+                        return apiError("This place is paid and is in your own household; someone outside your household must remove it.", 403);
+                    }
                     return apiError(isSelfRemoval
                         ? "Your place is paid; ask the board to withdraw you."
                         : "This child has paid; ask the board to withdraw them.", 403);

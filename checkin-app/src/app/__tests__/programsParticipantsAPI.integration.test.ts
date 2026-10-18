@@ -845,6 +845,60 @@ describe('Program Participants API Integration Tests', () => {
              expect(row).toBeNull();
         });
         
+        // Conflict of interest (Ethics Policy Art. III §III.5): staff do not remove
+        // a paid place in their own household; someone outside it does.
+        describe('own-household paid place', () => {
+            let ledProgramId: number;
+            const removeAs = async (user: Record<string, unknown>, personId: number) => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user });
+                return DELETE(
+                    new Request(`http://localhost:4000/api/programs/${ledProgramId}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: personId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(ledProgramId) as unknown as never,
+                );
+            };
+            const placeOf = (personId: number) => prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId: ledProgramId, personId } },
+            });
+
+            beforeEach(async () => {
+                // Led by the board household's non-lead adult, who holds no board flag here.
+                const program = await prisma.program.create({
+                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Own HH Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), leadMentorId: boardNonLeadId, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: 'dev-mock-variant-own-hh-partic' },
+                });
+                ledProgramId = program.id;
+                await prisma.programParticipant.createMany({
+                    data: [depId, commonId].map(personId => ({ programId: ledProgramId, personId, status: 'ACTIVE' as const })),
+                });
+            });
+            afterEach(async () => {
+                await prisma.programParticipant.deleteMany({ where: { programId: ledProgramId } });
+                await prisma.program.delete({ where: { id: ledProgramId } });
+            });
+
+            it("refuses the program leader removing their own household's paid place", async () => {
+                const res = await removeAs({ id: boardNonLeadId }, depId);
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toMatch(/someone outside your household/i);
+                expect(await placeOf(depId)).not.toBeNull();
+            });
+
+            it("refuses a board member removing their own household's paid place", async () => {
+                const res = await removeAs({ id: boardId, isBoardMember: true }, depId);
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toMatch(/someone outside your household/i);
+                expect(await placeOf(depId)).not.toBeNull();
+            });
+
+            it("still lets the program leader remove another family's paid place", async () => {
+                const res = await removeAs({ id: boardNonLeadId }, commonId);
+                expect(res.status).toBe(200);
+                expect(await placeOf(commonId)).toBeNull();
+            });
+        });
+
         // A youth may not withdraw themselves: beyond matching the enroll gate,
         // withdrawing a scholarship-held seat releases Shopify inventory, a
         // financial side effect that is the household lead's to trigger.
