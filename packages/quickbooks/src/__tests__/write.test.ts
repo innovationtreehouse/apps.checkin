@@ -22,6 +22,7 @@ const posts = () => calls().filter((c) => c.method === "POST");
 const queries = () => calls().filter((c) => c.method === "GET").map((c) => c.url.searchParams.get("query")!);
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid-w" } });
 const rows = (entity: string, list: unknown[]) => json({ QueryResponse: list.length ? { [entity]: list } : {} });
+const prefs = (BookCloseDate?: string) => rows("Preferences", [{ AccountingInfoPrefs: BookCloseDate === undefined ? {} : { BookCloseDate } }]);
 
 beforeEach(() => {
   fetchMock = vi.fn();
@@ -58,7 +59,8 @@ const req = (over: Partial<FindOrCreateRequest> = {}): FindOrCreateRequest => ({
   write: deposit,
   key: KEY,
   window: { from: "2025-03-03", to: "2025-03-10" },
-  takeoverLine: "2025-03-01",
+  closedThrough: "2025-03-01",
+  mayCreate: true,
   claimedIds: new Set(),
   excludedIds: new Set(),
   ...over,
@@ -195,7 +197,7 @@ describe("closed-enum writer", () => {
 
 describe("request limits", () => {
   it("sends every request with a timeout signal", async () => {
-    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(json({ Deposit: { Id: "1" } }));
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs()).mockResolvedValueOnce(json({ Deposit: { Id: "1" } }));
     await findOrCreate(client(), req());
     for (const [, init] of fetchMock.mock.calls) expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
@@ -321,29 +323,85 @@ describe("findOrCreate", () => {
     expect(posts()).toEqual([]);
   });
 
-  it("not found after the line: creates once, keyed", async () => {
-    fetchMock.mockResolvedValueOnce(rows("Deposit", [qboDeposit("10", "2025-03-06", 99)])).mockResolvedValueOnce(json({ Deposit: { Id: "77" } }));
+  it("not found after the closed date: re-reads the closing date, then creates once, keyed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("Deposit", [qboDeposit("10", "2025-03-06", 99)]))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(json({ Deposit: { Id: "77" } }));
     await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "created", id: "77" });
+    expect(queries()[1]).toBe("SELECT * FROM Preferences");
     const [c] = posts();
     expect(c.url.searchParams.get("requestid")).toBe(KEY);
     expect(appKeyOf({ PrivateNote: c.body?.PrivateNote as string })).toBe(KEY);
   });
 
-  it("not found before the line: too old, never created", async () => {
+  it("creates when QuickBooks has no closing date set", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs()).mockResolvedValueOnce(json({ Deposit: { Id: "78" } }));
+    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "created", id: "78" });
+  });
+
+  it("not found on or before closedThrough: closed, never created, closing date not read", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", []));
-    await expect(findOrCreate(client(), req({ takeoverLine: "2025-03-05" }))).resolves.toEqual({ kind: "too-old" });
+    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-05" }))).resolves.toEqual({ kind: "closed" });
+    expect(queries()).toHaveLength(1);
     expect(posts()).toEqual([]);
   });
 
-  it("no takeover line: never created", async () => {
+  it("closed takes precedence over mayCreate false", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", []));
-    await expect(findOrCreate(client(), req({ takeoverLine: null }))).resolves.toEqual({ kind: "no-line" });
+    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-05", mayCreate: false }))).resolves.toEqual({ kind: "closed" });
+  });
+
+  it("not found and mayCreate false: needs finance, never created", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Deposit", []));
+    await expect(findOrCreate(client(), req({ mayCreate: false }))).resolves.toEqual({ kind: "needs-finance" });
+    expect(queries()).toHaveLength(1);
     expect(posts()).toEqual([]);
+  });
+
+  it("still matches in the closed period", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [qboDeposit("10", "2025-03-06", 120.45)]));
+    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-31", mayCreate: false }))).resolves.toEqual({ kind: "found", id: "10", via: "amount" });
+  });
+
+  it("gates on the re-read closing date when it is later than closedThrough", async () => {
+    for (const close of ["2025-03-05", "2025-03-31"]) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs(close));
+      await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "closed" });
+      expect(posts()).toEqual([]);
+    }
+  });
+
+  it("failed: a closing-date read that fails never falls through to a create", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(new Response("down", { status: 503 }));
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/503/) });
+    expect(posts()).toEqual([]);
+  });
+
+  it("failed: an empty or malformed Preferences read never falls through to a create", async () => {
+    for (const reply of [rows("Preferences", []), prefs("06/30/2025")]) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(reply);
+      await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed" });
+      expect(posts()).toEqual([]);
+    }
+  });
+
+  it("a create QuickBooks refuses with fault 6200 is closed, not failed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("Deposit", []))
+      .mockResolvedValueOnce(prefs())
+      .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6200", Message: "closed period" }] } }, 400));
+    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "closed" });
   });
 
   it("failed: a QBO rejection of the create is returned, not thrown", async () => {
-    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(json({ Fault: {} }, 400));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400/) });
+    fetchMock
+      .mockResolvedValueOnce(rows("Deposit", []))
+      .mockResolvedValueOnce(prefs())
+      .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6000" }] } }, 400));
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/) });
   });
 
   it("failed: a read error never falls through to a create", async () => {
@@ -358,8 +416,9 @@ describe("findOrCreate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("failed: an unescapable window date is refused before any request", async () => {
+  it("failed: an unescapable window or closed date is refused before any request", async () => {
     await expect(findOrCreate(client(), req({ window: { from: "2025-03-03' OR 1=1", to: "2025-03-10" } }))).resolves.toMatchObject({ kind: "failed" });
+    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-01' OR 1=1" }))).resolves.toMatchObject({ kind: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -374,7 +433,7 @@ describe("findOrCreate", () => {
 
   it("crash after QBO accepts: the next run finds the entry by key and posts nothing", async () => {
     // Run 1: nothing matches, QBO accepts the create, and the caller crashes before recording the id.
-    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(json({ Deposit: { Id: "77" } }));
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs()).mockResolvedValueOnce(json({ Deposit: { Id: "77" } }));
     await findOrCreate(client(), req());
     const sent = posts()[0].body as { TxnDate: string; PrivateNote: string };
 

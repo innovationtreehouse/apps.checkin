@@ -19,7 +19,8 @@
     "test": "vitest run",
     "consent": "tsx scripts/consent.ts",
     "consent:manual": "tsx scripts/consent-manual.ts",
-    "pull": "tsx scripts/pull.ts"
+    "pull": "tsx scripts/pull.ts",
+    "sandbox-checks": "tsx scripts/sandbox-checks.ts"
   },
   "dependencies": {
     "@checkin/money": "*"

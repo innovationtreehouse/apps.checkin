@@ -194,3 +194,45 @@ describe("QuickBooksClient", () => {
     expect(sql(0)).toBe(`SELECT * FROM ${entity} STARTPOSITION 1 MAXRESULTS 1000`);
   });
 });
+
+describe("bookCloseDate", () => {
+  it("reads AccountingInfoPrefs.BookCloseDate from Preferences", async () => {
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "2026-06-30" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBe("2026-06-30");
+    expect(sql(0)).toBe("SELECT * FROM Preferences");
+  });
+
+  it("is null when no closing date is set", async () => {
+    respond("Preferences", [{ AccountingInfoPrefs: {} }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+  });
+
+  it("throws on an empty read or a malformed date, never answering null", async () => {
+    respond("Preferences", []);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).rejects.toThrow(/returned nothing/);
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "06/30/2026" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).rejects.toThrow(/Invalid QBO date/);
+  });
+});
+
+describe("createdSince", () => {
+  it("reads one page of entries created at or after the time, flooring to the second", async () => {
+    respond("Deposit", [{ Id: "1" }]);
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Deposit", new Date("2026-10-01T12:34:56.789Z"));
+    expect(got).toEqual({ entries: [{ Id: "1" }], full: false });
+    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T12:34:56Z' STARTPOSITION 1 MAXRESULTS 1000");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("signals a full page, since more entries may exist", async () => {
+    respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: String(i) })));
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.full).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an invalid time before any request", async () => {
+    await expect(new QuickBooksClient(tokens, sandbox).createdSince("Purchase", new Date("nope"))).rejects.toThrow(/valid time/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

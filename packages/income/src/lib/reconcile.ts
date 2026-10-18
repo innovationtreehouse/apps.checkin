@@ -230,7 +230,6 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               ref: bank,
               key: incomeKey(fact.payoutGid),
               window: matchWindow(fact.payoutDate),
-              takeoverLine: null,
               claimedIds: claimed,
               excludedIds: excluded,
             });

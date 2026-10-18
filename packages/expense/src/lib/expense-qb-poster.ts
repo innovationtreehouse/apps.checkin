@@ -1,6 +1,6 @@
 // QB-2 write path: drains the ExpenseEvent outbox into QuickBooks, one entry per expense
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
-import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
+import { findOrCreate, qbKey, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
 import type { Expense } from "../db/schema";
@@ -71,7 +71,7 @@ async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise
     },
     select: { receiptDate: true },
   });
-  return takeoverLine([takeoverDate, ...rows.map((r) => r.receiptDate!)].map((date) => ({ date, qbOrigin: "hand" as const }))) ?? takeoverDate;
+  return rows.reduce((line, r) => (r.receiptDate! > line ? r.receiptDate! : line), takeoverDate);
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
@@ -336,7 +336,8 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
     write,
     key: qbKey("expense", expenseId),
     window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
-    takeoverLine: line,
+    closedThrough: line,
+    mayCreate: true,
     claimedIds,
     excludedIds,
   });
@@ -365,11 +366,11 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
       }
       case "ambiguous":
         return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, `candidates: ${result.ids.join(", ")}`);
-      case "too-old":
+      case "closed":
         return settle(tx, before, "queued", { qbMatchState: "BEFORE_LINE" });
       case "failed":
         return recordFailure(tx, before, result.error);
-      case "no-line":
+      case "needs-finance":
         return settle(tx, before, "waiting", { qbMatchState: before.qbMatchState });
     }
   });

@@ -11,6 +11,7 @@ import type {
   QboCustomer,
   QboDeposit,
   QboEnv,
+  QboPreferences,
   QboPurchase,
   QboRealm,
   QboVendor,
@@ -25,14 +26,24 @@ const DAY_MS = 86_400_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRY_AFTER_S = 10;
 
-/** `: codes 6240,610` from a QBO Fault body, or nothing; never the fault's free text. */
-async function faultCodes(res: Response): Promise<string> {
+/** The numeric fault codes of a QBO Fault body, or none; never the fault's free text. */
+async function faultCodes(res: Response): Promise<string[]> {
   try {
     const body = (await res.json()) as { Fault?: { Error?: { code?: unknown }[] } };
-    const codes = (body.Fault?.Error ?? []).map((e) => e.code).filter((c): c is string => typeof c === "string" && /^\d+$/.test(c));
-    return codes.length ? `: codes ${codes.join(",")}` : "";
+    return (body.Fault?.Error ?? []).map((e) => e.code).filter((c): c is string => typeof c === "string" && /^\d+$/.test(c));
   } catch {
-    return "";
+    return [];
+  }
+}
+
+/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
+export class QboRequestError extends Error {
+  readonly codes: readonly string[];
+
+  constructor(message: string, codes: readonly string[]) {
+    super(codes.length ? `${message}: codes ${codes.join(",")}` : message);
+    this.name = "QboRequestError";
+    this.codes = codes;
   }
 }
 
@@ -244,6 +255,13 @@ function writeBody(req: WriteRequest, key: string, env: QboEnv): Record<string, 
   }
 }
 
+/** The entities the created-since read covers: the ones the app creates transactions in. */
+interface CreatedEntity {
+  Deposit: QboDeposit;
+  Purchase: QboPurchase;
+  Bill: QboBill;
+}
+
 export class QuickBooksClient {
   private readonly tokens: AccessTokenSource;
   private readonly realm: QboRealm;
@@ -307,6 +325,28 @@ export class QuickBooksClient {
 
   depositsBetween(from: string, to: string): Promise<QboDeposit[]> {
     return this.between("Deposit", from, to);
+  }
+
+  /**
+   * Every `entity` QuickBooks created at or after `since`, one page of at most PAGE_SIZE.
+   * `full` means the page is full and more entries may exist. Creation time is kept when
+   * finance edits an entry's date, so this finds an entry a dated window misses.
+   */
+  async createdSince<E extends keyof CreatedEntity>(entity: E, since: Date): Promise<{ entries: CreatedEntity[E][]; full: boolean }> {
+    if (Number.isNaN(since.getTime())) throw new Error("QBO createdSince needs a valid time");
+    const at = `${since.toISOString().slice(0, 19)}Z`;
+    const entries = await this.query<CreatedEntity[E]>(`SELECT * FROM ${entity} WHERE MetaData.CreateTime >= '${at}' STARTPOSITION 1 MAXRESULTS ${PAGE_SIZE}`);
+    return { entries, full: entries.length >= PAGE_SIZE };
+  }
+
+  /** The books closing date (YYYY-MM-DD), or null when finance has set none. Throws when the read fails. */
+  async bookCloseDate(): Promise<string | null> {
+    const [prefs] = await this.query<QboPreferences>("SELECT * FROM Preferences");
+    if (!prefs) throw new Error(`QBO Preferences read returned nothing (intuit_tid=${this.lastTid})`);
+    const date = prefs.AccountingInfoPrefs?.BookCloseDate;
+    if (date === undefined) return null;
+    parseDate(date);
+    return date;
   }
 
   /** Every `entity` with one of `ids`, at most one page of ids. */
@@ -394,7 +434,7 @@ export class QuickBooksClient {
         await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(wait) ? wait : 1, MAX_RETRY_AFTER_S) * 1000));
         continue;
       }
-      if (!res.ok) throw new Error(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})${await faultCodes(res)}`);
+      if (!res.ok) throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, await faultCodes(res));
       return res.json();
     }
   }
