@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Button, Checkbox, Group, NumberInput, Paper, Select, Table, Text, Title } from "@mantine/core";
-import { send, useBuckets, useLoad } from "../components/api";
+import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import { formatCents } from "@checkin/money";
 
 interface DonatedLine {
@@ -23,11 +23,13 @@ interface Review {
 
 /**
  * /expense/donated-capital — FINANCE's capital review of donated equipment: each gift line at or
- * over the capital thresholds becomes an asset in the register, or stays an in-kind expense.
+ * over the capital thresholds becomes an asset in the register, or stays an in-kind expense. The
+ * board sees the lines waiting.
  */
 export default function DonatedCapitalPage() {
   const lines = useLoad<DonatedLine[]>("/donated-capital");
-  const buckets = useBuckets(true);
+  const { isFinance } = useRoles();
+  const buckets = useBuckets(isFinance);
   const [review, setReview] = useState<Record<number, Review>>({});
 
   const valueOf = (l: DonatedLine): Review => review[l.id] ?? { isCapital: true, years: "", owner: String(l.budgetOwnerId) };
@@ -48,7 +50,7 @@ export default function DonatedCapitalPage() {
           <Table>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Gift</Table.Th><Table.Th>Item</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Cost</Table.Th><Table.Th>Date</Table.Th><Table.Th>Review</Table.Th>
+                <Table.Th>Gift</Table.Th><Table.Th>Item</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Cost</Table.Th><Table.Th>Date</Table.Th>{isFinance && <Table.Th>Review</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -63,7 +65,7 @@ export default function DonatedCapitalPage() {
                     <Table.Td>{l.quantity}</Table.Td>
                     <Table.Td>{formatCents(l.costCents)}</Table.Td>
                     <Table.Td>{l.acquisitionDate ?? "—"}</Table.Td>
-                    <Table.Td>
+                    {isFinance && <Table.Td>
                       <Group gap="xs">
                         <Checkbox label="Asset" checked={v.isCapital} onChange={(e) => set({ isCapital: e.currentTarget.checked })} />
                         {v.isCapital && (
@@ -74,7 +76,7 @@ export default function DonatedCapitalPage() {
                         )}
                         <Button size="compact-sm" disabled={incomplete} onClick={() => void submit(l)}>Submit</Button>
                       </Group>
-                    </Table.Td>
+                    </Table.Td>}
                   </Table.Tr>
                 );
               })}

@@ -621,7 +621,7 @@ model DonatedCapitalLine {
   isCapital         Boolean?  @map("is_capital")
   /// @sensitivity:internal
   depreciationYears Int?      @map("depreciation_years")
-  /// @sensitivity:internal
+  /// @sensitivity:pii
   reviewedByUserId  Int?      @map("reviewed_by_user_id")
   /// @sensitivity:internal
   reviewedAt        DateTime? @map("reviewed_at")

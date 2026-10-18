@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
-import { actorOf } from "../lib/caller";
+import { actorOf, callerId } from "../lib/caller";
 import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
 import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-register";
@@ -62,8 +62,10 @@ export async function giftsAwaitingCapitalReview(orgId: string): Promise<{ giftS
   });
 }
 
+/** Finance and the board read the lines waiting on review; only finance reviews them. */
 export async function listDonatedCapital(principal: ExpensePrincipal) {
-  requireFinance(principal);
+  callerId(principal);
+  if (!principal.isFinance && !principal.isBoard) throw new ServiceError(403, "Only finance or the board can see donated equipment");
   return db.donatedCapitalLine.findMany({ where: { orgId: await getOrgId(), isCapital: null }, select: VIEW_SELECT, orderBy: { id: "asc" } });
 }
 

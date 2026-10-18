@@ -247,7 +247,7 @@ export const classifications = {
         budgetOwnerId: 'internal',
         isCapital: 'internal',
         depreciationYears: 'internal',
-        reviewedByUserId: 'internal',
+        reviewedByUserId: 'pii',
         reviewedAt: 'internal',
         createdAt: 'internal',
     },

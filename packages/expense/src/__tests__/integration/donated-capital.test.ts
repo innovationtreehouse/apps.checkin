@@ -12,6 +12,7 @@ import {
 } from "../../services/donatedCapitalService";
 
 const FINANCE = principal(3, { isFinance: true });
+const BOARD = principal(5, { isBoard: true });
 
 const line = (giftLineId: number, costCents: number, quantity = 1): DonatedLine => ({
   giftSource: "receipt",
@@ -29,9 +30,10 @@ async function thresholds(lineCents: number) {
 }
 
 describe("donated capital — guards", () => {
-  it("only FINANCE lists or reviews", async () => {
+  it("only FINANCE or the board lists; only FINANCE reviews", async () => {
     await expect(listDonatedCapital(principal(9))).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(principal(9), 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
+    await expect(reviewDonatedLine(BOARD, 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
   });
 });
 
@@ -43,6 +45,7 @@ describeDb("donated capital", () => {
 
     const rows = await listDonatedCapital(FINANCE);
     expect(rows.map((r) => r.giftLineId)).toEqual([1]);
+    expect(await listDonatedCapital(BOARD)).toEqual(rows);
     expect(rows[0]).not.toHaveProperty("createdAt");
     expect(await giftsAwaitingCapitalReview(ORG)).toEqual([{ giftSource: "receipt", giftId: 41 }]);
   });
