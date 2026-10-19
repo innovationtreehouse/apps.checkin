@@ -128,6 +128,8 @@ def round_pairs(shas, base):
 
 def linear_since(cmp):
     """A round-to-round compare holds only PR work: the old head is an ancestor and no merge commits came in."""
+    if cmp.get("total_commits", 0) > len(cmp.get("commits", [])):
+        return False  # compare lists <=250 commits; a hidden merge could be past the cap
     return cmp.get("status") == "ahead" and all(len(c.get("parents", [])) <= 1 for c in cmp.get("commits", []))
 
 
@@ -223,6 +225,7 @@ def route_selftest():
     assert linear_since({"status": "ahead", "commits": [{"parents": [1]}, {"parents": [2]}]})
     assert not linear_since({"status": "ahead", "commits": [{"parents": [1, 2]}]})  # merged main in
     assert not linear_since({"status": "diverged", "commits": [{"parents": [1]}]})  # rebased
+    assert not linear_since({"status": "ahead", "total_commits": 300, "commits": [{"parents": [1]}]})  # truncated list
     rv = lambda i, at, sha, who=BOT: {"id": i, "submitted_at": at, "commit_id": sha, "user": {"login": who}}
     got = round_entries([rv(3, "T2", "b"), rv(2, "T1", "a"), rv(9, "T1", "x"), rv(4, None, "z"),
                          rv(5, "T3", "b"), rv(6, "T0", "q", "someone"), rv(7, "T4", "c")], "main", skip_id="9")
