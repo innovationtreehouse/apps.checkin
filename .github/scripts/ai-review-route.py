@@ -40,6 +40,8 @@ ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
+# Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
+JEV_STATE_MAX = 1_500_000
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
 FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and risk findings, not new nits. "
                   "In a verify round, still re-check every earlier finding, nits included.\n")
@@ -184,10 +186,21 @@ def prior_rounds(pr, repo, skip_id=None):
     return rounds
 
 
+def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
+    """Blank the oldest rounds' diffs until the Jev state fits `limit` bytes; bodies and markers stay."""
+    for entry in rounds:
+        if len(json.dumps(dict(state, untrusted_prior_review_rounds=rounds)).encode()) <= limit:
+            break
+        if entry["diff"]:
+            entry["diff"], entry["diff_status"] = "", "omitted_size"
+            entry["diff_note"] = "dropped to keep the request under the size limit; oldest rounds go first"
+    return dict(state, untrusted_prior_review_rounds=rounds)
+
+
 def with_prior_rounds(state, pr, repo, skip_id=None):
     # Earlier rounds are PR-derived text: data for Jev, never instructions.
     try:
-        return dict(state, untrusted_prior_review_rounds=prior_rounds(pr, repo, skip_id))
+        return fit_rounds(state, prior_rounds(pr, repo, skip_id))
     except Exception as e:
         print(f"::warning::could not read prior review rounds ({e}); deciding without them", file=sys.stderr)
         return state
@@ -238,6 +251,10 @@ def route_selftest():
     assert [(i, ab, e["diff_status"]) for i, ab, e in got] == [
         (2, ("main", "a"), "unavailable"), (3, ("a", "b"), "unavailable"), (5, ("b", "b"), "no_new_changes"), (7, ("b", "c"), "unavailable")]
     assert [rid for rid, _, _ in round_entries([rv(11, "T1", "b"), rv(10, "T1", "a")], "main")] == [10, 11]
+    big = [{"round": i, "diff": "d" * 400, "diff_status": "ok"} for i in (1, 2, 3)]
+    fitted = fit_rounds({"k": 1}, big, limit=1000)["untrusted_prior_review_rounds"]
+    assert [e["diff_status"] for e in fitted] == ["omitted_size", "omitted_size", "ok"]
+    assert fit_rounds({}, [{"round": 1, "diff": "x", "diff_status": "ok"}])["untrusted_prior_review_rounds"][0]["diff"] == "x"
     global prior_rounds
     saved, prior_rounds = prior_rounds, lambda *a: 1 / 0
     try:
