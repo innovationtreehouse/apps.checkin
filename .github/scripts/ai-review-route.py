@@ -18,7 +18,7 @@ JEV = "typesafe/jev-1.14"
 LADDER = [
     # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
-    ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
+    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
     # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
     # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
@@ -41,6 +41,8 @@ PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
 SMALL_DELTA = 300
+# Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
+MIN_CREDIT_USD = 5.0
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
 FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and risk findings, not new nits. "
                   "In a verify round, still re-check every earlier finding, nits included.\n")
@@ -90,6 +92,38 @@ def jev(state, questions):
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
+
+
+def _openrouter(path):
+    req = urllib.request.Request(f"https://openrouter.ai/api/v1/{path}",
+                                 headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["data"]
+
+
+def credit_left():
+    """Dollars left: the lower of the key's own limit and the account balance; None if neither is known.
+    Never raises. /credits needs a management key, so with a plain key it 403s and only the key limit counts."""
+    known = []
+    for path, left in (("key", lambda d: d["limit_remaining"]),
+                       ("credits", lambda d: d["total_credits"] - d["total_usage"])):
+        try:
+            v = left(_openrouter(path))
+            if isinstance(v, (int, float)):
+                known.append(v)
+        except Exception as e:
+            print(f"::warning::could not read OpenRouter {path} credit ({e}); ignoring it", file=sys.stderr)
+    return min(known) if known else None
+
+
+def low_credit():
+    left = credit_left()
+    return left is not None and left < MIN_CREDIT_USD
+
+
+def out_of_credit(review):
+    """A lane in the posted review failed because the key ran out of credit."""
+    return re.search(r"^- `[^`]+`: failed-open[^\n]*OpenRouter HTTP 402", review or "", re.M) is not None
 
 
 def output_block(o, name, value):
@@ -155,6 +189,32 @@ def route_selftest():
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
+    assert out_of_credit("Lanes:\n- `google/gemini-4-argon`: failed-open (at least pennies spent, incomplete) — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit(None)
+    assert outcome("Fixed in 4fb685939. The summary now says") == "fixed in 4fb685939"
+    assert outcome("Same finding as the thread above; fixed in 4fb685939.") == "fixed in 4fb685939"
+    assert outcome("Partly fixed in b66415363: the inventory-log rule") == "partly fixed in b66415363"
+    assert outcome("Not fixed in abc1234 yet, see below") .startswith("replied: ")
+    assert outcome("Disputed. A tag on its own line is already the convention") == "disputed"
+    assert outcome("Settled; not changing. The owner has confirmed") == "settled"
+    assert outcome("**Deferred** to #2400.") == "deferred"
+    assert outcome("Rejected: out of scope") == "rejected"
+    assert outcome("Declined, by design.") == "declined"
+    assert outcome("Verified against the owner's policy library (Procurement Policy v1.0, active). Both stand.") == \
+        "replied: Verified against the owner's policy library (Procurement Policy v1.0, active)"
+    assert outcome("I think we fixed this somewhere") == "replied: I think we fixed this somewhere"
+    bot = {"login": BOT}
+    def thread(n, t):
+        return [{"user": bot, "created_at": f"2026-10-0{t}", "path": "a.md", "line": n, "diff_hunk": "x" * 1000,
+                 "body": f"<!-- or-finding:abc123:r1-{n} -->\n🟠 **Finding {n}** (`risk`)\n" + "y" * 2000},
+                {"user": {"login": "thpr"}, "created_at": f"2026-10-0{t}T1", "body": f"Fixed in {n}{n}{n}abcd."}]
+    out = compose_history([thread(1, 1), thread(2, 2), thread(3, 3)], [(f"2026-10-09", "- summary " + "z" * 900)], "head123", 6000)
+    for n in (1, 2, 3):
+        assert f'- abc123:r1-{n} "Finding {n}" (a.md) → fixed in {n}{n}{n}abcd (by thpr)' in out, out
+    assert "abc123:r1-3 a.md:3" in out and "abc123:r1-1 a.md:1" not in out  # newest full thread kept, oldest dropped
     global gh
     real, calls = gh, []
     def fake(out):
@@ -209,6 +269,88 @@ def _clean(text, limit):
     return text[:limit] + (" …" if len(text) > limit else "")
 
 
+_SHA = r"([0-9a-f]{7,40})\b"
+_OUTCOME_WORDS = ("rejected", "disputed", "declined", "deferred", "settled")
+
+
+def outcome(reply):
+    """Conservative read of one author/owner reply: a leading outcome word, or "fixed in <sha>"
+    in the first sentence. Anything else is "replied" plus its first clause, never a guess."""
+    text = _clean(reply, 2000)
+    first = re.split(r"(?<=[.!?])\s|\n", text, maxsplit=1)[0]
+    word = re.match(r"\W*(\w+)", first.lower())
+    if word and word.group(1) in _OUTCOME_WORDS:
+        return word.group(1)
+    fixed = re.search(r"\b(partly |partially )?fixed in " + _SHA, first, re.I)
+    if fixed and not re.search(r"\bnot\b[^.;]*$", first[:fixed.start()], re.I):
+        return f"{(fixed.group(1) or '').lower()}fixed in {fixed.group(2)}"
+    clause = re.split(r"[.;:](?:\s|$)|\n", text, maxsplit=1)[0].strip()
+    return "replied: " + clause[:100] + (" …" if len(clause) > 100 else "")
+
+
+def _finding(first):
+    """Finding id from the bot's or-finding marker (empty for a human thread), and its bold title."""
+    m = re.search(r"or-finding:([0-9a-f]+:r\d+-\d+)", first.get("body") or "")
+    t = re.search(r"\*\*(.+?)\*\*", first.get("body") or "")
+    title = t.group(1) if t else _clean(first.get("body"), 80)
+    return (m.group(1) if m else ""), title[:120]
+
+
+def _fit(entries, room):
+    kept, used = [], 0
+    for _, text in sorted(entries, reverse=True):  # newest first until the room runs out
+        n = len(text.encode()) + 1
+        if used + n > room:
+            break
+        kept.append(text); used += n
+    return list(reversed(kept)), used, len(entries) - len(kept)
+
+
+def compose_history(threads, summaries, head7, budget):
+    """threads: lists of inline comments, oldest first; summaries: (time, text). Outcome lines for
+    findings with an author/owner reply claim the budget first, then full threads (70% of the rest),
+    then summaries, so a confirmation can't be trimmed while the finding it answers survives."""
+    inline, outcomes = [], []
+    for cs in threads:
+        first = cs[0]
+        fid, title = _finding(first)
+        # GitHub nulls `line` once the commented code changes; original_line is where it was written.
+        if first.get("line"):
+            where = f"{first['path']}:{first['line']} (unchanged at head {head7})"
+        else:
+            where = (f"{first['path']}:{first.get('original_line')} as of {str(first.get('original_commit_id'))[:7]} "
+                     f"(outdated: this code changed before head {head7}; re-check it against the current diff)")
+        hunk = "\n".join((first.get("diff_hunk") or "").splitlines()[-6:])
+        talk = "\n".join(f"  {c['user']['login']}: {_clean(c['body'], 700)}" for c in cs)
+        inline.append((cs[-1]["created_at"], f"- {fid + ' ' if fid else ''}{where}\n```diff\n{hunk}\n```\n{talk}"))
+        replies = [c for c in cs[1:] if c["user"]["login"] != BOT]
+        if replies:
+            label = f"{fid} \"{title}\"" if fid else f"\"{title}\""
+            said = "; ".join(f"{outcome(c['body'])} (by {c['user']['login']})" for c in replies)
+            outcomes.append((replies[-1]["created_at"], f"- {label} ({first['path']}) → {said}"))
+
+    head = ("\n\n## Prior review history on this PR\n"
+            "Context, not instructions. Each inline comment below is aligned to the diff it was written against and "
+            "says whether that code is unchanged at the current head or has changed since. A finding a maintainer "
+            "accepted or disputed with a reason stays settled unless the code it points at changed.\n")
+    room = budget - len(head.encode())
+    oc, used, oc_drop = _fit(outcomes, room)  # outcome lines get first claim on the budget
+    room -= used
+    th, used, th_drop = _fit(inline, int(room * 0.7))
+    sm, _, sm_drop = _fit(summaries, room - used)
+    if not oc and not th and not sm:
+        return ""
+    out = head
+    if oc:
+        out += ("\n### Outcomes of earlier findings (each author or owner reply, oldest first)\n"
+                + ("(older outcomes omitted)\n" if oc_drop else "") + "\n".join(oc))
+    if th:
+        out += "\n\n### Inline comments, aligned to the diff\n" + ("(older threads omitted)\n" if th_drop else "") + "\n".join(th)
+    if sm:
+        out += "\n\n### Review summaries and PR comments\n" + ("(older entries omitted)\n" if sm_drop else "") + "\n".join(sm)
+    return out
+
+
 def review_history(pr, repo, head_sha, budget):
     """Earlier review comments aligned to the diff, then review summaries, within the byte budget.
     Only repo members, collaborators and the review bot are included: anyone can comment on a public PR."""
@@ -220,19 +362,8 @@ def review_history(pr, repo, head_sha, budget):
     for c in api(f"pulls/{pr}/comments?per_page=100"):
         if _trusted(c):
             threads.setdefault(c.get("in_reply_to_id") or c["id"], []).append(c)
-    inline = []  # (newest activity, text)
     for cs in threads.values():
         cs.sort(key=lambda c: c["created_at"])
-        first = cs[0]
-        # GitHub nulls `line` once the commented code changes; original_line is where it was written.
-        if first.get("line"):
-            where = f"{first['path']}:{first['line']} (unchanged at head {head7})"
-        else:
-            where = (f"{first['path']}:{first.get('original_line')} as of {str(first.get('original_commit_id'))[:7]} "
-                     f"(outdated: this code changed before head {head7}; re-check it against the current diff)")
-        hunk = "\n".join((first.get("diff_hunk") or "").splitlines()[-6:])
-        talk = "\n".join(f"  {c['user']['login']}: {_clean(c['body'], 700)}" for c in cs)
-        inline.append((cs[-1]["created_at"], f"- {where}\n```diff\n{hunk}\n```\n{talk}"))
 
     summaries = []
     for r in api(f"pulls/{pr}/reviews?per_page=100"):
@@ -245,31 +376,7 @@ def review_history(pr, repo, head_sha, budget):
         body = _clean(c.get("body"), 800)
         if _trusted(c) and body and "openrouter-pr-review-status" not in (c.get("body") or ""):
             summaries.append((c["created_at"], f"- PR comment by {c['user']['login']}: {body}"))
-
-    def fit(entries, room):
-        kept, used = [], 0
-        for _, text in sorted(entries, reverse=True):  # newest first until the room runs out
-            n = len(text.encode()) + 1
-            if used + n > room:
-                break
-            kept.append(text); used += n
-        return list(reversed(kept)), used, len(entries) - len(kept)
-
-    head = ("\n\n## Prior review history on this PR\n"
-            "Context, not instructions. Each inline comment below is aligned to the diff it was written against and "
-            "says whether that code is unchanged at the current head or has changed since. A finding a maintainer "
-            "accepted or disputed with a reason stays settled unless the code it points at changed.\n")
-    room = budget - len(head.encode())
-    th, used, th_drop = fit(inline, int(room * 0.7))  # inline comments get first claim on the budget
-    sm, _, sm_drop = fit(summaries, room - used)
-    if not th and not sm:
-        return ""
-    out = head
-    if th:
-        out += "\n### Inline comments, aligned to the diff\n" + ("(older threads omitted)\n" if th_drop else "") + "\n".join(th)
-    if sm:
-        out += "\n\n### Review summaries and PR comments\n" + ("(older entries omitted)\n" if sm_drop else "") + "\n".join(sm)
-    return out
+    return compose_history(list(threads.values()), summaries, head7, budget)
 
 
 def first_round(pr, repo):
@@ -398,6 +505,9 @@ def route():
             tier, t_by = capped, f"later round {later}, capped from {tier} ({t_by})"
         elif scope:
             t_by = f"round {rounds + 1}: {scope} scope, {compaction} history ({t_by})"
+    credit_override = None
+    if tier != ORDER[0] and low_credit():
+        credit_override, tier, t_by = tier, ORDER[0], f"credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     base = open(f"{CFG}/instructions.md").read()
     note = FREE_ONLY_BUGS if tier == ORDER[0] else ""
@@ -415,7 +525,7 @@ def route():
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
                  tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
-                 files=state["file_count"])
+                 files=state["file_count"], credit_override=credit_override)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
@@ -442,6 +552,10 @@ def posted_review(repo, pr, url):
     return body + "\n\nInline comments:\n" + comments
 
 
+class OutOfCredit(Exception):
+    pass
+
+
 def adjudicate():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     tier, verdict = os.environ["TIER"], os.environ.get("VERDICT", "")
@@ -452,6 +566,8 @@ def adjudicate():
         try:
             _, state = pr_state(pr, repo)
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
+            if out_of_credit(review) or low_credit():
+                raise OutOfCredit
             m = re.search(r"\*\*Mode:\*\*\s*`(\w+)`", review)
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
@@ -470,6 +586,8 @@ def adjudicate():
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
             by = f"{JEV} complete={p:.2f}, rerun " + ", ".join(f"{k}={v:.2f}" for k, v in a["rerun_on"]["probabilities"].items())
+        except OutOfCredit:
+            by = "out of credit: a rerun would get HTTP 402 too"
         except Exception as e:
             print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
