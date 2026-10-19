@@ -225,6 +225,10 @@ model DisbursementEvent {
   qbDriftedTxnId      String? @map("qb_drifted_txn_id")
   /// @sensitivity:internal
   qbDriftCause        String? @map("qb_drift_cause")
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// @sensitivity:internal
+  qbNote              String? @map("qb_note")
 
   @@unique([orgId, disbursementId])
   @@unique([orgId, qbTxnId])
@@ -296,6 +300,16 @@ model DonationQbMatchExclusion {
 
   @@unique([orgId, qbTxnId])
   @@map("qb_match_exclusion")
+}
+
+// The lane's QuickBooks settings, one row per org.
+model DonationOrgSettings {
+  /// @sensitivity:internal
+  orgId         String    @id @map("org_id")
+  /// @sensitivity:internal
+  qbPostingOnAt DateTime? @map("qb_posting_on_at")
+
+  @@map("donation_org_settings")
 }
 
 // An in-kind donation that arrived with a receipt (FR5). The money side (X9) and the donor

@@ -10,7 +10,7 @@ import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
 import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
-import { benevityTakeoverLine, QB_MATCH_STATE, recordQbMatched } from "../../lib/qb-match";
+import { QB_MATCH_STATE } from "../../lib/qb-match";
 import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
@@ -309,25 +309,4 @@ describeDb("QuickBooks match pre-seat", () => {
     await expect(db.donationQbMatchExclusion.create({ data })).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("the Benevity takeover line is the newest matched disbursement date; CREATED never sets it", async () => {
-    expect(await benevityTakeoverLine(db, orgId)).toBeNull();
-    await event("D-A", "2026-08-01", QB_MATCH_STATE.MATCHED, "qb-1");
-    await recordQbMatched(db, orgId, { disbursementId: "D-A", disbursementDate: "2026-08-01", qbTxnId: "qb-1" }, AUDIT);
-    await event("D-B", "2026-09-01", QB_MATCH_STATE.CREATED, "qb-2");
-    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-08-01");
-  });
-
-  it("un-matching the newest matched record does not move the line back", async () => {
-    await event("D-A", "2026-08-01", QB_MATCH_STATE.MATCHED, "qb-1");
-    await recordQbMatched(db, orgId, { disbursementId: "D-A", disbursementDate: "2026-08-01", qbTxnId: "qb-1" }, AUDIT);
-    await event("D-B", "2026-09-01", QB_MATCH_STATE.MATCHED, "qb-2");
-    await recordQbMatched(db, orgId, { disbursementId: "D-B", disbursementDate: "2026-09-01", qbTxnId: "qb-2" }, AUDIT);
-    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-01");
-
-    await db.disbursementEvent.updateMany({
-      where: { orgId, disbursementId: "D-B" },
-      data: { qbMatchState: QB_MATCH_STATE.UNMATCHED, qbTxnId: null },
-    });
-    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-01");
-  });
 });

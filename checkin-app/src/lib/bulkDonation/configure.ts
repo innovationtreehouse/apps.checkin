@@ -8,7 +8,8 @@
  * X9 and X13 are bound by their callers (workflow-mapping and receipt). The
  * QuickBooks drain books through checkin's one guarded client, bound only where
  * QBO_REALM_ID and QBO_DONATION_BANK_ACCOUNT_ID are set; unbound, a run answers
- * "unbound". Deposits income holds are kept out of its matching. The in-kind
+ * "unbound"; a daily sweep that could not read every Deposit alerts finance. Deposits income
+ * holds are kept out of its matching. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital-equipment amount.
@@ -39,6 +40,14 @@ function qbPosting(): DonationQbPosting | undefined {
     client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
     bankAccountId,
     prod: config.isProd(),
+    async sweepIncomplete({ since }) {
+      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+      await notifyFinanceAlert(
+        "Donations: the daily check for stray QuickBooks deposits could not see them all",
+        `<p>QuickBooks returned more deposits created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. <a href="${config.baseUrl()}/donations/qb-queue">Open the donations QuickBooks queue</a></p>`,
+        "Donation sweep alert failed:",
+      );
+    },
   };
 }
 
