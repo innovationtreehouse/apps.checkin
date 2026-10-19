@@ -18,7 +18,7 @@ JEV = "typesafe/jev-1.14"
 LADDER = [
     # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
-    ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
+    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
     # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
     # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
@@ -42,6 +42,8 @@ PROFILE_THRESHOLD = 0.5
 COMPLETE_THRESHOLD = 0.2
 # Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
 JEV_STATE_MAX = 1_500_000
+# Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
+MIN_CREDIT_USD = 5.0
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
 FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and risk findings, not new nits. "
                   "In a verify round, still re-check every earlier finding, nits included.\n")
@@ -92,6 +94,38 @@ def jev(state, questions, timeout=180):
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
+
+
+def _openrouter(path):
+    req = urllib.request.Request(f"https://openrouter.ai/api/v1/{path}",
+                                 headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["data"]
+
+
+def credit_left():
+    """Dollars left: the lower of the key's own limit and the account balance; None if neither is known.
+    Never raises. /credits needs a management key, so with a plain key it 403s and only the key limit counts."""
+    known = []
+    for path, left in (("key", lambda d: d["limit_remaining"]),
+                       ("credits", lambda d: d["total_credits"] - d["total_usage"])):
+        try:
+            v = left(_openrouter(path))
+            if isinstance(v, (int, float)):
+                known.append(v)
+        except Exception as e:
+            print(f"::warning::could not read OpenRouter {path} credit ({e}); ignoring it", file=sys.stderr)
+    return min(known) if known else None
+
+
+def low_credit():
+    left = credit_left()
+    return left is not None and left < MIN_CREDIT_USD
+
+
+def out_of_credit(review):
+    """A lane in the posted review failed because the key ran out of credit."""
+    return re.search(r"^- `[^`]+`: failed-open[^\n]*OpenRouter HTTP 402", review or "", re.M) is not None
 
 
 def output_block(o, name, value):
@@ -261,6 +295,11 @@ def route_selftest():
         assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
     finally:
         prior_rounds = saved
+    assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
+    assert out_of_credit("Lanes:\n- `google/gemini-4-argon`: failed-open (at least pennies spent, incomplete) — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit(None)
     assert outcome("Fixed in 4fb685939. The summary now says") == "fixed in 4fb685939"
     assert outcome("Same finding as the thread above; fixed in 4fb685939.") == "fixed in 4fb685939"
     assert outcome("Partly fixed in b66415363: the inventory-log rule") == "partly fixed in b66415363"
@@ -476,6 +515,9 @@ def route():
             print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
             tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
+    credit_override = None
+    if tier != ORDER[0] and low_credit():
+        credit_override, tier, t_by = tier, ORDER[0], f"credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     base = open(f"{CFG}/instructions.md").read()
     note = FREE_ONLY_BUGS if tier == ORDER[0] else ""
@@ -493,7 +535,7 @@ def route():
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
                  tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
-                 files=state["file_count"])
+                 files=state["file_count"], credit_override=credit_override)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
@@ -515,6 +557,10 @@ def posted_review(repo, pr, url):
     return body + "\n\nInline comments:\n" + comments
 
 
+class OutOfCredit(Exception):
+    pass
+
+
 def adjudicate():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     tier, verdict = os.environ["TIER"], os.environ.get("VERDICT", "")
@@ -527,6 +573,8 @@ def adjudicate():
             m = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL") or "")
             state = with_prior_rounds(state, pr, repo, m and m.group(1))
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
+            if out_of_credit(review) or low_credit():
+                raise OutOfCredit
             m = re.search(r"\*\*Mode:\*\*\s*`(\w+)`", review)
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
@@ -545,6 +593,8 @@ def adjudicate():
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
             by = f"{JEV} complete={p:.2f}, rerun " + ", ".join(f"{k}={v:.2f}" for k, v in a["rerun_on"]["probabilities"].items())
+        except OutOfCredit:
+            by = "out of credit: a rerun would get HTTP 402 too"
         except Exception as e:
             print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
