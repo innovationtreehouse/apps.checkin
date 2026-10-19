@@ -8,7 +8,7 @@ import { z } from "zod";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
 import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
-import { RECON_STATUS, runReconcile } from "./lib/reconcile";
+import { runReconcile } from "./lib/reconcile";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
 
@@ -25,8 +25,10 @@ const resolveBody = z.discriminatedUnion(
     z.object({ action: z.literal("match"), reason: z.string({ error: "reason must be a string" }).optional(), depositId: requiredString("depositId") }),
     z.object({ action: z.literal("dismiss"), reason: requiredString("reason") }),
     z.object({ action: z.literal("retry") }),
+    z.object({ action: z.literal("book") }),
+    z.object({ action: z.literal("clear_note"), reason: requiredString("reason") }),
   ],
-  { error: (issue) => (isJsonObject(issue.input) ? "action must be match, dismiss or retry" : NOT_AN_OBJECT) },
+  { error: (issue) => (isJsonObject(issue.input) ? "action must be match, dismiss, retry, book or clear_note" : NOT_AN_OBJECT) },
 );
 
 const positiveIntOrNull = { error: "budgetOwnerId must be a positive integer or null" };
@@ -69,11 +71,11 @@ export const getPayout: IncomeRouteHandler = async ({ params }) => {
 };
 
 export const listReconciliation: IncomeRouteHandler = async () => ({
-  PayoutReconciliation: await reconciliationService.list(await getOrgId(), RECON_STATUS.OPEN),
+  PayoutReconciliation: await reconciliationService.listQueue(await getOrgId()),
 });
 
 export const countReconciliation: IncomeRouteHandler = async () => ({
-  IncomeReconciliationCount: { total: await reconciliationService.count(await getOrgId(), RECON_STATUS.OPEN) },
+  IncomeReconciliationCount: { total: await reconciliationService.countQueue(await getOrgId()) },
 });
 
 export const candidates: IncomeRouteHandler = async ({ params }) => {

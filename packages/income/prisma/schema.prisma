@@ -57,6 +57,15 @@ model PayoutReconciliation {
   createdAt         DateTime  @default(now()) @map("created_at")
   /// @sensitivity:internal
   updatedAt         DateTime  @updatedAt @map("updated_at")
+  /// When a post claimed this payout; also the claim's token. Null when no post holds it.
+  /// @sensitivity:internal
+  postClaimedAt       DateTime? @map("post_claimed_at")
+  /// The first post attempt's claim time; never moved once set.
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
+  /// @sensitivity:internal
+  qbNote              String?   @map("qb_note")
 
   @@unique([orgId, payoutGid])
   @@unique([orgId, depositId])
@@ -94,6 +103,9 @@ model IncomeOrgSettings {
   maxCreatesPerRun     Int    @default(25) @map("max_creates_per_run")
   /// @sensitivity:internal
   maxCreateCentsPerRun Int    @default(2500000) @map("max_create_cents_per_run")
+  /// When income posting switched on: set once, by the first connected drain, never cleared.
+  /// @sensitivity:internal
+  qbPostingOnAt        DateTime? @map("qb_posting_on_at")
 
   @@map("org_settings")
 }

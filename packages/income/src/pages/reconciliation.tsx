@@ -14,6 +14,7 @@ interface ReconRow {
   status: string;
   kind: string | null;
   reason: string | null;
+  qbNote: string | null;
 }
 
 interface Deposit {
@@ -31,7 +32,7 @@ interface RunResult {
 }
 
 const KIND_HELP: Record<string, string> = {
-  NO_DEPOSIT: "No QuickBooks deposit matches this payout",
+  NO_DEPOSIT: "No QuickBooks deposit matches this payout; book it, match it, or dismiss it with a reason",
   AMBIGUOUS_DEPOSIT: "More than one deposit could be this payout",
   TXN_SUM_MISMATCH: "The payout's transactions don't add up to its net",
   DRIFT: "The payout or its deposit changed after it was reconciled",
@@ -44,7 +45,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-/** One open row's actions: candidate deposits to match or exclude, dismiss, retry. */
+/** One queue row's actions: on an open row, candidate deposits to match or exclude, dismiss, retry, book; on any row with an app note, clear it. */
 function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
   const candidates = useLoad<Deposit[]>(`/reconciliation/${row.id}/candidates`);
   const [reason, setReason] = useState("");
@@ -68,6 +69,18 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
     if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red" });
     return !!reason.trim();
   };
+
+  const clearNote = row.qbNote && (
+    <Button size="xs" variant="default" disabled={busy} onClick={() => needReason() && resolve({ action: "clear_note", reason }, "Note cleared")}>Clear note</Button>
+  );
+  if (row.status !== "OPEN") {
+    return (
+      <Group gap="xs" align="end">
+        <TextInput size="xs" label="Reason (clear the note)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
+        {clearNote}
+      </Group>
+    );
+  }
 
   return (
     <>
@@ -110,6 +123,10 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
         {(row.kind === "POST_FAILED" || row.kind === "OVER_CAP") && (
           <Button size="xs" variant="default" disabled={busy} onClick={() => resolve({ action: "retry" }, "Retried")}>Retry create</Button>
         )}
+        {row.kind === "NO_DEPOSIT" && (
+          <Button size="xs" variant="default" disabled={busy} onClick={() => resolve({ action: "book" }, "Booked")}>Book it</Button>
+        )}
+        {clearNote}
       </Group>
     </>
   );
@@ -173,9 +190,10 @@ export default function ReconciliationPage() {
                     <Table.Td>{row.payoutDate}</Table.Td>
                     <Table.Td>{money(row.payoutNetCents)}</Table.Td>
                     <Table.Td>
-                      <Badge size="sm" color="orange">{row.kind}</Badge>{" "}
+                      <Badge size="sm" color="orange">{row.kind ?? row.status}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>
-                      {row.kind === "NEEDS_MAPPING" && row.reason && <Text size="sm">{row.reason}</Text>}
+                      {row.reason && <Text size="sm">{row.reason}</Text>}
+                      {row.qbNote && <Text size="sm" c="orange">{row.qbNote}</Text>}
                     </Table.Td>
                     <Table.Td><Code>{row.payoutGid}</Code></Table.Td>
                     <Table.Td>
