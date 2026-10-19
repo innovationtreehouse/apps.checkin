@@ -1,12 +1,13 @@
 // Per-line budget-owner approval: the approvers of the line's bucket approve or raise an
 // exception; FINANCE assigns buckets and settles exceptions.
+import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket, liveBucketIds } from "../lib/financial-flow";
-import { lockExpense, voidSignoffs } from "../lib/signoff-facts";
+import { conflictedParties, lockExpense, voidSignoffs } from "../lib/signoff-facts";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -49,6 +50,27 @@ function requireStatus(approval: { status: string }, status: string): void {
   if (approval.status !== status) throw new ServiceError(400, `Item is not in ${status} status`);
 }
 
+/** Refuses a decision by the submitter, the reimbursee, or anyone in their households. */
+async function refuseConflicted(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
+  if ((await conflictedParties(expense)).includes(callerId(principal))) {
+    throw new ServiceError(403, "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for");
+  }
+}
+
+type ApprovalRead = { id: number; status: string; ownerId: number | null };
+
+/**
+ * Writes the approval only if its status and bucket are still what the caller read, so of two
+ * racing decisions the later one is refused instead of silently replacing the earlier one.
+ */
+async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data: Prisma.LineItemOwnerApprovalUncheckedUpdateManyInput): Promise<void> {
+  const { count } = await tx.lineItemOwnerApproval.updateMany({
+    where: { id: read.id, status: read.status, ownerId: read.ownerId },
+    data,
+  });
+  if (count === 0) throw new ServiceError(409, "This line changed; reload");
+}
+
 /** An approver approves; FINANCE may approve any line with an override comment (distinct audit action). */
 export async function approveLine(
   principal: ExpensePrincipal,
@@ -57,8 +79,9 @@ export async function approveLine(
   overrideComment?: string | null,
 ): Promise<void> {
   const actor = actorOf(principal);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "pending");
+  await refuseConflicted(principal, expense);
 
   let notes: string | null = null;
   if (!(await isBucketApprover(principal, approval.ownerId))) {
@@ -68,10 +91,7 @@ export async function approveLine(
   }
 
   await db.$transaction(async (tx) => {
-    await tx.lineItemOwnerApproval.update({
-      where: { id: approvalId },
-      data: { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes },
-    });
+    await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
     await writeAudit(tx, actor, {
       expenseId,
       action: notes ? "line_item_approved_finance_override" : "line_item_approved",
@@ -90,17 +110,15 @@ export async function raiseException(
   notes: string,
 ): Promise<void> {
   const actor = actorOf(principal);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "pending");
   if (!principal.isFinance && !(await isBucketApprover(principal, approval.ownerId))) {
     throw new ServiceError(403, "This line item is not in a bucket you approve");
   }
+  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
-    await tx.lineItemOwnerApproval.update({
-      where: { id: approvalId },
-      data: { status: "exception_raised", notes, decidedAt: new Date(), decidedByUserId: actor.userId },
-    });
+    await transition(tx, approval, { status: "exception_raised", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, { expenseId, action: "exception_raised", lineItemId: approval.lineItemId, valueAfter: notes });
   });
 }
@@ -113,14 +131,12 @@ export async function rejectException(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
+  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
-    await tx.lineItemOwnerApproval.update({
-      where: { id: approvalId },
-      data: { status: "rejected", notes, decidedAt: new Date(), decidedByUserId: actor.userId },
-    });
+    await transition(tx, approval, { status: "rejected", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_rejected_exception",
@@ -142,15 +158,13 @@ export async function financeAssign(
   requireFinance(principal);
   const actor = actorOf(principal);
   await requireLiveBuckets([ownerId]);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
+  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
-    await tx.lineItemOwnerApproval.update({
-      where: { id: approvalId },
-      data: { ownerId, status: "finance_assigned", decidedAt: new Date(), decidedByUserId: actor.userId },
-    });
+    await transition(tx, approval, { ownerId, status: "finance_assigned", decidedAt: new Date(), decidedByUserId: actor.userId });
     if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
@@ -182,15 +196,20 @@ export async function assignOwner(
   if (approval.ownerId !== null && approval.status !== "pending") {
     throw new ServiceError(400, "This item already has an owner assigned");
   }
+  await refuseConflicted(principal, expense);
 
   const lineItem = await expenseRepo.findLineItemById(approval.lineItemId);
   const gtin13 = permanent ? (lineItem?.gtin13 ?? null) : null;
-  const [sameExpense, siblings] = gtin13
+  const [sameExpense, listed] = gtin13
     ? await Promise.all([
         expenseRepo.listSameExpenseUnassignedApprovalsByGtin13(expenseId, gtin13, approvalId),
         expenseRepo.listSiblingApprovals(expense.orgId, gtin13, expenseId),
       ])
     : [[], []];
+  // A sibling on an expense the caller is conflicted on stays unassigned for someone else.
+  const caller = callerId(principal);
+  const conflicted = await Promise.all(listed.map(async (s) => (await conflictedParties(s)).includes(caller)));
+  const siblings = listed.filter((_, i) => !conflicted[i]);
 
   const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   const now = new Date();
@@ -199,7 +218,7 @@ export async function assignOwner(
   await db.$transaction(async (tx) => {
     // Sorted, so two assignments touching the same expenses lock them in the same order.
     for (const id of [...new Set([expenseId, ...siblings.map((s) => s.expenseId)])].sort()) await lockExpense(tx, id);
-    await tx.lineItemOwnerApproval.update({ where: { id: approvalId }, data: assigned });
+    await transition(tx, approval, assigned);
     if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
@@ -210,7 +229,9 @@ export async function assignOwner(
     });
 
     for (const s of [...sameExpense.map((a) => ({ ...a, expenseId })), ...siblings]) {
-      await tx.lineItemOwnerApproval.update({ where: { id: s.approvalId }, data: assigned });
+      // A line assigned since it was listed keeps that assignment.
+      const { count } = await tx.lineItemOwnerApproval.updateMany({ where: { id: s.approvalId, ownerId: null }, data: assigned });
+      if (count === 0) continue;
       await voidSignoffs(tx, actor, s.expenseId, [s.lineItemId], BUCKET_CHANGED);
       await writeAudit(tx, actor, {
         expenseId: s.expenseId,
@@ -238,17 +259,15 @@ export async function resolveUnknown(
   requireFinance(principal);
   const actor = actorOf(principal);
   await requireLiveBuckets([ownerId]);
-  const { approval } = await loadApproval(expenseId, approvalId);
+  const { expense, approval } = await loadApproval(expenseId, approvalId);
   requireStatus(approval, "unknown");
+  await refuseConflicted(principal, expense);
 
   const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
+    await transition(tx, approval, { ownerId, status, decidedAt: new Date(), decidedByUserId: actor.userId });
     if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
-    await tx.lineItemOwnerApproval.update({
-      where: { id: approvalId },
-      data: { ownerId, status, decidedAt: new Date(), decidedByUserId: actor.userId },
-    });
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_resolved_unknown",
