@@ -12,6 +12,7 @@ import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
+import { systemActor } from "@/lib/auditActor";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
 jest.mock("@/lib/email", () => ({
@@ -168,6 +169,7 @@ afterAll(async () => {
     if (ids.length) {
         const procs = await prisma.orgMembershipProcess.findMany({ where: { orgMembership: { householdId: { in: ids } } }, select: { id: true } });
         await prisma.paymentException.deleteMany({ where: { processId: { in: procs.map((p) => p.id) } } });
+        await prisma.auditLog.deleteMany({ where: { tableName: "OrgMembershipProcess", affectedEntityId: { in: procs.map((p) => p.id) } } });
         await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
     }
@@ -186,6 +188,7 @@ afterAll(async () => {
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
     }
     await prisma.paymentException.deleteMany({ where: { shopifyOrderId: { startsWith: `${TAG}-` } } });
+    await prisma.auditLog.deleteMany({ where: { tableName: "ShopifyOrderReversal", newData: { path: ["shopifyOrderId"], string_starts_with: `${TAG}-` } } });
     await restoreBoardSettings();
 });
 
@@ -250,6 +253,49 @@ describe("forward recovery", () => {
         expect(proc?.status).toBe("PENDING_PAYMENT");
         expect(proc?.paidAt).toBeNull();
         expect((await prisma.orgMembership.findUnique({ where: { id: membershipId } }))?.status).toBe("DENIED");
+    });
+
+    it("raises a paid order on a paid application of a DENIED household as DENIED activity, not UNMATCHED_ORDER", async () => {
+        const oid = `${TAG}-denied-paid`;
+        const { processId } = await makeApplicant({ email: `denied-paid-${TAG}@ex.com`, status: "ACTIVE", household: "DENIED", paid: true, shopifyOrderId: `${TAG}-denied-first` });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { kind: "DENIED_HOUSEHOLD_ACTIVITY", processId, severity: "CRITICAL" } })).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid } })).toBe(0);
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(1);
+    });
+
+    it("finds the Board's recorded refund of an order by its JSON audit row on this process only", async () => {
+        const oid = `${TAG}-refund-recorded`;
+        const refundedOrder = { legacyId: oid, financialStatus: "REFUNDED", totalRefundedCents: 5000 };
+        // Paid with oid, Board recorded the refund, paid again: the process is back awaiting with oid gone from it.
+        const recorded = await makeApplicant({ email: `refund-recorded-${TAG}@ex.com`, status: "PENDING_PAYMENT" });
+        const other = await makeApplicant({ email: `refund-other-${TAG}@ex.com`, status: "PENDING_PAYMENT" });
+        await prisma.auditLog.create({
+            data: {
+                ...systemActor("system:dev-seed"),
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: recorded.processId,
+                oldData: { status: "PENDING_BG_CLEARANCE", shopifyOrderId: oid },
+                newData: { status: "PENDING_PAYMENT", paidAt: null, refundRecorded: true },
+            },
+        });
+        ordersChangedSince.mockResolvedValue([
+            order({ ...refundedOrder, noteAttributes: attrs({ Membership_Process_ID: String(recorded.processId) }) }),
+        ]);
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId: recorded.processId } })).toBe(0);
+
+        // The same order id attributed to another process is not covered by that row.
+        ordersChangedSince.mockResolvedValue([
+            order({ ...refundedOrder, noteAttributes: attrs({ Membership_Process_ID: String(other.processId) }) }),
+        ]);
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { kind: "REVERSED_BEFORE_ACTIVATION", processId: other.processId } })).toBe(1);
     });
 
     // An order whose pass throws is isolated (the sweep goes on) but counted: the

@@ -4,6 +4,7 @@ import type { TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { bgSubjectKey } from "./guard";
@@ -146,8 +147,8 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const mergeId = merge.id;
 
     await prisma.$transaction(async (tx) => {
-        await lockAndRecheckKeeper(tx, keepId);
-        await recheckSubjects(tx, keepId, mergeId, actor);
+        await lockAndRecheckKeeper(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
+        await recheckSubjects(tx, plan, actor);
         await clearTombstoneIdentity(tx, mergeId, keepId);
         await applyKeeperChoices(tx, keepId, plan.keeperUpdate);
 
@@ -184,22 +185,35 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 }
 
 /**
- * The BOARD lock comes before any Person row lock, the order a role change
- * takes them in; the keeper's row is locked and re-checked live after it.
+ * Lock order: BOARD roles, then the application rows this merge writes, then both
+ * households' membership rows, then the keeper. BOARD first is the order a role
+ * change takes. Application before membership is the order payment, clearance
+ * and reset take, so a merge never holds a household row while it waits on an
+ * application. The membership rows serialize a deny with the merge even when
+ * there are no BOARD rows to lock.
  */
-async function lockAndRecheckKeeper(tx: TxClient, keepId: number): Promise<void> {
+async function lockAndRecheckKeeper(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
+    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
+        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
+        ORDER BY id FOR UPDATE`;
+    await lockAndFindDeniedHousehold(tx, householdIds);
     const [keeper] = await tx.$queryRaw<{ mergedIntoId: number | null }[]>`SELECT "mergedIntoId" FROM "Person" WHERE id = ${keepId} FOR UPDATE`;
     if (!keeper || keeper.mergedIntoId !== null) throw new AlreadyMergedError();
 }
 
 /**
- * Re-run the subject refusals on a live read. A deny takes the BOARD lock, so
- * a household denied after prepareMerge is seen here and refuses the merge.
+ * Re-run the subject refusals on a live read, under the households' membership
+ * locks: a household denied after prepareMerge is seen here and refuses the
+ * merge. A subject that changed household since the plan refuses too, since the
+ * locks cover the planned households only.
  */
-async function recheckSubjects(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null): Promise<void> {
-    const keep = await tx.person.findUniqueOrThrow({ where: { id: keepId }, include: KEEP_INCLUDE });
-    const merge = await tx.person.findUniqueOrThrow({ where: { id: mergeId }, include: MERGE_INCLUDE });
+async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: AuthenticatedUser | null): Promise<void> {
+    const keep = await tx.person.findUniqueOrThrow({ where: { id: plan.keep.id }, include: KEEP_INCLUDE });
+    const merge = await tx.person.findUniqueOrThrow({ where: { id: plan.merge.id }, include: MERGE_INCLUDE });
+    if (keep.householdId !== plan.keep.householdId || merge.householdId !== plan.merge.householdId) {
+        throw new MergeRefusedError({ status: 409, error: "One of these participants changed household while merging. Reload and try again." });
+    }
     const refusal = subjectRefusal(keep, merge, actor);
     if (refusal) throw new MergeRefusedError(refusal);
 }
