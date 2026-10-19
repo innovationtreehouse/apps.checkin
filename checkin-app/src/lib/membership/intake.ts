@@ -120,7 +120,7 @@ export async function getIntakeState(userId: number) {
         allergies: p.allergies,
     });
 
-    const canSeeNotes = leadIds.has(userId) || user.isSysadmin;
+    const canSeeNotes = leadIds.has(userId);
     const external = process ? await getExternalStatus(process) : null;
 
     // The caller's own individual agreement, if they have one open. Person-scoped,

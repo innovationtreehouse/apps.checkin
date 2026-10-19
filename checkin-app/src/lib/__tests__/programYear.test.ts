@@ -1,4 +1,4 @@
-import { nextBoundary, landsNextYear, memberYearStarts, birthCutoff } from '@/lib/programYear';
+import { nextBoundary, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched } from '@/lib/programYear';
 import { calculateAge } from '@/lib/time';
 
 // Anchor "now" so the rollover branch is deterministic.
@@ -62,5 +62,28 @@ describe('birthCutoff', () => {
         expect(calculateAge(cutoff, asOf)).toBe(18);
         expect(calculateAge(dayLate, asOf)).toBe(17);
         expect(dayLate.getTime() <= cutoff.getTime()).toBe(false);
+    });
+});
+
+describe('membership years', () => {
+    const b = new Date(SEPT1);
+    const d = (s: string) => new Date(`${s}T00:00:00Z`);
+
+    it('a start on the boundary day is in the new year', () => {
+        expect(membershipYearOf(b, d('2026-09-01'))).toBe(2026);
+        expect(membershipYearOf(b, d('2026-08-31'))).toBe(2025);
+    });
+
+    it('labels a year in the spanning form', () => {
+        expect(membershipYearLabel(2026)).toBe('2026-2027');
+    });
+
+    it('an end on the boundary day stays in the old year; one day later crosses', () => {
+        expect(programYearsTouched(b, d('2026-06-01'), d('2026-09-01'))).toEqual([2025]);
+        expect(programYearsTouched(b, d('2026-06-01'), d('2026-09-02'))).toEqual([2025, 2026]);
+    });
+
+    it('a one-day program on the boundary day is in the year it starts', () => {
+        expect(programYearsTouched(b, d('2026-09-01'), d('2026-09-01'))).toEqual([2026]);
     });
 });

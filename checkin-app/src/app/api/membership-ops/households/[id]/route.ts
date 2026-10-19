@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, getPrimaryValidContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
+import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 
 /**
@@ -169,7 +170,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             ]);
         }
 
-        return NextResponse.json({ household: updated });
+        return NextResponse.json({ household: withIntakeNotesFor(updated, auth.user) });
     } catch (error) {
         if (error instanceof EmergencyContactError) {
             return apiError(error.message, 400);

@@ -158,36 +158,33 @@ or skip what it hasn't entered yet. So every payout is **matched first**:
    net, minus every deposit already claimed by another payout and every deposit
    finance has excluded. Old QuickBooks history is never walked.
 2. **Found:** record its id and mark the payout reconciled. Post nothing.
-3. **Not found, after the takeover line:** create the deposit (QB-2 write),
+3. **Not found, first seen after switch-on, dated after the books closing
+   date:** create the deposit (QB-2 write),
    keyed so a retry never books twice. **Gated on the mirror being
    newest-wins.** s-read's `projectOrders` / `projectPayouts` do not keep the
    newest version today: a backfill, bulk re-ingest or replay can revert a row to
    older state. A deposit created from a reverted payout would book wrong amounts,
    so step 3 stays off (the payout waits as `WAITING`) until that fix, owned
    outside the port, is deployed. Matching (steps 1, 2, 4) does not wait.
-4. **Not found, before the line:** finance's queue. A gap among finance's own
-   bookings is finance's to explain; the app never fills it.
+4. **Not found otherwise:** finance's queue as `NO_DEPOSIT`. Finance books it
+   ("book it", which still matches first and never creates in closed books) or
+   dismisses it with a reason.
 
-**The takeover line is derived, never configured** (owner decision). It is the
-date of the newest payout tied to a deposit the app did not create, i.e. one
-finance booked by hand, found by matching or chosen by finance. Each run matches
-every open payout first, then reads the line, then creates for what is after
-it. Payouts finance had booked by go-live sit before the line; everything later
-belongs to the app. No date to set, no switch to flip, no action from finance
-beyond knowing the release went out. The line always falls inside the mirror's
-reach, because the hand-booked payouts that set it are recent. Deposits the app
-creates don't move it. If finance hand-books a newer payout anyway, step 1 finds
-it and the line moves forward, which is harmless. With no hand booking matched
-yet (for example before the deposit read works), there is no line and the app
-creates nothing: it fails closed.
+**Closed books and switch-on** replace the takeover line; the full design is
+`docs/in-design/QB_CLOSED_BOOKS.md`. Nothing dated on or before QuickBooks' books
+closing date is ever created (with no closing date set, nothing dated before
+switch-on). Income switches itself on the first time its drain runs with
+QuickBooks connected, after that run's reconcile. A payout the app first sees
+after switch-on books itself, however late Shopify delivers it; one seen before
+goes to finance at once.
 
 **Built once, in `packages/quickbooks`.** Steps 1 to 4 are one shared
 find-or-create, used by income and bulk donation alike (plan decision), so the
 line, the lookup and the retry key behave the same for both. Income supplies
 the deposit it wants (date, net, lines, account), its key (the payout GID), its
-current line, and its claimed and excluded deposit ids; the helper keeps no
-state and answers *found*, *ambiguous*, *created*, *failed* or *before the
-line*. Each lane derives its line the same way from its own records.
+last closed date, whether it may create without asking, and its claimed and
+excluded deposit ids; the helper keeps no state and answers *found*,
+*ambiguous*, *created*, *failed*, *closed* or *needs-finance*.
 Owned by L4, alongside:
 
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
@@ -225,9 +222,10 @@ Plain status column with a guarded transition table; no xstate.
 | (none) | Σ txn net ≠ payout net | `OPEN` + `TXN_SUM_MISMATCH` (nothing is posted for numbers that don't add up) |
 | (none), `WAITING` | exactly one deposit, neither claimed nor excluded, `amount = payout net`, date in `[issuedAt, issuedAt + window]` | `MATCHED` (nothing posted) |
 | (none), `WAITING` | more than one candidate | `OPEN` + `AMBIGUOUS_DEPOSIT` |
-| (none), `WAITING` | none found, payout after the line, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
-| (none) | none found, payout after the line or no line yet, no deposit write yet | `WAITING` |
-| (none) | none found, payout before the line, window elapsed | `OPEN` + `NO_DEPOSIT` |
+| (none), `WAITING` | none found, first seen after switch-on, dated after the closed line, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
+| (none) | none found, no deposit write yet | `WAITING` |
+| `WAITING` | none found, first seen before switch-on, or dated in closed books | `OPEN` + `NO_DEPOSIT` |
+| `OPEN` `NO_DEPOSIT` | finance: book it | create → `POSTED`, or back to `NO_DEPOSIT` when closed |
 | `OPEN` | a later run finds the deposit (late hand booking) | `MATCHED` |
 | `OPEN` `POST_FAILED` | a later run, or finance's retry, creates it with the same key | `POSTED` |
 | `OPEN` | finance: match to a chosen deposit | `RESOLVED` (manual match) |

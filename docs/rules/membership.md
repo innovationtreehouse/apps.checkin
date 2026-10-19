@@ -417,6 +417,10 @@ Procedure below is built on them.
 - An intake note is readable by the household's leads and the reviewers, not by
   its other members.  [Decision — *Policy: Membership Policy, Art. VI §VI.2; Records Policy, Art. IV*]
 
+- The sysadmin role never shows a household's intake note; a sysadmin sees it
+  only through another role they hold (a lead of that household, the Board, a
+  reviewer).  [Decision]
+
 ### Compliance
 
 - Nobody is removed for falling out of compliance. The view reports and sends

@@ -20,6 +20,9 @@ export const classifications = {
         resolvedAt: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
+        postClaimedAt: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
     },
     IncomeItemCategory: {
         id: 'public',
@@ -33,6 +36,7 @@ export const classifications = {
         orgId: 'internal',
         maxCreatesPerRun: 'internal',
         maxCreateCentsPerRun: 'internal',
+        qbPostingOnAt: 'internal',
     },
     IncomeQbMatchExclusion: {
         id: 'public',

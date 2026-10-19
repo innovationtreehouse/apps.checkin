@@ -93,10 +93,10 @@ export function when(iso: string | null | undefined): string {
 }
 
 /** Run a write, toast the outcome, then reload. Returns whether it succeeded. */
-export async function act(call: () => Promise<unknown>, ok: string, reload: () => void): Promise<boolean> {
+export async function act(call: () => Promise<unknown>, ok: string | ((result: unknown) => string), reload: () => void): Promise<boolean> {
   try {
-    await call();
-    notifications.show({ message: ok, color: "green" });
+    const result = await call();
+    notifications.show({ message: typeof ok === "string" ? ok : ok(result), color: "green" });
     reload();
     return true;
   } catch (e) {

@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { systemActor } from "@/lib/auditActor";
-import type { DbClient } from "@/lib/db-client";
+import { isRootClient, type DbClient, type TxClient } from "@/lib/db-client";
 
 export type PaymentExceptionKind =
     | "PAID_WHILE_BLOCKED"
@@ -98,30 +98,42 @@ const ledgerRow = (db: DbClient, shopifyOrderId: string) =>
         select: { id: true },
     });
 
+/** Two-argument advisory-lock class, apart from FACILITY_ADVISORY_CLASS and REFUND_SETTLEMENT_ADVISORY_CLASS. */
+export const ORDER_REVERSAL_ADVISORY_CLASS = 3;
+
+/** Serializes a reversal being recorded on an order with a payment or clearance reading it. */
+const lockOrderReversal = (tx: TxClient, shopifyOrderId: string) =>
+    tx.$executeRaw`SELECT pg_advisory_xact_lock(${ORDER_REVERSAL_ADVISORY_CLASS}::int, hashtext(${shopifyOrderId}))`;
+
 /**
  * Remember that an order was refunded, cancelled or disputed, once per order, so
  * no later payment or clearance activates a membership on it.
  */
 export async function recordReversal(shopifyOrderId: string, kind: PaymentExceptionKind): Promise<void> {
-    // ponytail: check-then-insert without a lock; a concurrent redelivery can add a second row, which the gate ignores.
-    if (await ledgerRow(prisma, shopifyOrderId)) return;
-    await prisma.auditLog.create({
-        data: {
-            ...systemActor("webhook:shopify-refund"),
-            action: "CREATE",
-            tableName: REVERSAL_LEDGER_TABLE,
-            affectedEntityId: 0,
-            newData: { shopifyOrderId, kind },
-        },
+    await prisma.$transaction(async (tx) => {
+        await lockOrderReversal(tx, shopifyOrderId);
+        if (await ledgerRow(tx, shopifyOrderId)) return;
+        await tx.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "CREATE",
+                tableName: REVERSAL_LEDGER_TABLE,
+                affectedEntityId: 0,
+                newData: { shopifyOrderId, kind },
+            },
+        });
     });
 }
 
 /**
  * True when the order's money went back: a reversal in the ledger, or an
  * unresolved reversal problem on it. A refunded order never activates a
- * membership; the Board decides instead.
+ * membership; the Board decides instead. Inside a transaction it takes the
+ * order's reversal lock, so a refund recorded concurrently is either seen here or
+ * waits for the transaction to commit (and then finds the process by the order id it wrote).
  */
 export async function isOrderReversed(db: DbClient, shopifyOrderId: string): Promise<boolean> {
+    if (!isRootClient(db)) await lockOrderReversal(db, shopifyOrderId);
     if (await ledgerRow(db, shopifyOrderId)) return true;
     const open = await db.paymentException.findFirst({
         where: { shopifyOrderId, kind: { in: REVERSAL_KINDS }, status: { not: "RESOLVED" } },

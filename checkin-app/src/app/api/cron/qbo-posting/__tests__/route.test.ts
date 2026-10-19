@@ -3,11 +3,12 @@
  */
 /**
  * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, runs the expense and donation
- * QuickBooks steps (each isolated), records the run, and answers `{}`.
+ * QuickBooks steps and income's orphan sweep (each isolated), records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { runExpenseQbPosting } from '@checkin/expense';
 import { runDonationQbPosting } from '@checkin/bulk-donation';
+import { runIncomeOrphanSweep } from '@checkin/income';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { GET } from '../route';
@@ -15,6 +16,7 @@ import { GET } from '../route';
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ runDonationQbPosting: jest.fn() }));
+jest.mock('@checkin/income', () => ({ runIncomeOrphanSweep: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -35,6 +37,7 @@ describe('GET /api/cron/qbo-posting', () => {
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
         jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound' });
         jest.mocked(runDonationQbPosting).mockResolvedValue('unbound');
+        jest.mocked(runIncomeOrphanSweep).mockResolvedValue({ status: 'unbound' });
     });
 
     afterAll(() => {
@@ -58,6 +61,7 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(await res.json()).toEqual({});
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
         expect(runDonationQbPosting).toHaveBeenCalledWith('org-1');
+        expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
         expect(create).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
     });

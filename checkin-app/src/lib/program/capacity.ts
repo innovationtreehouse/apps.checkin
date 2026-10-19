@@ -1,14 +1,14 @@
 import type { TxClient } from "@/lib/db-client";
 import type { Prisma, ProgramParticipant, ProgramParticipantStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { adjustProgramInventory, type StockWriteOptions } from "@/lib/shopify/stock";
+import { changeProgramStockWith, type StockWriteOptions } from "@/lib/shopify/stock";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
 
 /** Seats Shopify counts as taken out of public stock: every ACTIVE seat and every held PENDING seat. */
-export function countStockTakenSeats(programId: number): Promise<number> {
-    return prisma.programParticipant.count({
+export function countStockTakenSeats(programId: number, db: TxClient = prisma): Promise<number> {
+    return db.programParticipant.count({
         where: {
             programId,
             person: LIVE_PERSON,
@@ -80,7 +80,7 @@ export async function lockProgramAndCheckCapacity(
  * After the program's sale has ended the seat is released without the +1, so
  * the seat is not put back on sale.
  *
- * Never throws on the Shopify leg (adjustProgramInventory already logs +
+ * Never throws on the Shopify leg (the stock writer already logs +
  * emails on failure); the boolean return lets the caller surface a
  * non-fatal warning the same way every other Shopify-adjusting endpoint does.
  */
@@ -91,24 +91,17 @@ export async function withdrawAndReleaseHold(
     only?: ProgramParticipantStatus | Prisma.ProgramParticipantWhereInput,
     stockOptions: StockWriteOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
-    const enrollment = await prisma.programParticipant.delete({
-        where: { programId_personId: { programId, personId }, ...(typeof only === "string" ? { status: only } : only) },
-    });
-
-    const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
-    if (!enrollment.inventoryHeldAt && !unsoldPlace) {
-        return { enrollment, released: false, shopifyOk: true };
-    }
-
-    // Once the sale has ended the seat is not resold: no +1.
-    const sale = await prisma.program.findUnique({
-        where: { id: programId },
-        select: { startAt: true, offSaleAt: true, saleEndedAt: true },
-    });
-    if (sale && isSaleEnded(sale)) {
-        return { enrollment, released: true, shopifyOk: true };
-    }
-
-    const shopifyOk = await adjustProgramInventory({ id: programId, shopifyVariantId: program.shopifyVariantId }, 1, "hold-release", stockOptions);
-    return { enrollment, released: true, shopifyOk };
+    const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
+        const enrollment = await tx.programParticipant.delete({
+            where: { programId_personId: { programId, personId }, ...(typeof only === "string" ? { status: only } : only) },
+        });
+        const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
+        const released = !!enrollment.inventoryHeldAt || unsoldPlace;
+        // Once the sale has ended the seat is not resold: no +1.
+        const sale = released
+            ? await tx.program.findUnique({ where: { id: programId }, select: { startAt: true, offSaleAt: true, saleEndedAt: true } })
+            : null;
+        return { result: { enrollment, released }, delta: released && !(sale && isSaleEnded(sale)) ? 1 : 0 };
+    }, stockOptions);
+    return { ...result, shopifyOk: landed };
 }

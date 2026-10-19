@@ -15,7 +15,7 @@ import type { DepositAccount } from "./lib/deposit-lines";
 /** QuickBooks account ids a created deposit's lines book to. */
 export type IncomeQbAccounts = Record<DepositAccount, string>;
 
-/** What the create path needs to write deposits. Unbound, payouts after the line wait. */
+/** What the create path needs to write deposits. Unbound, nothing is created. */
 export interface IncomePosting {
   client: QuickBooksClient;
   accounts: IncomeQbAccounts;
@@ -49,6 +49,8 @@ export interface IncomeAlerts {
   postCapReached(event: PostCapEvent): Promise<void>;
   /** Fires once per bucket each time it becomes unusable, not once per sale. */
   bucketUnusable(event: BucketUnusableEvent): Promise<void>;
+  /** The orphan sweep read a full page, so some deposits the app created may have gone unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
 export interface IncomeConfig {

@@ -97,6 +97,8 @@ export const classifications = {
         qbDepositTxnDate: 'internal',
         qbDriftedTxnId: 'internal',
         qbDriftCause: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
     },
     DisbursementSnapshot: {
         orgId: 'internal',
@@ -126,6 +128,10 @@ export const classifications = {
         reason: 'internal',
         excludedByUserId: 'internal',
         excludedAt: 'internal',
+    },
+    DonationOrgSettings: {
+        orgId: 'internal',
+        qbPostingOnAt: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -222,6 +228,8 @@ export const relations = {
     WorkflowEvent: {
     },
     DonationQbMatchExclusion: {
+    },
+    DonationOrgSettings: {
     },
     InKindDonation: {
         lines: { model: 'InKindDonationLine', isList: true },

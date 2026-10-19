@@ -23,6 +23,7 @@ jest.mock('@/lib/finance/reconcile/reversals', () => ({
 }));
 jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 jest.mock('@/lib/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },

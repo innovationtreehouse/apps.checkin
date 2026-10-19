@@ -15,6 +15,14 @@ goods.
 How the pieces are built is described in
 `docs/designs/COMPONENT_ARCHITECTURE.md`.
 
+## Policy
+
+- Inventories of products, materials and supplies, and their invoices, are
+  kept for seven years. — *Records Policy, Art. VI §VI.4.J*
+
+- No policy governs the catalog itself or how stock is counted and received;
+  the rules below are Assumptions and Procedure.
+
 ## Assumptions
 
 - Checkin's role system decides who may curate the catalog: a sysadmin or board

@@ -44,6 +44,9 @@ jest.mock('@/lib/prisma', () => ({
         auditLog: {
             create: (...args: unknown[]) => mockAuditLogCreate(...args),
         },
+        boardSettings: {
+            findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2000-09-01T00:00:00Z') }),
+        },
     },
 }));
 
@@ -174,5 +177,39 @@ describe('POST /api/programs — startAt/endAt date preservation', () => {
         const res = await POST(req);
         expect(res.status).toBe(400);
         expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    describe('membership year', () => {
+        const create = (body: Record<string, unknown>) => POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Year Program', leadMentorId: 7, maxParticipants: 50, ...body }),
+        }) as unknown as import('next/server').NextRequest);
+        const createdYear = () => (mockProgramCreate.mock.calls[0][0] as { data: { appliesToYear: number } }).data.appliesToYear;
+
+        beforeEach(() => mockProgramCreate.mockResolvedValue({ id: 45, name: 'Year Program' }));
+
+        it('derives the year when the dates fall inside one', async () => {
+            expect((await create({ startAt: '2026-09-01', endAt: '2027-08-31' })).status).toBe(200);
+            expect(createdYear()).toBe(2026);
+        });
+
+        it('stores the year a Board member states for a crossing program', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+            expect((await create({ startAt: '2026-01-01', endAt: '2026-12-31', appliesToYear: 2025 })).status).toBe(200);
+            expect(createdYear()).toBe(2025);
+        });
+
+        it('rejects an inverted range before judging its year', async () => {
+            expect((await create({ startAt: '2026-10-01', endAt: '2026-06-01' })).status).toBe(400);
+            expect(mockProgramCreate).not.toHaveBeenCalled();
+        });
+
+        it('sends a sysadmin creating a crossing program to the Board', async () => {
+            const res = await create({ startAt: '2026-01-01', endAt: '2026-12-31', appliesToYear: 2025 });
+            expect(res.status).toBe(403);
+            expect((await res.json()).error).toContain('Ask the Board');
+            expect(mockProgramCreate).not.toHaveBeenCalled();
+        });
     });
 });

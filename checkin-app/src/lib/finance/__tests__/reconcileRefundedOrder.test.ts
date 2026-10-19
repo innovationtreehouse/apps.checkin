@@ -42,6 +42,7 @@ it("does not raise a refunded order whose id a later payment overwrote", async (
     await expect(reconcileForwardMembership(order)).resolves.toBe(true);
     expect(prisma.auditLog.findFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
+            affectedEntityId: 5,
             oldData: { path: ["shopifyOrderId"], equals: "order-1" },
             newData: { path: ["refundRecorded"], equals: true },
         }),

@@ -16,6 +16,7 @@ import { sendEmail } from '@/lib/email';
 
 jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
     nudgeProgramStock: jest.fn(),
 }));
 jest.mock('@/lib/shopifyRead/client', () => ({

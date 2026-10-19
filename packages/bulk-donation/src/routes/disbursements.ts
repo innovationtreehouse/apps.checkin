@@ -23,11 +23,13 @@ const resolveSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("match"), qbTxnId: z.string().trim().min(1, "qbTxnId is required"), reason: z.string().optional() }),
   z.object({ action: z.literal("dismiss"), reason: z.string().trim().min(1, "reason is required") }),
   z.object({ action: z.literal("retry") }),
+  z.object({ action: z.literal("book") }),
+  z.object({ action: z.literal("clear"), reason: z.string().trim().min(1, "reason is required") }),
 ]);
 
 const QB_STATES = new Set<string>(Object.values(QB_MATCH_STATE));
 
-/** `?qbState=A,B`: the QuickBooks match states to list; absent lists every event. */
+/** `?qbState=A,B`: the QuickBooks match states to list; absent lists every event. `&noted=1` adds every record carrying a note. */
 function qbStateFilter(req: Request): string[] | undefined {
   const raw = new URL(req.url).searchParams.get("qbState");
   if (raw === null) return undefined;
@@ -56,7 +58,12 @@ export const resubmitHold: DonationRouteHandler = async ({ req, params }) => {
 };
 
 export const listEvents: DonationRouteHandler = async ({ req }) => ({
-  DisbursementEvent: await disbursementService.listEvents(await getOrgId(), pageArgs(req), qbStateFilter(req)),
+  DisbursementEvent: await disbursementService.listEvents(
+    await getOrgId(),
+    pageArgs(req),
+    qbStateFilter(req),
+    new URL(req.url).searchParams.get("noted") === "1",
+  ),
 });
 
 export const navCounts: DonationRouteHandler = async () => ({

@@ -25,6 +25,7 @@ import { adjustProgramInventory } from '@/lib/shopify/stock';
 
 jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 const mockAdjust = adjustProgramInventory as jest.Mock;
 

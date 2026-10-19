@@ -440,8 +440,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                             }
 
                             // Pre-image of everything this merge destroys, read before the
-                            // deletes: the household row and any OrgMembership on it.
-                            const sourceHousehold = await tx.household.findUnique({ where: { id: sourceHouseholdId } });
+                            // deletes: the household row and any OrgMembership on it. The intake
+                            // note stays out: the audit log is readable beyond who may see it.
+                            const sourceHousehold = await tx.household.findUnique({ where: { id: sourceHouseholdId }, omit: { intakeNotes: true } });
                             const sourceMemberships = await tx.orgMembership.findMany({ where: { householdId: sourceHouseholdId } });
 
                             // A merge deletes the source's membership row, so it may only

@@ -13,6 +13,7 @@
  */
 import { GET } from '@/app/api/cron/scholarship-grace-expiry/route';
 import prisma from '@/lib/prisma';
+import type { Prisma } from '@/generated/prisma/client';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -141,13 +142,26 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
             // Force one row's removal to fail, simulating any per-row error (DB
             // hiccup, concurrent removal, etc.) without it blocking the rest of
             // the sweep.
-            const originalDelete = prisma.programParticipant.delete.bind(prisma.programParticipant);
-            const deleteSpy = jest.spyOn(prisma.programParticipant, 'delete').mockImplementation((args: Parameters<typeof originalDelete>[0]) => {
-                if (args?.where?.programId_personId?.personId === ids.gone) {
-                    throw new Error('simulated per-row failure');
-                }
-                return originalDelete(args);
+            // The delete runs inside the stock writer's transaction, so the failure is injected on the tx client.
+            type TxFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
+            const originalTx = prisma.$transaction.bind(prisma) as unknown as (fn: TxFn) => Promise<unknown>;
+            const failGone = (tx: Prisma.TransactionClient): Prisma.TransactionClient => new Proxy(tx, {
+                get(target, key, receiver) {
+                    const delegate = Reflect.get(target, key, receiver) as Prisma.TransactionClient['programParticipant'];
+                    if (key !== 'programParticipant') return delegate;
+                    return new Proxy(delegate, {
+                        get(d, k, r) {
+                            if (k !== 'delete') return Reflect.get(d, k, r);
+                            return (args: Prisma.ProgramParticipantDeleteArgs) => args.where.programId_personId?.personId === ids.gone
+                                ? Promise.reject(new Error('simulated per-row failure'))
+                                : d.delete(args);
+                        },
+                    });
+                },
             });
+            const deleteSpy = jest.spyOn(prisma, '$transaction').mockImplementation(
+                ((fn: TxFn) => originalTx((tx) => fn(failGone(tx)))) as unknown as typeof prisma.$transaction,
+            );
 
             try {
                 const res = await GET(mkReq('Bearer test-secret'));

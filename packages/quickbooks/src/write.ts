@@ -17,7 +17,8 @@ export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "clai
 }
 
 export type FindOrCreateResult =
-  | { kind: "found"; id: string; via: "key" | "amount" }
+  /** `txnDate` is the matched entry's date, from the read that matched it. */
+  | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
   | { kind: "failed"; error: string }
@@ -70,7 +71,8 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
     if (date < req.window.from || date > req.window.to) {
       throw new Error(`TxnDate ${date} is outside the match window ${req.window.from}..${req.window.to}`);
     }
-    const match = findMatch(await candidates(client, req.write, req.window.from, req.window.to), {
+    const read = await candidates(client, req.write, req.window.from, req.window.to);
+    const match = findMatch(read, {
       date,
       amountCents: sumCents(...req.write.fields.lines.map((l) => l.amountCents)),
       ref: matchRef(req.write),
@@ -79,7 +81,12 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
       claimedIds: req.claimedIds,
       excludedIds: req.excludedIds,
     });
-    if (match.kind !== "not-found") return match;
+    if (match.kind === "found") {
+      const hit = read.find((c) => c.id === match.id);
+      if (!hit) throw new Error(`matched entry ${match.id} is not in the read`);
+      return { ...match, txnDate: hit.date };
+    }
+    if (match.kind === "ambiguous") return match;
     if (date <= req.closedThrough) return { kind: "closed" };
     if (!req.mayCreate) return { kind: "needs-finance" };
     // Finance may have closed a period since the caller read the date.

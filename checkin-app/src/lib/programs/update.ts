@@ -12,6 +12,7 @@ import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
+import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 
 export interface ProgramEditor {
@@ -26,6 +27,7 @@ export interface ProgramPatch {
     leadMentorId?: unknown;
     startAt?: unknown;
     endAt?: unknown;
+    appliesToYear?: unknown;
     offSaleAt?: unknown;
     orgMemberOnly?: boolean;
     publiclyVisible?: unknown;
@@ -60,6 +62,54 @@ export type ProgramUpdateResult =
     | { ok: false; refusal: ProgramRefusal; message: string };
 
 const refuse = (refusal: ProgramRefusal, message: string) => ({ ok: false as const, refusal, message });
+
+export type ProgramYearResult =
+    | { ok: true; appliesToYear: number }
+    | { ok: false; refusal: ProgramRefusal; message: string };
+
+/**
+ * The membership year a program with these dates runs in. Derived when the
+ * dates fall inside one year; otherwise the supplied year, or a still-valid
+ * stated one, must be one the dates touch. A current year counts as stated only
+ * when the current dates already crossed; a derived year is never carried into
+ * a crossing. Only a Board member supplies or changes a stated year, because it
+ * is copied from the Board's budget approval.
+ */
+export async function resolveProgramYear(input: {
+    startAt: Date;
+    endAt: Date;
+    supplied: unknown;
+    current: { appliesToYear: number | null; startAt: Date; endAt: Date } | null;
+    isBoardMember: boolean;
+}): Promise<ProgramYearResult> {
+    const { startAt, endAt, supplied, current, isBoardMember } = input;
+    if (supplied != null && !Number.isInteger(supplied)) {
+        return refuse("invalid", "appliesToYear must be a whole year");
+    }
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    if (!boundary) {
+        return refuse("invalid", "Set the membership year boundary in Board settings before creating or re-dating a program.");
+    }
+    const years = programYearsTouched(boundary, startAt, endAt);
+    if (years.length === 1) return { ok: true, appliesToYear: years[0] };
+
+    const askTheBoard = refuse("forbidden", "These dates cross the membership year boundary, so the program's membership year comes from its budget approval. Ask the Board to set it.");
+    const currentYear = current?.appliesToYear;
+    const keptYear = current && currentYear != null && years.includes(currentYear)
+        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? currentYear : null;
+    const stated = supplied as number | null | undefined;
+    if (stated != null && stated !== keptYear) {
+        if (!isBoardMember) return askTheBoard;
+        if (!years.includes(stated)) {
+            return refuse("invalid", `The membership year must be one these dates touch: ${years.map(membershipYearLabel).join(" or ")}.`);
+        }
+        return { ok: true, appliesToYear: stated };
+    }
+    if (keptYear != null) return { ok: true, appliesToYear: keptYear };
+    if (!isBoardMember) return askTheBoard;
+    return refuse("invalid", `These dates cross the membership year boundary. Choose the membership year from the budget approval: ${years.map(membershipYearLabel).join(" or ")}.`);
+}
 
 /** Only the program's lead mentor, a sysadmin or a board member edits it. */
 export async function authorizeProgramEdit(programId: number, actor: ProgramEditor): Promise<ProgramEditAccess> {
@@ -248,11 +298,28 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "A program cannot have a Shopify variant without a price on at least one tier");
     }
 
+    // Re-dating re-derives the membership year; a stated year is only supplied by the Board.
+    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
+    const yearSupplied = patch.appliesToYear != null && patch.appliesToYear !== currentProgram.appliesToYear;
+    let newAppliesToYear: number | undefined;
+    if (datesMoved || yearSupplied) {
+        const year = await resolveProgramYear({
+            startAt: effStartAt,
+            endAt: effEndAt,
+            supplied: patch.appliesToYear,
+            current: currentProgram,
+            isBoardMember: actor.isBoardMember,
+        });
+        if (!year.ok) return year;
+        if (year.appliesToYear !== currentProgram.appliesToYear) newAppliesToYear = year.appliesToYear;
+    }
+
     const updateData: Record<string, unknown> = {
         ...(name !== undefined && { name }),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
+        ...(newAppliesToYear !== undefined && { appliesToYear: newAppliesToYear }),
         ...(newOffSaleAt !== undefined && { offSaleAt: newOffSaleAt }),
         ...(rearmSale && { saleEndedAt: null, unpaidClaimsNotifiedAt: null, productHiddenAt: null }),
         ...(orgMemberOnly !== undefined && { orgMemberOnly }),
@@ -325,7 +392,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         // Changes skipped while the sale was ended are lost to a relative push;
         // set the absolute stock instead: capacity minus seats Shopify counts
         // as taken. Not clamped: an overfilled program keeps its shortfall owed.
-        if (!(await setProgramInventory(updatedProgram, async () => newMax - await countStockTakenSeats(programId), "re-arm"))) {
+        if (!(await setProgramInventory(updatedProgram, async (db) => newMax - await countStockTakenSeats(programId, db), "re-arm"))) {
             warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
         }
     } else if (oldMax !== newMax && hasShopifyVariant) {

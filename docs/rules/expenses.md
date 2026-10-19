@@ -4,6 +4,13 @@ Income and donation rules are in `revenue.md`.
 
 ---
 
+## Policy
+
+- Spending sign-off is governed by the *Financial Policy, Arts. IX and XII*
+  and the *Procurement Policy, Art. IV*.
+
+---
+
 ## Assumptions
 
 - The Treasurer enforces the limits on a signed note in place of a receipt
@@ -105,7 +112,7 @@ Income and donation rules are in `revenue.md`.
   costs more than $250. An item is one unit, so three $100 items are three items
   under the limit. Both amounts are settings: finance may lower them, and only
   the Board raises them above $500 and $250.
-  [Decision — *Policy: Financial Policy, Art. XII §XII.4*; owner]
+  [Decision — *Policy: Procurement Policy, Art. IV §IV.1; Financial Policy, Art. XII §XII.4*; owner]
 
 - A purchase from a single-source vendor is never Everyday.
   [Decision — owner]

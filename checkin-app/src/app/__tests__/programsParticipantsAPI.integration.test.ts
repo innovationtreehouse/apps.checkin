@@ -31,6 +31,7 @@ describe('Program Participants API Integration Tests', () => {
     let dep2Id: number;    // second dependent (25yo) in the same household
     let memberId: number;  // person in a household with an ACTIVE OrgMembership
     let memberHouseholdId: number;
+    let boardRemoverId: number; // Board member (flag in the DB) outside every test household
 
     let standardProgramId: number;
     let freeProgramId: number;
@@ -162,6 +163,16 @@ describe('Program Participants API Integration Tests', () => {
         });
         dep2Id = dependent2.id;
 
+        const boardRemover = await prisma.person.create({
+            data: {
+                email: 'board-remover-partic-api-test@example.com',
+                name: 'Board Remover',
+                isBoardMember: true,
+                household: { create: { name: "Test HH" } },
+            }
+        });
+        boardRemoverId = boardRemover.id;
+
         // Create mock programs
         const standardProgram = await prisma.program.create({
             // Priced programs carry a variant — a priced one without it is
@@ -219,7 +230,7 @@ describe('Program Participants API Integration Tests', () => {
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, leadId, commonId, otherId, boardId, depId, youthDepId, boardNonLeadId, dep2Id, memberId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, leadId, commonId, otherId, boardId, depId, youthDepId, boardNonLeadId, dep2Id, memberId, boardRemoverId].filter(id => id !== undefined);
         const validProgramIds = [standardProgramId, freeProgramId, fullProgramId, exactAgeProgramId, memberOnlyProgramId].filter(id => id !== undefined);
 
         if (existingUserIds.length > 0) {
@@ -567,10 +578,11 @@ describe('Program Participants API Integration Tests', () => {
                 expect((await prisma.program.findUniqueOrThrow({ where: { id: shopifyProgram.id } })).shopifyStockCarry).toBe(-1);
 
                 // Withdrawing the comp puts the seat back: the +1 nets the owed -1 to 0.
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
                 const del = await DELETE(
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'DELETE',
-                        body: JSON.stringify({ participantId: otherId }),
+                        body: JSON.stringify({ participantId: otherId, reason: 'Comp withdrawn' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );
@@ -849,12 +861,12 @@ describe('Program Participants API Integration Tests', () => {
         // a paid place in their own household; someone outside it does.
         describe('own-household paid place', () => {
             let ledProgramId: number;
-            const removeAs = async (user: Record<string, unknown>, personId: number) => {
+            const removeAs = async (user: Record<string, unknown>, personId: number, reason?: string) => {
                 (getServerSession as jest.Mock).mockResolvedValue({ user });
                 return DELETE(
                     new Request(`http://localhost:4000/api/programs/${ledProgramId}/participants`, {
                         method: 'DELETE',
-                        body: JSON.stringify({ participantId: personId }),
+                        body: JSON.stringify({ participantId: personId, reason }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(ledProgramId) as unknown as never,
                 );
@@ -885,16 +897,71 @@ describe('Program Participants API Integration Tests', () => {
                 expect(await placeOf(depId)).not.toBeNull();
             });
 
-            it("refuses a board member removing their own household's paid place", async () => {
-                const res = await removeAs({ id: boardId, isBoardMember: true }, depId);
-                expect(res.status).toBe(403);
-                expect((await res.json()).error).toMatch(/someone outside your household/i);
-                expect(await placeOf(depId)).not.toBeNull();
+            it("refuses a board member removing their own household's paid place, even with a reason", async () => {
+                await prisma.person.update({ where: { id: boardId }, data: { isBoardMember: true } });
+                try {
+                    const res = await removeAs({ id: boardId, isBoardMember: true }, depId, 'Family request');
+                    expect(res.status).toBe(403);
+                    expect((await res.json()).error).toMatch(/someone outside your household/i);
+                    expect(await placeOf(depId)).not.toBeNull();
+                } finally {
+                    await prisma.person.update({ where: { id: boardId }, data: { isBoardMember: false } });
+                }
             });
 
-            it("still lets the program leader remove another family's paid place", async () => {
+            // Standards of Conduct §XVI.3: only the Board removes a paid place, in writing.
+            it("refuses the program leader removing another family's paid place", async () => {
+                const res = await removeAs({ id: boardNonLeadId }, commonId, 'Family request');
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toBe('Only the Board removes a paid place.');
+                expect(await placeOf(commonId)).not.toBeNull();
+            });
+
+            it("refuses a sysadmin who is not on the Board removing a paid place", async () => {
+                const res = await removeAs({ id: adminId, isSysadmin: true }, commonId, 'Family request');
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toBe('Only the Board removes a paid place.');
+                expect(await placeOf(commonId)).not.toBeNull();
+            });
+
+            it("refuses a session that claims the Board role the database does not hold", async () => {
+                const res = await removeAs({ id: adminId, isSysadmin: true, isBoardMember: true }, commonId, 'Family request');
+                expect(res.status).toBe(403);
+                expect(await placeOf(commonId)).not.toBeNull();
+            });
+
+            it("refuses a Board member without a written reason (400)", async () => {
+                for (const reason of [undefined, '   ']) {
+                    const res = await removeAs({ id: boardRemoverId, isBoardMember: true }, commonId, reason);
+                    expect(res.status).toBe(400);
+                    expect((await res.json()).error).toMatch(/written reason/i);
+                }
+                expect(await placeOf(commonId)).not.toBeNull();
+            });
+
+            it("lets a Board member remove a paid place with a reason, and audits the reason", async () => {
+                const res = await removeAs({ id: boardRemoverId, isBoardMember: true }, commonId, '  Family moved away  ');
+                expect(res.status).toBe(200);
+                expect(await placeOf(commonId)).toBeNull();
+                const audit = await prisma.auditLog.findFirst({
+                    where: { actorId: boardRemoverId, action: 'DELETE', tableName: 'ProgramParticipant', affectedEntityId: commonId, secondaryAffectedEntity: ledProgramId },
+                });
+                expect(audit?.newData).toEqual({ reason: 'Family moved away' });
+                expect((audit?.oldData as { status?: string } | null)?.status).toBe('ACTIVE');
+            });
+
+            it("still lets the program leader and a sysadmin remove an unpaid place without a reason", async () => {
+                await prisma.programParticipant.update({
+                    where: { programId_personId: { programId: ledProgramId, personId: commonId } },
+                    data: { status: 'PENDING' },
+                });
                 const res = await removeAs({ id: boardNonLeadId }, commonId);
                 expect(res.status).toBe(200);
+                expect(await placeOf(commonId)).toBeNull();
+
+                await prisma.programParticipant.create({ data: { programId: ledProgramId, personId: commonId, status: 'PENDING' } });
+                const res2 = await removeAs({ id: adminId, isSysadmin: true }, commonId);
+                expect(res2.status).toBe(200);
                 expect(await placeOf(commonId)).toBeNull();
             });
         });
@@ -1177,13 +1244,13 @@ describe('Program Participants API Integration Tests', () => {
                 await prisma.programParticipant.create({
                     data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId, seatTakenWithoutSaleAt },
                 });
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
 
                 const res = await DELETE(
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'DELETE',
                         headers: { cookie: 'session=test' },
-                        body: JSON.stringify({ participantId: commonId }),
+                        body: JSON.stringify({ participantId: commonId, reason: 'Board decision' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );

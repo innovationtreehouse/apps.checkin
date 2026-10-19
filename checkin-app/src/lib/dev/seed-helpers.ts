@@ -3,6 +3,7 @@ import { addHouseholdLead } from "@/lib/household/leads";
 import { setRoleFlag, type RoleFlag } from "@/lib/roles";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
+import { programYearsTouched } from "@/lib/programYear";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -338,15 +339,25 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         create: { personId: toolCertifier.id, toolId: tableSaw.id, level: "MAY_CERTIFY_OTHERS" },
     });
 
-    // 5. Sample program
+    // 5. The membership-year boundary at the policy value (1 September), unless one is set.
+    await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+    await prisma.boardSettings.updateMany({
+        where: { id: 1, orgMembershipYearBoundary: null },
+        data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
+    });
+
+    // 6. Sample program
     const program = await prisma.program.findFirst({ where: { name: "Woodworking 101" } });
     if (!program) {
+        const startAt = new Date();
+        const endAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
         await prisma.program.create({
             data: {
                 name: "Woodworking 101",
                 leadMentorId: isBoardMember.id,
-                startAt: new Date(),
-                endAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+                startAt,
+                endAt,
+                appliesToYear: await seedProgramYear(prisma, startAt, endAt),
                 // Stays on sale through its run so the seeded program accepts claims.
                 offSaleAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
                 phase: "UPCOMING",
@@ -358,7 +369,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
-    // 6. Budget-owner buckets: one org-level, one for the first program.
+    // 7. Budget-owner buckets: one org-level, one for the first program.
     const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
     const buckets = [
         { name: "Facility", programId: null },
@@ -371,6 +382,15 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     }
 
     console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");
+}
+
+// A seeded program that crosses the boundary counts in its later year, which
+// prices it exactly as its end date would.
+async function seedProgramYear(prisma: Db, startAt: Date, endAt: Date): Promise<number> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    if (!boundary) throw new Error("Set the membership year boundary in Board settings before seeding programs.");
+    return programYearsTouched(boundary, startAt, endAt).at(-1)!;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -431,6 +451,7 @@ export async function createProgram(prisma: Db): Promise<string> {
             name: `Test Program ${tag}`,
             startAt,
             endAt,
+            appliesToYear: await seedProgramYear(prisma, startAt, endAt),
             offSaleAt: endAt,
             phase: "UPCOMING",
             enrollmentStatus: "OPEN",
