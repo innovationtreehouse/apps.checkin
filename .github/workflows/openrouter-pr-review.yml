@@ -62,6 +62,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
+          # fixed ladder says high; "false" lets Jev pick. The judge can still order a rerun.
+          FIRST_ROUND_LOWEST: "true"
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
