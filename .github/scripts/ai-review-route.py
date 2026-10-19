@@ -570,8 +570,7 @@ def adjudicate():
     if higher:
         try:
             _, state = pr_state(pr, repo)
-            m = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL") or "")
-            state = with_prior_rounds(state, pr, repo, m and m.group(1))
+            rid = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL") or "")
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
             if out_of_credit(review) or low_credit():
                 raise OutOfCredit
@@ -581,6 +580,7 @@ def adjudicate():
                          review_verdict=verdict or "missing (the review failed)", review_mode=mode,
                          review_scope="bugs and risks only; new nits were not requested" if tier == ORDER[0] else "all findings",
                          untrusted_review_output=review)
+            state = with_prior_rounds(state, pr, repo, rid and rid.group(1))  # last, so the size cap counts the review too
             qs = {"complete": {"type": "noul",
                                "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode and review_scope; a review told to skip nits is not incomplete for having none. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
                                "criteria": {"true": "Initial: thorough for this change with evidenced findings. Verify: every earlier finding is marked fixed, not fixed or disputed with evidence, and the new commit was checked.",
