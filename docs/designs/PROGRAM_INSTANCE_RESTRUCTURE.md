@@ -4,7 +4,7 @@
 **Supersedes:** Audit item **P2-3** (naming confusion around "session"/"program"/"event")
 **Scope:** `checkin-app` (schema + security + UI + data migration)
 **Progress:** P1 (table + backfill, no readers) merged in September 2026 (issue #1361). P2–P5 remain. The `ProgramInstance` table stays; it is not to be dropped.
-**Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
+**Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
 
 **Naming.** This doc says **program leader** for the person who runs a program, matching the rules register (`docs/rules/programs.md`). The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
 
@@ -60,7 +60,7 @@ None of this is visible yet because nothing reads instances. P2 handles it (§4)
 - **The `programsLed` claim and its readers:** `lib/auth-options.ts`, `lib/authClaims.ts`, `types/next-auth.d.ts`, `program-ops/layout.tsx`, `lib/nav/sections/programsILead.ts`, `lib/volunteer.ts`.
 - **The `Person.programsLed` relation (Prisma, not the claim):** `lib/person/filters.ts`, `lib/receipt/configure.ts`, `lib/membership/personAgreementTriggers.ts`, `api/household/member/route.ts`, `api/membership-audit/compliance/route.ts`. These move to `Person.instancesLed` with the reads in P3.
 - **Capacity:** `lib/program/capacity.ts` locks `SELECT id FROM "Program" … FOR UPDATE`.
-- **Store and sale:** `lib/shopify.ts` (product create, claimant product, stock writer, price sync, off-sale, `mintMemberDiscountCode`), `lib/programs/variants.ts`, `lib/programs/memberDiscountCode.ts`, `lib/programs/saleSweep.ts`, `lib/programs/saleState.ts`, `lib/programs/activateEnrollment.ts`, `api/programs/[id]/sync-shopify`, `api/programs/[id]/discount-code`, the `orders/paid` webhook, `lib/finance/reconcile.ts`, `lib/finance/matchAudit.ts`.
+- **Store and sale:** `lib/shopify/` (product create, claimant product, stock writer, price sync, off-sale, `mintMemberDiscountCode`), `lib/programs/variants.ts`, `lib/programs/memberDiscountCode.ts`, `lib/programs/saleSweep.ts`, `lib/programs/saleState.ts`, `lib/programs/activateEnrollment.ts`, `api/programs/[id]/sync-shopify`, `api/programs/[id]/discount-code`, the `orders/paid` webhook, `lib/finance/reconcile.ts`, `lib/finance/matchAudit.ts`.
 - **Routes and pages:** `api/programs/[id]/*`, `api/events/*`, the `program-ops`, `finance-ops`, `facility-ops` pages, `programs/` and `my-activities/programs`.
 
 Grep `programId`, `leadMentorId` and `programsLed` repo-wide before each phase; this list is a starting point, not a gate.

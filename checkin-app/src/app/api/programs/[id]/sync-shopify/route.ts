@@ -2,7 +2,8 @@ import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { createClaimantProduct, createShopifySingleVariantProgram, programProductHandle, setProgramInventory, STOCK_BOOKKEEPING_RESET } from "@/lib/shopify";
+import { createClaimantProduct, createShopifySingleVariantProgram, programProductHandle } from "@/lib/shopify/products";
+import { setProgramInventory, STOCK_BOOKKEEPING_RESET } from "@/lib/shopify/stock";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { logBackendError } from "@/lib/logger";
@@ -98,7 +99,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // A new capped variant starts sold out (0 available); lift it to capacity less the seats already taken.
         const max = updated.maxParticipants;
         const stockOk = !publicCreated || max === null
-            || await setProgramInventory(updated, async () => max - await countStockTakenSeats(programId), "initial-stock");
+            || await setProgramInventory(updated, async (db) => max - await countStockTakenSeats(programId, db), "initial-stock");
 
         const warning = claimantFailed
             ? "Public product created, but the reserved-seat product failed; checkout uses the public variant until you retry."

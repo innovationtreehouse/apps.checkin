@@ -10,6 +10,7 @@
 import { attest, overrideBlocked } from '@/lib/membership/review';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
+import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
 import { raiseMembershipPaymentOutcome } from '@/lib/finance/reconcile/membership';
 import prisma from '@/lib/prisma';
 import { sendEmail } from '@/lib/email';
@@ -30,7 +31,7 @@ async function makePerson(label: string, extra: { isBackgroundCheckReviewer?: bo
 }
 
 /** A household with one lead, a NONE membership and an INITIAL process in the given state. */
-async function makeApplicant(data: { status: 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED'; paid?: boolean; bgCleared?: boolean; shopifyOrderId?: string }) {
+async function makeApplicant(data: { status: 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'PENDING_BG_REVIEW' | 'BLOCKED'; paid?: boolean; bgCleared?: boolean; shopifyOrderId?: string }) {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG} ${Math.random()}` } });
     const lead = await prisma.person.create({ data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead', householdId: hh.id } });
     await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
@@ -159,6 +160,51 @@ describe('a refunded order never activates', () => {
         expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
         expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId, severity: 'CRITICAL' } })).toBe(1);
+    });
+
+    it('a legacy paid PENDING_BG_REVIEW application on a refunded order is held at clearance, not activated', async () => {
+        const oid = orderId('Rev');
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'PENDING_BG_REVIEW', paid: true, shopifyOrderId: oid });
+
+        expect(await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`)).toBe(true);
+        expect((await prisma.paymentException.findFirst({ where: { kind: 'REFUND', processId } }))?.severity).toBe('CRITICAL');
+
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+        const proc = await processOf(processId);
+        expect(proc?.status).toBe('PENDING_BG_CLEARANCE');
+        expect(proc?.bgClearedAt).toBeTruthy();
+        expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+        expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId, severity: 'CRITICAL' } })).toBe(1);
+        expect(emailed('Welcome to the Treehouse')).toBe(false);
+    });
+
+    it('a refund arriving while a payment holds the order waits for it, then finds the application', async () => {
+        const oid = orderId('race');
+        const { processId } = await makeApplicant({ status: 'PENDING_PAYMENT' });
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let lockHeld!: () => void;
+        const locked = new Promise<void>((r) => (lockHeld = r));
+        // The payment's settle(): reads the order unreversed, then records it on the application.
+        const payment = prisma.$transaction(async (tx) => {
+            expect(await isOrderReversed(tx, oid)).toBe(false);
+            lockHeld();
+            await released;
+            await tx.orgMembershipProcess.update({ where: { id: processId }, data: { status: 'PENDING_BG_CLEARANCE', paidAt: new Date(), shopifyOrderId: oid } });
+        }, { timeout: 20_000 });
+        await locked;
+
+        let finished = false;
+        const refund = raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`).then((matched) => { finished = true; return matched; });
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(finished).toBe(false);
+        release();
+        await payment;
+
+        expect(await refund).toBe(true);
+        expect((await prisma.paymentException.findFirst({ where: { kind: 'REFUND', processId } }))?.severity).toBe('CRITICAL');
     });
 
     it('an unrefunded order still activates, on either path', async () => {

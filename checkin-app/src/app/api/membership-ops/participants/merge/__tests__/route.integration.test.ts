@@ -206,6 +206,84 @@ describe("Merge Participants API", () => {
         expect(merged?.email).toBe("merge@example.com");
     });
 
+    it("refuses with 409 when the merged-away record changes household between the pre-check and the transaction", async () => {
+        const movedTo = await makeHousehold("Merge Test Moved Household");
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: movedTo } });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(409);
+            expect((await res.json()).error).toContain("changed household");
+        } finally {
+            spy.mockRestore();
+        }
+        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+    });
+
+    it("waits on a deny holding the merged-away household's membership row, then refuses", async () => {
+        const otherHh = await makeHousehold("Merge Test Deny In Flight Household", "NONE");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let lockHeld!: () => void;
+        const locked = new Promise<void>((r) => (lockHeld = r));
+        // Stands in for a deny with no BOARD rows to lock: it holds only the membership row.
+        const deny = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${otherHh} FOR UPDATE`;
+            lockHeld();
+            await released;
+            await tx.orgMembership.update({ where: { householdId: otherHh }, data: { status: "DENIED" } });
+        }, { timeout: 20_000 });
+        await locked;
+
+        let finished = false;
+        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(finished).toBe(false);
+        release();
+        await deny;
+
+        const res = await merge;
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain("DENIED");
+        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+    });
+
+    it("takes an application row before the household row, so a payment holding the application does not deadlock it", async () => {
+        const otherHh = await makeHousehold("Merge Test Payment In Flight Household", "NONE");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: otherHh } });
+        const process = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", zohoSignerPersonId: pMergeId },
+        });
+        createdProcessIds.push(process.id);
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let lockHeld!: () => void;
+        const locked = new Promise<void>((r) => (lockHeld = r));
+        // Stands in for settle(): the application row, then the household row.
+        const payment = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
+            lockHeld();
+            await released;
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
+        }, { timeout: 20_000 });
+        await locked;
+
+        let finished = false;
+        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
+        await new Promise((r) => setTimeout(r, 1_000));
+        expect(finished).toBe(false);
+        release();
+        await expect(payment).resolves.toBeUndefined();
+
+        expect((await merge).status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } })).zohoSignerPersonId).toBe(pKeepId);
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {

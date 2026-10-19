@@ -170,7 +170,7 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
 
 /**
  * Synthetic membership variant id used when the Shopify mock is active. Programs
- * synthesize a dev-mock-variant id at creation (shopify.ts › createShopifySingleVariantProgram),
+ * synthesize a dev-mock-variant id at creation (lib/shopify/products.ts › createShopifySingleVariantProgram),
  * but the membership variant is manual BoardSettings config that a local seed never
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
@@ -304,7 +304,7 @@ export const config = {
     // explicit name fails to null, i.e. to doing nothing.
     sReadTriggerFunction: (): string | null => process.env.S_READ_TRIGGER_FUNCTION || null,
 
-    // Shopify — Client Credentials Grant integration (see shopify.ts). All three
+    // Shopify — Client Credentials Grant integration (see lib/shopify/client.ts). All three
     // null when unset (integration "off").
     shopifyStoreDomain: (): string | null => process.env.SHOPIFY_STORE_DOMAIN || null,
     shopifyClientId: (): string | null => process.env.SHOPIFY_CLIENT_ID || null,

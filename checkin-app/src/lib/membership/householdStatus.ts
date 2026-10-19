@@ -116,8 +116,8 @@ export async function setHouseholdStatus(
  * Locks the OrgMembership rows of `householdIds` FOR UPDATE, in household-id order,
  * and returns the first DENIED household among them, or null. A household move or
  * merge holds these locks so a concurrent deny either lands first and is seen, or
- * waits for the move. Callers take `lockBoardRoles` first, the order a deny takes
- * its locks in.
+ * waits for the move. Callers that also take board roles (`lockBoardRoles`) take
+ * them first, the order a deny takes its locks in.
  */
 export async function lockAndFindDeniedHousehold(tx: TxClient, householdIds: readonly number[]): Promise<number | null> {
     let denied: number | null = null;

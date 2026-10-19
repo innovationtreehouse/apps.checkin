@@ -4,7 +4,7 @@ import { Anchor, Badge, Button, Code, Group, Table, Text, TextInput, Title } fro
 import { act, api, cents, paged, useCanWrite, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
-import { QB_HELD_STATES, QB_RETRYABLE_STATES } from "../lib/qb-queue-states";
+import { QB_BOOKABLE_STATES, QB_HELD_STATES, QB_RETRYABLE_STATES } from "../lib/qb-queue-states";
 
 interface HeldRow {
   id: number;
@@ -15,14 +15,17 @@ interface HeldRow {
   qbDriftCause: string | null;
   qbDepositTotalCents: number | null;
   qbDepositTxnDate: string | null;
+  qbTxnId: string | null;
+  qbNote: string | null;
 }
 interface Candidate { id: string; type: string; date: string; amountCents: number; memo: string | null }
 
 const STATE_HELP: Record<string, string> = {
   AMBIGUOUS: "More than one QuickBooks deposit could be this disbursement, or its deposit is claimed twice and one needs voiding",
-  BEFORE_LINE: "Dated before the takeover line, so it is never created automatically; match the hand-booked deposit",
-  POST_FAILED: "Creating the deposit failed; the drain retries it",
-  NEEDS_FINANCE: "Out of automatic retries, or over the per-run cap",
+  UNBOOKED: "Not found in QuickBooks, and the app may not create it on its own; match the hand-booked deposit, book it, or dismiss it with a reason",
+  BEFORE_LINE: "Not found in QuickBooks, and the app may not create it on its own; match the hand-booked deposit, book it, or dismiss it with a reason",
+  POST_FAILED: "Creating the deposit failed; the drain retries it, or book it now",
+  NEEDS_FINANCE: "Out of automatic retries, over the per-run cap, or possibly booked already (see the note); match it, book it, or dismiss it",
   DRIFT: "Its booked QuickBooks deposit changed or disappeared; match it again, or dismiss it",
 };
 
@@ -53,19 +56,44 @@ function facts(payload: string): { date: string; netCents: number | null } {
   }
 }
 
-/** One held disbursement's actions: candidate deposits to match or exclude, and retry. */
+const isIn = (states: readonly string[], state: string) => states.some((s) => s === state);
+
+/** What finance should know about the row, from the drain, a lost claim or the daily sweep. */
+function QbNote({ row }: { row: HeldRow }) {
+  return row.qbNote ? <Text size="xs" mt={4} c="red">{row.qbNote}</Text> : null;
+}
+
+/** The saved row after a match or dismiss: the app may have linked its own deposit instead. */
+function resolvedMessage(saved: unknown, fallback: string): string {
+  const row = saved as Partial<HeldRow> | null;
+  return row?.qbMatchState === "CREATED" && row.qbTxnId ? `The app had already booked deposit ${row.qbTxnId}; linked to it` : fallback;
+}
+
+/** One queued disbursement's actions: candidate deposits to match or exclude, retry, book, dismiss, or clear its note. */
 function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
   const base = `/disbursement-events/${encodeURIComponent(row.disbursementId)}`;
-  const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
+  const held = isIn(QB_HELD_STATES, row.qbMatchState);
+  const candidates = useLoad<Candidate[]>(held ? `${base}/qb-candidates` : null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function run(call: () => Promise<unknown>, ok: string) {
+  async function run(call: () => Promise<unknown>, ok: string | ((saved: unknown) => string)) {
     setBusy(true);
     await act(call, ok, onDone);
     setBusy(false);
   }
   const post = (path: string, body: unknown) => api(path, { method: "POST", body: JSON.stringify(body) });
+
+  if (!held) {
+    return (
+      <Group gap="xs" align="end">
+        <TextInput size="xs" label="Reason (clear the note, e.g. the stray deposit is voided)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={340} />
+        <Button size="xs" variant="default" disabled={busy || !reason.trim()} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "clear", reason }), "Note cleared")}>
+          Clear note
+        </Button>
+      </Group>
+    );
+  }
 
   return (
     <>
@@ -87,7 +115,7 @@ function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
                   <Table.Td><Text size="xs" c="dimmed">{c.memo ?? ""}</Text></Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      <Button size="xs" disabled={busy} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "match", qbTxnId: c.id, ...(reason.trim() ? { reason } : {}) }), "Matched")}>
+                      <Button size="xs" disabled={busy} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "match", qbTxnId: c.id, ...(reason.trim() ? { reason } : {}) }), (saved) => resolvedMessage(saved, "Matched"))}>
                         Match
                       </Button>
                       <Button size="xs" variant="light" color="red" disabled={busy || !reason.trim()} onClick={() => run(() => post("/qb-exclusions", { qbTxnId: c.id, reason }), "Deposit excluded for good")}>
@@ -101,11 +129,21 @@ function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
           </Table>
         )}
       <Group gap="xs" align="end">
-        <TextInput size="xs" label="Reason (dismiss, exclude, or match a deposit whose amount differs)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={340} />
-        <Button size="xs" variant="default" disabled={busy || !reason.trim()} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "dismiss", reason }), "Dismissed")}>
+        <TextInput size="xs" label="Reason (dismiss, exclude, clear the note, or match a deposit whose amount differs)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={340} />
+        <Button size="xs" variant="default" disabled={busy || !reason.trim()} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "dismiss", reason }), (saved) => resolvedMessage(saved, "Dismissed"))}>
           Dismiss
         </Button>
-        {QB_RETRYABLE_STATES.some((s) => s === row.qbMatchState) && (
+        {isIn(QB_BOOKABLE_STATES, row.qbMatchState) && (
+          <Button size="xs" disabled={busy} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "book" }), "Booked in QuickBooks")}>
+            Book it
+          </Button>
+        )}
+        {row.qbNote && (
+          <Button size="xs" variant="default" disabled={busy || !reason.trim()} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "clear", reason }), "Note cleared")}>
+            Clear note
+          </Button>
+        )}
+        {isIn(QB_RETRYABLE_STATES, row.qbMatchState) && (
           <Button size="xs" variant="default" disabled={busy} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "retry" }), "Handed back to the drain")}>
             Retry
           </Button>
@@ -115,11 +153,11 @@ function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
   );
 }
 
-/** /donations/qb-queue — completed disbursements whose QuickBooks deposit the drain holds for finance. */
+/** /donations/qb-queue — completed disbursements the drain holds for finance, and any carrying a note for finance. */
 export default function QbQueuePage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const rows = useLoad<HeldRow[]>(paged(`/disbursement-events?qbState=${QB_HELD_STATES.join(",")}`, page));
+  const rows = useLoad<HeldRow[]>(paged(`/disbursement-events?qbState=${QB_HELD_STATES.join(",")}&noted=1`, page));
   const [open, setOpen] = useState<number | null>(null);
 
   const reload = () => {
@@ -156,6 +194,7 @@ export default function QbQueuePage() {
                         <Badge size="sm" color="orange">{row.qbMatchState}</Badge>{" "}
                         <Text span size="sm" c="dimmed">{STATE_HELP[row.qbMatchState] ?? ""}</Text>
                         <DriftNote row={row} />
+                        <QbNote row={row} />
                       </Table.Td>
                       <Table.Td><Code>{row.disbursementId}</Code></Table.Td>
                       <Table.Td>

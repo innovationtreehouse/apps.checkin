@@ -42,8 +42,10 @@ export const disbursementService = {
     return holds.map((hold) => ({ ...hold, matchedRows: parseMatchedRows(hold.matchedRows) }));
   },
 
-  async listEvents(orgId: string, page?: { skip: number; take: number }, qbStates?: string[]) {
-    return db.disbursementEvent.findMany({ where: { orgId, ...(qbStates && { qbMatchState: { in: qbStates } }) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
+  async listEvents(orgId: string, page?: { skip: number; take: number }, qbStates?: string[], noted = false) {
+    const byState = qbStates && { qbMatchState: { in: qbStates } };
+    const filter = byState && noted ? { OR: [byState, { qbNote: { not: null } }] } : byState;
+    return db.disbursementEvent.findMany({ where: { orgId, ...filter }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
   },
 
   async resubmitHold(orgId: string, disbursementId: string, audit: AuditContext) {

@@ -20,8 +20,11 @@ LADDER = [
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
     ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
-    ("mid", "z-ai/glm-5.3", "30", "300",
-     "Quarters a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
+    # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
+    # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
+    # risks. On glm's own token mix deepseek lists at ~45% of glm's price; judge it by fixed bugs.
+    ("mid", "deepseek/deepseek-v4-pro", "30", "300",
+     "Dimes a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
     # ponytail: per-review spend caps via tool rounds and diff size on the two costliest rungs.
     ("high", "google/gemini-4-argon", "12", "150",
      "Around a dollar a review, several times the mid tier. Only when the mid reviewer is likely to miss something serious: security-boundary or migration changes, two or more risky areas, concurrency or authorization logic.", ""),
@@ -238,6 +241,24 @@ def route_selftest():
         assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
     finally:
         prior_rounds = saved
+    global gh
+    real, calls = gh, []
+    def fake(out):
+        def stub(*args):
+            calls.append(args)
+            if isinstance(out, Exception):
+                raise out
+            return out
+        return stub
+    try:
+        gh = fake("")
+        assert first_round("1", "o/r") and calls[-1][-1] == f'.[] | select(.user.login == "{BOT}") | .id'
+        gh = fake("123\n")
+        assert not first_round("1", "o/r")
+        gh = fake(subprocess.CalledProcessError(1, "gh"))
+        assert not first_round("1", "o/r")
+    finally:
+        gh = real
     print("route selftest ok")
 
 
@@ -316,6 +337,16 @@ def review_history(pr, repo, head_sha, budget):
     return out
 
 
+def first_round(pr, repo):
+    """No review from the bot yet. A failed lookup counts as a later round, so routing is unchanged."""
+    try:
+        return not gh("api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate",
+                      "--jq", f'.[] | select(.user.login == "{BOT}") | .id').strip()
+    except Exception as e:
+        print(f"::warning::could not list reviews ({e}); routing as a later round", file=sys.stderr)
+        return False
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
@@ -339,17 +370,23 @@ def route():
         chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
-    try:
-        a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
-            "reviewer": {"type": "choice",
-                         "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
-                         "criteria": rung_choice(ORDER)}})["reviewer"]
-        tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
-        tier = pick(a["probabilities"], ORDER)
-        t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
-    except Exception as e:
-        print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
-        tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
+    # A high-ladder PR (risky profile, several profiles, very large) keeps normal routing: later
+    # rounds only verify, so the first round is its only full sweep.
+    if (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
+            and suggested != "high" and first_round(pr, repo)):
+        tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
+    else:
+        try:
+            a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
+                "reviewer": {"type": "choice",
+                             "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
+                             "criteria": rung_choice(ORDER)}})["reviewer"]
+            tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
+            tier = pick(a["probabilities"], ORDER)
+            t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
+        except Exception as e:
+            print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
+            tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()

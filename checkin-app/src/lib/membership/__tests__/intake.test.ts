@@ -288,6 +288,29 @@ describe('getIntakeState', () => {
         expect(state.prefill.household?.name).toBe('Test Household');
     });
 
+    it('a sysadmin who is not a lead gets no intake note in the prefill', async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            id: 3,
+            householdId: 7,
+            isSysadmin: true,
+            household: {
+                name: 'Test Household',
+                intakeNotes: 'we are volunteer only; dad lost his job',
+                line1: null, line2: null, city: null, state: null, postalCode: null,
+                householdMembers: [
+                    { id: 1, name: 'Primary', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: true },
+                    { id: 3, name: 'Admin', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: false },
+                ],
+                orgMembership: { status: 'ACTIVE', processes: [] },
+                emergencyContacts: [],
+            },
+        });
+
+        const state = await getIntakeState(3);
+
+        expect(state.prefill.household?.notes).toBeNull();
+    });
+
     it('every process ACTIVE → process is null, no external lookup', async () => {
         prisma.person.findUnique.mockResolvedValue({
             id: 1,

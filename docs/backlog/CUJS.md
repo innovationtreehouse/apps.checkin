@@ -11,7 +11,7 @@ Digestible companion to INDEX. Two views (owner wants both):
 
 Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base `5528270d`. No ❓ remain in Parts A/B. **Extraction rounds 1–4 (2026-07-22)** added ❌ steps from owner walkthroughs (shirt/add-on offers, trips, FIRST registration, waivers, rollover, alumni, prospect path, calendar feed, sponsorships, statement recon, budget view, metrics, todo board, cert visibility/upgrade) — these are captured wants, NOT code-validated absences (they're net-new by construction).
 
-**Authoritative lifecycle source:** `checkin-app/docs/generated/lifecycle/{membership,enrollment}.md` are auto-generated, drift-checked state machines (from `src/lib/lifecycle/machineSpecs.ts`). They are MORE reliable than any validation chip — where a chip's tag conflicts with these machines, **the machine wins.** Membership PROCESS machine = INTAKE→…→ACTIVE/BLOCKED/ARCHIVED (application/renewal only; does NOT model ongoing grace/inactive — that's the M1 gap). Enrollment machine = UNENROLLED→PENDING_UNPAID→ACTIVE + scholarship-hold + capacity-decrement.
+**Authoritative lifecycle source:** `docs/generated/lifecycle/{membership,enrollment}.md` are auto-generated, drift-checked state machines (from `src/lib/lifecycle/machineSpecs.ts`). They are MORE reliable than any validation chip — where a chip's tag conflicts with these machines, **the machine wins.** Membership PROCESS machine = INTAKE→…→ACTIVE/BLOCKED/ARCHIVED (application/renewal only; does NOT model ongoing grace/inactive — that's the M1 gap). Enrollment machine = UNENROLLED→PENDING_UNPAID→ACTIVE + scholarship-hold + capacity-decrement.
 
 ---
 

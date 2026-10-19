@@ -14,7 +14,7 @@ import { escapeHtml } from "@/lib/email-templates/base";
  * existing program-participants admin surface (`DELETE
  * /api/programs/[id]/participants`), which routes through the hold-ledger
  * release helper in `lib/program/capacity.ts` (see
- * docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §3).
+ * docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §3).
  */
 
 /** Warning copy (day 1/3/6) — identical body across all three, only the subject escalates. */

@@ -21,10 +21,11 @@
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import prisma from '@/lib/prisma';
 import { toRow, classify, validate } from '@/lib/programs/enrollmentState';
-import { adjustProgramInventory } from '@/lib/shopify';
+import { adjustProgramInventory } from '@/lib/shopify/stock';
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 const mockAdjust = adjustProgramInventory as jest.Mock;
 

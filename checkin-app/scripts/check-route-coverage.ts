@@ -8,7 +8,7 @@
  *      defineFileRoute for a file route served through fileHandler().
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
- *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
+ *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify/ and src/lib/email.ts.
  *   4b. In packages/* and *-function source (tests, fixtures and generated code excluded), any
  *      non-loopback URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
  *      and every surface that map names is a defineOutbound entry in the registry.
@@ -43,7 +43,10 @@ const ALLOWED_DIRECT_JSON_FILES = new Set<string>([
 ]);
 
 const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
-    path.join(REPO_ROOT, 'src/lib/shopify.ts'),
+    path.join(REPO_ROOT, 'src/lib/shopify/client.ts'),
+    path.join(REPO_ROOT, 'src/lib/shopify/products.ts'),
+    path.join(REPO_ROOT, 'src/lib/shopify/stock.ts'),
+    path.join(REPO_ROOT, 'src/lib/shopify/discounts.ts'),
     path.join(REPO_ROOT, 'src/lib/email.ts'),
 ]);
 

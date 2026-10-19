@@ -310,7 +310,7 @@ describe("appKeyOf", () => {
 describe("findOrCreate", () => {
   it("found on amount: links the hand entry and posts nothing", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", [qboDeposit("10", "2025-03-06", 120.45)]));
-    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "found", id: "10", via: "amount" });
+    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "found", id: "10", via: "amount", txnDate: "2025-03-06" });
     expect(queries()).toEqual([
       "SELECT * FROM Deposit WHERE TxnDate >= '2025-03-03' AND TxnDate <= '2025-03-10' STARTPOSITION 1 MAXRESULTS 1000",
     ]);
@@ -361,7 +361,7 @@ describe("findOrCreate", () => {
 
   it("still matches in the closed period", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", [qboDeposit("10", "2025-03-06", 120.45)]));
-    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-31", mayCreate: false }))).resolves.toEqual({ kind: "found", id: "10", via: "amount" });
+    await expect(findOrCreate(client(), req({ closedThrough: "2025-03-31", mayCreate: false }))).resolves.toEqual({ kind: "found", id: "10", via: "amount", txnDate: "2025-03-06" });
   });
 
   it("gates on the re-read closing date when it is later than closedThrough", async () => {
@@ -426,8 +426,8 @@ describe("findOrCreate", () => {
     fetchMock
       .mockResolvedValueOnce(rows("Purchase", [{ Id: "p1", TxnDate: "2025-03-05", TotalAmt: 19.99, AccountRef: { value: "99" } }, { Id: "p2", TxnDate: "2025-03-05", TotalAmt: 19.99, AccountRef: { value: "41" } }]))
       .mockResolvedValueOnce(rows("Bill", [{ Id: "b1", TxnDate: "2025-03-05", TotalAmt: 42.1, VendorRef: { value: "5" } }]));
-    await expect(findOrCreate(client(), req({ write: purchase }))).resolves.toEqual({ kind: "found", id: "p2", via: "amount" });
-    await expect(findOrCreate(client(), req({ write: bill }))).resolves.toEqual({ kind: "found", id: "b1", via: "amount" });
+    await expect(findOrCreate(client(), req({ write: purchase }))).resolves.toEqual({ kind: "found", id: "p2", via: "amount", txnDate: "2025-03-05" });
+    await expect(findOrCreate(client(), req({ write: bill }))).resolves.toEqual({ kind: "found", id: "b1", via: "amount", txnDate: "2025-03-05" });
     expect(queries().map((q) => q.split(" ")[3])).toEqual(["Purchase", "Bill"]);
   });
 
@@ -442,7 +442,7 @@ describe("findOrCreate", () => {
     fetchMock.mockResolvedValueOnce(
       rows("Deposit", [qboDeposit("77", sent.TxnDate, 120.45, sent.PrivateNote), qboDeposit("10", "2025-03-06", 120.45)]),
     );
-    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "found", id: "77", via: "key" });
+    await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "found", id: "77", via: "key", txnDate: sent.TxnDate });
     expect(posts()).toEqual([]);
   });
 });

@@ -4,12 +4,16 @@
 import prisma from '@/lib/prisma';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { withdrawAndReleaseHold } from '@/lib/program/capacity';
-import { setProgramProductOffSale, adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
+import { reportShopifyFailure } from '@/lib/shopify/client';
+import { setProgramProductOffSale, adjustProgramInventory } from '@/lib/shopify/stock';
 import { emailBoardMembers } from '@/lib/emailRecipients';
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     setProgramProductOffSale: jest.fn().mockResolvedValue(true),
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
+}));
+jest.mock('@/lib/shopify/client', () => ({
     reportShopifyFailure: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn().mockResolvedValue(undefined) }));

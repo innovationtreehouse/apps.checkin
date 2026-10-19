@@ -50,5 +50,5 @@ qualify, and it belongs to the tracker alone. See `docs/DOCUMENTATION_STANDARD.m
 | `inventory.md` | the shared catalog (what parts, tools, and consumables are), on-hand stock, and receiving |
 
 Two registers sit outside this directory and are not duplicated here:
-`checkin-app/docs/VOCABULARY.md` defines what the words mean, and
+`docs/VOCABULARY.md` defines what the words mean, and
 `docs/conventions.md` holds how we build rather than what the domain requires.

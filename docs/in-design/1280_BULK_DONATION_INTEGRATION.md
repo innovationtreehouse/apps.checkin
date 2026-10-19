@@ -410,7 +410,7 @@ driven from our records, never by scanning QuickBooks.
 - **The work list is our own unmatched records.** Each `DisbursementEvent` and
   each in-kind donation carries a match state: `UNMATCHED` →
   `MATCHED(qbTxnId)` or `CREATED(qbTxnId)`, or a finance-queue state
-  (`AMBIGUOUS`, `BEFORE_LINE`, `WAITING`, `POST_FAILED`). The queue should fall
+  (`AMBIGUOUS`, `UNBOOKED`, `WAITING`, `POST_FAILED`). The queue should fall
   to zero and stay there.
 - **Each search is narrow:** for one record, ask QuickBooks only for entries of
   the right type, in the right account (the bank account for Benevity, the
@@ -426,26 +426,24 @@ driven from our records, never by scanning QuickBooks.
   lane keeps its own exclusion table and classifications merge by model name.
 - **One candidate:** `MATCHED`; post nothing (expense's `backfill` path). **More
   than one:** `AMBIGUOUS`; equal amounts are common, so finance picks or creates,
-  never a guess. **None, after the takeover line:** create, keyed so a retry never
-  books twice. **None, before the line:** `BEFORE_LINE`; a gap among finance's
-  own bookings is finance's to explain.
+  never a guess. **None:** create, keyed so a retry never books twice, but only
+  when the closed-books gate allows it; otherwise `UNBOOKED`, for finance to book
+  or skip.
 
-**The takeover line is derived, never configured, and there is one per stream.**
-Benevity disbursements (matched in the bank account) and in-kind donations
-(matched in the clearing account) each have their own line, so a hand-booked
-Benevity deposit never pushes in-kind records before the line, or the reverse.
-A stream's line is the date of its newest record in `MATCHED` state, meaning tied
-to an entry the app did not create, whether found by matching or picked by
-finance.
-Each run matches first, then reads the line, then creates for what is after it.
-`CREATED` entries never move the line; a late hand booking of a newer record is
-matched and moves it forward. A stream with no `MATCHED` record has no line, and
-the app creates nothing in it: it fails closed.
+**Closed books, open period, switch-on.** The gate is the one in
+`QB_CLOSED_BOOKS.md`: nothing dated on or before QuickBooks' books closing date is
+created; a disbursement uploaded before the lane switched itself on is only
+matched, and an unmatched one waits in finance's queue as `UNBOOKED`, where
+finance has the app book it or dismisses it with a reason. A record the app may
+already have created looks for its own entry by key before anything creates,
+matches or dismisses it, and a daily sweep reports app-keyed entries no record
+holds.
 
 The shared find-or-create in `packages/quickbooks` is stateless: bulk donation
 passes the record, its retry key (org + disbursement id, or the in-kind donation
-id), its stream's takeover line, and its claimed and excluded ids. It answers *found*,
-*ambiguous*, *created*, *failed*, or *before the line*.
+id), the closed-through date, whether it may create, and its claimed and excluded
+ids. It answers *found* (with the entry's date), *ambiguous*, *created*, *failed*,
+*closed*, or *needs finance*.
 
 **When it runs.** No boot drain and no new schedule (plan rule 5). The drain is
 a try/catch step inside the existing prod `/api/cron/reconcile-shopify`, next to

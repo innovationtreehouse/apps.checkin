@@ -27,6 +27,8 @@ const signoff = {
 jest.mock("@/lib/expense/configure", () => ({ signoff }));
 const getExpenseSettings = jest.fn();
 jest.mock("@checkin/expense", () => ({ getExpenseSettings }));
+const notifyFinanceAlert = jest.fn();
+jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
 
 async function config(): Promise<BulkDonationConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -126,6 +128,20 @@ describe("bulk-donation wiring", () => {
 
     expect(qb).toMatchObject({ bankAccountId: "35", prod: false });
     await expect(qb!.client()).resolves.toBe(client);
+  });
+
+  it("tells finance when the orphan sweep could not read every Deposit", async () => {
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
+    const { qb } = await config();
+
+    await qb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
+
+    expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
+    const [subject, html] = notifyFinanceAlert.mock.calls[0];
+    expect(subject).toContain("stray QuickBooks deposits");
+    expect(html).toContain("2026-10-01");
+    expect(html).toContain("/donations/qb-queue");
   });
 
   it("keeps deposits income holds out of donation matching", async () => {

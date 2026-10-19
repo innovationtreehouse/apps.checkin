@@ -88,6 +88,17 @@ Things the app takes as true because they are handled outside it.
   the organisation. The app records who is core and opens the information that
   role needs; it does not define the role's authority.
 
+- A program running across the membership-year boundary is assigned to a year
+  when the board approves its budget. The person recording it copies that
+  decision; nothing in the app decides it. This holds while programs are
+  budgeted before they are created.
+
+- The membership-year boundary is set once and does not move. Were it to move,
+  every household's renewal date, every background check's validity window and
+  every agreement's cycle would need reconciling before program years mattered;
+  the app rebuilds none of it. This holds while changing the boundary stays a
+  deliberate organisation-wide act.
+
 ---
 
 ## Procedure
@@ -127,13 +138,12 @@ Things the app takes as true because they are handled outside it.
   household lead, who may also withdraw them while the place is unpaid. Neither a
   youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
 
-- A paid place is not the household's to withdraw: neither the household lead
-  nor the enrolled adult can remove it. The board, a sysadmin and the program's
-  leader can.  [Unsettled — who withdraws a paid
-  place is open with the board]
+- A paid place is removed only by the Board, with a written reason. Neither the
+  household lead, the enrolled adult, a sysadmin nor the program's leader can
+  remove it.  [Decision — *Policy: Standards of Conduct §XVI.3*]
 
-- The board, a sysadmin and the program's leader remove a paid place except for
-  a place in their own household, which someone outside the household removes.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+- A Board member does not remove a paid place in their own household; another
+  Board member outside the household does.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Being refused for an unknown age is not a dead end. Someone with no age on file
   is asked to record one and may then enroll themselves; a brand-new adult is
@@ -224,6 +234,20 @@ Things the app takes as true because they are handled outside it.
 
 - Member pricing requires the household's membership fee to cover the membership year the
   program runs in, not the program's own dates.  [Decision]
+
+- A program runs in one membership year and states which. The statement is
+  derived when the program's dates fall inside one membership year, and recorded
+  from the Board's budget approval when they do not. Only the Board records or
+  changes it.  [Decision]
+
+- The Board may change a program's stated year after places are paid. Nothing
+  already paid is repriced; the Board settles any difference with those families.
+  [Decision — *Principle: people decide about people*]
+
+- A program cannot be created or re-dated before the membership-year boundary is
+  set. There is no membership year to state until there is a boundary to state
+  it against.  [Decision — *Principle: where finishing an operation would take
+  inventing a fact, refuse to finish it*]
 
 - A program priced on a tier with nothing wired to sell it is broken and is
   reported as such. A free tier has nothing to wire and is never reported, and a

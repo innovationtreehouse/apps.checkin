@@ -134,9 +134,9 @@ function snapshotOf(li: ExpenseLineItem): CatalogInfo | null {
 }
 
 /** Fixes the catalog inputs of signed lines; a line that already has a snapshot keeps it. */
-export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>): Promise<void> {
+export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>, client: Db = db): Promise<void> {
   for (const [id, { gtin13, category, subcategory }] of info) {
-    await db.expenseLineItem.updateMany({
+    await client.expenseLineItem.updateMany({
       where: { id, signedGtin13: null },
       data: { signedGtin13: gtin13, signedCategory: category, signedSubcategory: subcategory },
     });
@@ -146,16 +146,16 @@ export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>): Prom
 // ── Stage 1: resolve accounts for all line items ─────────────────────────────
 
 /**
- * Callers run this only once every line is signed off, so a line resolved from the live catalog
- * here has its snapshot taken now, and later catalog edits cannot move its account.
+ * Callers run this only once every line is signed off. `snapshots` holds the live catalog inputs of
+ * lines without one; the caller saves them, so later catalog edits cannot move those accounts.
  */
 async function resolveAccountsForExpense(
   lineItems: ExpenseLineItem[],
   rules: AccountMapping[],
   vendorName: string,
-): Promise<{ resolved: ResolvedItem[]; conflicts: ConflictItem[] }> {
+): Promise<{ resolved: ResolvedItem[]; conflicts: ConflictItem[]; snapshots: Map<number, CatalogInfo> }> {
   const live = await lookupCatalogInfo(lineItems.filter((li) => !snapshotOf(li)), vendorName);
-  await saveCatalogSnapshots(live.info);
+  const snapshots = new Map(live.info);
 
   const gtin13ByItemId = live.gtin13ByItemId;
   const itemInfoByItemId = live.info;
@@ -205,7 +205,7 @@ async function resolveAccountsForExpense(
     }
   }
 
-  return { resolved, conflicts };
+  return { resolved, conflicts, snapshots };
 }
 
 // ── Stage 2 (idempotent write): persist conflict holds ───────────────────────
@@ -307,6 +307,9 @@ async function qbPayloadFor(expense: Expense, resolved: ResolvedItem[], lineItem
 // All domain writes (holds, allocations, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
+// The sign-off holds are re-read under the expense lock before anything is written,
+// catalog snapshots included, so a seat void or a not-Everyday mark either lands
+// first and holds the expense, or finds it closed.
 
 async function commitQbProcessing(
   orgId: string,
@@ -317,10 +320,16 @@ async function commitQbProcessing(
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
   payload: QbExpenseEvent,
-): Promise<void> {
+  snapshots: Map<number, CatalogInfo>,
+): Promise<boolean> {
   const resolvedLineItemIds = resolved.map((r) => r.id);
 
-  await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
+    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) return false;
+    await saveCatalogSnapshots(snapshots, tx);
+
     if (resolvedLineItemIds.length > 0) {
       await tx.expenseHold.updateMany({
         where: {
@@ -355,6 +364,7 @@ async function commitQbProcessing(
       actor: SYSTEM_ACTOR,
       action: "qb_event_emitted",
     });
+    return true;
   });
 }
 
@@ -401,7 +411,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   if (existing) return;
 
   // An unknown reimbursee or a line with an unfilled sign-off seat holds the expense out of the
-  // outbox; setting the reimbursee or the last sign-off drains it.
+  // outbox; setting the reimbursee or the last sign-off drains it. The outbox commit re-checks under the lock.
   if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
@@ -437,13 +447,14 @@ async function processExpenseForQb(
 
   const rules = await db.accountMapping.findMany({ where: { orgId } });
 
-  const { resolved, conflicts } = await resolveAccountsForExpense(
+  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(
     lineItems,
     rules,
     expense.vendorName ?? "",
   );
 
   if (conflicts.length > 0) {
+    await saveCatalogSnapshots(snapshots);
     await persistConflicts(orgId, expenseId, conflicts);
 
     if (expense.state === "qb_pending") {
@@ -473,12 +484,13 @@ async function processExpenseForQb(
   const { payload, taxAlloc, shippingAlloc, discountAlloc } = await qbPayloadFor(expense, resolved, lineItems);
 
   try {
-    await commitQbProcessing(
+    const committed = await commitQbProcessing(
       orgId, expenseId,
       lineItems, resolved,
       taxAlloc, shippingAlloc, discountAlloc,
-      payload,
+      payload, snapshots,
     );
+    if (!committed) return;
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore
@@ -536,7 +548,8 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
     const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
     const rules = await tx.accountMapping.findMany({ where: { orgId } });
-    const { resolved, conflicts } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+    await saveCatalogSnapshots(snapshots, tx);
     if (conflicts.length > 0) return false;
 
     const { payload } = await qbPayloadFor(expense, resolved, lineItems, tx);

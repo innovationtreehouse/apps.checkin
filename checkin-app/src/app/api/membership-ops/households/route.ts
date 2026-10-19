@@ -15,6 +15,7 @@ import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
+import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +37,9 @@ function withFlatContact<T extends { emergencyContacts: { name: string; phone: s
 
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
-    async (req) => {
+    async (req, auth) => {
         try {
+            const viewer = auth.type === 'session' ? auth.user : {};
             const url = new URL(req.url);
             const id = url.searchParams.get('id');
             const q = url.searchParams.get('q') || '';
@@ -134,7 +136,7 @@ export const GET = withAuth(
                 return NextResponse.json({
                     signing,
                     household: {
-                        ...withFlatContact(household),
+                        ...withFlatContact(withIntakeNotesFor(household, viewer)),
                         // isVolunteer mirrors isVolunteerFamily for edit modals loaded before the rename deploy; drop it one release later.
                         orgMembership: household.orgMembership && { ...household.orgMembership, isVolunteer: household.orgMembership.isVolunteerFamily },
                         householdMembers: membersWithBg,
@@ -236,7 +238,7 @@ export const GET = withAuth(
                     .reduce<Date | null>((acc, m) => (!acc || m.lastBackgroundCheck! > acc ? m.lastBackgroundCheck! : acc), null);
                 const bgValidUntil = bgValidUntilBoundary(latestLeadBg, bgSettings);
                 return {
-                    ...withFlatContact(h),
+                    ...withFlatContact(withIntakeNotesFor(h, viewer)),
                     orgMembership: h.orgMembership ? orgMembership : null,
                     renewalGrantable,
                     awaitingPayment,

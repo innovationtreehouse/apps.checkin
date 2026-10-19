@@ -16,8 +16,12 @@ jest.mock('@/lib/notifications', () => ({
     sendNotification: jest.fn(),
 }));
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/shopify/products', () => ({
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
@@ -26,7 +30,6 @@ jest.mock('@/lib/shopify', () => ({
         claimantShopifyProductId: 'mock-claimant-product-id',
         claimantShopifyVariantId: 'mock-claimant-variant-id',
     }),
-    syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock Prisma
@@ -73,6 +76,9 @@ jest.mock('@/lib/prisma', () => {
     auditLog: {
       create: jest.fn(),
     },
+    boardSettings: {
+      findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2000-09-01T00:00:00Z') }),
+    },
     appSettings: {
       // Event creation reads the org timezone via getAppSettings().
       upsert: jest.fn().mockResolvedValue({ id: 1, timezone: 'America/Chicago', locale: 'en-US' }),
@@ -117,7 +123,7 @@ describe('Full Program Signup Integration Flow', () => {
             body: JSON.stringify({
                 name: 'Integration Test Program',
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
+                endAt: '2026-06-30',
                 memberPrice: 50,
                 nonMemberPrice: 100,
                 leadMentorId: mentorId,

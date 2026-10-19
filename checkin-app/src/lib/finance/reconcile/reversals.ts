@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { systemActor, type SystemActorName } from "@/lib/auditActor";
 import { programVariantIds } from "@/lib/programs/variants";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";

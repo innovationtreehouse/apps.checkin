@@ -23,6 +23,7 @@ import { PATCH as updateHousehold } from '@/app/api/membership-ops/households/[i
 import { PATCH as updateVisit } from '@/app/api/facility/visits/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -33,6 +34,11 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 describe('AuditLog Integration Tests', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let testAdminId: number;
     let testParticipantId: number;
     let testLeadId: number;
@@ -153,7 +159,7 @@ describe('AuditLog Integration Tests', () => {
                 name: 'Audit Test Program',
                 enrollmentStatus: 'OPEN',
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
+                endAt: '2026-06-30',
                 leadMentorId: testLeadId,
                 maxParticipants: 50
             })

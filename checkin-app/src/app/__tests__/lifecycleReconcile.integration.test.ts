@@ -16,10 +16,11 @@
  *    the negative-authz coverage authzRegistry.test.ts requires.
  *
  * Shopify is mocked (no network): the reconciler imports only adjustProgramInventory
- * + reportShopifyFailure from @/lib/shopify, so replacing the whole module with two
- * jest.fn()s is sufficient (SWC's non-configurable exports block jest.spyOn).
+ * (@/lib/shopify/stock) and reportShopifyFailure (@/lib/shopify/client), so replacing
+ * both modules with a jest.fn() each is sufficient (SWC's non-configurable exports block jest.spyOn).
  */
-import { adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
+import { reportShopifyFailure } from '@/lib/shopify/client';
+import { adjustProgramInventory } from '@/lib/shopify/stock';
 import { runLifecycleReconcile, scanLifecycleViolations } from '@/lib/lifecycleDrift';
 import { GET as LIFECYCLE_GET } from '@/app/api/system-status/lifecycle/route';
 import prisma from '@/lib/prisma';
@@ -27,9 +28,13 @@ import { toRow, validate } from '@/lib/programs/enrollmentState';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     __esModule: true,
     adjustProgramInventory: jest.fn(),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
+}));
+jest.mock('@/lib/shopify/client', () => ({
+    __esModule: true,
     reportShopifyFailure: jest.fn(),
 }));
 

@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
@@ -87,49 +87,44 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
     }
 
-    let activatedCount = 0;
-    let releasedHoldCount = 0;
-
-    for (const personId of personIds) {
-        const existing = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
-        if (!existing) {
-            logger.warn(`[enroll] Participant ${personId} not found in program ${programId} — ignoring payment.`);
-            continue;
-        }
-
-        // Guarded PENDING → ACTIVE in ONE atomic write: status flip AND hold release
-        // together, so the row is never committed as ACTIVE-with-held (invariant I1 —
-        // the crash window that stranded a −1 that never came back). The single
-        // status:'PENDING' guard makes this idempotent: a webhook redelivery / reconciler
-        // re-run finds the row already ACTIVE → matches 0 rows → no double-activate, and
-        // (since the flip and the release are the same write) no double-release either.
-        const activated = await prisma.programParticipant.updateMany({
-            // T4 activate CAS from-state (any PENDING; sourced from the definition, #1080).
-            where: { programId, personId, ...fromWhere("PENDING_UNPAID") },
-            data: { status: "ACTIVE", pendingSince: null, shopifyOrderId, inventoryHeldAt: null },
-        });
-        activatedCount += activated.count;
-        if (activated.count > 0) logger.info(`[enroll] Marked participant ${personId} ACTIVE for program ${programId}`);
-
-        // A hold was released iff THIS activation flipped a row that had one set (the pre-read
-        // held stamp + a real 0→1 flip). The compensating Shopify +1 stays a separate call below.
-        if (existing.inventoryHeldAt && activated.count > 0) releasedHoldCount += 1;
-    }
-
     const claimantVariantId = program?.claimantShopifyVariantId;
     const claimantPaid = claimantVariantId
         ? lines.filter((l) => l.variantId === claimantVariantId).reduce((n, l) => n + l.quantity, 0)
         : 0;
-    // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
-    const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
 
-    // One stock call for the whole order; once the sale has ended only a
-    // reduction goes through, so no seat goes back on sale. Never fatal.
-    const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
-    if (delta !== 0) {
-        const ok = await adjustProgramInventory({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, delta, "activation", { deferred: true });
-        if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
-    }
+    // The flips and the stock delta they cause commit together under the program's
+    // stock lock, so no hold stamp lands between a flip and its count.
+    const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, "activation", async (tx) => {
+        let activatedCount = 0;
+        let releasedHoldCount = 0;
+        for (const personId of personIds) {
+            // Guarded PENDING → ACTIVE: status flip and hold release in one write (invariant I1),
+            // idempotent for a redelivery (the row is already ACTIVE → 0 rows). Whether a hold
+            // was released is read off which guarded write matched, never off a pre-read.
+            const flip = (held: boolean) => tx.programParticipant.updateMany({
+                // T4 activate CAS from-state (any PENDING; sourced from the definition, #1080).
+                where: { programId, personId, ...fromWhere("PENDING_UNPAID"), inventoryHeldAt: held ? { not: null } : null },
+                data: { status: "ACTIVE", pendingSince: null, shopifyOrderId, inventoryHeldAt: null },
+            });
+            const released = (await flip(true)).count;
+            const unheld = released ? 0 : (await flip(false)).count;
+            if (!released && !unheld) {
+                logger.warn(`[enroll] Participant ${personId} not pending in program ${programId} — ignoring payment.`);
+                continue;
+            }
+            activatedCount += 1;
+            releasedHoldCount += released;
+            logger.info(`[enroll] Marked participant ${personId} ACTIVE for program ${programId}`);
+        }
+        // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
+        const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
+        // Once the sale has ended only a reduction goes through, so no seat goes back on sale.
+        const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
+        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta }, delta };
+    }, { deferred: true });
+
+    const { activatedCount, releasedHoldCount, claimantSeatCount, delta } = result;
+    if (!landed) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
 
     return { activatedCount, releasedHoldCount, claimantSeatCount };
 }

@@ -10,6 +10,7 @@ import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ProgramYearField, formYearsTouched, useMembershipYearBoundary } from '../ProgramYearField';
 type ParticipantOption = {
   id: number;
   name: string | null;
@@ -17,12 +18,13 @@ type ParticipantOption = {
 };
 
 export default function CreateProgramPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember'], { redirectTo: '/system-status' });
+  const { user, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember'], { redirectTo: '/system-status' });
   const router = useRouter();
 
   const [name, setName] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [appliesToYear, setAppliesToYear] = useState<number | null>(null);
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
   const [isFree, setIsFree] = useState(true);
@@ -41,6 +43,9 @@ export default function CreateProgramPage() {
 
   // End date before start date is invalid (ISO date strings compare lexically).
   const datesInvalid = Boolean(startAt && endAt && endAt < startAt);
+  const years = formYearsTouched(useMembershipYearBoundary(ready), startAt, endAt);
+  const crossing = years.length > 1;
+  const yearMissing = crossing && (!user?.isBoardMember || appliesToYear == null || !years.includes(appliesToYear));
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +62,7 @@ export default function CreateProgramPage() {
           name,
           startAt,
           endAt,
+          ...(crossing && { appliesToYear }),
           orgMemberOnly,
           publiclyVisible: orgMemberOnly && publiclyVisible,
           minAge: minAge ? parseInt(minAge) : null,
@@ -163,6 +169,8 @@ export default function CreateProgramPage() {
               />
             </SimpleGrid>
 
+            <ProgramYearField years={years} value={appliesToYear} onChange={setAppliesToYear} canEdit={!!user?.isBoardMember} />
+
             <Card withBorder radius="md" padding="md">
               <Checkbox
                 checked={isFree}
@@ -223,7 +231,7 @@ export default function CreateProgramPage() {
             )}
 
             <Group justify="flex-end">
-              <Button type="submit" disabled={saving || !name.trim() || !leadMentorId || !startAt || !endAt || !maxParticipants || datesInvalid} loading={saving}>
+              <Button type="submit" disabled={saving || !name.trim() || !leadMentorId || !startAt || !endAt || !maxParticipants || datesInvalid || yearMissing} loading={saving}>
                 Create Program
               </Button>
             </Group>

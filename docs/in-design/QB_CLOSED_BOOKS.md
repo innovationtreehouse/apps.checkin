@@ -311,7 +311,11 @@ call. It is set only while null and never moved, so every later lookup starts
 from the first attempt. It therefore marks every post attempt, including ones
 that end in a match and never send a create. A record that carries it is
 "attempted", whatever its state now; a lookup on one that never created simply
-finds nothing. The column is additive and ships in the lane's PR.
+finds nothing. Income marks only a post the gate lets create (`mayCreate`, dated
+after the closed line): a post that can only match leaves nothing to find, and an
+attempted payout is never matched by amount in reconcile, so marking every
+open-period payout would stop a later hand booking from matching on its own. The
+column is additive and ships in the lane's PR.
 
 **Income gets the same claim, call and settle.** Today income calls QuickBooks
 inside the database transaction that also settles, under its advisory lock and
@@ -493,9 +497,12 @@ ships with that lane's code. The three related fixes are separate PRs, outside
 this split.
 
 Only PR 1 changes the security boundary. The new columns and
-`DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours, and
-no route returns them; the income and donation "book" actions ride on routes
-whose role and response types stay as registered.
+`DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours. Income's
+reconciliation routes return whole `PayoutReconciliation` rows, so its claim,
+create-attempt and `qbNote` columns reach finance and the board as internal fields, under the
+existing registry entries; the settings route selects only the caps. The income
+and donation "book" actions ride on routes whose role and response types stay as
+registered.
 
 PRs 3, 4 and 5 touch different packages and can run in parallel once 1 and 2
 have landed.

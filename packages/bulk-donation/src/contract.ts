@@ -78,6 +78,8 @@ export interface DonationQbPosting {
   client(): Promise<QuickBooksClient | null>;
   bankAccountId: string;
   prod: boolean;
+  /** Tells finance the daily orphan sweep read a full page, so some Deposits went unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
 /** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */

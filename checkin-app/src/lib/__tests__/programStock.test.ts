@@ -1,4 +1,5 @@
-import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, resetTokenCache, setProgramInventory, settleUnconfirmedStock, SHOPIFY_INVENTORY_API_VERSION } from '../shopify';
+import { resetTokenCache, SHOPIFY_INVENTORY_API_VERSION } from '../shopify/client';
+import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
@@ -8,7 +9,7 @@ jest.mock('../logger', () => ({ logIntegrationError: jest.fn().mockResolvedValue
 // assert the bookkeeping the writer leaves behind rather than call shapes.
 jest.mock('../prisma', () => {
     type Row = Record<string, unknown>;
-    const mockState: { row: Row | null } = { row: null };
+    const mockState: { row: Row | null; locked: boolean } = { row: null, locked: false };
     const apply = (row: Row, data: Row) => {
         for (const [k, v] of Object.entries(data)) {
             row[k] = v !== null && typeof v === 'object' && 'increment' in (v as Row)
@@ -26,8 +27,13 @@ jest.mock('../prisma', () => {
         }
         return true;
     };
-    const db = {
+    const client: Record<string, unknown> = {
             __state: mockState,
+            // The Program row lock: recorded so a test can check what ran under it.
+            $queryRaw: jest.fn(async () => { mockState.locked = true; return []; }),
+            $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+                try { return await fn(client); } finally { mockState.locked = false; }
+            }),
             program: {
                 update: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
                     if (!mockState.row || where.id !== mockState.row.id) throw new Error('P2025');
@@ -47,13 +53,11 @@ jest.mock('../prisma', () => {
             person: { findMany: jest.fn(async () => [{ email: 'admin@test.com' }]) },
             integrationErrorLog: { findMany: jest.fn(async () => []) },
             auditLog: { create: jest.fn() },
-            $transaction: jest.fn(),
     };
-    db.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(db));
-    return { __esModule: true, default: db };
+    return { __esModule: true, default: client };
 });
 
-const db = prisma as unknown as { __state: { row: Record<string, unknown> | null }; person: { findMany: jest.Mock } };
+const db = prisma as unknown as { __state: { row: Record<string, unknown> | null; locked: boolean }; person: { findMany: jest.Mock } };
 
 type Vars = Record<string, unknown> & { idempotencyKey?: string; input?: { changes: { delta: number; changeFromQuantity: null }[] } };
 type Reply = { status?: number; data?: unknown; errors?: unknown[]; unreadable?: boolean; delayMs?: number } | Error;
@@ -408,9 +412,11 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         setRow({ shopifyStockCarry: -2, shopifyStockPushNeededAt: new Date() });
         const s = shopify({ ProgramStockRead: [readReply(1), readReply(1)], ProgramStockAdjust: [adjustOk] });
 
-        // The quantity is counted under the lease.
+        // The quantity is counted under the lease and the Program row lock that every
+        // seat change takes with its carry change (F6, programs TLA+ model).
         const quantity = jest.fn(async () => {
             expect(db.__state.row!.shopifyStockLeaseToken).not.toBeNull();
+            expect(db.__state.locked).toBe(true);
             return 4;
         });
 

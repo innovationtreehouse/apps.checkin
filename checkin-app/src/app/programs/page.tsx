@@ -12,8 +12,8 @@ import { PageLoader } from "@/components/ui/PageLoader";
 type ProgramSummary = {
   id: number;
   name: string;
-  startAt: string | null;
-  endAt: string | null;
+  startAt: string;
+  endAt: string;
   orgMemberOnly: boolean;
   phase: string;
   enrollmentStatus: string;
@@ -128,8 +128,7 @@ export default function PublicProgramsDirectory() {
                 </Group>
 
                 <Text c="dimmed" style={{ flex: 1 }} mb="md">
-                  {program.startAt ? formatDateOnly(program.startAt) : 'Start Date TBD'}
-                  {program.endAt ? ` - ${formatDateOnly(program.endAt)}` : ' (Ongoing)'}
+                  {formatDateOnly(program.startAt)} - {formatDateOnly(program.endAt)}
                 </Text>
 
                 {/* Counts come live-only (never cached): while the system wakes,

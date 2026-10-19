@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { fetchStorefrontProductVariants, ProductUrlError } from "@/lib/shopify";
+import { fetchStorefrontProductVariants, ProductUrlError } from "@/lib/shopify/products";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * sysadmins only, same gate as the settings routes beside it.
  *
  * Body: { productUrl: string }. The URL is pinned hard before the server-side
- * fetch (fetchStorefrontProductVariants in lib/shopify.ts): https only, host
+ * fetch (fetchStorefrontProductVariants in lib/shopify/products.ts): https only, host
  * exactly SHOPIFY_STORE_DOMAIN, /products/<handle> path, no redirects.
  * Exactly one variant → { variantId } for the client to fill into the
  * variant-ID field (the normal settings save persists it). Several variants →

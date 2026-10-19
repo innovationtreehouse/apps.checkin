@@ -9,7 +9,7 @@
 
 import { PATCH } from '@/app/api/programs/[id]/route';
 import prisma from '@/lib/prisma';
-import { resetTokenCache } from '@/lib/shopify';
+import { resetTokenCache } from '@/lib/shopify/client';
 import { sendEmail } from '@/lib/email';
 import { logIntegrationError } from '@/lib/logger';
 import { getServerSession } from 'next-auth/next';

@@ -14,7 +14,7 @@
  * just re-running the client_id/client_secret exchange (confirmed in the issue thread).
  * So this is deliberately in-memory only, no DB table.
  *
- * Mirrors checkin-app/src/lib/shopify.ts's getAccessToken shape (cache + 5-min-early
+ * Mirrors checkin-app/src/lib/shopify/client.ts's getAccessToken shape (cache + 5-min-early
  * refresh), but standalone — this package imports nothing from checkin-app.
  */
 import type { ShopifyConfig } from "@checkin/s-ingest-core";

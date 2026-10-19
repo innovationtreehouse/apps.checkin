@@ -27,7 +27,7 @@ problem; emptying `designs/` fixes the second.
 - **The rules register.** `docs/rules/` holds `principles.md` and nine domain
   files, mined from the PR history and session transcripts and checked against
   the tree. The capacity and scholarship rules from
-  `checkin-app/docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` are in `programs.md`.
+  `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` are in `programs.md`.
 - **`AGENTS.md`.** The docs map opens with the register and cites the standard.
   One `CUJS.md` remains, in `docs/backlog/`.
 - **Ops moves.** `docs/ops/` holds the dev instance, the lifecycle machines, the
@@ -70,7 +70,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | done, PR 1 |
 | `SHOPIFY_DEV_STORE_WEBHOOK.md` | Ops reference; move to `docs/ops/shopify-dev-store.md`, keeping the §2, §4 and §6 numbering that code cites | done, PR 1 |
 | `SHOPIFY_MEMBER_SEGMENT_PRICING.md` | Not built; move to `docs/in-design/` | done, PR 1 |
-| `UNFINISHED.md` | Follow-up ledger behind issue #1322; each non-sensitive open item becomes an issue, then the file is deleted (Q5) | todo, PR 5 |
+| `UNFINISHED.md` | Follow-up ledger behind issue #1322; each non-sensitive open item becomes an issue, then the file is deleted (Q5) | done, PR 5 |
 | `resilient-load-swr.md` | Not built; move to `docs/in-design/` | done, PR 1 |
 | `UNIFIED_SIGNUP.md` (not on `main`) | Open PR #1370 adds it here; if it goes ahead it belongs in `docs/in-design/` | open PR, its author's call |
 
@@ -78,10 +78,10 @@ where a move breaks one of their pointers, that doc's session gets the new path
 
 | Work | Action | Status |
 |---|---|---|
-| `checkin-app/docs/VOCABULARY.md` | Build conventions to `docs/conventions.md`; drop the migration log; domain facts to the register or cut where already there (§3.4) | todo, PR 6 |
+| `VOCABULARY.md` | Build conventions to `docs/conventions.md`; drop the migration log; domain facts to the register or cut where already there (§3.4); then to `docs/VOCABULARY.md` (Q6) | done, PR 6 and the DM-6 PR |
 | `docs/rules/expenses.md`, `inventory.md` | No Policy section yet; check the policy corpus and add one, even if empty | todo, PR 7, after #2224 |
 | Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | backlog pointer done, PR 2; source comments todo, PR 8 |
-| Root-vs-app split | Per Q6, still open | todo, PR 9 |
+| Root-vs-app split | Per Q6: `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` and `MIGRATION_COALESCE_FLOW.md` to `docs/ops/`, `VOCABULARY.md` to `docs/`, `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` to `docs/architecture/`, the lifecycle diagrams to `docs/generated/lifecycle/`; `UNFINISHED.md` stays until PR 5 deletes it, and `checkin-app/docs/` goes with it | done, the DM-6 PR |
 | `AGENTS.md` "Design & product" block | Rewritten as an Operations block once its last entry moves | todo, PR 3 |
 
 ### 3.4 What the vocabulary split moves
@@ -121,8 +121,8 @@ different line that rebase is mechanical.
 | 1 | **Pure moves.** No content edits beyond paths | `git mv` of `SHOPIFY_MEMBER_SEGMENT_PRICING.md`, `1333-EMAIL_TEMPLATES.md`, `resilient-load-swr.md` to `docs/in-design/`; `SHOPIFY_DEV_STORE_WEBHOOK.md` to `docs/ops/shopify-dev-store.md` | `src/lib/shopify.ts`; `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` (two lines); `api/dev/shopify/orders-paid/route.ts` and its integration test; `app/dev/shopify/page.tsx`; `components/pageRegistry.ts` (the `/dev/shopify` row); `PRODUCTION_PLAN.md`; `1655_MEMBERSHIP_YEAR_DECLARED.md` and its `-migration.md`; links between the moved files | #2264 and the 975 session, which both edit `1655_MEMBERSHIP_YEAR_DECLARED.md`; the restructure doc's session, whose doc cites the segment-pricing path |
 | 2 | **Retire shipped docs in `docs/designs/`.** Extraction | delete `ARCHITECT_IDEAS_o46.md` and `DESIGN.md`; edit `docs/conventions.md`, `docs/backlog/INDEX.md`, any `docs/rules/` file a use case adds to (not `expenses.md`) | `README.md` (the design-spec link); `AGENTS.md` (the `DESIGN.md` and `ARCHITECT_IDEAS` lines); the dead `PROGRAM_PAYMENT_VISIBILITY.md` pointer in `INDEX.md` | owner review of any rule added (§5) |
 | 3 | **Production runbook to ops** | `git mv` to `docs/ops/production-runbook.md`, keeping only the deploy and rollback runbook; file each unfinished follow-up as an issue; drop the launch checklist (Q7) | `README.md` (the runbook link); `docs/ops/shopify-dev-store.md`; `AGENTS.md`, where this PR also replaces the "Design & product" heading with an Operations block listing `dev-instance.md`, the runbook and the dev store | PR 1, PR 2 |
-| 4 | **Architecture reference** | create `docs/architecture/` and move `COMPONENT_ARCHITECTURE.md` into it (Q4); add the class to the standard's §2 table, long-lived and edited when the shape changes | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`. Pointers in `1265_`, `1272_`, `1280_` and `1283_` (including the `RECEIPT.md` and `EXPENSE_QB.md` files `1265_` and `1272_` plan under `docs/designs/`, which now belong in `docs/architecture/`) belong to those docs' sessions | those sessions repointing or retiring their docs first |
-| 5 | **Retire `UNFINISHED.md`** (Q5) | file each non-sensitive open item as a GitHub issue (the admin-role item maps to #1551); take any sensitive item to the owner instead; drop the dismissed list, which git keeps; delete the file | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | PR 6 (removes the vocabulary's links); the restructure doc's session (`UNFINISHED.md` links to its doc) |
+| 4 | **Architecture reference** | move `COMPONENT_ARCHITECTURE.md` into `docs/architecture/` (Q4); the DM-6 PR created the folder and added its §2 row to the standard | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`. Pointers in `1265_`, `1272_`, `1280_` and `1283_` (including the `RECEIPT.md` and `EXPENSE_QB.md` files `1265_` and `1272_` plan under `docs/designs/`, which now belong in `docs/architecture/`) belong to those docs' sessions | those sessions repointing or retiring their docs first |
+| 5 | **Retire `UNFINISHED.md`** (Q5) | file each non-sensitive open item as a GitHub issue (the admin-role item maps to #1318); take any sensitive item to the owner instead; drop the dismissed list, which git keeps; delete the file | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | PR 6 (removes the vocabulary's links); the restructure doc's session (`UNFINISHED.md` links to its doc) |
 | 6 | **Vocabulary split** (§3.4). Extraction | `VOCABULARY.md`; `docs/conventions.md`; `docs/rules/membership.md`, and any other register file a moved rule lands in; the standard, which gains the Q3 rule that a change to a term in either the dictionary or the register edits both in the same PR | none beyond the file's own links | owner review of any rule added; rebase on PR 2 for `conventions.md` |
 | 7 | **Policy sections for `expenses.md` and `inventory.md`** | those two files | none | #2224; needs the policy corpus on Drive, so the owner or a session the owner gives access runs it |
 | 8 | **Dead pointers in source** | `components/ui/CountBadge.tsx`; `api/household/intake/route.ts`; `lib/intake/profiles.ts`: drop the citation of a doc that no longer exists, or point at the rules file that now states it | n/a | nothing |
@@ -196,16 +196,16 @@ IDs are stable; a resolved question keeps its number.
    working docs plan (PR 4).
 5. **What happens to `UNFINISHED.md`.** Decided: every non-sensitive open item
    becomes a GitHub issue, then the file is deleted (PR 5).
-6. **Does `checkin-app/` keep a docs folder? Open; the owner has not confirmed.**
+6. **Does `checkin-app/` keep a docs folder?** Decided (DM-6, 2026-10-18): no.
    The eventual plan makes `checkin-app` a thin shell, with check-in and
    membership as libraries the way inventory is. The libraries keep no docs of
    their own, so the proposal is that `checkin-app` keeps none either:
    `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` and `MIGRATION_COALESCE_FLOW.md` go
    to `docs/ops/`, `VOCABULARY.md` to the `docs/` top level after its split
    (PR 6), and `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` to `docs/architecture/`.
-   The proposal does not yet say where `checkin-app/docs/generated/` goes; the
-   standard's §2 table places it there today. If confirmed, PR 9 carries the
-   moves and their reference sweep.
+   The lifecycle diagrams go to `docs/generated/lifecycle/`, where the generator
+   now writes them. The DM-6 PR carries the moves and
+   their reference sweep.
 7. **Is the production launch finished?** Decided: yes; the app is live, with
    membership in production. Only the deploy and rollback runbook moves to
    `docs/ops/`, unfinished follow-ups are filed as issues, and the launch

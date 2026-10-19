@@ -8,7 +8,8 @@ export type EntityType =
   | "comment_rule"
   | "qb_exclusion"
   | "in_kind"
-  | "manual_in_kind";
+  | "manual_in_kind"
+  | "donation_org_settings";
 
 export interface WorkflowEventInput {
   orgId: string;

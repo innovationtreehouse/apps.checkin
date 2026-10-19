@@ -21,7 +21,7 @@
  * - alerts: a drain that stops at a cap emails finance (the board when no one
  *   holds FINANCE), so the payouts it left waiting reach a person. A bucket
  *   that becomes unusable emails finance once, so the payouts it holds reach a
- *   person.
+ *   person. An orphan sweep that cannot read every new deposit emails finance.
  */
 import {
   configureIncome,
@@ -100,6 +100,14 @@ const alerts: IncomeAlerts = {
       "Income: a budget-owner bucket can't take sales",
       `<p>The budget-owner bucket ${name} ${escapeHtml(issue)}. ${itemCount} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. <a href="${config.baseUrl()}/income/items">Open income items</a></p>`,
       "Income bucket alert failed:",
+    );
+  },
+  async sweepIncomplete({ since }) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert(
+      "Income: the daily check for stray QuickBooks deposits could not see them all",
+      `<p>QuickBooks returned more deposits created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
+      "Income sweep alert failed:",
     );
   },
 };

@@ -9,6 +9,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
 /**
  * Whether a check dated `date` covers the coming membership year — the per-lead
@@ -183,7 +184,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             lastBackgroundCheck: updatedParticipant.lastBackgroundCheck,
             isBoardMember: updatedParticipant.isBoardMember,
             isKeyholder: updatedParticipant.isKeyholder,
-            household: updatedParticipant.household,
+            household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user),
         };
 
         return NextResponse.json({ participant: formatted });

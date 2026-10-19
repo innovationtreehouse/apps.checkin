@@ -15,7 +15,7 @@ description: >-
 # migration-safety
 
 The authority for every rule below is
-[`checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`](../../../checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md)
+[`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`](../../../docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md)
 — read it once for the why; this is the checklist version for every migration
 PR. It exists because PR #917 shipped a `DROP TABLE` in the same release as
 its backfill while `origin/main`'s JWT callback read that table on every
@@ -46,7 +46,7 @@ A schema change isn't cut over until these are all updated too — #917's own
 cutover sweep missed the first one:
 ```
 grep -rn '<OldModelOrTable>' checkin-app/scripts/*.sh
-grep -rn '<OldModelOrTable>' checkin-app/docs/VOCABULARY.md
+grep -rn '<OldModelOrTable>' docs/VOCABULARY.md
 grep -rn 'tableName: "<OldModelOrTable>"' checkin-app/src   # audit-log literals
 grep -rn '<OldModelOrTable>' checkin-app/prisma/seed.ts
 ```

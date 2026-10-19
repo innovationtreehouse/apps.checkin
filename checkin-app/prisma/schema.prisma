@@ -671,7 +671,7 @@ model BoardSettings {
   orgMembershipVariantId     String?
   /// Storefront URL of the membership product ("https://<store>/products/<handle>"),
   /// pasted by the board in membership settings. "Extract variant from URL" resolves
-  /// orgMembershipVariantId from it server-side (lib/shopify.ts) — the Shopify admin
+  /// orgMembershipVariantId from it server-side (lib/shopify/products.ts) — the Shopify admin
   /// UI hides the lone variant of a single-variant product, so the variant ID is not
   /// visible anywhere an admin could copy it from. The checkout link is always built
   /// from the variant ID above, never from this URL.
@@ -1067,7 +1067,7 @@ model Program {
   /// @sensitivity:public
   claimantShopifyVariantId  String?
   /// Durable "Shopify stock needs a push" flag: set when a stock write could not
-  /// be confirmed (lib/shopify.ts adjustProgramInventory).
+  /// be confirmed (lib/shopify/stock.ts adjustProgramInventory).
   /// @sensitivity:internal
   shopifyStockPushNeededAt  DateTime?
   /// JSON of a stock write that may still land, under its idempotency key; the

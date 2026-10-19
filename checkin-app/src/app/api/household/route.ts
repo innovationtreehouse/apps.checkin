@@ -47,7 +47,7 @@ export const GET = withAuth(
             // Only the lead sees it, matching the lead-gated editor on /my-household
             // and the 403 on PATCH /api/household/settings. Address stays: shared
             // household data the family authored.
-            const canSeeNotes = user.isHouseholdLead || user.isSysadmin;
+            const canSeeNotes = user.isHouseholdLead;
             const household = user.household && {
                 ...user.household,
                 ...(canSeeNotes ? {} : { intakeNotes: null }),
