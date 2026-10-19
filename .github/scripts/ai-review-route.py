@@ -42,6 +42,9 @@ PROFILE_THRESHOLD = 0.5
 COMPLETE_THRESHOLD = 0.2
 # Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
 MIN_CREDIT_USD = 5.0
+# The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
+FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and risk findings, not new nits. "
+                  "In a verify round, still re-check every earlier finding, nits included.\n")
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
@@ -342,12 +345,16 @@ def route():
     if tier != ORDER[0] and low_credit():
         credit_override, tier, t_by = tier, ORDER[0], f"credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
-    instructions = open(f"{CFG}/instructions.md").read()
+    base = open(f"{CFG}/instructions.md").read()
+    note = FREE_ONLY_BUGS if tier == ORDER[0] else ""
+    history = ""
     try:
         head_sha = os.environ.get("HEAD_SHA") or gh("pr", "view", pr, "-R", repo, "--json", "headRefOid", "--jq", ".headRefOid").strip()
-        instructions += review_history(pr, repo, head_sha, INSTRUCTIONS_MAX - len(instructions.encode()) - 200)
+        history = review_history(pr, repo, head_sha, INSTRUCTIONS_MAX - len((base + note).encode()) - 200)
     except Exception as e:
         print(f"::warning::could not read the review history ({e}); reviewing without it", file=sys.stderr)
+    # A judge-ordered rerun runs on a stronger rung, so it gets the instructions without the free-rung note.
+    instructions, rerun_instructions = base + note + history, base + history
     summary = (f"profiles={chosen} (path hint {hits}; {p_by})\n"
                f"tier={tier} model={model} (ladder suggested {suggested}; {t_by})\n"
                f"prompt: {len(instructions.encode())} bytes including review history")
@@ -360,6 +367,7 @@ def route():
         o.write(f"profiles={json.dumps(chosen)}\n")
         output_block(o, "path_profiles", json.dumps(applied))
         output_block(o, "instructions", instructions)
+        output_block(o, "rerun_instructions", rerun_instructions)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
         s.write(f"### AI review routing\n{summary}\n")
 
@@ -395,9 +403,10 @@ def adjudicate():
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
                          review_verdict=verdict or "missing (the review failed)", review_mode=mode,
+                         review_scope="bugs and risks only; new nits were not requested" if tier == ORDER[0] else "all findings",
                          untrusted_review_output=review[:60_000])
             qs = {"complete": {"type": "noul",
-                               "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
+                               "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode and review_scope; a review told to skip nits is not incomplete for having none. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
                                "criteria": {"true": "Initial: thorough for this change with evidenced findings. Verify: every earlier finding is marked fixed, not fixed or disputed with evidence, and the new commit was checked.",
                                             "false": "The review is missing or failed, is partial, skipped risky files or earlier findings, stopped early, or only restates the diff."}},
                   "rerun_on": {"type": "choice",
