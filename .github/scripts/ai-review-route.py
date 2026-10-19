@@ -311,7 +311,9 @@ def later_round(pr, repo, head_sha, profiles):
         if prior == head_sha:
             return rounds, (True, prior_ok, 0, False)
         cmp = json.loads(gh("api", f"repos/{repo}/compare/{prior}...{head_sha}"))
-        if cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
+        # A truncated compare (over 250 commits or 300 files) can hide a risky path, so it gets no cap.
+        truncated = cmp.get("total_commits", 0) > len(cmp.get("commits", [])) or len(cmp.get("files", [])) >= 300
+        if truncated or cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
             return rounds, (False, prior_ok, None, False)
         files = cmp.get("files", [])
         risky = [p for p in profiles if p["name"] in HIGH_PROFILES]
