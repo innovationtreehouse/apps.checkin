@@ -69,7 +69,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@d1a1a1cf4c539af618e86a0a1c3cd45ea084aabf # fork PR #7 head (compaction: none, rules), includes 1c2b06d; re-pin to its merge commit
+        uses: innovationtreehouse/openrouter-pr-review-action@c9f6e53263e5525777fe8ad29ff494d4ea690f7c # fork main: max_tokens cap + no 402 salvage (#6), compaction outcomes (#8), compaction none/rules (#7)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
@@ -108,7 +108,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@d1a1a1cf4c539af618e86a0a1c3cd45ea084aabf # fork PR #7 head (compaction: none, rules), includes 1c2b06d; re-pin to its merge commit
+        uses: innovationtreehouse/openrouter-pr-review-action@c9f6e53263e5525777fe8ad29ff494d4ea690f7c # fork main: max_tokens cap + no 402 salvage (#6), compaction outcomes (#8), compaction none/rules (#7)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
