@@ -37,8 +37,9 @@ ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
-# The free rung's nits were mostly rejected or ignored (2026-10-17/18: 26% rejected, 0 fixed bugs), so it reports bugs and risks only.
-FREE_ONLY_BUGS = "\n\nThis review runs on the free tier: report only bug and risk findings. Do not report nits.\n"
+# The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
+FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and risk findings, not new nits. "
+                  "In a verify round, still re-check every earlier finding, nits included.\n")
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
@@ -351,9 +352,10 @@ def adjudicate():
             mode = m.group(1) if m else "unknown"
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
                          review_verdict=verdict or "missing (the review failed)", review_mode=mode,
+                         review_scope="bugs and risks only; new nits were not requested" if tier == ORDER[0] else "all findings",
                          untrusted_review_output=review[:60_000])
             qs = {"complete": {"type": "noul",
-                               "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
+                               "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode and review_scope; a review told to skip nits is not incomplete for having none. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
                                "criteria": {"true": "Initial: thorough for this change with evidenced findings. Verify: every earlier finding is marked fixed, not fixed or disputed with evidence, and the new commit was checked.",
                                             "false": "The review is missing or failed, is partial, skipped risky files or earlier findings, stopped early, or only restates the diff."}},
                   "rerun_on": {"type": "choice",
