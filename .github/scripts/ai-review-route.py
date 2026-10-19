@@ -9,7 +9,7 @@ own: path matches for profiles, a fixed ladder for the model.
 `adjudicate` (after the review) asks Jev whether the posted review is complete and,
 if not, which stronger model on LADDER should rerun it.
 """
-import json, os, re, subprocess, sys, urllib.request, uuid
+import functools, json, os, re, subprocess, sys, urllib.request, uuid
 
 # The workflow points this at the default branch's copy, so a PR cannot edit its own reviewer.
 CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
@@ -49,6 +49,8 @@ FREE_ONLY_BUGS = ("\n\nThis review runs on the free tier: raise only new bug and
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
+# A later-round delta here keeps its tier. The pipeline holds the review key, so it counts too.
+DELTA_HIGH = HIGH_PROFILES | {"review-pipeline"}
 DIFF_BYTES = 200_000  # over ~32 KB Jev uses its slower long-context mode
 INSTRUCTIONS_MAX = 16_000  # the action's custom_instructions limit, in UTF-8 bytes
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -142,6 +144,18 @@ def gh(*args):
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+@functools.lru_cache(maxsize=None)
+def pr_reviews(repo, pr):
+    """Every review on the PR, fetched once per run."""
+    return [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
+
+
+def lane_rung(body):
+    """Highest rung index among the review's lanes that finished ok; -1 when none maps to today's ladder."""
+    models = re.findall(r"^- `([^`]+)`: ok\b", body or "", re.M)
+    return max((ORDER.index(r[0]) for r in LADDER if r[1] in models), default=-1)
+
+
 def pr_state(pr, repo):
     meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
     files = [f["path"] for f in meta["files"]]
@@ -217,22 +231,46 @@ def route_selftest():
     assert "abc123:r1-3 a.md:3" in out and "abc123:r1-1 a.md:1" not in out  # newest full thread kept, oldest dropped
     global gh
     real, calls = gh, []
-    def fake(out):
+    def rv(sha, verdict="issues", model=RUNG["high"][1]):
+        return {"user": {"login": BOT}, "commit_id": sha,
+                "body": f"**Verdict:** `{verdict}`\n- `{model}`: ok (1 finding(s))\n<!-- openrouter-review-ledger:v1:x -->"}
+    def api(reviews, cmp=None):
         def stub(*args):
             calls.append(args)
-            if isinstance(out, Exception):
-                raise out
-            return out
+            if isinstance(reviews, Exception):
+                raise reviews
+            return json.dumps([reviews]) if "/reviews" in args[-1] else json.dumps(cmp)
+        pr_reviews.cache_clear()
         return stub
+    ahead = lambda *files: {"status": "ahead", "total_commits": 1, "commits": [{"parents": [1]}], "files": list(files)}
+    prof = json.load(open(f"{CFG}/profiles.json"))
     try:
-        gh = fake("")
-        assert first_round("1", "o/r") and calls[-1][-1] == f'.[] | select(.user.login == "{BOT}") | .id'
-        gh = fake("123\n")
+        gh = api([{"user": {"login": "thpr"}}])
+        assert first_round("1", "o/r") and later_round("1", "o/r", "h", prof) is None
+        gh = api([rv("a")])
         assert not first_round("1", "o/r")
-        gh = fake(subprocess.CalledProcessError(1, "gh"))
-        assert not first_round("1", "o/r")
+        gh = api(subprocess.CalledProcessError(1, "gh"))
+        assert not first_round("1", "o/r") and later_round("1", "o/r", "h", prof) is None  # uncapped
+        n = len(calls)
+        gh = api([rv("a"), rv("h", "error")])
+        assert later_round("1", "o/r", "h", prof) == (1, (True, False, 0, False), True) and first_round("1", "o/r") is False
+        assert len(calls) == n + 1  # one reviews fetch per run
+        gh = api([rv("a"), rv("b", model=RUNG["mid"][1])], ahead({"filename": "x.ts", "additions": 200, "deletions": 0}))
+        assert later_round("1", "o/r", "h", prof) == (2, (False, True, 200, False), True) and "compare/a...h" in calls[-1][-1]
+        gh = api([rv("a", model=RUNG["mid"][1]), rv("b", "error")], ahead())  # no good high review to measure from
+        assert later_round("1", "o/r", "h", prof)[1] == (False, False, None, False)
+        gh = api([rv("a")], ahead({"filename": "checkin-app/src/lib/x.ts", "previous_filename": "checkin-app/src/security/x.ts"}))
+        assert later_round("1", "o/r", "h", prof)[1][3]  # a rename out of the boundary
+        for f in (".github/workflows/x.yml", "checkin-app/src/middleware.ts"):
+            gh = api([rv("a")], ahead({"filename": f, "additions": 5}))
+            assert later_round("1", "o/r", "h", prof)[1][3], f
+        for cmp in (dict(ahead(), total_commits=300), dict(ahead(), status="diverged"), dict(ahead(), commits=[{"parents": [1, 2]}])):
+            gh = api([rv("a")], cmp)
+            assert later_round("1", "o/r", "h", prof)[1][2] is None, cmp
     finally:
         gh = real
+        pr_reviews.cache_clear()
+    assert lane_rung("- `x/unknown`: ok (1)") == -1 and lane_rung(f"- `{RUNG['high'][1]}`: failed-open") == -1
     assert verify_cap("high", True, True, 0, False) == "free"
     assert verify_cap("high", True, False, 0, False) == "high"  # redo of a failed review keeps its tier
     assert verify_cap("high", False, True, 120, False) == "mid"
@@ -366,7 +404,7 @@ def review_history(pr, repo, head_sha, budget):
         cs.sort(key=lambda c: c["created_at"])
 
     summaries = []
-    for r in api(f"pulls/{pr}/reviews?per_page=100"):
+    for r in pr_reviews(repo, pr):
         body = _clean(r.get("body"), 1500)
         if _trusted(r) and body:
             at = str(r.get("commit_id"))[:7]
@@ -382,8 +420,7 @@ def review_history(pr, repo, head_sha, budget):
 def first_round(pr, repo):
     """No review from the bot yet. A failed lookup counts as a later round, so routing is unchanged."""
     try:
-        return not gh("api", f"repos/{repo}/pulls/{pr}/reviews", "--paginate",
-                      "--jq", f'.[] | select(.user.login == "{BOT}") | .id').strip()
+        return not any(r["user"]["login"] == BOT for r in pr_reviews(repo, pr))
     except Exception as e:
         print(f"::warning::could not list reviews ({e}); routing as a later round", file=sys.stderr)
         return False
@@ -423,29 +460,33 @@ def resume_plan(event, has_ledger):
 
 def later_round(pr, repo, head_sha, profiles):
     """(rounds, (same_commit, prior_ok, delta_lines, delta_high), has_ledger) since the last bot review; None on
-    the first round. delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
+    the first round. The delta runs from the last good review on high or above, so capped rounds add up instead
+    of chaining. delta_lines is None without such a review, or when the range is a rebase or a base merge."""
     try:
-        reviews = [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
-        last = [r for r in reviews if r["user"]["login"] == BOT and r.get("commit_id")]
+        last = [r for r in pr_reviews(repo, pr) if r["user"]["login"] == BOT and r.get("commit_id")]
         if not last:
             return None
         has_ledger = any("openrouter-review-ledger:" in (r.get("body") or "") for r in last)
         rounds = len({r["commit_id"] for r in last} - {head_sha}) if has_ledger else 0
-        prior, body = last[-1]["commit_id"], last[-1].get("body") or ""
-        prior_ok = re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", body) is not None
-        if prior == head_sha:
+        good = lambda r: re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", r.get("body") or "") is not None
+        prior_ok = good(last[-1])
+        if last[-1]["commit_id"] == head_sha:
             return rounds, (True, prior_ok, 0, False), has_ledger
-        cmp = json.loads(gh("api", f"repos/{repo}/compare/{prior}...{head_sha}"))
+        base = next((r for r in reversed(last) if good(r) and lane_rung(r.get("body")) >= ORDER.index("high")), None)
+        if base is None:
+            return rounds, (False, prior_ok, None, False), has_ledger
+        cmp = json.loads(gh("api", f"repos/{repo}/compare/{base['commit_id']}...{head_sha}"))
         # A truncated compare (over 250 commits or 300 files) can hide a risky path, so it gets no cap.
         truncated = cmp.get("total_commits", 0) > len(cmp.get("commits", [])) or len(cmp.get("files", [])) >= 300
         if truncated or cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
             return rounds, (False, prior_ok, None, False), has_ledger
         files = cmp.get("files", [])
-        risky = [p for p in profiles if p["name"] in HIGH_PROFILES]
+        risky = [p for p in profiles if p["name"] in DELTA_HIGH]
+        paths = [f[k] for f in files for k in ("filename", "previous_filename") if f.get(k)]  # renames out count
         return rounds, (False, prior_ok, sum(f.get("additions", 0) + f.get("deletions", 0) for f in files),
-                        bool(matched_profiles(risky, [f["filename"] for f in files]))), has_ledger
+                        bool(matched_profiles(risky, paths))), has_ledger
     except Exception as e:
-        print(f"::warning::could not compare with the last review ({e}); routing as a first round", file=sys.stderr)
+        print(f"::warning::could not compare with the last review ({e}); routing uncapped", file=sys.stderr)
         return None
 
 
@@ -491,7 +532,7 @@ def route():
 
     head_sha = os.environ.get("HEAD_SHA", "")
     later = later_round(pr, repo, head_sha, profiles) if head_sha else None
-    mode = scope = compaction = None
+    mode = scope = compaction = capped_from = None
     event = os.environ.get("EVENT_ACTION", "")
     resume = resume_plan(event, later[2]) if later else None
     if resume:
@@ -502,7 +543,7 @@ def route():
         scope, compaction, apply_cap = round_plan(rounds, delta[0], event)
         capped = verify_cap(tier, *delta) if apply_cap else tier
         if capped != tier:
-            tier, t_by = capped, f"later round {later}, capped from {tier} ({t_by})"
+            capped_from, tier, t_by = tier, capped, f"later round {later}, capped from {tier} ({t_by})"
         elif scope:
             t_by = f"round {rounds + 1}: {scope} scope, {compaction} history ({t_by})"
     credit_override = None
@@ -525,7 +566,9 @@ def route():
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
                  tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
-                 files=state["file_count"], credit_override=credit_override)
+                 files=state["file_count"], credit_override=credit_override, rounds=later and later[0],
+                 delta=later and later[1], resume=bool(resume) and event, mode=mode, scope=scope,
+                 compaction=compaction, capped_from=capped_from)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
