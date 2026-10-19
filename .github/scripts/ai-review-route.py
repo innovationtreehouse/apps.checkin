@@ -18,7 +18,7 @@ JEV = "typesafe/jev-1.14"
 LADDER = [
     # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
-    ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
+    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
     # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
     # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
