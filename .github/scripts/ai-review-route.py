@@ -188,6 +188,10 @@ def route_selftest():
     assert round_plan(3, True, "labeled") == (None, None, False)  # re-added label: no same-commit cap
     assert rerun_plan(True) == ("verify", "rebase", "none")  # keeps the ledger generation and its history
     assert rerun_plan(False) == ("initial", "full-pr", "auto")  # round-1 rerun: no ledger to verify
+    for event in ("labeled", "reopened", "ready_for_review"):
+        assert resume_plan(event, True) == ("verify", "rebase", "none")  # same ledger generation, uncapped tier
+        assert resume_plan(event, False) is None  # no ledger: a fresh initial review
+    assert resume_plan("synchronize", True) is None  # pushes keep round_plan and auto mode
     print("route selftest ok")
 
 
@@ -304,6 +308,12 @@ def rerun_plan(has_ledger):
     return ("verify", "rebase", "none") if has_ledger else ("initial", "full-pr", "auto")
 
 
+def resume_plan(event, has_ledger):
+    """(review_mode, review_scope, compaction) when a re-added label, a reopen or ready-for-review finds a ledger:
+    pick up from the last review as round 2 does, so its findings and disputes carry over. None: today's plan."""
+    return rerun_plan(True) if has_ledger and event in ("labeled", "reopened", "ready_for_review") else None
+
+
 def later_round(pr, repo, head_sha, profiles):
     """(rounds, (same_commit, prior_ok, delta_lines, delta_high), has_ledger) since the last bot review; None on
     the first round. delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
@@ -374,10 +384,15 @@ def route():
 
     head_sha = os.environ.get("HEAD_SHA", "")
     later = later_round(pr, repo, head_sha, profiles) if head_sha else None
-    scope = compaction = None
-    if later:
+    mode = scope = compaction = None
+    event = os.environ.get("EVENT_ACTION", "")
+    resume = resume_plan(event, later[2]) if later else None
+    if resume:
+        mode, scope, compaction = resume
+        t_by = f"{event}: picks up from the last review, {mode} mode, {scope} scope, {compaction} history ({t_by})"
+    elif later:
         rounds, delta, _ = later
-        scope, compaction, apply_cap = round_plan(rounds, delta[0], os.environ.get("EVENT_ACTION", ""))
+        scope, compaction, apply_cap = round_plan(rounds, delta[0], event)
         capped = verify_cap(tier, *delta) if apply_cap else tier
         if capped != tier:
             tier, t_by = capped, f"later round {later}, capped from {tier} ({t_by})"
@@ -404,6 +419,8 @@ def route():
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
+        if mode:
+            o.write(f"review_mode={mode}\n")
         if scope:
             o.write(f"review_scope={scope}\ncompaction={compaction}\n")
         o.write("rerun_review_mode={}\nrerun_review_scope={}\nrerun_compaction={}\n".format(*rerun_plan(bool(later and later[2]))))
