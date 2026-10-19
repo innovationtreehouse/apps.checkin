@@ -325,7 +325,7 @@ describe('Program payment-plan routes', () => {
                     new Request(`http://localhost/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'DELETE',
                         headers: { cookie: 'session=test' },
-                        body: JSON.stringify({ participantId: selfId }),
+                        body: JSON.stringify({ participantId: selfId, reason: 'Family moved away' }),
                     }) as unknown as import('next/server').NextRequest,
                     { params: Promise.resolve({ id: String(shopifyProgram.id) }) },
                 );

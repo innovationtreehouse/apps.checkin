@@ -138,13 +138,12 @@ Things the app takes as true because they are handled outside it.
   household lead, who may also withdraw them while the place is unpaid. Neither a
   youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
 
-- A paid place is not the household's to withdraw: neither the household lead
-  nor the enrolled adult can remove it. The board, a sysadmin and the program's
-  leader can.  [Unsettled — who withdraws a paid
-  place is open with the board]
+- A paid place is removed only by the Board, with a written reason. Neither the
+  household lead, the enrolled adult, a sysadmin nor the program's leader can
+  remove it.  [Decision — *Policy: Standards of Conduct §XVI.3*]
 
-- The board, a sysadmin and the program's leader remove a paid place except for
-  a place in their own household, which someone outside the household removes.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+- A Board member does not remove a paid place in their own household; another
+  Board member outside the household does.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Being refused for an unknown age is not a dead end. Someone with no age on file
   is asked to record one and may then enroll themselves; a brand-new adult is
