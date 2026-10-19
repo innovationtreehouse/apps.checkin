@@ -13,6 +13,7 @@ import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { resolveProgramYear } from "@/lib/programs/update";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -179,7 +180,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        const { name, leadMentorId, startAt, endAt, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
+        const { name, leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
 
         if (!name) {
             return apiError("Program name is required", 400);
@@ -211,6 +212,22 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (!endAt) {
             return apiError("End date is required", 400);
         }
+        const startDate = new Date(startAt);
+        const endDate = new Date(endAt);
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            return apiError("Invalid start or end date", 400);
+        }
+        if (startDate > endDate) {
+            return apiError("Start date must be on or before the end date", 400);
+        }
+        const year = await resolveProgramYear({
+            startAt: startDate,
+            endAt: endDate,
+            supplied: appliesToYear,
+            current: null,
+            isBoardMember: auth.user.isBoardMember,
+        });
+        if (!year.ok) return apiError(year.message, year.refusal === "forbidden" ? 403 : 400);
 
         const maxPart = maxParticipants != null ? parseInt(maxParticipants, 10) : null;
         if (maxPart == null || isNaN(maxPart) || maxPart < 1) {
@@ -241,8 +258,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             data: {
                 name,
                 leadMentorId: mentorId,
-                startAt: new Date(startAt),
-                endAt: new Date(endAt),
+                startAt: startDate,
+                endAt: endDate,
+                appliesToYear: year.appliesToYear,
                 orgMemberOnly: orgMemberOnly || false,
                 // publiclyVisible only has meaning for a members-only program; a
                 // public one is already visible. Clamp so the nonsense state

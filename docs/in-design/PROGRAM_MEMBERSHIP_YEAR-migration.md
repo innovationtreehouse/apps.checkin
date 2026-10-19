@@ -5,7 +5,7 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Four pull requests finish this; none has started. The date half of the original
+Four pull requests finish this. PRs 1 and 2 have merged; PR 3 is in review. The date half of the original
 design has shipped: every program has a start and an end date, the create and
 edit routes refuse one without both, and `programCoverageDate` returns the end
 date. What remains is the stated year and everything that reads it.

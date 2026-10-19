@@ -696,4 +696,80 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "← Back to Programs" }));
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs");
   });
+
+  describe("membership year", () => {
+    // jsdom lacks scrollIntoView, which Mantine's Select/Combobox calls on open.
+    beforeAll(() => {
+      window.HTMLElement.prototype.scrollIntoView = jest.fn();
+    });
+    // Crosses 1 September 2026; one ACTIVE (paid) place in programData.
+    const crossingProgram = { ...programData, startAt: "2026-06-01T00:00:00.000Z", endAt: "2026-10-01T00:00:00.000Z", appliesToYear: 2025 };
+    const setup = () => {
+      setSession({ id: 1, isBoardMember: true });
+      return routedFetch([
+        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
+        { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
+      ]);
+    };
+    const patched = (fetchMock: jest.Mock) => fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+
+    it("asks before saving a changed year on a program with paid places, naming how many", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+      renderPage();
+      fireEvent.click(await screen.findByDisplayValue("2025-2026"));
+      fireEvent.click(screen.getByText("2026-2027", { selector: '[role="option"] span' }));
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 paid place was"));
+      expect(patched(fetchMock)).toHaveLength(0);
+
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(JSON.parse(String((patched(fetchMock)[0][1] as RequestInit).body)).appliesToYear).toBe(2026);
+      confirm.mockRestore();
+    });
+
+    it("drops a year the new dates no longer touch and blocks saving until one is chosen", async () => {
+      const fetchMock = setup();
+      renderPage();
+      await screen.findByDisplayValue("2025-2026");
+
+      fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2027-06-01" } });
+      fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2027-10-01" } });
+
+      expect(screen.queryByDisplayValue("2025-2026")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save Settings" })).toBeDisabled();
+      expect(patched(fetchMock)).toHaveLength(0);
+    });
+
+    it("does not pre-select a derived year when single-year dates are moved across the boundary", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      routedFetch([
+        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: { ...crossingProgram, endAt: "2026-08-15T00:00:00.000Z" } } },
+      ]);
+      renderPage();
+      await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+      fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2026-10-01" } });
+
+      expect(await screen.findByPlaceholderText("Choose the year")).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Save Settings" })).toBeDisabled();
+    });
+
+    it("saves an unchanged year without asking", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm");
+      renderPage();
+      await screen.findByDisplayValue("2025-2026");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(confirm).not.toHaveBeenCalled();
+      confirm.mockRestore();
+    });
+  });
 });

@@ -38,6 +38,10 @@ describe("flow: program purchase with member pricing", () => {
                 leadMentorId: lead.personaId,
                 startAt: "2026-01-01",
                 endAt: "2026-12-31",
+                // These dates cross the 1 September boundary, so the Board states the year.
+                // The seeded member has no settled dues for the year in progress, so its
+                // coverage reaches only the boundary that opened that year: state 2025-2026.
+                appliesToYear: 2025,
                 memberPrice: "40",
                 nonMemberPrice: "50",
                 maxParticipants: 10,

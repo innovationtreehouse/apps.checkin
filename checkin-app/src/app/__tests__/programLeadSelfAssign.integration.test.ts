@@ -10,6 +10,7 @@ import { PATCH } from '@/app/api/programs/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import type { NextRequest } from 'next/server';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -18,6 +19,11 @@ jest.mock('next-auth/next', () => ({
 const TAG = 'lead-self-assign-test';
 
 describe('program lead assignment refuses self and own household', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let boardId: number;
     let housemateId: number;
     let outsiderId: number;
@@ -26,7 +32,7 @@ describe('program lead assignment refuses self and own household', () => {
 
     const create = (leadMentorId: number) => POST(new Request('http://localhost/api/programs', {
         method: 'POST',
-        body: JSON.stringify({ name: `${TAG} program`, leadMentorId, startAt: '2026-01-01', endAt: '2026-12-31', maxParticipants: 10 }),
+        body: JSON.stringify({ name: `${TAG} program`, leadMentorId, startAt: '2026-01-01', endAt: '2026-06-30', maxParticipants: 10 }),
     }) as unknown as NextRequest);
 
     const edit = (body: Record<string, unknown>) => PATCH(

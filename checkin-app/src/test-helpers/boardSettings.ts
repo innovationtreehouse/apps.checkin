@@ -12,3 +12,18 @@ export async function snapshotBoardSettings(): Promise<() => Promise<void>> {
         else await prisma.boardSettings.deleteMany({ where: { id: 1 } });
     };
 }
+
+/**
+ * Set the membership-year boundary to 1 September, which program writes need.
+ * Returns the restore from snapshotBoardSettings.
+ */
+export async function setMembershipYearBoundary(): Promise<() => Promise<void>> {
+    const restore = await snapshotBoardSettings();
+    const boundary = new Date('2000-09-01T00:00:00Z');
+    await prisma.boardSettings.upsert({
+        where: { id: 1 },
+        create: { id: 1, orgMembershipYearBoundary: boundary },
+        update: { orgMembershipYearBoundary: boundary },
+    });
+    return restore;
+}

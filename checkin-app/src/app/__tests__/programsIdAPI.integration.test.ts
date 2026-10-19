@@ -10,7 +10,7 @@ import { GET, PATCH } from '@/app/api/programs/[id]/route';
 import { GET as getMine } from '@/app/api/programs/mine/route';
 import { emailBoardMembers } from '@/lib/emailRecipients';
 import prisma from '@/lib/prisma';
-import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { snapshotBoardSettings, setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { ORG_DOMAIN } from '@/lib/config';
 // Mock NextAuth
@@ -1004,8 +1004,15 @@ describe('Individual Program API Integration Tests', () => {
                 method: 'PATCH',
                 body: JSON.stringify({ startAt: '2026-03-01', endAt: '2026-03-01' })
             });
-            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(noEventsProgramId) as unknown as never);
-            expect(res.status).toBe(200);
+            const restoreBoundary = await setMembershipYearBoundary();
+            try {
+                const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(noEventsProgramId) as unknown as never);
+                expect(res.status).toBe(200);
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: noEventsProgramId } });
+                expect(row.appliesToYear).toBe(2025);
+            } finally {
+                await restoreBoundary();
+            }
         });
 
         // ── Enum / type validation ──
@@ -1255,12 +1262,14 @@ describe('Individual Program API Integration Tests', () => {
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
+                    appliesToYear: 2098,
                     name: 'Prog ID API Test Sale Ended Start Move',
                     phase: 'RUNNING',
                     leadMentorId: leadId,
                     enrollmentStatus: 'CLOSED',
                 },
             });
+            const restoreBoundary = await setMembershipYearBoundary();
             try {
                 const res = await PATCH(
                     new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ startAt: '2099-01-01', enrollmentStatus: 'OPEN' }) }) as unknown as import("next/server").NextRequest,
@@ -1277,6 +1286,7 @@ describe('Individual Program API Integration Tests', () => {
                 expect(row.startAt.toISOString()).toBe('2099-01-01T00:00:00.000Z');
                 expect(row.offSaleAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
             } finally {
+                await restoreBoundary();
                 await prisma.program.delete({ where: { id: ended.id } });
             }
         });
@@ -1778,7 +1788,12 @@ describe('Individual Program API Integration Tests', () => {
 
         it('a later edit names only newly out-of-range children', async () => {
             // Moving the start two years later makes the 15-year-old 17.
-            await patch({ maxAge: 16, startAt: '2028-06-15', endAt: '2028-08-31' });
+            const restoreBoundary = await setMembershipYearBoundary();
+            try {
+                await patch({ maxAge: 16, startAt: '2028-06-15', endAt: '2028-08-31' });
+            } finally {
+                await restoreBoundary();
+            }
             expect(emailSpy).toHaveBeenCalledTimes(1);
             expect(flaggedHtml()).toContain('Fifteen Year Canary');
             expect(flaggedHtml()).not.toContain('Ten Year Canary');

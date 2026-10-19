@@ -16,6 +16,7 @@ import { POST } from '@/app/api/programs/route';
 import { PATCH } from '@/app/api/programs/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -34,6 +35,11 @@ jest.mock('@/lib/shopify/stock', () => ({
 const PROGRAM_NAME_TAG = 'Price RoundTrip Test Program';
 
 describe('Program price round-trip (dollars -> cents) Integration Tests', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let adminId: number;
     let leadId: number;
 
@@ -73,7 +79,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
             const name = `${PROGRAM_NAME_TAG} decimal`;
             const req = new Request('http://localhost:4000/api/programs', {
                 method: 'POST',
-                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', memberPrice: '25.99', nonMemberPrice: '100', maxParticipants: 50 }),
+                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30', memberPrice: '25.99', nonMemberPrice: '100', maxParticipants: 50 }),
             });
             const res = await POST(req as unknown as import('next/server').NextRequest);
             expect(res.status).toBe(200);
@@ -89,7 +95,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
             const name = `${PROGRAM_NAME_TAG} wholedollar`;
             const req = new Request('http://localhost:4000/api/programs', {
                 method: 'POST',
-                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', memberPrice: '30', nonMemberPrice: '', maxParticipants: 50 }),
+                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30', memberPrice: '30', nonMemberPrice: '', maxParticipants: 50 }),
             });
             const res = await POST(req as unknown as import('next/server').NextRequest);
             expect(res.status).toBe(200);
@@ -105,7 +111,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
             const name = `${PROGRAM_NAME_TAG} null`;
             const req = new Request('http://localhost:4000/api/programs', {
                 method: 'POST',
-                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', maxParticipants: 50 }),
+                body: JSON.stringify({ name, leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30', maxParticipants: 50 }),
             });
             const res = await POST(req as unknown as import('next/server').NextRequest);
             expect(res.status).toBe(200);
