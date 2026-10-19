@@ -69,8 +69,10 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@c83b7122460572aa1d684191279e2af634a58579 # fork PR #7 head (compaction: full); re-pin to its merge commit
+        uses: innovationtreehouse/openrouter-pr-review-action@d1a1a1cf4c539af618e86a0a1c3cd45ea084aabf # fork PR #7 head (compaction: none, rules), includes 1c2b06d; re-pin to its merge commit
         with:
+          # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
+          approve: "off"
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
           max_tool_turns: ${{ steps.route.outputs.max_tool_turns }}
@@ -106,14 +108,16 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@c83b7122460572aa1d684191279e2af634a58579 # fork PR #7 head (compaction: full); re-pin to its merge commit
+        uses: innovationtreehouse/openrouter-pr-review-action@d1a1a1cf4c539af618e86a0a1c3cd45ea084aabf # fork PR #7 head (compaction: none, rules), includes 1c2b06d; re-pin to its merge commit
         with:
+          # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
+          approve: "off"
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
           max_tool_turns: ${{ steps.judge.outputs.max_tool_turns }}
           max_diff_kb: ${{ steps.judge.outputs.max_diff_kb }}
           effort: ${{ steps.judge.outputs.effort }}
-          custom_instructions: ${{ steps.route.outputs.instructions }}
+          custom_instructions: ${{ steps.route.outputs.rerun_instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
           # The escalated rerun is a fresh review, not a verify round of the one the judge rejected.
