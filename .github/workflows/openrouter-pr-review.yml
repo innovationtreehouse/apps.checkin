@@ -60,6 +60,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
@@ -68,7 +69,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@9bac9bf636765f10250aadf93497dda57a70c7fd # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4)
+        uses: innovationtreehouse/openrouter-pr-review-action@c83b7122460572aa1d684191279e2af634a58579 # fork PR #7 head (compaction: full); re-pin to its merge commit
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
@@ -78,8 +79,10 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
-          # Re-reviews only: cached brief of a long PR body and overflowing history.
-          # compaction defaults to auto; `off` stops only this brief, not history compaction.
+          # Round 2 (route sets these): whole-PR rebase review with verbatim history.
+          # Round 3+: auto, so history is compacted and long bodies get a cached brief.
+          review_scope: ${{ steps.route.outputs.review_scope || 'full-pr' }}
+          compaction: ${{ steps.route.outputs.compaction || 'auto' }}
           compaction_model: nvidia/nemotron-3.5-super-vl:free
           # Continue the review loop only on new commits; label and reopen start fresh.
           review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
@@ -103,7 +106,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@9bac9bf636765f10250aadf93497dda57a70c7fd # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4)
+        uses: innovationtreehouse/openrouter-pr-review-action@c83b7122460572aa1d684191279e2af634a58579 # fork PR #7 head (compaction: full); re-pin to its merge commit
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}

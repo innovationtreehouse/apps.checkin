@@ -174,6 +174,12 @@ def route_selftest():
     assert verify_cap("high", False, True, 120, True) == "high"  # delta touches a migration or the security boundary
     assert verify_cap("high", False, True, 900, False) == "high"
     assert verify_cap("high", False, True, None, False) == "high"  # rebased: no clean delta
+    assert round_plan(1, False, "synchronize") == ("rebase", "full", False)  # round 2: Jev's tier, full history
+    assert round_plan(1, False, "labeled") == (None, None, False)  # initial mode cannot take rebase scope
+    assert round_plan(2, False, "synchronize") == (None, None, True)
+    assert round_plan(0, False, "synchronize") == (None, None, True)  # no ledger yet
+    assert round_plan(1, True, "synchronize") == (None, None, True)
+    assert round_plan(3, True, "labeled") == (None, None, False)  # re-added label: no same-commit cap
     print("route selftest ok")
 
 
@@ -274,25 +280,37 @@ def verify_cap(tier, same_commit, prior_ok, delta_lines, delta_high):
     return tier
 
 
+def round_plan(rounds, same_commit, event):
+    """(review_scope, compaction, apply_cap). rounds = commits the bot reviewed before head (0 without a ledger).
+    Round 2 is a full-PR rebase review with verbatim history at Jev's tier; review_mode is auto only on push."""
+    if same_commit:
+        return None, None, event != "labeled"
+    if rounds == 1:
+        return ("rebase", "full", False) if event == "synchronize" else (None, None, False)
+    return None, None, True
+
+
 def later_round(pr, repo, head_sha, profiles):
-    """(same_commit, prior_ok, delta_lines, delta_high) since the last bot review; None on the first round.
-    delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
+    """(rounds, (same_commit, prior_ok, delta_lines, delta_high)) since the last bot review; None on the first
+    round. delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
     try:
         reviews = [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
         last = [r for r in reviews if r["user"]["login"] == BOT and r.get("commit_id")]
         if not last:
             return None
+        has_ledger = any("openrouter-review-ledger:" in (r.get("body") or "") for r in last)
+        rounds = len({r["commit_id"] for r in last} - {head_sha}) if has_ledger else 0
         prior, body = last[-1]["commit_id"], last[-1].get("body") or ""
         prior_ok = re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", body) is not None
         if prior == head_sha:
-            return True, prior_ok, 0, False
+            return rounds, (True, prior_ok, 0, False)
         cmp = json.loads(gh("api", f"repos/{repo}/compare/{prior}...{head_sha}"))
         if cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
-            return False, prior_ok, None, False
+            return rounds, (False, prior_ok, None, False)
         files = cmp.get("files", [])
         risky = [p for p in profiles if p["name"] in HIGH_PROFILES]
-        return (False, prior_ok, sum(f.get("additions", 0) + f.get("deletions", 0) for f in files),
-                bool(matched_profiles(risky, [f["filename"] for f in files])))
+        return rounds, (False, prior_ok, sum(f.get("additions", 0) + f.get("deletions", 0) for f in files),
+                        bool(matched_profiles(risky, [f["filename"] for f in files])))
     except Exception as e:
         print(f"::warning::could not compare with the last review ({e}); routing as a first round", file=sys.stderr)
         return None
@@ -340,10 +358,15 @@ def route():
 
     head_sha = os.environ.get("HEAD_SHA", "")
     later = later_round(pr, repo, head_sha, profiles) if head_sha else None
+    scope = compaction = None
     if later:
-        capped = verify_cap(tier, *later)
+        rounds, delta = later
+        scope, compaction, apply_cap = round_plan(rounds, delta[0], os.environ.get("EVENT_ACTION", ""))
+        capped = verify_cap(tier, *delta) if apply_cap else tier
         if capped != tier:
             tier, t_by = capped, f"later round {later}, capped from {tier} ({t_by})"
+        elif scope:
+            t_by = f"round {rounds + 1}: {scope} scope, {compaction} history ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
     try:
@@ -361,6 +384,8 @@ def route():
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
+        if scope:
+            o.write(f"review_scope={scope}\ncompaction={compaction}\n")
         output_block(o, "path_profiles", json.dumps(applied))
         output_block(o, "instructions", instructions)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
