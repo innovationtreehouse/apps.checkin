@@ -186,6 +186,8 @@ def route_selftest():
     assert round_plan(0, False, "synchronize") == (None, None, True)  # no ledger yet
     assert round_plan(1, True, "synchronize") == (None, None, True)
     assert round_plan(3, True, "labeled") == (None, None, False)  # re-added label: no same-commit cap
+    assert rerun_plan(True) == ("verify", "rebase", "none")  # keeps the ledger generation and its history
+    assert rerun_plan(False) == ("initial", "full-pr", "auto")  # round-1 rerun: no ledger to verify
     print("route selftest ok")
 
 
@@ -296,9 +298,15 @@ def round_plan(rounds, same_commit, event):
     return None, None, True
 
 
+def rerun_plan(has_ledger):
+    """(review_mode, review_scope, compaction) for the judge's rerun. A ledger from before this run means a
+    whole-PR verify round, so settled and disputed findings survive; only a round-1 rerun starts fresh."""
+    return ("verify", "rebase", "none") if has_ledger else ("initial", "full-pr", "auto")
+
+
 def later_round(pr, repo, head_sha, profiles):
-    """(rounds, (same_commit, prior_ok, delta_lines, delta_high)) since the last bot review; None on the first
-    round. delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
+    """(rounds, (same_commit, prior_ok, delta_lines, delta_high), has_ledger) since the last bot review; None on
+    the first round. delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
     try:
         reviews = [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
         last = [r for r in reviews if r["user"]["login"] == BOT and r.get("commit_id")]
@@ -309,16 +317,16 @@ def later_round(pr, repo, head_sha, profiles):
         prior, body = last[-1]["commit_id"], last[-1].get("body") or ""
         prior_ok = re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", body) is not None
         if prior == head_sha:
-            return rounds, (True, prior_ok, 0, False)
+            return rounds, (True, prior_ok, 0, False), has_ledger
         cmp = json.loads(gh("api", f"repos/{repo}/compare/{prior}...{head_sha}"))
         # A truncated compare (over 250 commits or 300 files) can hide a risky path, so it gets no cap.
         truncated = cmp.get("total_commits", 0) > len(cmp.get("commits", [])) or len(cmp.get("files", [])) >= 300
         if truncated or cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
-            return rounds, (False, prior_ok, None, False)
+            return rounds, (False, prior_ok, None, False), has_ledger
         files = cmp.get("files", [])
         risky = [p for p in profiles if p["name"] in HIGH_PROFILES]
         return rounds, (False, prior_ok, sum(f.get("additions", 0) + f.get("deletions", 0) for f in files),
-                        bool(matched_profiles(risky, [f["filename"] for f in files])))
+                        bool(matched_profiles(risky, [f["filename"] for f in files]))), has_ledger
     except Exception as e:
         print(f"::warning::could not compare with the last review ({e}); routing as a first round", file=sys.stderr)
         return None
@@ -368,7 +376,7 @@ def route():
     later = later_round(pr, repo, head_sha, profiles) if head_sha else None
     scope = compaction = None
     if later:
-        rounds, delta = later
+        rounds, delta, _ = later
         scope, compaction, apply_cap = round_plan(rounds, delta[0], os.environ.get("EVENT_ACTION", ""))
         capped = verify_cap(tier, *delta) if apply_cap else tier
         if capped != tier:
@@ -398,6 +406,7 @@ def route():
         o.write(f"profiles={json.dumps(chosen)}\n")
         if scope:
             o.write(f"review_scope={scope}\ncompaction={compaction}\n")
+        o.write("rerun_review_mode={}\nrerun_review_scope={}\nrerun_compaction={}\n".format(*rerun_plan(bool(later and later[2]))))
         output_block(o, "path_profiles", json.dumps(applied))
         output_block(o, "instructions", instructions)
         output_block(o, "rerun_instructions", rerun_instructions)

@@ -120,8 +120,12 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.rerun_instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
-          # The escalated rerun is a fresh review, not a verify round of the one the judge rejected.
-          review_mode: initial
+          # With an earlier ledger, a whole-PR verify round that keeps the review history (route's
+          # rerun_plan); a round-1 rerun stays a fresh initial review.
+          review_mode: ${{ steps.route.outputs.rerun_review_mode || 'initial' }}
+          review_scope: ${{ steps.route.outputs.rerun_review_scope || 'full-pr' }}
+          compaction: ${{ steps.route.outputs.rerun_compaction || 'auto' }}
+          compaction_model: nvidia/nemotron-3.5-super-vl:free
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Advisory only: a recommendation line on the final review plus the ai-recommends-approve label.

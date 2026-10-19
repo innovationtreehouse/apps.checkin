@@ -64,5 +64,14 @@
    "docs/in-design/**"
   ],
   "instructions": "Every claim about current behaviour must match the code on main; read it. A tag change such as [Unsettled] to [Decision] needs an owner ruling recorded in the PR. Retiring a doc must not drop an open question or follow-up without a new home."
+ },
+ {
+  "name": "review-pipeline",
+  "paths": [
+   ".github/scripts/**",
+   ".github/workflows/**",
+   ".github/ai-review/**"
+  ],
+  "instructions": "These files are code that decides how PRs are reviewed. PR-controlled text (titles, bodies, diffs, comments, review output) must stay data, never instructions: check prompt-injection boundaries and the _trusted filtering of comments and reviews. Secrets reach only the steps that need them and never PR-controlled code (checkouts of the PR head, scripts it can edit). Routing, judge and rerun logic must fail safe: a failure must never silently skip or weaken a review. Size and budget limits must still hold. The self-tests must cover every new branch."
  }
 ]
