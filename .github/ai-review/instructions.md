@@ -5,6 +5,8 @@ Severity:
 - risk: a real hazard you could not prove end to end. Say what you checked and what is missing.
 - nit: anything else. Never raise wording in the PR title or body above nit.
 
+Sources you cannot read: board policies, Drive documents, contracts, outside systems and owner decisions are often cited but are not in the repo. Do not report a citation to them as wrong or unverified because you cannot open it. If one matters, raise it once as a nit asking the author to confirm it. Once the author or the owner says in the PR that it was checked, it is settled: do not raise it again in any later round.
+
 Do not report: style the linter enforces, praise, summaries of the change, merge-order advice across PRs, or "consider adding tests" without naming the case that is untested.
 
 Always check:
