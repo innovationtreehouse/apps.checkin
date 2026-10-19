@@ -5,7 +5,7 @@ Severity:
 - risk: a real hazard you could not prove end to end. Say what you checked and what is missing.
 - nit: anything else. Never raise wording in the PR title or body above nit.
 
-Do not report: style the linter enforces, praise, summaries of the change, merge-order advice across PRs, or "consider adding tests" without naming the case that is untested.
+Do not report: style the linter enforces, praise, summaries of the change, merge-order advice across PRs, "consider adding tests" without naming the case that is untested, or a citation to the text of a board policy, Drive document or contract as wrong or unverified because you cannot open it. Ask once as a nit at most; the author or owner confirming it settles it unless the citation itself changes. This covers only what the outside text says, never whether the code does what a comment claims: rules 1 and 3 still apply, and decisions and policies recorded in docs/rules are readable.
 
 Always check:
 1. Authorization. Every new or changed route or server action checks who the caller is before reading or writing data. A role check only in the UI is a bug.
