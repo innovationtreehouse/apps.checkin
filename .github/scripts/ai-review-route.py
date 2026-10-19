@@ -37,6 +37,7 @@ ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
+SMALL_DELTA = 300
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
@@ -166,6 +167,13 @@ def route_selftest():
         assert not first_round("1", "o/r")
     finally:
         gh = real
+    assert verify_cap("high", True, True, 0, False) == "free"
+    assert verify_cap("high", True, False, 0, False) == "high"  # redo of a failed review keeps its tier
+    assert verify_cap("high", False, True, 120, False) == "mid"
+    assert verify_cap("free", False, True, 120, False) == "free"
+    assert verify_cap("high", False, True, 120, True) == "high"  # delta touches a migration or the security boundary
+    assert verify_cap("high", False, True, 900, False) == "high"
+    assert verify_cap("high", False, True, None, False) == "high"  # rebased: no clean delta
     print("route selftest ok")
 
 
@@ -256,6 +264,40 @@ def first_round(pr, repo):
         return False
 
 
+def verify_cap(tier, same_commit, prior_ok, delta_lines, delta_high):
+    """Cap the tier for a round after the first: an unchanged commit that already has a usable review goes
+    to the free rung, and a small delta (<= SMALL_DELTA lines) away from high-risk paths to at most mid."""
+    if same_commit:
+        return ORDER[0] if prior_ok else tier
+    if delta_lines is not None and not delta_high and delta_lines <= SMALL_DELTA:
+        return ORDER[min(ORDER.index(tier), 1)]
+    return tier
+
+
+def later_round(pr, repo, head_sha, profiles):
+    """(same_commit, prior_ok, delta_lines, delta_high) since the last bot review; None on the first round.
+    delta_lines is None when the range is not a plain run of PR commits (a rebase or a base merge)."""
+    try:
+        reviews = [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
+        last = [r for r in reviews if r["user"]["login"] == BOT and r.get("commit_id")]
+        if not last:
+            return None
+        prior, body = last[-1]["commit_id"], last[-1].get("body") or ""
+        prior_ok = re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", body) is not None
+        if prior == head_sha:
+            return True, prior_ok, 0, False
+        cmp = json.loads(gh("api", f"repos/{repo}/compare/{prior}...{head_sha}"))
+        if cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
+            return False, prior_ok, None, False
+        files = cmp.get("files", [])
+        risky = [p for p in profiles if p["name"] in HIGH_PROFILES]
+        return (False, prior_ok, sum(f.get("additions", 0) + f.get("deletions", 0) for f in files),
+                bool(matched_profiles(risky, [f["filename"] for f in files])))
+    except Exception as e:
+        print(f"::warning::could not compare with the last review ({e}); routing as a first round", file=sys.stderr)
+        return None
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
@@ -296,10 +338,16 @@ def route():
             print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
             tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
+    head_sha = os.environ.get("HEAD_SHA", "")
+    later = later_round(pr, repo, head_sha, profiles) if head_sha else None
+    if later:
+        capped = verify_cap(tier, *later)
+        if capped != tier:
+            tier, t_by = capped, f"later round {later}, capped from {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
     try:
-        head_sha = os.environ.get("HEAD_SHA") or gh("pr", "view", pr, "-R", repo, "--json", "headRefOid", "--jq", ".headRefOid").strip()
+        head_sha = head_sha or gh("pr", "view", pr, "-R", repo, "--json", "headRefOid", "--jq", ".headRefOid").strip()
         instructions += review_history(pr, repo, head_sha, INSTRUCTIONS_MAX - len(instructions.encode()) - 200)
     except Exception as e:
         print(f"::warning::could not read the review history ({e}); reviewing without it", file=sys.stderr)
