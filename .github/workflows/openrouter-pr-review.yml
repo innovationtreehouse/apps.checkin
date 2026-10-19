@@ -86,8 +86,9 @@ jobs:
           review_scope: ${{ steps.route.outputs.review_scope || 'full-pr' }}
           compaction: ${{ steps.route.outputs.compaction || 'auto' }}
           compaction_model: nvidia/nemotron-3.5-super-vl:free
-          # Continue the review loop only on new commits; label and reopen start fresh.
-          review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
+          # Route sets verify when a label, reopen or ready-for-review finds an earlier ledger, so the
+          # review picks up from the last one; otherwise new commits continue the loop and the rest start fresh.
+          review_mode: ${{ steps.route.outputs.review_mode || (github.event.action == 'synchronize' && 'auto' || 'initial') }}
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
