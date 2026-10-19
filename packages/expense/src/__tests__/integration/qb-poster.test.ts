@@ -653,6 +653,53 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
     expect(qbo.posts).toHaveLength(0);
     expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+    expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { kind: true, audience: true, detail: true } })).toEqual([
+      { kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted: a line is missing a sign-off seat" },
+    ]);
+
+    await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
+    expect(await drainExpenseOutbox()).toMatchObject({ waiting: 1 });
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).checkedOffAt).not.toBeNull();
+  });
+
+  it("a checked-off held flag reopens when the hold's reason changes", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
+
+    await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: lines[0], seat: "TREASURER", signerUserId: 9002 } });
+    await db.expense.update({ where: { id }, data: { financeNotEveryday: true, boardAuthorization: null } });
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+
+    expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { detail: true, checkedOffAt: true } })).toEqual([
+      { detail: "closed but not posted: the Board authorization is missing", checkedOffAt: null },
+    ]);
+  });
+
+  it("a hold on an expense not yet closed waits without a flag", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
+  });
+
+  it.each(["rejected", "exception_raised", "pending"])("a line approval that turns %s after the outbox holds the post", async (status) => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await seedApproval(id, lines[0], { ownerId: 7, status: "approved" });
+    const late = await seedApproval(id, lines[1], { ownerId: 100, status: "finance_assigned" });
+    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).kind).toBe("QB_POST_HELD");
+
+    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status: "finance_assigned" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
   });
 
   it("an unknown reimbursee holds the post", async () => {
