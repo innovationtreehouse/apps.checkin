@@ -87,16 +87,26 @@ def jev(state, questions):
     return resp["answers"]
 
 
+def _openrouter(path):
+    req = urllib.request.Request(f"https://openrouter.ai/api/v1/{path}",
+                                 headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["data"]
+
+
 def credit_left():
-    """Dollars left on the key's own limit (None = no limit set or unknown); never raises."""
-    try:
-        req = urllib.request.Request("https://openrouter.ai/api/v1/key",
-                                     headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)["data"].get("limit_remaining")
-    except Exception as e:
-        print(f"::warning::could not read the key's remaining credit ({e}); routing normally", file=sys.stderr)
-        return None
+    """Dollars left: the lower of the key's own limit and the account balance; None if neither is known.
+    Never raises. /credits needs a management key, so with a plain key it 403s and only the key limit counts."""
+    known = []
+    for path, left in (("key", lambda d: d["limit_remaining"]),
+                       ("credits", lambda d: d["total_credits"] - d["total_usage"])):
+        try:
+            v = left(_openrouter(path))
+            if isinstance(v, (int, float)):
+                known.append(v)
+        except Exception as e:
+            print(f"::warning::could not read OpenRouter {path} credit ({e}); ignoring it", file=sys.stderr)
+    return min(known) if known else None
 
 
 def low_credit():
@@ -106,7 +116,7 @@ def low_credit():
 
 def out_of_credit(review):
     """A lane in the posted review failed because the key ran out of credit."""
-    return re.search(r"failed-open[^\n]*OpenRouter HTTP 402", review or "") is not None
+    return re.search(r"^- `[^`]+`: failed-open[^\n]*OpenRouter HTTP 402", review or "", re.M) is not None
 
 
 def output_block(o, name, value):
@@ -174,6 +184,8 @@ def route_selftest():
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
+    assert out_of_credit("Lanes:\n- `google/gemini-4-argon`: failed-open (at least pennies spent, incomplete) — OpenRouter HTTP 402: {...}")
     assert not out_of_credit(None)
     print("route selftest ok")
 
@@ -289,8 +301,9 @@ def route():
         print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
         tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
+    credit_override = None
     if tier != ORDER[0] and low_credit():
-        tier, t_by = ORDER[0], f"key credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
+        credit_override, tier, t_by = tier, ORDER[0], f"credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
     try:
@@ -304,7 +317,7 @@ def route():
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
                  tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
-                 files=state["file_count"])
+                 files=state["file_count"], credit_override=credit_override)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
