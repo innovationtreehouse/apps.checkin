@@ -41,6 +41,8 @@ PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
 SMALL_DELTA = 300
+# Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
+JEV_STATE_MAX = 1_500_000
 # Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
 MIN_CREDIT_USD = 5.0
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
@@ -51,7 +53,6 @@ LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
 # A later-round delta here keeps its tier. The pipeline holds the review key, so it counts too.
 DELTA_HIGH = HIGH_PROFILES | {"review-pipeline"}
-DIFF_BYTES = 200_000  # over ~32 KB Jev uses its slower long-context mode
 INSTRUCTIONS_MAX = 16_000  # the action's custom_instructions limit, in UTF-8 bytes
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 BOT = "github-actions[bot]"
@@ -86,11 +87,13 @@ def ladder(chosen, lines, nfiles):
     return "free"
 
 
-def jev(state, questions):
+def jev(state, questions, timeout=180):
     body = json.dumps({"model": JEV, "state": state, "questions": questions}).encode()
     req = urllib.request.Request("https://openrouter.ai/api/v1/systemone", data=body, headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    # timeout bounds each socket read, not the whole call. Routing has cheap fallbacks, so it gets less
+    # time than the judge (600 s), keeping three hung calls well inside the job's 50 minutes.
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
@@ -144,10 +147,14 @@ def gh(*args):
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+def api(repo, path):
+    return [x for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/{path}")) for x in page]
+
+
 @functools.lru_cache(maxsize=None)
 def pr_reviews(repo, pr):
     """Every review on the PR, fetched once per run."""
-    return [r for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100")) for r in page]
+    return api(repo, f"pulls/{pr}/reviews?per_page=100")
 
 
 def lane_rung(body):
@@ -160,8 +167,9 @@ def lane_rung(body):
 def pr_state(pr, repo):
     meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
     files = [f["path"] for f in meta["files"]]
+    # Jev always gets the whole diff: it is cheap, and over ~32 KB it only switches to a slower long-context mode.
     try:
-        diff = gh("pr", "diff", pr, "-R", repo)[:DIFF_BYTES]
+        diff = gh("pr", "diff", pr, "-R", repo)
     except Exception as e:
         print(f"::warning::could not read the diff ({e}); deciding on the file list", file=sys.stderr)
         diff = ""
@@ -169,6 +177,83 @@ def pr_state(pr, repo):
     return files, {"untrusted_pr_title": meta["title"], "changed_files": files,
                    "changed_lines": meta["additions"] + meta["deletions"], "file_count": len(files),
                    "untrusted_diff": diff}
+
+
+def round_pairs(shas, base):
+    """The (from, to) range each review round covered: base branch to round 1, then each previous round to the next."""
+    return list(zip([base] + shas[:-1], shas))
+
+
+def linear_since(cmp):
+    """A round-to-round compare holds only PR work: the old head is an ancestor and no merge commits came in."""
+    if cmp.get("total_commits", 0) > len(cmp.get("commits", [])):
+        return False  # compare lists <=250 commits; a hidden merge could be past the cap
+    return cmp.get("status") == "ahead" and all(len(c.get("parents", [])) <= 1 for c in cmp.get("commits", []))
+
+
+def round_entries(reviews, base, skip_id=None):
+    """Submitted bot reviews except skip_id, oldest first (same-second ties by id), as
+    (review id, (from, to), entry) with the diff still to fetch."""
+    rs = sorted((r for r in reviews if r["user"]["login"] == BOT and str(r["id"]) != skip_id and r.get("submitted_at")),
+                key=lambda r: (r["submitted_at"], r["id"]))
+    out = []
+    for n, (r, (a, b)) in enumerate(zip(rs, round_pairs([r["commit_id"] for r in rs], base)), 1):
+        entry = {"round": n, "reviewed_commit": b, "submitted_at": r["submitted_at"], "review_body": r.get("body") or "",
+                 "diff_range": f"{a}...{b}", "diff_status": "unavailable", "diff": ""}
+        if a == b:
+            entry["diff_status"], entry["diff_note"] = "no_new_changes", "same commit as the previous round"
+        out.append((r["id"], (a, b), entry))
+    return out
+
+
+def prior_rounds(pr, repo, skip_id=None):
+    """Every earlier AI review round, oldest first: body and inline comments verbatim with their markers,
+    plus the complete diff that round reviewed."""
+    # Round 1 compares base...sha1, i.e. from merge-base(current base tip, sha1); no per-round base sha is recorded.
+    base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
+    comments = {}
+    for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
+        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach Jev
+            continue
+        comments.setdefault(c.get("pull_request_review_id"), []).append(
+            {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
+    rounds = []
+    for rid, (a, b), entry in round_entries(api(repo, f"pulls/{pr}/reviews?per_page=100"), base, skip_id):
+        entry["inline_comments"] = comments.get(rid, [])
+        if entry["diff_status"] == "unavailable":
+            try:
+                if a != base and not linear_since(json.loads(gh("api", f"repos/{repo}/compare/{a}...{b}"))):
+                    entry["diff_status"] = "base_changed"
+                    entry["diff_note"] = ("the branch was rebased or merged with its base between these rounds, "
+                                          "so a round-to-round diff would include base-branch changes; none is shown")
+                    rounds.append(entry)
+                    continue
+                entry["diff"] = gh("api", f"repos/{repo}/compare/{a}...{b}", "-H", "Accept: application/vnd.github.diff")
+                entry["diff_status"] = "ok"
+            except subprocess.CalledProcessError as e:
+                entry["diff_note"] = f"compare failed: {e.stderr.strip()}"
+        rounds.append(entry)
+    return rounds
+
+
+def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
+    """Blank the oldest rounds' diffs until the Jev state fits `limit` bytes; bodies and markers stay."""
+    for entry in rounds:
+        if len(json.dumps(dict(state, untrusted_prior_review_rounds=rounds)).encode()) <= limit:
+            break
+        if entry["diff"]:
+            entry["diff"], entry["diff_status"] = "", "omitted_size"
+            entry["diff_note"] = "dropped to keep the request under the size limit; oldest rounds go first"
+    return dict(state, untrusted_prior_review_rounds=rounds)
+
+
+def with_prior_rounds(state, pr, repo, skip_id=None):
+    # Earlier rounds are PR-derived text: data for Jev, never instructions.
+    try:
+        return fit_rounds(state, prior_rounds(pr, repo, skip_id))
+    except Exception as e:
+        print(f"::warning::could not read prior review rounds ({e}); deciding without them", file=sys.stderr)
+        return state
 
 
 def pick(probs, rungs):
@@ -204,6 +289,28 @@ def route_selftest():
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
+    assert round_pairs(["a", "b", "b", "c"], "main") == [("main", "a"), ("a", "b"), ("b", "b"), ("b", "c")]
+    assert round_pairs([], "main") == []
+    assert linear_since({"status": "ahead", "commits": [{"parents": [1]}, {"parents": [2]}]})
+    assert not linear_since({"status": "ahead", "commits": [{"parents": [1, 2]}]})  # merged main in
+    assert not linear_since({"status": "diverged", "commits": [{"parents": [1]}]})  # rebased
+    assert not linear_since({"status": "ahead", "total_commits": 300, "commits": [{"parents": [1]}]})  # truncated list
+    rv = lambda i, at, sha, who=BOT: {"id": i, "submitted_at": at, "commit_id": sha, "user": {"login": who}}
+    got = round_entries([rv(3, "T2", "b"), rv(2, "T1", "a"), rv(9, "T1", "x"), rv(4, None, "z"),
+                         rv(5, "T3", "b"), rv(6, "T0", "q", "someone"), rv(7, "T4", "c")], "main", skip_id="9")
+    assert [(i, ab, e["diff_status"]) for i, ab, e in got] == [
+        (2, ("main", "a"), "unavailable"), (3, ("a", "b"), "unavailable"), (5, ("b", "b"), "no_new_changes"), (7, ("b", "c"), "unavailable")]
+    assert [rid for rid, _, _ in round_entries([rv(11, "T1", "b"), rv(10, "T1", "a")], "main")] == [10, 11]
+    big = [{"round": i, "diff": "d" * 400, "diff_status": "ok"} for i in (1, 2, 3)]
+    fitted = fit_rounds({"k": 1}, big, limit=1000)["untrusted_prior_review_rounds"]
+    assert [e["diff_status"] for e in fitted] == ["omitted_size", "omitted_size", "ok"]
+    assert fit_rounds({}, [{"round": 1, "diff": "x", "diff_status": "ok"}])["untrusted_prior_review_rounds"][0]["diff"] == "x"
+    global prior_rounds
+    saved, prior_rounds = prior_rounds, lambda *a: 1 / 0
+    try:
+        assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
+    finally:
+        prior_rounds = saved
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
@@ -394,12 +501,10 @@ def compose_history(threads, summaries, head7, budget):
 def review_history(pr, repo, head_sha, budget):
     """Earlier review comments aligned to the diff, then review summaries, within the byte budget.
     Only repo members, collaborators and the review bot are included: anyone can comment on a public PR."""
-    def api(path):
-        return [x for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/{path}")) for x in page]
     head7 = head_sha[:7]
 
     threads = {}
-    for c in api(f"pulls/{pr}/comments?per_page=100"):
+    for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
         if _trusted(c):
             threads.setdefault(c.get("in_reply_to_id") or c["id"], []).append(c)
     for cs in threads.values():
@@ -412,7 +517,7 @@ def review_history(pr, repo, head_sha, budget):
             at = str(r.get("commit_id"))[:7]
             rel = "current head" if at == head7 else f"head is now {head7}"
             summaries.append((r["submitted_at"], f"- {r['user']['login']} ({r['state'].lower()}) on commit {at}, {rel}:\n{body}"))
-    for c in api(f"issues/{pr}/comments?per_page=100"):
+    for c in api(repo, f"issues/{pr}/comments?per_page=100"):
         body = _clean(c.get("body"), 800)
         if _trusted(c) and body and "openrouter-pr-review-status" not in (c.get("body") or ""):
             summaries.append((c["created_at"], f"- PR comment by {c['user']['login']}: {body}"))
@@ -496,6 +601,7 @@ def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
     files, state = pr_state(pr, repo)
+    state = with_prior_rounds(state, pr, repo)
     hits = matched_profiles(profiles, files)
 
     try:
@@ -610,6 +716,7 @@ def adjudicate():
     if higher:
         try:
             _, state = pr_state(pr, repo)
+            rid = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL") or "")
             review = posted_review(repo, pr, os.environ.get("REVIEW_URL"))
             if out_of_credit(review) or low_credit():
                 raise OutOfCredit
@@ -618,7 +725,8 @@ def adjudicate():
             state = dict(state, reviewer_tier=tier, reviewer_model=RUNG[tier][1], review_checklists=chosen,
                          review_verdict=verdict or "missing (the review failed)", review_mode=mode,
                          review_scope="bugs and risks only; new nits were not requested" if tier == ORDER[0] else "all findings",
-                         untrusted_review_output=review[:60_000])
+                         untrusted_review_output=review)
+            state = with_prior_rounds(state, pr, repo, rid and rid.group(1))  # last, so the size cap counts the review too
             qs = {"complete": {"type": "noul",
                                "instructions": "Is the posted review complete enough to rely on? Judge it by its review_mode and review_scope; a review told to skip nits is not incomplete for having none. An 'initial' review should cover every changed file that matters, address each applicable checklist, and support findings with file:line evidence. A 'verify' review is a follow-up round: it re-checks each earlier finding against the new commit and looks at what changed since; it does not re-sweep unchanged files, and few tool rounds or no new findings are normal for it. A short review of a trivial change can be complete.",
                                "criteria": {"true": "Initial: thorough for this change with evidenced findings. Verify: every earlier finding is marked fixed, not fixed or disputed with evidence, and the new commit was checked.",
@@ -626,7 +734,7 @@ def adjudicate():
                   "rerun_on": {"type": "choice",
                                "instructions": "If the review must be redone, which stronger reviewer should redo it? Cost matters: pick the cheapest one that would fix what the review missed.",
                                "criteria": rung_choice(higher)}}
-            a = jev(state, qs)
+            a = jev(state, qs, timeout=600)
             p = a["complete"]["noul"]
             rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             nxt = "none" if p >= COMPLETE_THRESHOLD else rerun_gate(a["rerun_on"]["probabilities"], higher, p)
