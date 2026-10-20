@@ -152,7 +152,8 @@ def pr_reviews(repo, pr):
 
 def lane_rung(body):
     """Highest rung index among the review's lanes that finished ok; -1 when none maps to today's ladder."""
-    models = re.findall(r"^- `([^`]+)`: ok\b", body or "", re.M)
+    lanes = re.search(r"^### Lanes\n(.*?)(?=^#{1,3} |\Z)", body or "", re.M | re.S)  # never model-written text
+    models = re.findall(r"^- `([^`]+)`: ok\b", lanes.group(1) if lanes else "", re.M)
     return max((ORDER.index(r[0]) for r in LADDER if r[1] in models), default=-1)
 
 
@@ -233,7 +234,7 @@ def route_selftest():
     real, calls = gh, []
     def rv(sha, verdict="issues", model=RUNG["high"][1]):
         return {"user": {"login": BOT}, "commit_id": sha,
-                "body": f"**Verdict:** `{verdict}`\n- `{model}`: ok (1 finding(s))\n<!-- openrouter-review-ledger:v1:x -->"}
+                "body": f"**Verdict:** `{verdict}`\n### Lanes\n- `{model}`: ok (1 finding(s))\n<!-- openrouter-review-ledger:v1:x -->"}
     def api(reviews, cmp=None):
         def stub(*args):
             calls.append(args)
@@ -270,6 +271,7 @@ def route_selftest():
     finally:
         gh = real
         pr_reviews.cache_clear()
+    assert lane_rung(f"### Lanes\n- `{RUNG['mid'][1]}`: ok (1)\n\n### Round 2 resolution\n- `{RUNG['high'][1]}`: ok") == 1
     assert lane_rung("- `x/unknown`: ok (1)") == -1 and lane_rung(f"- `{RUNG['high'][1]}`: failed-open") == -1
     assert verify_cap("high", True, True, 0, False) == "free"
     assert verify_cap("high", True, False, 0, False) == "high"  # redo of a failed review keeps its tier
