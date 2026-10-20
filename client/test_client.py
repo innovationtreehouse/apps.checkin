@@ -280,7 +280,7 @@ class TestScanBodyIsJustTheBadge(unittest.TestCase):
 
         body, status = client.post_scan(7)
 
-        self.assertEqual(status, 503)
+        self.assertEqual(status, 0, "an unreadable reply acknowledges nothing, whatever status it carried")
         self.assertIn("not recorded", body["error"])
         self.assertIn("banner-error", _scan_result_banner_html(body, status))
 
@@ -308,6 +308,54 @@ class TestScanBodyIsJustTheBadge(unittest.TestCase):
         with patch.object(BackendClient, "_headers", return_value={}), \
              patch.object(client.session, "get", side_effect=OSError("down")):
             self.assertEqual(client.get_ping(), ({}, 0))
+
+
+class TestOddAnswersDoNotCrashTheKiosk(unittest.TestCase):
+    """What answers the kiosk is not always the server: the waker serves HTML,
+    a captive portal serves its own JSON, and either can put 200 on it. A body
+    that is not an object has to come back as an error rather than take down the
+    thread that read it."""
+
+    ODD_BODIES = (None, [], "a string", 7)
+
+    def _client(self, body=None, status=200, unparseable=False):
+        client = BackendClient("http://fake", SigningKey(b"\x00" * 32))
+        client.attendance_path = "/api/attendance"
+        client.session = MagicMock()
+        resp = MagicMock(status_code=status, headers={})
+        if unparseable:
+            resp.json.side_effect = ValueError("not json")
+        else:
+            resp.json.return_value = body
+        client.session.post.return_value = resp
+        client.session.get.return_value = resp
+        return client
+
+    def test_a_non_object_scan_reply_is_an_error_the_screen_can_show(self):
+        for body in self.ODD_BODIES:
+            with self.subTest(body=body):
+                reply, status = self._client(body).post_scan(7)
+                self.assertEqual(status, 0)
+                self.assertIn("error", reply)
+                # The banner renderer is only ever handed a dict.
+                self.assertIn("banner-error", _scan_result_banner_html(reply, status))
+
+    def test_a_non_object_roster_reply_is_an_error(self):
+        for body in self.ODD_BODIES:
+            with self.subTest(body=body):
+                reply, status = self._client(body).get_attendance()
+                self.assertEqual(status, 0)
+                self.assertIn("error", reply)
+
+    def test_a_non_object_ping_is_an_empty_answer(self):
+        for body in self.ODD_BODIES:
+            with self.subTest(body=body):
+                self.assertEqual(self._client(body).get_ping(), ({}, 0))
+
+    def test_a_gateways_html_200_is_not_a_recorded_scan(self):
+        reply, status = self._client(unparseable=True).post_scan(7)
+        self.assertEqual(status, 0)
+        self.assertIn("not recorded", reply["error"])
 
 
 class TestHandleScan(unittest.TestCase):
@@ -569,6 +617,17 @@ class TestPingPoller(unittest.TestCase):
 
         backend.get_attendance.assert_not_called()
         self.assertEqual(self.pushed, [])
+
+    def test_the_loop_survives_an_answer_it_cannot_read(self):
+        """get_ping normalizes, but nothing downstream may depend on that: a
+        thread that dies here leaves the board frozen while the kiosk still
+        scans, serves and looks alive."""
+        pings = [(None, 200), self._ping(4, open_=True)]
+        backend = self._backend(pings)
+
+        self._run(backend, pings)
+
+        backend.get_attendance.assert_called_once()
 
     def test_the_version_is_watched_even_with_no_roster_configured(self):
         pings = [self._ping(1, version="v1"), self._ping(1, version="v2")]

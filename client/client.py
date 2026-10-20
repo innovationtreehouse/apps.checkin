@@ -55,7 +55,7 @@ log = logging.getLogger("kiosk")
 # layout. Overridable per-Pi via config.json.
 DEFAULT_KIOSK_PATH = "/attendance/current?mode=kiosk"
 
-# Self-update loop guard (see version_poller): remote head we already exited
+# Self-update loop guard (see self_update_poller): remote head we already exited
 # for. Relative path -- kiosk.sh cds into client/ before launching client.py.
 SELF_UPDATE_STATE_FILE = ".self_update_last_target"
 
@@ -109,6 +109,21 @@ def sign_request(signing_key, method, path, body=""):
 # ---------------------------------------------------------------------------
 # Backend communication & State
 # ---------------------------------------------------------------------------
+def _json_object(response):
+    """(body, True) when the answer is a JSON object, else (None, False).
+
+    What answers the kiosk is not always the server: the waker serves HTML, a
+    captive portal serves its own JSON, and either can put 200 on it. Everything
+    past this point reads the body as a dict, so a bare `null` or a list has to
+    be turned back into an error here rather than crashing the thread that read
+    it."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None, False
+    return (body, True) if isinstance(body, dict) else (None, False)
+
+
 class BackendClient:
     def __init__(self, base_url, signing_key, attendance_path=None):
         self.base_url = base_url.rstrip("/")
@@ -141,12 +156,14 @@ class BackendClient:
             log.error(f"Failed to post scan: {e}")
             return {"error": str(e)}, 0
 
-        try:
-            return r.json(), r.status_code
-        except ValueError:
-            # Non-JSON body (e.g. the waker's 503 HTML on a cold-wake scan).
-            # Nothing was recorded, so the screen must not confirm the scan.
-            return {"error": "Server not ready — scan not recorded"}, r.status_code
+        body, readable = _json_object(r)
+        if not readable:
+            # The waker's HTML on a cold wake, or a captive portal. Nothing was
+            # acknowledged whatever status rode with it, so this reports no
+            # status at all: a gateway's 200 must never read as a recorded scan.
+            log.warning(f"Unreadable scan reply (HTTP {r.status_code})")
+            return {"error": "Server not ready — scan not recorded"}, 0
+        return body, r.status_code
 
     def get_attendance(self):
         if not self.attendance_path:
@@ -157,10 +174,15 @@ class BackendClient:
             r = self.session.get(
                 self.base_url + path, headers=headers, timeout=10
             )
-            return r.json(), r.status_code
         except Exception as e:
             log.error(f"Failed to get attendance: {e}")
             return {"error": str(e)}, 0
+
+        body, readable = _json_object(r)
+        if not readable:
+            log.warning(f"Unreadable roster reply (HTTP {r.status_code})")
+            return {"error": "Unreadable roster reply"}, 0
+        return body, r.status_code
 
     def get_ping(self):
         """What is deployed, and is anything worth fetching. The server answers
@@ -173,10 +195,12 @@ class BackendClient:
             r = self.session.get(
                 self.base_url + path, headers=headers, timeout=5
             )
-            return r.json(), r.status_code
         except Exception as e:
             log.error(f"Failed to ping the server: {e}")
             return {}, 0
+
+        body, readable = _json_object(r)
+        return (body, r.status_code) if readable else ({}, 0)
 
 
 class AttendanceState:
@@ -637,7 +661,12 @@ def usb_scanner_listener(backend, state, device_path):
                     if buffer.strip():
                         participant_id = buffer.strip()
                         log.info(f"Scanned ID: {participant_id}")
-                        handle_scan(backend, state, participant_id)
+                        try:
+                            handle_scan(backend, state, participant_id)
+                        except Exception as scan_err:
+                            # A failed scan is not a failed reader: without this
+                            # the handler below would ungrab a healthy scanner.
+                            log.warning(f"Scan failed: {scan_err}")
                     buffer = ""
                 elif key_event.scancode in KEY_MAP:
                     buffer += KEY_MAP[key_event.scancode]
@@ -665,6 +694,8 @@ def stdin_scanner_listener(backend, state):
                 handle_scan(backend, state, participant_id)
         except EOFError:
             break
+        except Exception as e:
+            log.warning(f"Scan failed: {e}")
 
 # Reads of one badge this close together are one scan (a scanner double-read).
 REPEAT_READ_SECONDS = 3.0
@@ -783,39 +814,46 @@ def ping_poller(backend, state, interval=PING_INTERVAL_S, fallback=ROSTER_FALLBA
     moved. Waking the database is the server's call, not the kiosk's: the answer
     comes from the server's own memory, and the kiosk fetches the roster only
     when the server says its roster generation changed."""
-    deployed = None
-    generation = None
-    last_fetch = 0.0
+    seen = {"version": None, "generation": None, "fetched_at": 0.0}
     while True:
         sleep_fn(interval)
-        ping, status = backend.get_ping()
-        if status != 200:
-            continue
+        try:
+            _ping_once(backend, state, seen, fallback)
+        except Exception as e:
+            # One odd answer must not take the loop with it: the board would
+            # stop updating while the kiosk still looked alive.
+            log.warning(f"Ping failed: {e}")
 
-        version = ping.get("version")
-        if version and deployed and version != deployed:
-            log.info(f"Server version changed from {deployed} to {version}. Requesting reload.")
-            state.push_event({"reload": True})
-        if version:
-            deployed = version
 
-        if not backend.attendance_path:
-            continue
-        facility = ping.get("facility")
-        stale = time.monotonic() - last_fetch >= fallback
-        if isinstance(facility, dict):
-            moved = facility.get("rosterGeneration")
-            # An unmoved generation means nothing changed. While the building is
-            # open, refresh on the fallback cadence anyway: the server's own
-            # cache bounds its staleness the same way, and the database is
-            # already awake.
-            if moved == generation and not (facility.get("open") and stale):
-                continue
-            generation = moved
-        elif not stale:
-            continue
-        last_fetch = time.monotonic()
-        push_roster(backend, state)
+def _ping_once(backend, state, seen, fallback=ROSTER_FALLBACK_S):
+    """One round of the ping loop. `seen` carries what the last round learned."""
+    ping, status = backend.get_ping()
+    if status != 200:
+        return
+
+    version = ping.get("version")
+    if version and seen["version"] and version != seen["version"]:
+        log.info(f"Server version changed from {seen['version']} to {version}. Requesting reload.")
+        state.push_event({"reload": True})
+    if version:
+        seen["version"] = version
+
+    if not backend.attendance_path:
+        return
+    facility = ping.get("facility")
+    stale = time.monotonic() - seen["fetched_at"] >= fallback
+    if isinstance(facility, dict):
+        moved = facility.get("rosterGeneration")
+        # An unmoved generation means nothing changed. While the building is
+        # open, refresh on the fallback cadence anyway: the server's own cache
+        # bounds its staleness the same way, and the database is already awake.
+        if moved == seen["generation"] and not (facility.get("open") and stale):
+            return
+        seen["generation"] = moved
+    elif not stale:
+        return
+    seen["fetched_at"] = time.monotonic()
+    push_roster(backend, state)
 
 def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
     # Missing/unreadable file means "never restarted" -- same as no target.
@@ -870,7 +908,7 @@ def _tracks_releases(ref):
 
 def resolve_update_target():
     """The commit this kiosk should be running. kiosk.sh checks this out and
-    version_poller restarts when HEAD differs, so both read it from here and
+    self_update_poller restarts when HEAD differs, so both read it from here and
     cannot disagree about where the Pi is meant to be."""
     tag = latest_release_tag()
     if tag and _tracks_releases(tag):
