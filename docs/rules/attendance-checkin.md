@@ -406,9 +406,18 @@ sends one.
   answer, and checking in or out decides from the visit record either
   way.  [Decision — *Principle: fail closed*]
 
-- The kiosk asks the server for the roster on its own interval, at any hour,
-  whether or not anyone is inside, and proxies every request the board screen
-  makes. It never answers one itself.  [Decision]
+- Whether a kiosk poll costs a database query is the server's decision, never
+  the kiosk's. The kiosk asks once a second what changed; the server answers
+  from what the task already holds in memory and names the generation of its
+  roster, and the kiosk fetches the roster only when that generation moves. An
+  empty building moves nothing, so the database can stay paused however often
+  the kiosk asks. The server never queries to answer the question, so a task
+  that has just started says it does not know whether the building is open —
+  the next badge, which is a real event, is what finds out.  [Decision]
+
+- What the server tells the kiosk about the building rides on the kiosk's
+  signature. Whether the building is occupied is not something an
+  unauthenticated caller may read.  [Decision]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]

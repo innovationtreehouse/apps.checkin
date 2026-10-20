@@ -21,6 +21,17 @@ export function invalidatableCache<T>(
             generation++;
             entry = null;
         },
+        /** The cached value, or null when this task holds none. Never computes. */
+        peek(): T | null {
+            return entry ? entry.value : null;
+        },
+        /**
+         * Moves on every invalidate, so a poller can tell "something changed"
+         * from "nothing to fetch" without a query of its own.
+         */
+        generation(): number {
+            return generation;
+        },
         async get(): Promise<T> {
             if (entry && !(isLive(entry.value) && Date.now() - entry.at > ttlMs)) return entry.value;
             const startGeneration = generation;

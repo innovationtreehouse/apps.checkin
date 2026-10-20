@@ -13,6 +13,13 @@ Every scan needs the backend reachable: the kiosk sends the badge and shows what
 the server said. It keeps no queue, no roster and no close state of its own, so a
 scan taken while the network is down is refused on screen, not stored for later.
 
+The kiosk pings `GET /api/system-status/kiosk-version` once a second and fetches
+the roster only when that answer says the server's roster generation moved. The
+server answers the ping from its own memory — a process-cached sha, the
+attendance cache read without computing — so the pace costs it no database work,
+and whether a poll becomes a query is the server's decision, not the kiosk's.
+The building state in that answer rides on the kiosk's signature.
+
 ## Setup
 
 ```bash
@@ -109,7 +116,8 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 | `usb_device` | Device name or path (e.g. `Newtologic` or `/dev/input/event0`), empty for stdin |
 | `listen_port` | Local HTTP server port (default `8083`) |
 | `kiosk_path` | Backend path for the kiosk display and initial data fetch (default `/attendance/current?mode=kiosk`) |
-| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The poller asks the server every 30 s, at any hour, and pushes the roster to the board when the counts change. |
+| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables roster fetching; the ping still watches the deploy version. |
+| `ping_interval` | Seconds between pings (default `1`). The answer is served from the server's memory, so this is a liveness/latency knob, not a database-load one. Raising it only delays how soon the board notices a change. |
 
 ## Architecture
 

@@ -162,19 +162,21 @@ class BackendClient:
             log.error(f"Failed to get attendance: {e}")
             return {"error": str(e)}, 0
 
-    def get_server_version(self):
-        # Public, DB-free route returning {"version": <git sha>}; it ignores the
-        # signature headers below, which are sent anyway for uniformity.
+    def get_ping(self):
+        """What is deployed, and is anything worth fetching. The server answers
+        this from its own memory, so the kiosk may ask as often as it likes; the
+        `facility` block rides on the signature, since whether the building is
+        empty is not public."""
         path = "/api/system-status/kiosk-version"
         headers = self._headers("GET", path)
         try:
             r = self.session.get(
                 self.base_url + path, headers=headers, timeout=5
             )
-            return r.json().get("version"), r.status_code
+            return r.json(), r.status_code
         except Exception as e:
-            log.error(f"Failed to get server version: {e}")
-            return None, 0
+            log.error(f"Failed to ping the server: {e}")
+            return {}, 0
 
 
 class AttendanceState:
@@ -744,40 +746,76 @@ def handle_scan(backend, state, participant_id):
 
     # Fetch fresh attendance and push update for the iframe
     if backend.attendance_path and recorded:
-        att_data, att_status = backend.get_attendance()
-        if att_status == 200:
-            event_payload = {"html": ""}
-            for key in ("attendance", "counts", "safety"):
-                if key in att_data:
-                    event_payload[key] = att_data[key]
-            if "counts" in att_data:
-                with state.lock:
-                    state.current_counts = att_data["counts"]
-            state.push_event(event_payload)
+        push_roster(backend, state)
 
     spec_trace.emit("KioskScanResult", p=str(participant_id), status=status, type=body.get("type"))
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep):
-    """Background thread that polls attendance counts periodically, pushing the
-    server's roster to the board when the counts change."""
+# How often the kiosk asks the server whether anything changed. The server
+# answers from memory, so the pace costs it no database work: it decides for
+# itself when a poll is worth a query.
+PING_INTERVAL_S = 1.0
+# When the answer carries no facility block — an older server, or one that would
+# not verify this signature — fall back to fetching the roster this often.
+ROSTER_FALLBACK_S = 30.0
+
+
+def push_roster(backend, state):
+    """Fetch the server's roster and push it to the board."""
+    att_data, att_status = backend.get_attendance()
+    if att_status != 200:
+        return
+    if "counts" in att_data:
+        with state.lock:
+            state.current_counts = att_data["counts"]
+    event = {"html": ""}
+    for key in ("attendance", "counts", "safety"):
+        if key in att_data:
+            event[key] = att_data[key]
+    state.push_event(event)
+
+
+def ping_poller(backend, state, interval=PING_INTERVAL_S, fallback=ROSTER_FALLBACK_S,
+                sleep_fn=time.sleep):
+    """Ask the server, once a second, what is deployed and whether the roster
+    moved. Waking the database is the server's call, not the kiosk's: the answer
+    comes from the server's own memory, and the kiosk fetches the roster only
+    when the server says its roster generation changed."""
+    deployed = None
+    generation = None
+    last_fetch = 0.0
     while True:
         sleep_fn(interval)
-        att_data, att_status = backend.get_attendance()
-        if att_status == 200 and "counts" in att_data:
-            new_counts = att_data["counts"]
-            with state.lock:
-                changed = new_counts != state.current_counts
-                state.current_counts = new_counts
-            if changed:
-                log.info(f"Attendance poll: {new_counts.get('total', '?')} present")
-                event = {"html": ""}
-                for key in ("attendance", "counts", "safety"):
-                    if key in att_data:
-                        event[key] = att_data[key]
-                state.push_event(event)
+        ping, status = backend.get_ping()
+        if status != 200:
+            continue
+
+        version = ping.get("version")
+        if version and deployed and version != deployed:
+            log.info(f"Server version changed from {deployed} to {version}. Requesting reload.")
+            state.push_event({"reload": True})
+        if version:
+            deployed = version
+
+        if not backend.attendance_path:
+            continue
+        facility = ping.get("facility")
+        stale = time.monotonic() - last_fetch >= fallback
+        if isinstance(facility, dict):
+            moved = facility.get("rosterGeneration")
+            # An unmoved generation means nothing changed. While the building is
+            # open, refresh on the fallback cadence anyway: the server's own
+            # cache bounds its staleness the same way, and the database is
+            # already awake.
+            if moved == generation and not (facility.get("open") and stale):
+                continue
+            generation = moved
+        elif not stale:
+            continue
+        last_fetch = time.monotonic()
+        push_roster(backend, state)
 
 def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
     # Missing/unreadable file means "never restarted" -- same as no target.
@@ -843,36 +881,14 @@ def resolve_update_target():
         ["git", "rev-parse", "origin/main"], text=True
     ).strip()
 
-def version_poller(backend, state, interval=60, state_path=SELF_UPDATE_STATE_FILE):
-    """Background thread that checks for client and server version updates."""
+def self_update_poller(interval=60, state_path=SELF_UPDATE_STATE_FILE):
+    """Background thread that restarts the client when the checkout should move
+    to a newer release. Git only — it reaches no server."""
     last_restart_target = _read_last_restart_target(state_path)
-
-    # Get initial server version
-    initial_server_version = None
-    for _ in range(6):
-        sv, status = backend.get_server_version()
-        if status == 200 and sv:
-            initial_server_version = sv
-            log.info(f"Initial server version: {initial_server_version}")
-            break
-        time.sleep(5)
 
     while True:
         time.sleep(interval)
 
-        # 1. Check Server Version Update. NOT gated on the init fetch having
-        # succeeded: a kiosk that boots while the backend is down must still
-        # pick the version up once the server is back.
-        sv, status = backend.get_server_version()
-        if status == 200 and sv and initial_server_version is None:
-            initial_server_version = sv
-            log.info(f"Server version (late init): {sv}")
-        elif status == 200 and sv and sv != initial_server_version:
-            log.info(f"Server version changed from {initial_server_version} to {sv}. Requesting reload.")
-            state.push_event({"reload": True})
-            initial_server_version = sv  # Update to prevent spam
-
-        # 2. Check Client Version Update
         try:
             fetch_update_refs()
 
@@ -916,6 +932,7 @@ def main():
     kiosk_path = config.get("kiosk_path", DEFAULT_KIOSK_PATH)
     attendance_path = config.get("attendance_path", "")
     disable_blackout = config.get("disable_blackout", True)
+    ping_interval = float(config.get("ping_interval", PING_INTERVAL_S))
 
     log.info(f"Backend: {backend_url}")
     log.info(f"Key:     {key_path}")
@@ -923,6 +940,7 @@ def main():
     log.info(f"Port:    {port}")
     log.info(f"Path:    {kiosk_path}")
     log.info(f"Attendance: {attendance_path or '(disabled)'}")
+    log.info(f"Ping:    every {ping_interval:g}s")
 
     if not os.path.exists(key_path):
         log.error(f"Private key not found: {key_path}")
@@ -942,13 +960,14 @@ def main():
         else:
             log.warning("Could not fetch initial attendance state")
 
-        # Start background poller for blackout updates
-        poller = threading.Thread(target=attendance_poller, args=(backend, state), daemon=True)
-        poller.start()
+    # Ask the server what changed; it decides what that costs it.
+    pinger = threading.Thread(target=ping_poller, args=(backend, state),
+                              kwargs={"interval": ping_interval}, daemon=True)
+    pinger.start()
 
-    # Start version poller thread
-    vpoller = threading.Thread(target=version_poller, args=(backend, state), daemon=True)
-    vpoller.start()
+    # Start the self-update thread (git only; it reaches no server)
+    updater = threading.Thread(target=self_update_poller, daemon=True)
+    updater.start()
 
     allow_reboot = bool(config.get("allow_reboot", False))
     allow_wifi_bounce = bool(config.get("allow_wifi_bounce", False))

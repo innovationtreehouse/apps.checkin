@@ -1,16 +1,17 @@
-"""Guard against #1616: version_poller's self-update exit must not
-restart-loop when the Pi's checkout of the target fails."""
+"""Guard against #1616: the self-update exit must not restart-loop when the
+Pi's checkout of the target fails."""
 
+import inspect
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from client import (
     _read_last_restart_target,
     _write_last_restart_target,
     _should_restart_for_update,
-    version_poller,
+    self_update_poller,
 )
 
 
@@ -44,19 +45,15 @@ class TestStateFileRoundTrip(unittest.TestCase):
 
 
 class _StopLoop(Exception):
-    """Sentinel used to escape version_poller's `while True`."""
+    """Sentinel used to escape self_update_poller's `while True`."""
 
 
-class TestVersionPollerLoopGuard(unittest.TestCase):
-    """Runs the real version_poller loop against a scripted head sequence:
+class TestSelfUpdatePollerLoopGuard(unittest.TestCase):
+    """Runs the real self_update_poller loop against a scripted head sequence:
     mismatch -> one restart; non-advancing pull -> no second exit (logged);
     remote moves on -> restart allowed again. Matches issue #1616."""
 
     def _run(self, head_sequence, state_name="state"):
-        backend = MagicMock()
-        backend.get_server_version.return_value = ("v1", 200)
-        state = MagicMock()
-
         # One sleep precedes each loop iteration, so the count names which
         # pair of the sequence is in play; the loop ends when it runs out.
         def fake_sleep(_):
@@ -82,7 +79,7 @@ class TestVersionPollerLoopGuard(unittest.TestCase):
                  patch("client.os._exit") as exit_mock, \
                  patch("client.time.sleep", side_effect=fake_sleep):
                 with self.assertRaises(_StopLoop):
-                    version_poller(backend, state, interval=0, state_path=state_path)
+                    self_update_poller(interval=0, state_path=state_path)
         return exit_mock
 
     def test_mismatch_then_stuck_checkout_then_genuine_advance(self):
@@ -108,43 +105,29 @@ class TestVersionPollerLoopGuard(unittest.TestCase):
         self.assertTrue(any("Not restarting" in m for m in logs.output))
 
 
-class TestVersionPollerServerVersion(unittest.TestCase):
-    """The poll asks for the server version every round and reloads the board
-    when the deployed sha changes."""
+class TestSelfUpdateReachesNoServer(unittest.TestCase):
+    """The self-update loop is git only. Watching the deployed server version is
+    the ping loop's job (TestPingPoller in test_client.py), so this thread keeps
+    checking the checkout with the backend down and needs no backend at all."""
 
-    def _run(self, version_results, rounds=3):
-        backend = MagicMock()
-        backend.get_server_version.side_effect = version_results
-        state = MagicMock()
+    def test_the_loop_runs_without_a_backend(self):
         calls = {"n": 0}
 
         def fake_sleep(_):
             calls["n"] += 1
-            if calls["n"] >= rounds:
+            if calls["n"] >= 3:
                 raise _StopLoop()
 
         with tempfile.TemporaryDirectory() as d:
-            with patch("client.subprocess.run"), \
+            with patch("client.subprocess.run") as fetch, \
                  patch("client.subprocess.check_output", return_value="same\n"), \
                  patch("client.time.sleep", side_effect=fake_sleep):
                 with self.assertRaises(_StopLoop):
-                    version_poller(backend, state, interval=0, state_path=os.path.join(d, "state"))
-        return backend, state
+                    self_update_poller(interval=0, state_path=os.path.join(d, "state"))
 
-    def test_the_version_get_runs_on_every_round(self):
-        backend, _ = self._run([("v1", 200)] * 5)
-        self.assertGreater(backend.get_server_version.call_count, 1)
-
-    def test_a_new_server_version_asks_the_board_to_reload(self):
-        _, state = self._run([("v1", 200), ("v2", 200), ("v2", 200)])
-        state.push_event.assert_called_with({"reload": True})
-
-    def test_failed_bootstrap_recovers_on_the_recurring_poll(self):
-        """A kiosk that boots while the backend is down adopts the version once
-        the server returns, without asking the board to reload for it."""
-        results = [(None, 0)] * 6 + [("v-late", 200)] * 5
-        _, state = self._run(results, rounds=4)
-        state.push_event.assert_not_called()
+        fetch.assert_called()
+        self.assertEqual(set(inspect.signature(self_update_poller).parameters),
+                         {"interval", "state_path"})
 
 
 if __name__ == "__main__":

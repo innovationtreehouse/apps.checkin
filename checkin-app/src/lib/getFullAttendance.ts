@@ -58,6 +58,26 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
     return (opts.kiosk === true ? kioskCache : fullCache).get();
 }
 
+export type FacilityState = {
+    /** Null when this task has no roster cached: it will not query to find out. */
+    open: boolean | null;
+    rosterGeneration: number;
+};
+
+/**
+ * What the server already knows about the building, read from memory. The
+ * kiosk's ping answers from this, so polling it costs no query and a paused
+ * database stays paused; the generation tells the kiosk when a fetch is worth
+ * making, which keeps that decision here rather than on the device.
+ */
+export function peekFacilityState(): FacilityState {
+    const cached = kioskCache.peek();
+    return {
+        open: cached ? cached.safety.facilityOpen : null,
+        rosterGeneration: kioskCache.generation(),
+    };
+}
+
 /** A keyholder arriving this soon after someone else still covers them. */
 export const NO_KEYHOLDER_GRACE_MS = 10 * 60_000;
 

@@ -19,7 +19,7 @@ from client import (
     CLOSING_ALONE_COPY,
     KioskHandler,
     _scan_result_banner_html,
-    attendance_poller,
+    ping_poller,
     handle_scan,
     local_clock_label,
     latest_release_tag,
@@ -29,7 +29,7 @@ from client import (
 
 
 class _StopLoop(Exception):
-    """Sentinel to escape attendance_poller's `while True` in tests."""
+    """Sentinel to escape ping_poller's `while True` in tests."""
 
 
 def scan_banner(body, status=200):
@@ -284,12 +284,30 @@ class TestScanBodyIsJustTheBadge(unittest.TestCase):
         self.assertIn("not recorded", body["error"])
         self.assertIn("banner-error", _scan_result_banner_html(body, status))
 
-    def test_get_server_version_returns_the_version_and_status(self):
+    def test_the_ping_returns_the_whole_body_and_status(self):
+        """The ping carries the deploy version and, for a verified kiosk, the
+        building state the server already holds."""
         client = BackendClient("http://fake", "fake_key")
+        answer = {"version": "abc", "facility": {"open": False, "rosterGeneration": 4}}
         with patch.object(BackendClient, "_headers", return_value={}), \
              patch.object(client.session, "get") as get:
-            get.return_value = Mock(status_code=200, json=Mock(return_value={"version": "abc"}))
-            self.assertEqual(client.get_server_version(), ("abc", 200))
+            get.return_value = Mock(status_code=200, json=Mock(return_value=answer))
+            self.assertEqual(client.get_ping(), (answer, 200))
+
+    def test_the_ping_is_signed_so_the_server_will_answer_with_the_building(self):
+        client = BackendClient("http://fake", SigningKey(b"\x00" * 32))
+        client.session = MagicMock()
+        client.session.get.return_value = MagicMock(status_code=200, json=lambda: {})
+        client.get_ping()
+        headers = client.session.get.call_args.kwargs["headers"]
+        self.assertIn("X-Kiosk-Signature", headers)
+        self.assertIn("X-Kiosk-Nonce", headers)
+
+    def test_an_unreachable_ping_is_an_empty_answer(self):
+        client = BackendClient("http://fake", "fake_key")
+        with patch.object(BackendClient, "_headers", return_value={}), \
+             patch.object(client.session, "get", side_effect=OSError("down")):
+            self.assertEqual(client.get_ping(), ({}, 0))
 
 
 class TestHandleScan(unittest.TestCase):
@@ -436,54 +454,130 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
         self.assertEqual(cfg["kiosk_path"], DEFAULT_KIOSK_PATH)
 
 
-class TestAttendancePoller(unittest.TestCase):
-    """The poller asks the server on its interval and pushes what came back."""
+class TestPingPoller(unittest.TestCase):
+    """The kiosk asks once a second what changed and fetches the roster only
+    when the server says its roster moved. Whether that costs the server a
+    query — and so whether the database wakes — is the server's call."""
 
-    def _run(self, backend, state):
+    ROSTER = {"attendance": [], "counts": {"total": 0}, "safety": {"isLastKeyholder": False}}
+
+    def setUp(self):
+        self.now = 10_000.0
+        patcher = patch("client.time.monotonic", lambda: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.state = AttendanceState()
+        self.pushed = []
+        self.state.push_event = self.pushed.append
+
+    def _backend(self, pings, attendance_path="/api/attendance"):
+        backend = Mock(attendance_path=attendance_path)
+        backend.get_ping.side_effect = list(pings)
+        backend.get_attendance.return_value = (self.ROSTER, 200)
+        return backend
+
+    def _run(self, backend, pings, advance=0.0):
         calls = {"n": 0}
 
         def fake_sleep(_secs):
             calls["n"] += 1
-            if calls["n"] >= 2:
+            self.now += advance
+            if calls["n"] > len(pings):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep)
+            ping_poller(backend, self.state, sleep_fn=fake_sleep)
 
-    def test_polls_whether_or_not_anyone_is_inside(self):
-        for total in (0, 3):
-            with self.subTest(total=total):
-                backend = Mock(attendance_path="/api/attendance")
-                backend.get_attendance.return_value = ({"counts": {"total": total}}, 200)
-                state = AttendanceState()
-                state.push_event = lambda event: None
-                self._run(backend, state)
-                backend.get_attendance.assert_called()
+    @staticmethod
+    def _ping(generation, open_=False, version="v1"):
+        return ({"version": version,
+                 "facility": {"open": open_, "rosterGeneration": generation}}, 200)
 
-    def test_a_change_pushes_the_server_roster_to_the_board(self):
-        roster = {"attendance": [], "counts": {"total": 0}, "safety": {"isLastKeyholder": False}}
-        backend = Mock(attendance_path="/api/attendance")
-        backend.get_attendance.return_value = (roster, 200)
-        state = AttendanceState()
-        state.current_counts = {"total": 1}
-        pushed = []
-        state.push_event = pushed.append
+    def test_the_first_ping_fetches_the_roster(self):
+        pings = [self._ping(3)]
+        backend = self._backend(pings)
 
-        self._run(backend, state)
+        self._run(backend, pings)
 
-        self.assertEqual(pushed, [{"html": "", **roster}])
+        backend.get_attendance.assert_called_once()
+        self.assertEqual(self.pushed, [{"html": "", **self.ROSTER}])
 
-    def test_unchanged_counts_push_nothing(self):
-        backend = Mock(attendance_path="/api/attendance")
-        backend.get_attendance.return_value = ({"counts": {"total": 2}}, 200)
-        state = AttendanceState()
-        state.current_counts = {"total": 2}
-        pushed = []
-        state.push_event = pushed.append
+    def test_an_unmoved_generation_fetches_nothing_further(self):
+        pings = [self._ping(3)] * 3
+        backend = self._backend(pings)
 
-        self._run(backend, state)
+        self._run(backend, pings)
 
-        self.assertEqual(pushed, [])
+        backend.get_attendance.assert_called_once()
+
+    def test_a_moved_generation_fetches_again(self):
+        pings = [self._ping(3, open_=True), self._ping(4, open_=True)]
+        backend = self._backend(pings)
+
+        self._run(backend, pings)
+
+        self.assertEqual(backend.get_attendance.call_count, 2)
+
+    def test_a_closed_building_is_not_refetched_however_long_it_waits(self):
+        """The whole point: a kiosk pinging a closed building asks the server
+        for nothing it would have to query for."""
+        pings = [self._ping(3)] * 4
+        backend = self._backend(pings)
+
+        self._run(backend, pings, advance=60.0)
+
+        backend.get_attendance.assert_called_once()
+
+    def test_an_open_building_refreshes_on_the_fallback_cadence(self):
+        pings = [self._ping(3, open_=True)] * 3
+        backend = self._backend(pings)
+
+        self._run(backend, pings, advance=60.0)
+
+        self.assertEqual(backend.get_attendance.call_count, 3)
+
+    def test_without_a_facility_block_it_polls_on_the_fallback_only(self):
+        for advance, expected in ((0.0, 1), (60.0, 3)):
+            with self.subTest(advance=advance):
+                pings = [({"version": "v1"}, 200)] * 3
+                backend = self._backend(pings)
+                self.state.push_event = lambda event: None
+                self._run(backend, pings, advance=advance)
+                self.assertEqual(backend.get_attendance.call_count, expected)
+
+    def test_a_new_server_version_asks_the_board_to_reload(self):
+        pings = [self._ping(1, version="v1"), self._ping(1, version="v2")]
+        backend = self._backend(pings)
+
+        self._run(backend, pings)
+
+        self.assertIn({"reload": True}, self.pushed)
+
+    def test_the_first_version_seen_is_not_a_change(self):
+        pings = [self._ping(1, version="v1")]
+        backend = self._backend(pings)
+
+        self._run(backend, pings)
+
+        self.assertNotIn({"reload": True}, self.pushed)
+
+    def test_an_unreachable_server_changes_nothing(self):
+        pings = [({}, 0)] * 3
+        backend = self._backend(pings)
+
+        self._run(backend, pings, advance=60.0)
+
+        backend.get_attendance.assert_not_called()
+        self.assertEqual(self.pushed, [])
+
+    def test_the_version_is_watched_even_with_no_roster_configured(self):
+        pings = [self._ping(1, version="v1"), self._ping(1, version="v2")]
+        backend = self._backend(pings, attendance_path=None)
+
+        self._run(backend, pings)
+
+        backend.get_attendance.assert_not_called()
+        self.assertIn({"reload": True}, self.pushed)
 
 
 class TestProxyPassesEverythingThrough(unittest.TestCase):
