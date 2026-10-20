@@ -7,7 +7,7 @@ A thin Python client for Raspberry Pi that runs at the facility entrance. It act
 1. **Transparent signing proxy** — serves on `localhost:8083`, proxies all requests to the backend with Ed25519 signature headers injected automatically
 2. **Kiosk display wrapper** — serves an HTML wrapper at `/` that iframes `kiosk_path` (default `/attendance/current?mode=kiosk`) from the backend, with a flash banner overlay for scan feedback
 3. **Listens for badge scans** — reads USB barcode/QR scanner input, sends signed POST to `/api/scan`
-4. **Scan feedback** — displays check-in/check-out confirmation banners via a polling mechanism
+4. **Scan feedback** — displays check-in/check-out confirmation banners over the SSE stream at `/events`
 
 Every scan needs the backend reachable: the kiosk sends the badge and shows what
 the server said. It keeps no queue, no roster and no close state of its own, so a
@@ -157,7 +157,7 @@ releases, so a Pi following `main` runs client code whose server counterpart is
 not deployed yet — the paths it calls may not exist.
 
 `kiosk.sh` fetches and checks out the target at the top of each loop;
-`client.py`'s `version_poller` restarts the client when `HEAD` no longer matches
+`client.py`'s `self_update_poller` restarts the client when `HEAD` no longer matches
 it. Both read the target from `resolve_update_target()`, so they cannot disagree
 about where the Pi is meant to be.
 

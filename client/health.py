@@ -21,7 +21,7 @@ CHROMIUM_BOUNCE_SENTINEL = ".chromium-bounce"
 FULL_CYCLE_SENTINEL = ".full-cycle-times"
 PROBE_PATH = "/api/health"
 PROBE_TIMEOUT = 5
-OPEN_HOURS_INTERVAL = 30
+PROBE_INTERVAL = 30
 WEDGE_SILENCE_SECONDS = 150
 ATTENDANCE_STALE_SECONDS = 180
 CHROMIUM_COOLDOWN = 300
@@ -250,7 +250,7 @@ class HealthMonitor:
         return True
 
 
-def health_monitor(backend_url, state, interval=OPEN_HOURS_INTERVAL,
+def health_monitor(backend_url, state, interval=PROBE_INTERVAL,
                    sleep_fn=time.sleep, allow_reboot=False, allow_wifi_bounce=False):
     monitor = HealthMonitor(backend_url, state, allow_reboot, allow_wifi_bounce)
     while True:

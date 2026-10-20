@@ -199,18 +199,16 @@ person in front of it.
 - Keyholders reach every household's emergency contacts, not only those of the
   people currently in the building.  [Decision]
 
-- Every live departure at the badge scanner that takes a supervising adult out
-  of the building is interrupted, whoever is leaving. A departure badged while
-  the kiosk cannot reach the server is not: the kiosk does not compute
-  supervision itself. Dropping to two is a warning and nothing more.
-  Dropping below two stops the departure until the person badges again within
-  fifteen seconds — but only while a youth is in the building. With no youth
-  there, that departure is warned about and goes through: two deep is owed
-  whenever a youth is present, so an adult-only room locking up has nothing to
-  confirm, and an interrupt raised where nothing is at stake teaches people to
-  badge through the one that matters. The kiosk's close offer is separate: a
-  keyholder held by this interrupt is offered the close once their departure
-  goes through.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
+- Every departure at the badge scanner that takes a supervising adult out of the
+  building is interrupted, whoever is leaving. Dropping to two is a warning and
+  nothing more. Dropping below two stops the departure until the person badges
+  again within fifteen seconds — but only while a youth is in the building. With
+  no youth there, that departure is warned about and goes through: two deep is
+  owed whenever a youth is present, so an adult-only room locking up has nothing
+  to confirm, and an interrupt raised where nothing is at stake teaches people to
+  badge through the one that matters. The interrupt and its confirm are the
+  server's throughout: the kiosk computes no supervision, holds no departure of
+  its own, and offers no close to go with it.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
 
 - The supervision interrupt is on the badge scanner only. Checking someone out
   from the web does not raise it — the person doing the checking out is not at the
