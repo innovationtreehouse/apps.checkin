@@ -69,6 +69,13 @@ export type FacilityState = {
  * kiosk's ping answers from this, so polling it costs no query and a paused
  * database stays paused; the generation tells the kiosk when a fetch is worth
  * making, which keeps that decision here rather than on the device.
+ *
+ * ponytail: the kiosk's freshness now rests on this cache being the same one
+ * every write invalidates — true for one ECS task, not for two. With several,
+ * a kiosk pinging task A would never hear about a scan task B committed, and
+ * an empty-looking roster would stay empty on screen. Move the entry and its
+ * generation to a shared store before the service runs more than one task
+ * (same constraint as the kiosk last-seen stamp and the nonce cache).
  */
 export function peekFacilityState(): FacilityState {
     const cached = kioskCache.peek();
