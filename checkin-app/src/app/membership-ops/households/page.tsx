@@ -350,7 +350,7 @@ export default function AdminHouseholdsPage() {
                           >
                             {hasActiveMembership ? "Revoke Membership" : "Grant Membership"}
                           </Button>}
-                          {hasActiveMembership && isBoard && !isStaffHousehold && isMembershipLapsed(household.validUntil) && <Button
+                          {hasActiveMembership && (isBoard || !household.awaitingPayment) && !isStaffHousehold && isMembershipLapsed(household.validUntil) && <Button
                             size="xs" fz={15}
                             variant="light"
                             color="treehouseGreen"

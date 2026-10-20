@@ -66,6 +66,20 @@ describe("membership-ops/households page", () => {
     expect(screen.getAllByRole("button", { name: "Grant Membership" })).toHaveLength(1);
   });
 
+  it("offers a sysadmin the lapsed-row Grant only when it would open a renewal, not certify a payment", async () => {
+    setSession({ id: 1, isSysadmin: true, householdId: 500 });
+    const lapsed = { ...households.households[0], validUntil: "2026-08-01T00:00:00.000Z" };
+    mockFetchJson({
+      "/api/membership-ops/households": {
+        households: [lapsed, { ...lapsed, id: 4, name: "The Payables", awaitingPayment: true }],
+      },
+    });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Payables");
+
+    expect(screen.getAllByRole("button", { name: "Grant Membership" })).toHaveLength(1);
+  });
+
   it("loads and renders households with membership status", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/membership-ops/households": households });

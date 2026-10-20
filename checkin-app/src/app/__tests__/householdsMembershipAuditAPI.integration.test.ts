@@ -247,13 +247,36 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).not.toBeNull();
     });
 
-    it('grant on an ACTIVE household with nothing in flight refuses and opens no joining application', async () => {
+    it('grant on a lapsed ACTIVE household with nothing in flight opens its renewal, in or out of season', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
-        const res = await post({ householdId: noRenewalHouseholdId, active: true, reason: 'Paid by check' });
+        const householdId = await makeHousehold('lapsedactive');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'ACTIVE' } });
+
+        const res = await post({ householdId, active: true, reason: 'Paid by check' });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ paid: false, opened: true });
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('ACTIVE');
+        const processes = await prisma.orgMembershipProcess.findMany({ where: { orgMembershipId: m.id } });
+        expect(processes).toHaveLength(1);
+        expect(processes[0]).toMatchObject({ kind: 'RENEWAL', status: 'PENDING_RENEWAL', paidAt: null });
+
+        // Granting again before the family reaches payment refuses and opens nothing new.
+        const again = await post({ householdId, active: true, reason: 'Paid by check' });
+        expect(again.status).toBe(409);
+        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(1);
+    });
+
+    it('grant on an ACTIVE household already paid for the live year refuses and opens nothing', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('paidactive');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'ACTIVE' } });
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'ACTIVE', paidAt: new Date(), bgClearedAt: new Date(), stageEnteredAt: new Date() },
+        });
+
+        const res = await post({ householdId, active: true, reason: 'Paid by check' });
         expect(res.status).toBe(409);
-        const m = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: noRenewalHouseholdId } });
-        expect(m.status).toBe('ACTIVE');
-        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(0);
+        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(1);
     });
 
     it("refuses revoke, deny and restore on the actor's OWN household", async () => {
