@@ -132,4 +132,43 @@ describe("KioskHeartbeatBox", () => {
     renderWithProviders(<KioskHeartbeatBox />);
     expect(await screen.findByText(/Kiosk last seen 1m ago/)).toBeInTheDocument();
   });
+
+  it("names the build the kiosk reported", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: [
+          { metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 30 },
+          { metric: "kiosk_version:1.2.6+a1b2c3d4e5f6", timestamp: new Date().toISOString(), value: 30 },
+        ],
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Build: 1\.2\.6\+a1b2c3d4e5f6 \(30s ago\)/)).toBeInTheDocument();
+  });
+
+  it("flags more than one build reporting in — a stuck or mid-rollout Pi", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: [
+          { metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 5 },
+          { metric: "kiosk_version:1.2.6+a1b2c3d4e5f6", timestamp: new Date().toISOString(), value: 5 },
+          { metric: "kiosk_version:1.2.4+999999999999", timestamp: new Date().toISOString(), value: 120 },
+        ],
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Builds reporting in:/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.2\.4\+999999999999 \(2m ago\)/)).toBeInTheDocument();
+  });
+
+  it("renders without a build row when no kiosk has reported one", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 10 }],
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Kiosk last seen 10s ago/)).toBeInTheDocument();
+    expect(screen.queryByText(/Build/)).not.toBeInTheDocument();
+  });
 });

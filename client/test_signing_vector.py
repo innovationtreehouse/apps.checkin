@@ -47,7 +47,12 @@ class TestSigningVector(unittest.TestCase):
         """sign_request signs via the pinned seam and names the three headers."""
         headers = sign_request(TEST_ONLY_KEY, VECTOR["method"], VECTOR["path"], VECTOR["body"])
         h = VECTOR["headers"]
-        self.assertEqual(set(headers), {h["timestamp"], h["nonce"], h["signature"]})
+        signed = {h["timestamp"], h["nonce"], h["signature"]}
+        self.assertTrue(signed.issubset(headers))
+        # X-Kiosk-Version is telemetry, outside the signed message and outside
+        # the vector. Pinned as the only unsigned header so a future addition
+        # has to be a deliberate edit here.
+        self.assertEqual(set(headers) - signed, {"X-Kiosk-Version"})
 
         message = build_signed_message(
             headers[h["timestamp"]],

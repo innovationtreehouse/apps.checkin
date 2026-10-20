@@ -28,6 +28,10 @@ import { stampKioskSeen } from "./kioskSeen";
  *
  * Supports multiple comma-separated public keys in KIOSK_PUBLIC_KEY env var.
  * Each key should be a hex-encoded 32-byte Ed25519 public key.
+ *
+ * X-Kiosk-Version is recorded for fleet monitoring once a request verifies. It
+ * is outside the signed message, so it is telemetry only — never an input to
+ * an auth or behavior decision here or downstream.
  */
 
 const MAX_AGE_SECONDS = 60;
@@ -62,7 +66,8 @@ export function verifyKioskSignature(
     timestampHeader: string | null,
     signatureHeader: string | null,
     nonceHeader: string | null,
-    publicKeys: Buffer | Buffer[]
+    publicKeys: Buffer | Buffer[],
+    versionHeader: string | null = null
 ): VerifyResult {
     if (!timestampHeader || !signatureHeader || !nonceHeader) {
         return { ok: false, status: 401, error: "Missing kiosk signature headers" };
@@ -133,7 +138,7 @@ export function verifyKioskSignature(
         return { ok: false, status: 401, error: "Replay detected" };
     }
     seenNonces.set(nonceHeader, nowMs + MAX_AGE_SECONDS * 1000);
-    stampKioskSeen(nowMs);
+    stampKioskSeen(nowMs, versionHeader);
 
     return { ok: true };
 }

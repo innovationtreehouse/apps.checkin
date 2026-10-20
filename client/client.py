@@ -25,6 +25,7 @@ import requests
 
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
+from version import kiosk_version
 
 # Browser iframe polls these with idleStopMs unset. Swallowing them overnight
 # is what lets prod's 5-minute curfew fire — the Python attendance_poller
@@ -129,6 +130,13 @@ def sign_request(signing_key, method, path, body=""):
         "X-Kiosk-Timestamp": timestamp,
         "X-Kiosk-Nonce": nonce,
         "X-Kiosk-Signature": signature,
+        # Build identity, for server-side fleet monitoring. Deliberately NOT in
+        # the signed message: the signature covers ts:nonce:method:path:body,
+        # so this value is unauthenticated telemetry and nothing server-side
+        # may gate on it. Emitted here because this is the one function both
+        # BackendClient and the proxy build headers through, so every request
+        # carries it -- the browser iframe's proxied calls included.
+        "X-Kiosk-Version": kiosk_version(),
     }
 
 # ---------------------------------------------------------------------------

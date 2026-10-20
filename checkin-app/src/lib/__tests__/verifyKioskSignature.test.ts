@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { verifyKioskSignature } from '../verify-kiosk';
+import { getKioskSeen, resetKioskSeen } from '../kioskSeen';
 
 /** Generate an Ed25519 keypair and return the raw 32-byte public key + a signer. */
 function makeKeypair() {
@@ -177,6 +178,41 @@ describe('verifyKioskSignature', () => {
         const n2 = freshNonce();
         const s2 = sign(ts, n2, 'POST', '/api/scan', '');
         expect(verifyKioskSignature('POST', '/api/scan', '', ts, s2, n2, rawPublic).ok).toBe(true);
+    });
+
+    describe('the reported build (X-Kiosk-Version)', () => {
+        beforeEach(() => resetKioskSeen());
+        afterEach(() => resetKioskSeen());
+
+        it('is recorded once the request verifies', () => {
+            const { rawPublic, sign } = makeKeypair();
+            const ts = String(nowSec());
+            const nonce = freshNonce();
+            const sig = sign(ts, nonce, 'POST', '/api/scan', '');
+            verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, rawPublic, '1.2.6+a1b2c3d4e5f6');
+            expect(getKioskSeen().versions.map(v => v.version)).toEqual(['1.2.6+a1b2c3d4e5f6']);
+        });
+
+        it('is NOT recorded when the signature fails', () => {
+            // The header is unsigned, so a forged request must not be able to
+            // write the fleet view it would otherwise be absent from.
+            const { rawPublic } = makeKeypair();
+            const ts = String(nowSec());
+            verifyKioskSignature('POST', '/api/scan', '', ts, 'deadbeef', freshNonce(), rawPublic, '9.9.9+ffffffffffff');
+            expect(getKioskSeen().versions).toEqual([]);
+        });
+
+        it('does not affect the verdict', () => {
+            // Garbage in the header is dropped, not rejected: a kiosk mid-update
+            // must keep scanning.
+            const { rawPublic, sign } = makeKeypair();
+            const ts = String(nowSec());
+            const nonce = freshNonce();
+            const sig = sign(ts, nonce, 'POST', '/api/scan', '');
+            const res = verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, rawPublic, 'not a version');
+            expect(res).toEqual({ ok: true });
+            expect(getKioskSeen().versions).toEqual([]);
+        });
     });
 });
 

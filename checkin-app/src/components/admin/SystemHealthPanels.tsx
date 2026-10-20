@@ -393,6 +393,13 @@ export function SystemVersionBox() {
 
 type HeartbeatRow = { metric: string; timestamp: string; value: number };
 
+const VERSION_METRIC_PREFIX = "kiosk_version:";
+
+function describeAge(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 1 ? `${seconds}s ago` : `${minutes}m ago`;
+}
+
 export function KioskHeartbeatBox() {
   const [rows, setRows] = useState<HeartbeatRow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -407,12 +414,19 @@ export function KioskHeartbeatBox() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Rows are keyed by metric, not position: the bag carries the last-seen row
+  // plus one `kiosk_version:<build>` row per build that has reported in.
+  const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen") ?? null;
+  const builds = (rows ?? [])
+    .filter((r) => r.metric.startsWith(VERSION_METRIC_PREFIX))
+    .map((r) => ({ build: r.metric.slice(VERSION_METRIC_PREFIX.length), age: r.value }));
+
   let body: string;
   if (loading) body = "Checking…";
   else if (rows == null) body = "Unable to read kiosk last-seen.";
-  else if (rows.length === 0) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
+  else if (lastSeen == null) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
   else {
-    const age = rows[0].value;
+    const age = lastSeen.value;
     const minutes = Math.floor(age / 60);
     body = minutes < 1 ? `Kiosk last seen ${age}s ago` : `Kiosk last seen ${minutes}m ago`;
   }
@@ -421,6 +435,12 @@ export function KioskHeartbeatBox() {
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="xs">Kiosk last seen</Title>
       <Text size="sm" c="dimmed">{body}</Text>
+      {builds.length > 0 && (
+        <Text size="sm" c={builds.length > 1 ? "orange" : "dimmed"} mt="xs">
+          {builds.length > 1 ? "Builds reporting in: " : "Build: "}
+          {builds.map((b) => `${b.build} (${describeAge(b.age)})`).join(", ")}
+        </Text>
+      )}
     </Card>
   );
 }

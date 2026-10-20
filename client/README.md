@@ -134,6 +134,8 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 - `scanner_discovery.py` — Manual helper: list USB input devices matching a pattern (needs `python3-evdev` and real hardware)
 - `generate_keys.py` — One-time Ed25519 keypair generator
 - `kiosk.sh` — Pi startup script (updates the checkout, launches client.py, reads port from config, opens Chromium)
+- `version.py` — Build identity (reads `VERSION`, digests the build files); no git
+- `VERSION` — The release this checkout declares; bumped when a release is cut
 - `migrate.sh` — One-time migration script for Pis on the old standalone `checkin-client` repo
 - `config.json` — Runtime configuration (not committed)
 - `client.key` — Ed25519 private key (not committed)
@@ -160,3 +162,27 @@ To see what a Pi would move to:
 ```bash
 cd ~/checkin/client && python3 -c 'import client; print(client.resolve_update_target())'
 ```
+
+## Which build a Pi is running
+
+Every signed request carries `X-Kiosk-Version: <release>+<digest>`, so the
+server sees the build without the Pi being reachable. Both halves come off the
+filesystem — git is not on the path a running kiosk depends on:
+
+- **`<release>`** is the one line in `VERSION`. Bump it in the commit the
+  release tag points at; nothing enforces that, so treat it as a claim.
+- **`<digest>`** is a SHA-256 over the `.py`/`.sh`/`.txt` files in this
+  directory, names included. It is the honest half: two Pis agreeing on it run
+  identical bytes, and a half-applied update or an edit made on the Pi moves it
+  even when `VERSION` doesn't. Per-Pi state (`config.json`, `client.key`,
+  `outbox.db`) is excluded, so it is identical across a healthy fleet.
+
+```bash
+cd ~/checkin/client && python3 -c 'import version; print(version.kiosk_version())'
+```
+
+Server side the value lands in `src/lib/kioskSeen.ts` on every verified
+signature — no DB write — and surfaces on System Status > Kiosk last seen, which
+flags more than one build reporting in. The header is **outside** the signed
+message (the signature covers `ts:nonce:method:path:body`), so it is telemetry:
+nothing may gate on it.
