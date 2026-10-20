@@ -1,8 +1,7 @@
-"""Scripted kiosk scenarios for trace validation of the check-in TLA+ model
-(CheckinImpl_v3). Each drives the real handle_scan, AttendanceState, Outbox
-and replay_drain against a scripted server, asserts what the kiosk did, and
-leaves one NDJSON trace per scenario in KIOSK_TRACE_DIR (a temp dir when
-unset). The first line is the scenario's topology."""
+"""Scripted kiosk scenarios for trace validation. Each drives the real
+handle_scan and AttendanceState against a scripted server, asserts what the
+kiosk did, and leaves one NDJSON trace per scenario in KIOSK_TRACE_DIR (a temp
+dir when unset). The first line is the scenario's topology."""
 
 import glob
 import json
@@ -13,16 +12,11 @@ from unittest.mock import patch
 
 import client
 import spec_trace
-from client import AttendanceState, SCAN_PROTOCOL_VERSION, handle_scan
-from outbox import Outbox, replay_drain
+from client import AttendanceState, handle_scan
 
-K1, K2, M1, U1 = 9, 8, 5, 4242
-NAMES = {K1: "k1", K2: "k2", M1: "m1", U1: "u1"}
-KEYHOLDERS = {K1, K2}
-
-
-class _Drained(Exception):
-    pass
+K1, M1, U1 = 9, 5, 4242
+NAMES = {K1: "k1", M1: "m1", U1: "u1"}
+KEYHOLDERS = {K1}
 
 
 class ScriptedServer:
@@ -37,29 +31,25 @@ class ScriptedServer:
     def answer(self, body, status=200):
         self.script.append((body, status))
 
-    def post_scan(self, participant_id, **kw):
-        self.sent.append((int(participant_id), kw))
-        body, status = self.script.pop(0)
-        return body, status, None
+    def post_scan(self, participant_id):
+        self.sent.append(int(participant_id))
+        return self.script.pop(0)
 
     def get_attendance(self):
         return {
             "attendance": [{"participant": {"id": p, "name": NAMES[p], "isKeyholder": p in KEYHOLDERS}}
                            for p in sorted(self.inside)],
             "counts": {"total": len(self.inside)},
-            "rosterAsOf": client.now_iso(),
         }, 200
 
 
 OFFLINE = ({"error": "Connection refused"}, 0)
 
 
-def checkout(pid, closed=None, prompt=None):
+def checkout(pid, closed=None):
     body = {"type": "checkout", "participant": {"id": pid, "name": NAMES[pid]}}
     if closed is not None:
         body["facilityClosed"] = closed
-    if prompt:
-        body["closePrompt"] = prompt
     return body
 
 
@@ -72,8 +62,6 @@ class TestSpecTraceScenarios(unittest.TestCase):
 
     def setUp(self):
         os.makedirs(self.trace_dir, exist_ok=True)
-        self._tmp = tempfile.TemporaryDirectory()
-        self.outbox = Outbox(os.path.join(self._tmp.name, "outbox.db"))
         # A distinct scan of the same badge, with no wait for the reader's filter.
         patcher = patch.object(client, "REPEAT_READ_SECONDS", 0)
         patcher.start()
@@ -81,117 +69,59 @@ class TestSpecTraceScenarios(unittest.TestCase):
 
     def tearDown(self):
         spec_trace.start(None)
-        self._tmp.cleanup()
 
     def begin(self, scenario, inside):
         server = ScriptedServer(inside)
         state = AttendanceState()
-        state.scan_protocol = SCAN_PROTOCOL_VERSION
         state.push_event = lambda event: None
-        state.seed_from_attendance(server.get_attendance()[0])
         self.file = os.path.join(self.trace_dir, f"{scenario}.ndjson")
         with open(self.file, "w") as f:
             f.write(json.dumps({"tag": "config", "config": {
                 "scenario": scenario,
                 "persons": {str(p): n for p, n in NAMES.items()},
-                "keyholders": ["k1", "k2"],
+                "keyholders": ["k1"],
                 "inside": [NAMES[p] for p in sorted(inside)],
                 "unresolvable": ["u1"],
             }}) + "\n")
         spec_trace.start(self.file)
         return server, state
 
-    def drain(self, server):
-        def stop_when_empty(_seconds):
-            if not self.outbox.pending_rows(skip_inflight=True):
-                raise _Drained()
-        with self.assertRaises(_Drained):
-            replay_drain(self.outbox, server.post_scan, sleep_fn=stop_when_empty)
-
     def events(self):
         with open(self.file) as f:
             return [json.loads(l)["event"]["name"] for l in f if json.loads(l)["tag"] == "trace"]
 
-    def test_single_keyholder_close(self):
-        server, state = self.begin("kiosk_single_keyholder_close", {K1, M1})
-        server.answer(checkout(K1))
-        server.inside = {M1}
-        handle_scan(server, state, self.outbox, K1)
-        self.assertIsNone(server.sent[-1][1]["close"], "others shown: the first scan only leaves")
-        server.answer(checkout(K1, closed=True))
-        server.inside = set()
-        handle_scan(server, state, self.outbox, K1)
-        self.assertEqual(server.sent[-1][1]["close"], "confirmed")
-        self.assertEqual(state.present_ids, set())
-        self.assertEqual(self.events().count("KioskLiveResult"), 2)
-
-    def test_two_keyholders(self):
-        server, state = self.begin("kiosk_two_keyholders", {K1, K2})
-        server.answer(checkout(K1))
-        server.inside = {K2}
-        handle_scan(server, state, self.outbox, K1)
-        self.assertIsNone(server.sent[-1][1]["close"])
-        server.answer(checkout(K2, closed=True))
-        server.inside = set()
-        handle_scan(server, state, self.outbox, K2)
-        self.assertEqual(server.sent[-1][1]["close"], "alone", "another badge ends k1's prompt")
-
-    def test_held_close_with_a_lost_reply(self):
-        server, state = self.begin("kiosk_held_close_lost_reply", {K1})
-        server.answer(*OFFLINE)
-        handle_scan(server, state, self.outbox, K1)
-        self.assertEqual(server.sent[-1][1]["close"], "alone")
-        self.assertEqual(len(self.outbox.pending_rows()), 1, "an unanswered close stays for the drain")
-        server.answer(checkout(K1, closed=True))
-        server.inside = set()
-        self.drain(server)
-        self.assertTrue(server.sent[-1][1]["replay"])
-        self.assertEqual(self.outbox.pending_rows(), [])
-        self.assertEqual(self.events()[-2:], ["DrainSend", "DrainResult"])
-
-    def test_queued_in_racing_a_live_close(self):
-        server, state = self.begin("kiosk_queued_in_races_close", {K1})
-        server.answer(*OFFLINE)
-        handle_scan(server, state, self.outbox, M1)
-        server.answer(checkout(K1))
-        server.inside = set()
-        handle_scan(server, state, self.outbox, K1)
-        self.assertIsNone(server.sent[-1][1]["close"], "the queued IN shows m1 inside")
-        self.assertEqual(state.present_ids, {M1})
-        server.answer(checkout(K1, closed=True))
-        handle_scan(server, state, self.outbox, K1)
-        self.assertEqual(server.sent[-1][1]["close"], "confirmed")
+    def test_check_in_then_out(self):
+        server, state = self.begin("kiosk_in_then_out", set())
         server.answer(checkin(M1))
-        self.drain(server)
-        self.assertEqual(server.sent[-1][0], M1)
-        self.assertEqual(self.outbox.pending_rows(), [])
-
-    def test_offline_replay_after_a_close(self):
-        server, state = self.begin("kiosk_offline_replay_after_close", {K1, M1})
-        server.answer(*OFFLINE)
-        handle_scan(server, state, self.outbox, M1)
-        server.answer(*OFFLINE)
-        handle_scan(server, state, self.outbox, K1)
-        rows = self.outbox.pending_rows()
-        self.assertEqual([(r.participant_id, r.intent, r.close) for r in rows],
-                         [(str(M1), "OUT", None), (str(K1), "OUT", "alone")])
+        server.inside = {M1}
+        handle_scan(server, state, M1)
         server.answer(checkout(M1))
+        server.inside = set()
+        handle_scan(server, state, M1)
+        self.assertEqual(server.sent, [M1, M1])
+        self.assertEqual(self.events().count("KioskScanResult"), 2)
+
+    def test_the_server_closes_the_building(self):
+        server, state = self.begin("kiosk_server_close", {K1})
         server.answer(checkout(K1, closed=True))
         server.inside = set()
-        self.drain(server)
-        self.assertEqual([s[0] for s in server.sent[-2:]], [M1, K1])
-        self.assertEqual(self.events().count("DrainResult"), 2)
+        handle_scan(server, state, K1)
+        self.assertEqual(state.current_counts, {"total": 0})
+        self.assertEqual(self.events(), ["KioskBadge", "KioskScanResult"])
 
-    def test_parked_replay(self):
-        server, state = self.begin("kiosk_parked_replay", {K1})
-        server.answer({"error": f"Participant {U1} not found."}, 404)
-        handle_scan(server, state, self.outbox, U1)
-        self.assertEqual(self.outbox.pending_rows(), [], "a live refusal is settled, not queued")
+    def test_an_unreachable_server_records_the_attempt_and_nothing_else(self):
+        server, state = self.begin("kiosk_offline_scan", {K1})
         server.answer(*OFFLINE)
-        handle_scan(server, state, self.outbox, U1)
-        server.answer({"type": "parked"})
-        self.drain(server)
-        self.assertEqual(self.outbox.pending_rows(), [], "a parked replay is acked")
+        handle_scan(server, state, M1)
+        self.assertEqual(server.sent, [M1])
+        self.assertEqual(self.events(), ["KioskBadge", "KioskScanResult"])
+
+    def test_an_unresolvable_badge_is_refused_by_the_server(self):
+        server, state = self.begin("kiosk_unresolvable_badge", {K1})
+        server.answer({"error": f"Participant {U1} not found."}, 404)
+        handle_scan(server, state, U1)
+        self.assertEqual(server.sent, [U1])
+        self.assertEqual(self.events(), ["KioskBadge", "KioskScanResult"])
 
 
 class TestSpecTraceIsAbsentInProduction(unittest.TestCase):

@@ -9,6 +9,10 @@ A thin Python client for Raspberry Pi that runs at the facility entrance. It act
 3. **Listens for badge scans** — reads USB barcode/QR scanner input, sends signed POST to `/api/scan`
 4. **Scan feedback** — displays check-in/check-out confirmation banners via a polling mechanism
 
+Every scan needs the backend reachable: the kiosk sends the badge and shows what
+the server said. It keeps no queue, no roster and no close state of its own, so a
+scan taken while the network is down is refused on screen, not stored for later.
+
 ## Setup
 
 ```bash
@@ -105,7 +109,7 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 | `usb_device` | Device name or path (e.g. `Newtologic` or `/dev/input/event0`), empty for stdin |
 | `listen_port` | Local HTTP server port (default `8083`) |
 | `kiosk_path` | Backend path for the kiosk display and initial data fetch (default `/attendance/current?mode=kiosk`) |
-| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The kiosk rests while the building is known empty (the last real roster showed nobody, with no badge or on-screen check-in since and nothing queued), at any hour: the roster poll, the server-version check and the dead-letter retry pause, and once each board page has had the real empty roster, the proxy answers its roster `GET`s with `204` and no body. The next badge ends it. Assumes this is the only door scanner. A web check-in into an empty building does not reach the screen until the next badge. |
+| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The poller asks the server every 30 s, at any hour, and pushes the roster to the board when the counts change. |
 
 ## Architecture
 

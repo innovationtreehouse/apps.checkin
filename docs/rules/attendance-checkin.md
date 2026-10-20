@@ -115,11 +115,9 @@ person in front of it.
 ### Opening and closing
 
 - A close is one event: a keyholder closed the building at a moment, at the
-  kiosk, at the kiosk while offline, or on the web. Whoever closes decides — the
-  keyholder at the kiosk, from what the kiosk shows, or the keyholder confirming
-  on the web. The server records that decision and carries it out; it never
-  weighs it against a freshness window, and against its own records and clock
-  only as the rules below state. Everyone
+  kiosk or on the web. At the kiosk the server decides it from the keyholder's
+  badge and its own records; on the web the keyholder decides it in the confirm
+  dialog. The server records that decision and carries it out. Everyone
   still recorded inside departs at that moment, including anyone who checked in
   with no keyholder present: people still recorded inside at a close are
   forgotten badge-outs.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
@@ -127,39 +125,24 @@ person in front of it.
 - Only a keyholder closes the building. A board member closes only as a
   keyholder.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
-- At the kiosk, a keyholder leaving when the kiosk shows nobody else inside
-  closes the building with that one badge, and the kiosk says the building should
-  now be empty. When the kiosk shows anyone else inside — keyholder or not — the
-  badge checks out only that keyholder, and the kiosk lists who it shows inside
-  and offers the close: the same badge again within fifteen seconds closes the
-  building. No second badge, or a badge of anyone else, ends the offer; that
-  other badge is handled as an ordinary scan. A read of the same badge within
-  three seconds of the offer is the same touch read twice, never the second
-  badge. The
-  kiosk decides the same way online and offline, from the same view of who is
-  inside.  [Decision]
-
-- The kiosk's view decides a one-badge close, but not past a check-in the kiosk
-  could not have known of. When anyone checked in after the kiosk last received
-  the roster, a live one-badge close does not close: the keyholder is checked
-  out, told who checked in and when, and the same badge again closes. A close
-  that reaches the server late is applied as the keyholder meant, and raised for
-  review naming whoever checked in after the kiosk's roster. A held close whose
-  reply never reached the kiosk is resent from its queue, and that resend is such
-  a late close: applied and raised for review.  [Decision]
+- At the kiosk, a keyholder's badge is a check-out and nothing more. The server
+  decides the close from its own records: a keyholder leaving nobody else
+  recorded inside closes the building, and the kiosk says the building should now
+  be empty. With anyone else recorded inside, the badge checks out only that
+  keyholder and the building stays open with nobody holding keys, flagged for a
+  human. The kiosk offers no close of its own, so locking up while others are
+  still recorded inside is a web close.  [Decision]
 
 - A web close is the keyholder confirming in a dialog that shows who is still
   recorded inside. It closes at the moment of the confirm; times are corrected
   afterwards on the visit edit screen.  [Decision]
 
-- Nothing on the web stops or undoes a close made at the kiosk, live or queued:
-  not checking the keyholder out, removing their visit, checking in another
-  keyholder, nor changing their roles. A kiosk close needs no visit of the
-  keyholder's to act on. A live close from a badge that is not a keyholder is
-  refused: that badge is checked out as itself, and the kiosk says only a
-  keyholder can close. A queued close from someone who is no longer a keyholder
-  by the time it reaches the server still closes, and is raised for review: the
-  role at the scan's time can't be known.  [Decision]
+- Nothing on the web stops or undoes a close made at the kiosk: not checking the
+  keyholder out, removing their visit, checking in another keyholder, nor
+  changing their roles. A kiosk close needs no visit of the keyholder's to act
+  on. A close from a badge that is not a keyholder is refused: that badge is
+  checked out as itself, and the kiosk says only a keyholder can
+  close.  [Decision]
 
 - A close never ends a visit that began after it, beyond the two-minute clock
   allowance below. Someone who arrives after a
@@ -276,19 +259,20 @@ person in front of it.
   is a leave, audited like a web leave with the handover not named — the reader
   has no pick-list, and a keyholder staying can badge in at the same reader.  [Decision]
 
-- A kiosk too old to send a close decides it from the keyholder's check-out
-  instead: from whether the kiosk showed anyone else inside, when it says so,
-  else from the server's records. Shown nobody, that one badge closes; otherwise
-  it is a leave, and the kiosk offers the close and its second badge closes. A
-  queued badge with no confirm replays as a leave, flagged for a human to check
-  who is still recorded inside.  [Decision — deliberate limit]
+- The kiosk sends only the badge, so the server decides every close from the
+  keyholder's check-out and its own records: nobody else recorded inside, that
+  one badge closes; otherwise it is a leave, flagged for a human to check who is
+  still recorded inside. A kiosk build that still sends a close of its own is
+  honoured as it sent it.  [Decision — deliberate limit]
 
-- When a keyholder closes with others shown inside, the kiosk passes on the
-  supervision caution it last knew, in yellow. It cannot re-check two-deep
-  itself, so it leaves the call to the keyholder at the reader.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
+- A close at the kiosk carries no supervision caution. The kiosk holds no roster
+  and offers no close prompt, so there is nowhere to show one; the caution shows
+  on the web close, which does list who is still recorded inside. The policy
+  expects the keyholder who locks up to be told, and at the door they are
+  not.  [Short of policy — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
 
 - Every facility close is recorded: who closed, when, and through which path
-  (kiosk, offline kiosk, a web checkout or correction, or the nightly sweep,
+  (kiosk, a web checkout or correction, or the nightly sweep,
   which no person makes). The record commits with the closer's own checkout, and
   the departures are carried out from it, so a close is never lost between the
   two: one whose departures were cut off is carried out at the next scan, web
@@ -322,42 +306,37 @@ person in front of it.
 
 ### Kiosk resilience
 
-The badge kiosk and its offline scan path. Infrastructure failure — WiFi loss for
-hours at a time — is a normal operating mode here, not an incident.
+The badge kiosk needs the server. It holds no scan, no roster and no close of its
+own, so a network outage stops check-in at the door until it is over. The replay
+rules below still govern a scan from a kiosk build that queues; no current build
+sends one.
 
-- A badge scan, once read, is never lost. It survives to a durable server record
-  whatever the network or facility state. The system may decline to *display* or
-  *project* a scan — park it, defer it — but never discards one.  [Decision]
+- A badge scan is recorded only when the server accepts it. The kiosk keeps
+  nothing, so a scan the server did not take is refused at the door: the person
+  is told, rather than walking away from a scan nobody holds.  [Decision]
 
 - A raw badge read is never edited or deleted, by anyone, a sysadmin included.
   Its time, place and person stay as the kiosk read them, and a wrong time is
   corrected on the visit. Only its review markings and replay key change, and a
   merge moves it to the surviving person.  [Decision]
 
-- A read that cannot name anyone — not a badge number at all, or, scanned live,
-  a number that matches nobody — is refused at the reader, which asks for the
-  badge again, and is not kept. A queued read that names nobody is kept for
-  review.  [Decision]
+- A read that cannot name anyone — not a badge number at all, or a number that
+  matches nobody — is refused at the reader, which asks for the badge again, and
+  is not kept.  [Decision]
 
-- Every good-faith badge is acknowledged at the door — "checked in" or "checked
-  out" — even when the server's live math disagrees or the network is down.
-  Surfacing that the kiosk is out of sync is additive, never a substitute for the
-  acknowledgement.  [Decision]
+- Every badge the server accepts is acknowledged at the door — "checked in" or
+  "checked out". One it refused, or could not answer, says so instead: the kiosk
+  never shows an acknowledgement it did not get.  [Decision]
 
-- The direction the kiosk displayed is the intent of record. When a queued scan is
-  delivered later, the server applies the in/out the person saw; it never re-infers
-  direction from its own live state at delivery, which would flip a replayed
-  check-in into a check-out.  [Decision]
+- The server decides the direction of a badge from its own records. The kiosk
+  displays no direction of its own and sends none.  [Decision]
 
 - Repeat reads of the same badge within three seconds are one scan: the scanner
-  can read one touch twice. The kiosk filters them at the moment the badge is
-  read, before the scan is queued or sent, so the rule is the same online and
-  offline and a double-read never queues an in and an out. A keyholder's second
-  badge to confirm a close therefore comes more than three seconds after the
-  first. For a current kiosk the server drops only exact duplicates — the same
-  scan sent twice, by its event id — and applies everything else it is sent;
-  it keeps its own three-second check only for callers that do not filter
-  (older kiosk builds and the web).  [Decision]
+  can read one touch twice. The kiosk filters them at the reader, before anything
+  is sent, so a double read never sends an in and an out. The server keeps its
+  own three-second check for every caller that does not advertise the filter —
+  this kiosk, which advertises nothing, the web, and older kiosk builds — so a
+  double read is dropped twice over.  [Decision]
 
 - A replayed scan applies at the time the badge was read, not the time it was
   delivered, however late it arrives: a scan is trusted by default. A replay
@@ -411,9 +390,9 @@ hours at a time — is a normal operating mode here, not an incident.
   check-out that the kiosk did not send as a close checks out only that keyholder,
   however late it arrives.  [Decision]
 
-- The kiosk is never blank while anyone is checked in: it shows everyone it
-  holds as inside, no-keyholder visits included, and its offline presence view
-  treats them as present.  [Decision]
+- The kiosk shows the roster the server sent it, no-keyholder visits included.
+  When the server cannot answer, it shows that it cannot: the kiosk never draws a
+  roster of its own.  [Decision]
 
 - The kiosk and attendance safety display reads a missing or incomplete safety
   payload as *unknown*, never as an empty, compliant room: a failed fetch or a
@@ -423,21 +402,13 @@ hours at a time — is a normal operating mode here, not an incident.
   whether it is two deep — as fact only while the server has heard from the
   kiosk within the last five minutes. Otherwise it says it can't confirm the
   building's state and when the kiosk was last heard from, and what it lists is
-  the visit record, not presence. A kiosk resting in a building it knows is
-  empty sends nothing on purpose, so that is the expected reading then. The
-  kiosk's own screen shows what the kiosk holds regardless, and checking in or
-  out decides from the visit record either way.  [Decision — *Principle: fail closed*]
+  the visit record, not presence. The kiosk's own screen shows the server's last
+  answer, and checking in or out decides from the visit record either
+  way.  [Decision — *Principle: fail closed*]
 
-- The kiosk rests — sends the server nothing on its own — only while the
-  building is known empty: its last real roster showed nobody inside, no badge
-  at the kiosk and no check-in made on its screen since, and no scan waiting
-  to be delivered. That holds at any hour, and the next badge ends it. Before
-  it rests, its screen shows the real empty roster. This rests on the front
-  door being the only scanner: every arrival badges there first. While anyone
-  is inside, or occupancy is unknown, it keeps fetching whatever its clock
-  says. When the server cannot answer, its screen shows the kiosk's own view —
-  the last server roster with its badges since, marked not up to date — and it
-  never invents a roster or states supervision it cannot know.  [Decision — *Principle: fail closed*]
+- The kiosk asks the server for the roster on its own interval, at any hour,
+  whether or not anyone is inside, and proxies every request the board screen
+  makes. It never answers one itself.  [Decision]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]

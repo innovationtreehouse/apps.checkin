@@ -382,9 +382,9 @@ How soon a copy of the app's data has to agree with its source depends on what a
 gap between them would put at risk. A gap that can only make a record late is
 allowed to close over time.
 
-- **Who is in the building agrees as soon as a scan can reach the server.** The
-  only accepted lag is a kiosk that is offline, and it replays every scan at the
-  time it was read and never loses one.
+- **Who is in the building agrees as soon as a scan reaches the server.** No lag
+  is accepted and none is held: the kiosk keeps no scan of its own, so one it
+  cannot deliver is refused at the door instead of closing the gap later.
 
 - **The finances are eventually consistent.** Income and spending take time to
   reach the books in full. They wait on people, because each entry is reviewed,

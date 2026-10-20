@@ -1,8 +1,8 @@
 """Kiosk health monitor: one cookieless GET /api/health, failure-mode routed
 to layers L2–L5, plus local L1 scanner and recovery ladder rungs.
 
-Silent through the closed window (23:00–06:00 local) so a 24/7 Pi cannot
-keep prod up overnight. L6 (DB) is observed from scan outcomes, never polled.
+Runs on its interval around the clock. L6 (DB) is observed from scan outcomes,
+never polled.
 """
 
 import logging
@@ -14,8 +14,6 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
-
-from outbox import in_closed_window
 
 log = logging.getLogger("kiosk")
 
@@ -35,7 +33,7 @@ WIFI_COOLDOWN = 300
 ESCALATION_AFTER_SECONDS = 900
 ESCALATION_REBOOT_COOLDOWN = 3600
 WARMING_CAP_SECONDS = 600
-NIGHTLY_REBOOT_HOUR = 3  # local, inside the 23:00–06:00 closed window
+NIGHTLY_REBOOT_HOUR = 3  # local
 
 L2, L3, L4, L5, WARMING, OK = "L2", "L3", "L4", "L5", "warming", "ok"
 
@@ -127,15 +125,9 @@ class HealthMonitor:
         self.last_nightly_date = None
         self._host = urlparse(base_url).hostname
 
-    def tick(self, now=None, diagnose_fn=None, in_closed_fn=in_closed_window, quiet_fn=lambda: False):
+    def tick(self, now=None, diagnose_fn=None):
         now = now or time.monotonic()
-        if in_closed_fn():
-            self._nightly_reboot_if_due()
-            return None
-        # A resting kiosk (building known empty, nothing queued) sends the server
-        # nothing, so prod's overnight curfew can fire; the ladder waits with it.
-        if quiet_fn():
-            return None
+        self._nightly_reboot_if_due()
 
         result = (diagnose_fn or diagnose)(self.base_url)
         self.layer = result
@@ -259,12 +251,11 @@ class HealthMonitor:
 
 
 def health_monitor(backend_url, state, interval=OPEN_HOURS_INTERVAL,
-                   sleep_fn=time.sleep, allow_reboot=False, allow_wifi_bounce=False,
-                   in_closed_fn=in_closed_window, quiet_fn=lambda: False):
+                   sleep_fn=time.sleep, allow_reboot=False, allow_wifi_bounce=False):
     monitor = HealthMonitor(backend_url, state, allow_reboot, allow_wifi_bounce)
     while True:
         sleep_fn(interval)
         try:
-            monitor.tick(in_closed_fn=in_closed_fn, quiet_fn=quiet_fn)
+            monitor.tick()
         except Exception as e:
             log.warning("health_monitor tick failed: %s", e)
