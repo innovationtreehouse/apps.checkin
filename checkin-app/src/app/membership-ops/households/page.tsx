@@ -350,6 +350,16 @@ export default function AdminHouseholdsPage() {
                           >
                             {hasActiveMembership ? "Revoke Membership" : "Grant Membership"}
                           </Button>}
+                          {hasActiveMembership && isBoard && !isStaffHousehold && isMembershipLapsed(household.validUntil) && <Button
+                            size="xs" fz={15}
+                            variant="light"
+                            color="treehouseGreen"
+                            disabled={ownHouseholdConflict}
+                            title={ownHouseholdConflict ? ownHouseholdTitle : undefined}
+                            onClick={() => openGrant(household.id, "current")}
+                          >
+                            Grant Membership
+                          </Button>}
                           <Button
                             size="xs" fz={15}
                             variant="outline"

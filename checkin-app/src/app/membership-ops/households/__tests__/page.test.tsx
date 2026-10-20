@@ -49,6 +49,23 @@ describe("membership-ops/households page", () => {
     expect(container.textContent).not.toContain("Aug 14, 2024");
   });
 
+  it("offers Grant Membership beside Revoke only on a lapsed active household", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 500 });
+    mockFetchJson({
+      "/api/membership-ops/households": {
+        households: [
+          { ...households.households[0], validUntil: "2026-08-01T00:00:00.000Z" },
+          { ...households.households[0], id: 3, name: "The Currents", validUntil: "2099-08-01T00:00:00.000Z" },
+        ],
+      },
+    });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+
+    expect(screen.getAllByRole("button", { name: "Revoke Membership" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Grant Membership" })).toHaveLength(1);
+  });
+
   it("loads and renders households with membership status", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/membership-ops/households": households });
