@@ -33,7 +33,12 @@ describe("normalizeOrder", () => {
 
   it("normalizes line items and refunds", () => {
     expect(n.lines).toHaveLength(1);
-    expect(n.lines[0]).toMatchObject({ sku: "WIDGET-1", quantity: 2, priceCents: 5000 });
+    expect(n.lines[0]).toMatchObject({ sku: "WIDGET-1", quantity: 2, currentQuantity: 1, priceCents: 5000 });
+  });
+
+  it("leaves currentQuantity unset when the payload predates the field", () => {
+    const legacy = { id: "gid://shopify/Order/1", lineItems: { nodes: [{ id: "gid://shopify/LineItem/1", quantity: 2 }] } };
+    expect(normalizeOrder(orderNodeSchema.parse(legacy)).lines[0].currentQuantity).toBeUndefined();
     expect(n.refunds).toHaveLength(1);
     expect(n.refunds[0].totalRefundedCents).toBe(2000);
     expect(n.refunds[0].orderGid).toBe("gid://shopify/Order/1001");

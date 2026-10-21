@@ -68,6 +68,17 @@ describeDb("projectOrder line reconciliation", () => {
     expect(await prisma.shopOrderLine.count({ where: { storeId: STORE, orderGid: ORDER } })).toBe(2);
   });
 
+  it("stores the current quantity next to the original, and null when the payload has none", async () => {
+    const node = orderWith([{ id: LINE_A, sku: "A" }, { id: LINE_B, sku: "B" }]);
+    node.lineItems.nodes[0] = { ...node.lineItems.nodes[0], quantity: 2, currentQuantity: 1 };
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node }], { storeId: STORE });
+
+    const a = await prisma.shopOrderLine.findUnique({ where: { storeId_lineGid: { storeId: STORE, lineGid: LINE_A } } });
+    const b = await prisma.shopOrderLine.findUnique({ where: { storeId_lineGid: { storeId: STORE, lineGid: LINE_B } } });
+    expect(a).toMatchObject({ quantity: 2, currentQuantity: 1 });
+    expect(b).toMatchObject({ quantity: 1, currentQuantity: null });
+  });
+
   it("un-marks a line that reappears on a still-later version", async () => {
     await injectFixtures(
       prisma,
