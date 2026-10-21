@@ -930,6 +930,11 @@ defineOutbound({
     // Purchase/Bill/Deposit only: amounts, dates, account/class/vendor ids, line
     // descriptions and memos ('internal'; memos may name a program participant,
     // accepted by the owner).
+    // Enforced for one caller: packages/expense's poster builds its Purchase/Bill
+    // inside outboundCall() (the expense `outbound` port, bound in
+    // lib/expense/configure.ts), so its rows are stripped to these tiers. The
+    // income and bulk-donation (Benevity) posters still call directly; for them
+    // this entry is inventory.
     tiers: ['public', 'internal'],
 });
 
