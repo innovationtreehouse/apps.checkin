@@ -186,7 +186,7 @@ layered:
 src/
   repositories/   expense, org, orgEvents, provisionalItemMap, provisionalResolution   (Prisma access)
   services/       provisionalItemMapService                                            (domain logic)
-  workflows/      expense.machine + events/guards/invariants + expense-event-schema     (xstate lifecycle; QbLineItemSchema)
+  workflows/      expense.machine + events/guards/invariants                           (xstate lifecycle)
   lib/            expense-qb-processor, expense-rules, financial-flow, capital-register,
                   workflow-engine, expense-constants, catalog-schemas          (domain; portable)
                   inventory-client, api-client, org-events-poller, org-events-container (crossings)
@@ -229,9 +229,9 @@ preserve them exactly:
   account, allocates tax/shipping/discount, and — in **one interactive
   transaction** — writes each line's allocations and resolved account
   (`ExpenseLineItem.resolvedQbAccount`), commits the `ExpenseEvent` outbox row
-  and advances `qb_pending → qb_complete`. The row is the durable outbox marker;
-  the poster and the drift check read the expense and its lines, not the row's
-  `payload`, which is still written until it is dropped;
+  and advances `qb_pending → qb_complete`. The row is the durable outbox marker
+  and carries no data; the poster and the drift check read the expense and its
+  lines;
   **something downstream posts it to QuickBooks.** In the source that downstream
   writer does not exist yet — the machine terminates the moment the event is
   committed. **The write path is exactly what §9 QB-2 builds** in
@@ -1093,9 +1093,9 @@ once every sign-off seat is filled (§6); until then it is held and nothing is
 committed for it.
 
 - **Exists in the source (checkin side of the port):** the `expense-qb-processor`
-  already builds and **validates** the outbound payload against `QbExpenseEventSchema`
-  / `QbLineItemSchema` (schemaVersion 1), resolves each line to **one** QB account
-  (rules → one account/line, **no category splits by design**), allocates
+  resolves each line to **one** QB account
+  (rules → one account/line, **no category splits by design**) and stores it on
+  the line (`resolvedQbAccount`), allocates
   tax/shipping/discount, and commits the `ExpenseEvent` **outbox row** in one
   transaction (`qb_pending → qb_complete`). The outbox, idempotency
   (`expense_events_org_expense_unique`), holds, and crash-recovery

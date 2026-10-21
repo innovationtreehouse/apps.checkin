@@ -6,7 +6,6 @@ import type { ExpensePosting } from "../contract";
 import type { Expense, ExpenseLineItem } from "../db/schema";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
-import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { lineCents, matchBaseline } from "./expense-qb-drift";
 import { logError, logWarn } from "./logger";
@@ -159,22 +158,6 @@ async function postedCentsByExpense(expenseIds: string[]): Promise<Map<string, n
   return cents;
 }
 
-/**
- * Each line's account as resolved when the expense entered the outbox. Lines outboxed by code that
- * writes only the payload carry none; those read it from the payload.
- */
-async function resolvedAccounts(client: Db, expenseId: string, lines: ExpenseLineItem[]): Promise<Map<number, string> | { error: string }> {
-  const accounts = new Map(lines.flatMap((l) => (l.resolvedQbAccount ? [[l.id, l.resolvedQbAccount] as const] : [])));
-  if (accounts.size < lines.length) {
-    const event = await client.expenseEvent.findFirst({ where: { expenseId }, select: { payload: true } });
-    for (const i of event ? QbExpenseEventSchema.parse(JSON.parse(event.payload)).items : []) {
-      if (!accounts.has(i.lineItemId)) accounts.set(i.lineItemId, i.account);
-    }
-  }
-  const unresolved = lines.find((l) => !accounts.has(l.id));
-  return unresolved ? { error: `line "${unresolved.description}" has no resolved QuickBooks account` } : accounts;
-}
-
 /** Each line's QuickBooks Class, from its budget bucket. */
 async function lineClasses(client: Db, expenseId: string, lines: ExpenseLineItem[]): Promise<Map<number, string> | { noClass: string }> {
   const approvals = await client.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
@@ -198,8 +181,9 @@ async function buildWrite(client: Db, orgId: string, expense: Expense, posting: 
   if (!expense.receiptDate) return { error: "the expense has no receipt date" };
   const items = await client.expenseLineItem.findMany({ where: { expenseId: expense.id }, orderBy: { id: "asc" } });
   if (items.length === 0) return { error: "the expense has no lines" };
-  const accounts = await resolvedAccounts(client, expense.id, items);
-  if ("error" in accounts) return accounts;
+  const unresolved = items.find((l) => !l.resolvedQbAccount);
+  if (unresolved) return { error: `line "${unresolved.description}" has no resolved QuickBooks account` };
+  const accounts = new Map(items.map((l) => [l.id, l.resolvedQbAccount!]));
   const classes = await lineClasses(client, expense.id, items);
   if ("noClass" in classes) return classes;
   const writeLines = items.map((l) => ({

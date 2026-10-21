@@ -9,7 +9,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedApproval, seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, ORG } from "../helpers/seed";
+import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, ORG } from "../helpers/seed";
 
 const inv = vi.hoisted(() => ({
   listCategories: vi.fn(),
@@ -67,31 +67,11 @@ describeDb("checkAndProcessExpense — happy path", () => {
 
     const events = await eventsFor(id);
     expect(events).toHaveLength(1);
-    const payload = JSON.parse(events[0].payload) as { items: Array<{ lineItemId: number; allocatedTaxCents: number; account: string }> };
-    const tax = payload.items.reduce((s, i) => s + i.allocatedTaxCents, 0);
-    expect(tax).toBe(10); // 10 cents conserved exactly
-    expect(payload.items.every((i) => i.account === "4000")).toBe(true);
-
     const lis = await db.expenseLineItem.findMany({ where: { expenseId: id } });
+    expect(lis.reduce((s, l) => s + (l.allocatedTaxCents ?? 0), 0)).toBe(10); // 10 cents conserved exactly
     expect(lis.find((l) => l.id === li1)!.allocatedTaxCents).toBe(8);
     expect(lis.find((l) => l.id === li2)!.allocatedTaxCents).toBe(2);
     expect(lis.map((l) => l.resolvedQbAccount)).toEqual(["4000", "4000"]);
-  });
-
-  it("carries each line's budget bucket on the event; a line with no bucket carries null", async () => {
-    const id = await seedExpense({ state: "qb_pending" });
-    const li1 = await seedLineItem(id, { partNumber: "PN-1" });
-    const li2 = await seedLineItem(id, { partNumber: "PN-2" });
-    await seedApproval(id, li1, { ownerId: 100, status: "approved" });
-    catalogResolvesAll({ [li1]: "0000000000017", [li2]: "0000000000024" });
-    await seedAccountMapping({ qbAccount: "4000" });
-
-    await signAllLines(id);
-    await checkAndProcessExpense(ORG, id);
-
-    const [event] = await eventsFor(id);
-    const payload = JSON.parse(event.payload) as { items: Array<{ lineItemId: number; bucketId: number | null }> };
-    expect(Object.fromEntries(payload.items.map((i) => [i.lineItemId, i.bucketId]))).toEqual({ [li1]: 100, [li2]: null });
   });
 });
 
@@ -141,7 +121,7 @@ describeDb("checkAndProcessExpense — negative / hold paths", () => {
 describeDb("checkAndProcessExpense — idempotency & resolution", () => {
   it("is a no-op when a QB event already exists for the expense", async () => {
     const id = await seedExpense({ state: "qb_pending" });
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: "{}" } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
 
     await signAllLines(id);
     await checkAndProcessExpense(ORG, id);

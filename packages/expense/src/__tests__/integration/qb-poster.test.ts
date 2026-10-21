@@ -122,19 +122,7 @@ async function outboxed(
     });
     if (bucket !== null) await seedApproval(id, line, { ownerId: bucket, status: "approved" });
   }
-  const item = (lineItemId: number, cents: number, account: string, bucketId: number | null) => ({
-    lineItemId, description: "Widget", quantity: 1, unitPriceCents: cents, totalPriceCents: cents,
-    allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0,
-    isDelayed: false, isCapital: false, capitalOwnerId: null, depreciationYears: null, account,
-    ...(bucketId !== null && { bucketId }),
-  });
-  const payload = {
-    schemaVersion: 1, id, vendorName, receiptDate: day, receiptTotalCents: a + b, orgId: ORG,
-    needsReimbursement: opts.reimburseePersonId !== undefined, reimbursementFor: null,
-    reimburseePersonId: opts.reimburseePersonId ?? null,
-    items: [item(l1, a, "60", b1), item(l2, b, "61", b2)],
-  };
-  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: JSON.stringify(payload) } });
+  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
   await signAllLines(id);
   return { id, lines: [l1, l2] };
 }
@@ -449,7 +437,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(fetches);
   });
 
-  it("finance fixes the account and retries: the payload is rebuilt and the expense posts", async () => {
+  it("finance fixes the account and retries: the account is re-resolved and the expense posts", async () => {
     const { id, line } = await outboxedManual("not-an-account");
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
@@ -748,14 +736,12 @@ describeDb("QB-2 posting — claim, call, settle", () => {
     await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
     const accounts = () => db.expenseLineItem.findMany({ where: { id: { in: lines } }, orderBy: { id: "asc" }, select: { resolvedQbAccount: true } });
     const before = await accounts();
-    const payloadBefore = (await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload;
     const release = holdQbo();
     const post = postExpenseToQb(ORG, id);
     await untilFetched();
 
     expect(await retryQbPost(ORG, id, { userId: 500 })).toBe(false);
     expect(await accounts()).toEqual(before);
-    expect((await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload).toBe(payloadBefore);
 
     release();
     expect(await post).toBe("posted");
@@ -918,22 +904,10 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
 });
 
 describeDb("QB-2 posting — a line outboxed without a resolved account", () => {
-  const accountsOf = (n: number) => qbo.posts[n].body.Line.map((l) => l.AccountBasedExpenseLineDetail.AccountRef.value);
-
-  it("posts the account its outbox payload names", async () => {
+  it("fails the attempt, and nothing reaches QuickBooks", async () => {
     await handMatched("2026-08-01");
     const { id, lines } = await outboxed("2026-09-10");
     await db.expenseLineItem.update({ where: { id: lines[0] }, data: { resolvedQbAccount: null } });
-
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
-    expect(accountsOf(0)).toEqual(["60", "61"]);
-  });
-
-  it("fails the attempt when the payload has no account for it either, and nothing reaches QuickBooks", async () => {
-    await handMatched("2026-08-01");
-    const { id, lines } = await outboxed("2026-09-10");
-    await db.expenseLineItem.update({ where: { id: lines[0] }, data: { resolvedQbAccount: null } });
-    await db.expenseEvent.updateMany({ where: { expenseId: id }, data: { payload: JSON.stringify({ items: [] }) } });
 
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
     expect(qbo.posts).toHaveLength(0);

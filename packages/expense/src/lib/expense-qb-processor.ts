@@ -3,7 +3,6 @@ import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
-import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
@@ -245,66 +244,19 @@ async function persistConflicts(
   }
 }
 
-// ── Stage 3 (pure): build and validate the outbound QB payload ───────────────
+// ── Stage 3 (pure): allocate tax, shipping and discount over the lines ────────
 
-function buildQbPayload(
-  expense: Expense,
-  resolved: ResolvedItem[],
-  lineItems: ExpenseLineItem[],
-  taxAlloc: Map<number, number>,
-  shippingAlloc: Map<number, number>,
-  discountAlloc: Map<number, number>,
-  bucketByLine: Map<number, number | null>,
-): QbExpenseEvent {
-  const payload = {
-    schemaVersion: 1 as const,
-    id: expense.id,
-    vendorName: expense.vendorName,
-    receiptDate: expense.receiptDate,
-    receiptTotalCents: expense.receiptTotalCents,
-    orgId: expense.orgId,
-    needsReimbursement: expense.needsReimbursement,
-    reimbursementFor: expense.reimbursementFor,
-    reimburseePersonId: expense.reimburseePersonId,
-    items: resolved.map((li) => {
-      const full = lineItems.find((x) => x.id === li.id)!;
-      return {
-        lineItemId: li.id,
-        description: li.description,
-        quantity: full.quantity,
-        unitPriceCents: full.unitPriceCents,
-        totalPriceCents: li.totalPriceCents,
-        allocatedTaxCents: taxAlloc.get(li.id) ?? 0,
-        allocatedShippingCents: shippingAlloc.get(li.id) ?? 0,
-        allocatedDiscountCents: discountAlloc.get(li.id) ?? 0,
-        isDelayed: li.isDelayed,
-        isCapital: li.isCapital,
-        capitalOwnerId: full.capitalOwnerId ?? null,
-        depreciationYears: full.depreciationYears ?? null,
-        account: li.account,
-        bucketId: bucketByLine.get(li.id) ?? null,
-      };
-    }),
-  };
-
-  return QbExpenseEventSchema.parse(payload);
-}
-
-/** Allocates tax, shipping and discount over the lines and builds the outbound payload with each line's bucket. */
-async function qbPayloadFor(expense: Expense, resolved: ResolvedItem[], lineItems: ExpenseLineItem[], client: Db = db) {
+function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
   const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
-  const taxAlloc      = allocateAmount(allocItems, expense.taxCents);
-  const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
-  const discountAlloc = allocateAmount(allocItems, expense.discountCents);
-
-  const approvals = await client.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } });
-  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
-  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
-  return { payload, taxAlloc, shippingAlloc, discountAlloc };
+  return {
+    taxAlloc: allocateAmount(allocItems, expense.taxCents),
+    shippingAlloc: allocateAmount(allocItems, expense.shippingCents),
+    discountAlloc: allocateAmount(allocItems, expense.discountCents),
+  };
 }
 
 // ── Stage 4 (atomic): commit QB processing ───────────────────────────────────
-// All domain writes (holds, allocations, event) and the state transition are
+// All domain writes (holds, allocations, resolved accounts, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
 // The sign-off holds are re-read under the expense lock before anything is written,
@@ -319,7 +271,6 @@ async function commitQbProcessing(
   taxAlloc: Map<number, number>,
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
-  payload: QbExpenseEvent,
   snapshots: Map<number, CatalogInfo>,
 ): Promise<boolean> {
   const resolvedLineItemIds = resolved.map((r) => r.id);
@@ -356,7 +307,7 @@ async function commitQbProcessing(
     }
 
     await tx.expenseEvent.create({
-      data: { orgId, expenseId, payload: JSON.stringify(payload) },
+      data: { orgId, expenseId },
     });
 
     await advanceWorkflowInTx(tx, {
@@ -483,14 +434,14 @@ async function processExpenseForQb(
     });
   }
 
-  const { payload, taxAlloc, shippingAlloc, discountAlloc } = await qbPayloadFor(expense, resolved, lineItems);
+  const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(expense, lineItems);
 
   try {
     const committed = await commitQbProcessing(
       orgId, expenseId,
       lineItems, resolved,
       taxAlloc, shippingAlloc, discountAlloc,
-      payload, snapshots,
+      snapshots,
     );
     if (!committed) return;
   } catch (err) {
@@ -539,9 +490,8 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
- * mappings (so a fixed mapping takes effect) and rebuilds the outbox payload, resets the attempt count
- * and records who asked, all under the row lock so an in-flight post never reads half-rewritten
- * accounts; then posts once.
+ * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
+ * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
 export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
@@ -555,8 +505,6 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     await saveCatalogSnapshots(snapshots, tx);
     if (conflicts.length > 0) return false;
 
-    const { payload } = await qbPayloadFor(expense, resolved, lineItems, tx);
-    await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
     }

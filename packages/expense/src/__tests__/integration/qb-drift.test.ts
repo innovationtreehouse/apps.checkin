@@ -64,7 +64,7 @@ async function created(day: string, opts: { bill?: boolean; state?: string } = {
       data: { resolvedQbAccount: account, qbAccountId: account, allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0 },
     });
   }
-  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: "{}" } });
+  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
   const qbId = String(nextQbId++);
   const entity = opts.bill ? "Bill" : "Purchase";
   await db.expense.update({

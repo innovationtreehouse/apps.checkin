@@ -65,7 +65,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("marking test data answers 409 once the expense is in the outbox or past its first QuickBooks state", async () => {
     const queued = await seedExpense();
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: queued, payload: "{}" } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: queued } });
     const matched = await seedExpense();
     await db.expense.update({ where: { id: matched }, data: { qbMatchState: "NOT_TEST_DATA" } });
     const lineMatched = await seedExpense();
