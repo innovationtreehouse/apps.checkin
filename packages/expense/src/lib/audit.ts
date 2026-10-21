@@ -28,7 +28,7 @@ export async function writeAudit(db: Db, actor: Actor, entry: AuditEntry): Promi
 }
 
 export interface OrgAuditEntry {
-  entityType: "account_mapping" | "qb_account" | "part_owner" | "capital_asset";
+  entityType: "account_mapping" | "qb_account" | "part_owner" | "capital_asset" | "qb_txn";
   entityId?: string | number | null;
   action: string;
   before?: unknown;
