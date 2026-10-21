@@ -89,9 +89,9 @@ async function handMatched(day: string) {
 }
 
 /**
- * An expense already in the outbox, every line signed: lines on accounts 60 and 61 in buckets 7 and 100,
- * receipt dated `day`; test data from a TEST- vendor unless told otherwise. A null bucket leaves bucketId
- * off the event.
+ * An expense already in the outbox, every line signed: lines resolved to accounts 60 and 61 and approved
+ * in buckets 7 and 100, receipt dated `day`; test data from a TEST- vendor unless told otherwise. A null
+ * bucket leaves that line without an approval.
  */
 async function outboxed(
   day: string,
@@ -115,19 +115,14 @@ async function outboxed(
   const l1 = await seedLineItem(id, { totalPriceCents: a });
   const l2 = await seedLineItem(id, { totalPriceCents: b });
   const [b1, b2] = opts.buckets ?? [7, 100];
-  const item = (lineItemId: number, cents: number, account: string, bucketId: number | null) => ({
-    lineItemId, description: "Widget", quantity: 1, unitPriceCents: cents, totalPriceCents: cents,
-    allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0,
-    isDelayed: false, isCapital: false, capitalOwnerId: null, depreciationYears: null, account,
-    ...(bucketId !== null && { bucketId }),
-  });
-  const payload = {
-    schemaVersion: 1, id, vendorName, receiptDate: day, receiptTotalCents: a + b, orgId: ORG,
-    needsReimbursement: opts.reimburseePersonId !== undefined, reimbursementFor: null,
-    reimburseePersonId: opts.reimburseePersonId ?? null,
-    items: [item(l1, a, "60", b1), item(l2, b, "61", b2)],
-  };
-  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: JSON.stringify(payload) } });
+  for (const [line, account, bucket] of [[l1, "60", b1], [l2, "61", b2]] as const) {
+    await db.expenseLineItem.update({
+      where: { id: line },
+      data: { resolvedQbAccount: account, allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0 },
+    });
+    if (bucket !== null) await seedApproval(id, line, { ownerId: bucket, status: "approved" });
+  }
+  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
   await signAllLines(id);
   return { id, lines: [l1, l2] };
 }
@@ -442,7 +437,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(fetches);
   });
 
-  it("finance fixes the account and retries: the payload is rebuilt and the expense posts", async () => {
+  it("finance fixes the account and retries: the account is re-resolved and the expense posts", async () => {
     const { id, line } = await outboxedManual("not-an-account");
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
@@ -459,11 +454,9 @@ describeDb("QB-2 posting — bounded retry", () => {
   it("an error thrown inside the post counts as an attempt, so it too stops at NEEDS_FINANCE with a flag", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
-    // A payload line that no longer exists makes the line update throw after QuickBooks answers.
-    const event = await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } });
-    const payload = JSON.parse(event.payload);
-    payload.items[0].lineItemId = 2_000_000_000;
-    await db.expenseEvent.update({ where: { id: event.id }, data: { payload: JSON.stringify(payload) } });
+    // Another expense already holding the entry id QuickBooks hands out makes the settle throw after QuickBooks answers.
+    const holder = await seedExpense({ state: "qb_complete", backfill: true });
+    await db.expense.update({ where: { id: holder }, data: { qbTxnEntity: "Purchase", qbTxnId: "5000" } });
 
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbTxnId: null });
@@ -688,7 +681,7 @@ describeDb("QB-2 posting — checks at post time", () => {
   });
 
   it.each(["rejected", "exception_raised", "pending"])("a line approval that turns %s after the outbox holds the post", async (status) => {
-    const { id, lines } = await outboxed("2026-09-10");
+    const { id, lines } = await outboxed("2026-09-10", { buckets: [null, null] });
     await seedApproval(id, lines[0], { ownerId: 7, status: "approved" });
     const late = await seedApproval(id, lines[1], { ownerId: 100, status: "finance_assigned" });
     await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status } });
@@ -738,16 +731,17 @@ describeDb("QB-2 posting — claim, call, settle", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbClaimedAt: null });
   });
 
-  it("a retry cannot rewrite the payload while a post is in flight", async () => {
-    const { id } = await outboxed("2026-09-10");
+  it("a retry cannot re-resolve the accounts while a post is in flight", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
     await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
-    const before = (await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload;
+    const accounts = () => db.expenseLineItem.findMany({ where: { id: { in: lines } }, orderBy: { id: "asc" }, select: { resolvedQbAccount: true } });
+    const before = await accounts();
     const release = holdQbo();
     const post = postExpenseToQb(ORG, id);
     await untilFetched();
 
     expect(await retryQbPost(ORG, id, { userId: 500 })).toBe(false);
-    expect((await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload).toBe(before);
+    expect(await accounts()).toEqual(before);
 
     release();
     expect(await post).toBe("posted");
@@ -840,7 +834,7 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect(classesOf(1)).toEqual(["9200", "97"]);
   });
 
-  it("an event without bucketIds takes each line's current bucket", async () => {
+  it("each line posts with the Class of the bucket it is in now", async () => {
     await handMatched("2026-08-01");
     const { id, lines } = await outboxed("2026-09-10", { buckets: [null, null] });
     await seedApproval(id, lines[0], { ownerId: 101, status: "approved" });
@@ -906,5 +900,17 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, no_class: 0 });
     expect(classesOf(0)).toEqual(["97", "9100"]);
     expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+});
+
+describeDb("QB-2 posting — a line outboxed without a resolved account", () => {
+  it("fails the attempt, and nothing reaches QuickBooks", async () => {
+    await handMatched("2026-08-01");
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineItem.update({ where: { id: lines[0] }, data: { resolvedQbAccount: null } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1 });
   });
 });

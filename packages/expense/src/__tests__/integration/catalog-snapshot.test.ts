@@ -46,8 +46,7 @@ async function seedLine(): Promise<{ id: string; li: number }> {
 async function postedAccount(id: string): Promise<string> {
   await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
   await checkAndProcessExpense(ORG, id);
-  const event = await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } });
-  return (JSON.parse(event.payload) as { items: Array<{ account: string }> }).items[0].account;
+  return (await db.expenseLineItem.findFirstOrThrow({ where: { expenseId: id } })).resolvedQbAccount!;
 }
 
 const snapshot = async (li: number) =>
