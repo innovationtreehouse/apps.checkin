@@ -150,7 +150,7 @@ export default function ShopifyWebhookSettingsPage() {
                 a &quot;Shopify webhook rejected&quot; warning.
               </Alert>
             ) : (
-              <Table.ScrollContainer minWidth={700}>
+              <Table.ScrollContainer minWidth={900}>
                 <Table striped highlightOnHover verticalSpacing="sm">
                   <Table.Thead>
                     <Table.Tr>
@@ -159,6 +159,7 @@ export default function ShopifyWebhookSettingsPage() {
                       <Table.Th>Test</Table.Th>
                       <Table.Th>Signature</Table.Th>
                       <Table.Th>Order</Table.Th>
+                      <Table.Th>Delivery</Table.Th>
                       <Table.Th>Outcome</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -172,6 +173,14 @@ export default function ShopifyWebhookSettingsPage() {
                           {r.hmacValid ? <Text c="green" component="span">✓</Text> : <Text c="red" component="span" fw={700}>✗</Text>}
                         </Table.Td>
                         <Table.Td>{r.orderId ?? <Text c="dimmed">—</Text>}</Table.Td>
+                        <Table.Td>
+                          {r.deliveryId ? (
+                            <Group gap={4} wrap="nowrap">
+                              <Code title={r.triggeredAt ? `Triggered at ${new Date(r.triggeredAt).toLocaleString()}` : undefined}>{r.deliveryId}</Code>
+                              {r.retry && <Badge color="orange" variant="light">retry</Badge>}
+                            </Group>
+                          ) : <Text c="dimmed">—</Text>}
+                        </Table.Td>
                         <Table.Td>{r.outcome}</Table.Td>
                       </Table.Tr>
                     ))}

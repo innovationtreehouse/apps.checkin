@@ -25,6 +25,16 @@ export interface ShopifyWebhookReceipt {
     topic: string | null;
     /** X-Shopify-Shop-Domain header — which store sent it; null if absent. */
     shopDomain: string | null;
+    /** X-Shopify-Webhook-Id header — stable across Shopify's retries of one delivery; null if absent. */
+    deliveryId: string | null;
+    /** X-Shopify-Triggered-At header — when Shopify raised the event; null if absent. */
+    triggeredAt: string | null;
+    /**
+     * True when an earlier receipt carries the same deliveryId, i.e. Shopify
+     * re-sent a delivery it already made. null when there is no deliveryId or
+     * the lookup failed. Display only: settlement never reads it.
+     */
+    retry: boolean | null;
     /** Whether HMAC verification passed. false = secret mismatch / missing signature. */
     hmacValid: boolean;
     /** True for Shopify's "Send test notification" sample and test-mode orders. */
@@ -76,6 +86,20 @@ export function isShopifyTestNotification(order: unknown): boolean {
     return String(o.id) === SHOPIFY_SAMPLE_ORDER_ID || Number(o.id) === Number(SHOPIFY_SAMPLE_ORDER_ID);
 }
 
+async function isRetriedDelivery(deliveryId: string | null): Promise<boolean | null> {
+    if (deliveryId === null) return null;
+    try {
+        const earlier = await prisma.auditLog.findFirst({
+            where: { tableName: SHOPIFY_WEBHOOK_RECEIPT_TABLE, newData: { path: ["deliveryId"], equals: deliveryId } },
+            select: { id: true },
+        });
+        return earlier !== null;
+    } catch (error) {
+        logger.warn("Shopify webhook receipt: retry lookup failed; recording the receipt without it.", error);
+        return null;
+    }
+}
+
 /**
  * Append one delivery receipt. NEVER throws: a failed insert must not break
  * settlement (a non-2xx would make Shopify retry the whole order), so the
@@ -88,9 +112,13 @@ export async function recordShopifyWebhookReceipt(
 ): Promise<void> {
     try {
         const o = (typeof order === "object" && order !== null ? order : {}) as { id?: unknown };
+        const deliveryId = req.headers.get("x-shopify-webhook-id");
         const receipt: ShopifyWebhookReceipt = {
             topic: req.headers.get("x-shopify-topic"),
             shopDomain: req.headers.get("x-shopify-shop-domain"),
+            deliveryId,
+            triggeredAt: req.headers.get("x-shopify-triggered-at"),
+            retry: await isRetriedDelivery(deliveryId),
             hmacValid: opts.hmacValid,
             test: isShopifyTestNotification(order),
             orderId: o.id === undefined || o.id === null ? null : String(o.id),
