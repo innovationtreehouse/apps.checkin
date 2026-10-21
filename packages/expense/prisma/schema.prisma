@@ -347,8 +347,6 @@ model ExpenseEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
-  /// @sensitivity:personal
-  payload   String?
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 
