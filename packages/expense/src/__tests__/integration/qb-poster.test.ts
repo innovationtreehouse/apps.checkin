@@ -5,6 +5,8 @@
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
+import { inertOutbound, type Outbound } from "../../contract";
+import type { Expense } from "../../db/schema";
 import { db } from "../../db";
 import { TEST_BUCKETS, bindPorts, catalogResolving, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
@@ -194,6 +196,36 @@ describeDb("QB-2 posting — create", () => {
     expect((await expenseRow(id)).state).toBe("qb_complete");
     expect(qbo.posts).toHaveLength(1);
     expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+});
+
+describeDb("QB-2 posting — outbound gateway", () => {
+  it("builds the entry inside quickbooks.create from the rows the gateway passes", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    const calls: { surface: string; models: string[] }[] = [];
+    const withoutVendorName: Outbound = (surface, bag, send) => {
+      calls.push({ surface, models: Object.keys(bag) });
+      return send({ ...bag, Expense: { ...(bag.Expense as Expense), vendorName: undefined } });
+    };
+    bindPorts({ quickbooks: { posting: posting() }, outbound: withoutVendorName });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+
+    expect(calls).toEqual([
+      { surface: "quickbooks.create", models: ["Expense", "ExpenseLineItem", "LineItemOwnerApproval", "BudgetOwner", "ExpenseReimburseeVendor"] },
+    ]);
+    expect(qbo.posts[0].body.PrivateNote).not.toContain("TEST-Acme");
+  });
+
+  it("a gateway that refuses sends nothing and records the failure", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    bindPorts({ quickbooks: { posting: posting() }, outbound: inertOutbound });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1 });
   });
 });
 
