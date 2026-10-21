@@ -15,11 +15,21 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
             isPaymentPlanRequested: true,
             ...fromWhere('PENDING_PAYMENT'),
         },
-        include: {
+        // Selects stay narrow: finance holds everyones:pii here for the lead
+        // emails, so any other column selected (the intake note, its snapshot on
+        // the process) would reach them too.
+        select: {
+            id: true,
+            stageEnteredAt: true,
+            scholarshipRequestKind: true,
             orgMembership: {
-                include: {
+                select: {
+                    id: true,
+                    isVolunteerFamily: true,
                     household: {
-                        include: {
+                        select: {
+                            id: true,
+                            name: true,
                             householdMembers: {
                                 where: { isHouseholdLead: true, ...LIVE_PERSON },
                                 select: { id: true, name: true, email: true },
