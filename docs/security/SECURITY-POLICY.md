@@ -124,6 +124,8 @@ export async function createShopifyOrder(participant, program) {
 
 Register the surface in `src/security/registry.ts` with the tier list you actually need on the wire — anything else (and `secret` regardless) is stripped before `fetch` ever sees it.
 
+A surface is enforced only where its caller goes through `outboundCall`, and its registry entry says so. Many existing callers, in the app as well as the packages, still build their request and call `fetch` or an SDK directly; for those, the entry's tiers are not applied at runtime. Check an entry's comment before relying on its tiers.
+
 ```ts
 defineOutbound({
     surface: 'shopify.order.create',
@@ -133,7 +135,7 @@ defineOutbound({
 
 A library in `packages/*` or a Lambda in a root-level `*-function` dir cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and map the file (path from the repo root) to that surface in `PACKAGE_EGRESS_FILES` in `src/security/egressAllowlist.ts`. The lint fails on any non-loopback URL literal, named third-party host or listed API SDK in `.ts`/`.tsx`/`.js`/`.mjs`/`.cjs` source there outside those files (tests, fixtures and generated code excluded), and on a mapped surface with no `defineOutbound` entry. An SDK hides its host, so a new one goes into `THIRD_PARTY_SDK_RE` in the same PR as its surface. AWS SDK clients are not listed: they reach only AWS, where the code runs.
 
-A package surface is an inventory, not a guarantee. Nothing strips a package payload by tier, so its `defineOutbound` tiers record what the code sends today; re-tiering the entry changes nothing on the wire, and adding a field to a package payload changes no test or stripper. Review a package payload change against its entry's comment. The lint also cannot see a host built from config, and an OAuth scope named in a comment (Gmail's `gmail.readonly`) is not checked at runtime. The allowlists and patterns live in `src/security/egressAllowlist.ts`, which is in the security boundary set: widening one ships in its own PR.
+An unenforced surface, in a package or in the app, is an inventory, not a guarantee. Nothing strips its payload by tier, so its `defineOutbound` tiers record what the code sends today; re-tiering the entry changes nothing on the wire, and adding a field to its payload changes no test or stripper. Review such a payload change against its entry's comment. The lint also cannot see a host built from config, and an OAuth scope named in a comment (Gmail's `gmail.readonly`) is not checked at runtime. The allowlists and patterns live in `src/security/egressAllowlist.ts`, which is in the security boundary set: widening one ships in its own PR.
 
 ### Serving a stored file
 
