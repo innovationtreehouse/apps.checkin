@@ -63,10 +63,10 @@ beforeEach(() => {
 });
 
 describe("PATCH /api/household/member — designated address", () => {
-    beforeEach(() => findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "kid@example.com", _count: { accounts: 0 } }));
+    beforeEach(() => findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "kid@example.com", household: { orgMembership: null }, _count: { accounts: 0 } }));
 
     it("saves other edits when the stored designated email is resent unchanged", async () => {
-        findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "volunteer@gmail.com", _count: { accounts: 0 } });
+        findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "volunteer@gmail.com", household: { orgMembership: null }, _count: { accounts: 0 } });
         const res = await call(memberPATCH, "/api/household/member", { participantId: KID, email: "Volunteer@gmail.com", phone: "5555550123" });
         expect(res.status).toBe(200);
         expect(tx.person.update).toHaveBeenCalled();
