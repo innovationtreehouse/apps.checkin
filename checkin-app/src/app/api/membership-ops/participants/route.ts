@@ -9,6 +9,16 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { lockBoardRoles } from "@/lib/roles";
+import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+
+/** The household the person would join is DENIED. */
+class DeniedHouseholdAddError extends Error {
+    constructor(public readonly householdId: number) {
+        super(`household ${householdId} is denied`);
+    }
+}
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req, auth) => {
     if (auth.type !== 'session') {
@@ -56,6 +66,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // creating: parent's household > explicitly provided household > a new
         // household of their own.
         let householdIdToAssign: number | null = null;
+        // Set when the person joins a household that already existed before this request.
+        let joinsExistingHousehold = false;
 
         if (parentEmail) {
             let parent = await prisma.person.findUnique({
@@ -90,25 +102,46 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     });
                 });
                 await addHouseholdLead(prisma, parent.householdId, parent.id);
+            } else {
+                joinsExistingHousehold = true;
             }
 
             householdIdToAssign = parent.householdId;
         } else if (householdId) {
             householdIdToAssign = householdId;
+            joinsExistingHousehold = true;
+        }
+
+        // Adding someone to the actor's own household would get around the own-household
+        // rule on grants, since an active household's members are members.
+        if (joinsExistingHousehold && householdIdToAssign && await refuseSelfGrant(prisma, auth.user.id, { householdId: householdIdToAssign }, {
+            table: "Person",
+            attempted: { householdId: householdIdToAssign, name: nameWrite(name) ?? null },
+        })) {
+            return apiError("You cannot add someone to your own household — someone outside your household must.", 403);
         }
 
         let newParticipant;
         if (householdIdToAssign) {
-            newParticipant = await withTx(prisma, async (tx) => tx.person.create({
-                data: {
-                    id: await mintPersonId(tx),
-                    name: nameWrite(name),
-                    ...(email && { email }),
-                    // #1165: 26+ participants are stored declared-adult with no DoB.
-                    ...normalizeAdultDob(dob),
-                    householdId: householdIdToAssign
+            const targetHouseholdId = householdIdToAssign;
+            newParticipant = await withTx(prisma, async (tx) => {
+                // Nobody joins a DENIED household. The BOARD lock comes first, as a deny
+                // takes it, so a deny of this household serializes with the add.
+                await lockBoardRoles(tx);
+                if (await lockAndFindDeniedHousehold(tx, [targetHouseholdId]) !== null) {
+                    throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
-            }));
+                return tx.person.create({
+                    data: {
+                        id: await mintPersonId(tx),
+                        name: nameWrite(name),
+                        ...(email && { email }),
+                        // #1165: 26+ participants are stored declared-adult with no DoB.
+                        ...normalizeAdultDob(dob),
+                        householdId: targetHouseholdId
+                    }
+                });
+            });
         } else {
             const lastName = (name || "").trim().split(/\s+/).pop() || "";
             newParticipant = await withTx(prisma, async (tx) => {
@@ -134,6 +167,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
     } catch (error: unknown) {
         if (error instanceof HouseholdLeadLimitError) {
             return apiError(error.message, 400);
+        }
+        if (error instanceof DeniedHouseholdAddError) {
+            await raiseDeniedHouseholdActivity({ householdId: error.householdId, what: "participant add refused" });
+            return apiError("This household has been denied membership, so no one can be added to it.", 409);
         }
         await logBackendError(error, "POST /api/membership-ops/participants");
         return apiError(`Failed to create participant`, 500);

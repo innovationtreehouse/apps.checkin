@@ -321,7 +321,7 @@ describe('Admin Participants API Integration Tests', () => {
 
         it('should successfully update a participant name, email, and phone', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: true }
             });
 
             // Create a disposable user just for this edit test
@@ -331,7 +331,7 @@ describe('Admin Participants API Integration Tests', () => {
 
             const req = new Request(`http://localhost:4000/api/membership-ops/participants/${editUser.id}`, {
                 method: 'PUT',
-                body: JSON.stringify({ name: 'Updated Name', email: 'updated-email@example.com', phone: '5551234567' })
+                body: JSON.stringify({ name: 'Updated Name', email: 'updated-email@example.com', emailChangeReason: 'New address', phone: '5551234567' })
             });
 
             const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: editUser.id.toString() }) });

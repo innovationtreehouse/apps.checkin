@@ -62,11 +62,28 @@ describe("AdminParticipantsIndex", () => {
         expect(await screen.findByText("Edit Person")).toBeInTheDocument();
         expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
         const emailInput = screen.getByLabelText("Email Address");
+        expect(screen.queryByLabelText(/Reason for the email change/)).not.toBeInTheDocument();
         fireEvent.change(emailInput, { target: { value: "alice@new.com" } });
+        fireEvent.change(screen.getByLabelText(/Reason for the email change/), { target: { value: "Alice asked by phone" } });
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
 
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
         expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" }));
+        const put = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/membership-ops/participants/1"));
+        expect(JSON.parse(String(put?.[1]?.body))).toEqual(expect.objectContaining({ email: "alice@new.com", emailChangeReason: "Alice asked by phone" }));
+    });
+
+    it("a sysadmin who is not on the board cannot edit the email", async () => {
+        setSession({ id: 999, isSysadmin: true });
+        mockFetchJson({ "/api/people/search": { people: [alice] } });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+
+        expect(await screen.findByLabelText("Email Address")).toBeDisabled();
+        expect(screen.getByText("Only a board member can change a person's email.")).toBeInTheDocument();
     });
 
     it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {

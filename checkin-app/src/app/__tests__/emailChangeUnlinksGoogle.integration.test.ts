@@ -63,7 +63,7 @@ describe('board email change unlinks Google sign-ins', () => {
     beforeAll(async () => {
         await wipe();
         const board = await prisma.person.create({
-            data: { email: `board-${TAG}@example.com`, name: 'Board', isSysadmin: true, household: { create: { name: 'Board HH' } } },
+            data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: 'Board HH' } } },
         });
         boardId = board.id;
     });
@@ -77,7 +77,7 @@ describe('board email change unlinks Google sign-ins', () => {
             },
         });
         personId = person.id;
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: false, isBoardMember: true } });
     });
 
     afterEach(async () => {
@@ -90,7 +90,7 @@ describe('board email change unlinks Google sign-ins', () => {
     it('the old Google account no longer resolves, and the new address links', async () => {
         expect((await adapter.getUserByAccount({ provider: 'google', providerAccountId: OLD_SUB }))?.id).toBe(String(personId));
 
-        const res = await put(personId, { email: NEW_EMAIL });
+        const res = await put(personId, { email: NEW_EMAIL, emailChangeReason: 'New address' });
         expect(res.status).toBe(200);
 
         expect(await adapter.getUserByAccount({ provider: 'google', providerAccountId: OLD_SUB })).toBeNull();

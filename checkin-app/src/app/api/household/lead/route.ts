@@ -4,6 +4,16 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { lockBoardRoles } from "@/lib/roles";
+import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+
+/** The household the lead would lead is DENIED. */
+class DeniedHouseholdLeadError extends Error {
+    constructor(public readonly householdId: number) {
+        super(`household ${householdId} is denied`);
+    }
+}
 
 export const POST = withAuth(
     {},
@@ -39,7 +49,24 @@ export const POST = withAuth(
                 return apiError("Only household leads, board members, or sysadmins can promote members", 403);
             }
 
-            const { created } = await addHouseholdLead(prisma, targetHouseholdId, participantId);
+            // A lead promotes within their own household; the board and sysadmin path
+            // into any other household may not reach the actor's own.
+            if (!isLeadOfTarget && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId: targetHouseholdId }, {
+                table: "Person",
+                attempted: { isHouseholdLead: true },
+            })) {
+                return apiError("You cannot make yourself or someone in your own household a lead — someone outside your household must.", 403);
+            }
+
+            // Nobody becomes a lead of a DENIED household. The BOARD lock comes first, as
+            // a deny takes it, so a deny of this household serializes with the promotion.
+            const { created } = await prisma.$transaction(async (tx) => {
+                await lockBoardRoles(tx);
+                if (await lockAndFindDeniedHousehold(tx, [targetHouseholdId]) !== null) {
+                    throw new DeniedHouseholdLeadError(targetHouseholdId);
+                }
+                return addHouseholdLead(tx, targetHouseholdId, participantId);
+            });
 
             if (!created) {
                 return NextResponse.json({ message: "Member is already a lead" }, { status: 200 });
@@ -65,6 +92,10 @@ export const POST = withAuth(
             }
             if (error instanceof HouseholdLeadYouthError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof DeniedHouseholdLeadError) {
+                await raiseDeniedHouseholdActivity({ householdId: error.householdId, what: "household lead promotion refused" });
+                return apiError("This household has been denied membership, so no one can be made its lead.", 409);
             }
             logger.error("Household Lead POST Error:", error);
             return apiError("Internal Server Error", 500);

@@ -291,10 +291,12 @@ describe('AuditLog Integration Tests', () => {
 
     it('should generate an AuditLog when an Admin edits participant PII', async () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'Person' } });
+        // An email change is the board's.
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true, isBoardMember: true } });
 
         const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}`, {
             method: 'PUT',
-            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com' })
+            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com', emailChangeReason: 'New address' })
         });
 
         const res = await editParticipant(req as never, { params: Promise.resolve({ id: testParticipantId.toString() }) });
