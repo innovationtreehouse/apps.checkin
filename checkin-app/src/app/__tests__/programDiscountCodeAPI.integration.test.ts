@@ -200,7 +200,11 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         expect(data.reason).toBeUndefined();
         // 5000 (non-member) - 4000 (member) = 1000: the amount actually
         // reaches the minting call, not just the response shape.
-        expect(mintSpy).toHaveBeenCalledWith(coveredProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-covered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: coveredProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-covered' }),
+            unsettledHouseholdId,
+            1000,
+        );
     });
 
     it('returns { code: null, reason } when the program ends after an unsettled member\'s boundary', async () => {

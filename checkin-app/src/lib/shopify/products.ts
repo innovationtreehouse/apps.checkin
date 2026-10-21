@@ -3,6 +3,7 @@
 import { escapeHtml } from "@/lib/email-templates/base";
 import { config } from "@/lib/config";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
+import { outboundCall } from "@/security/outbound";
 
 /** Thrown by fetchStorefrontProductVariants; status maps straight onto the API response. */
 export class ProductUrlError extends Error {
@@ -112,6 +113,9 @@ export function programProductHandle(program: { id: number; name: string }, kind
     return `checkin-program-${program.id}-${slug}${kind === "claimant" ? "-reserved-seat" : ""}`;
 }
 
+/** The Program fields a product create sends, as outboundCall hands them back after stripping. */
+type ProductCreateFields = { name: string; nonOrgMemberPriceCents: number; maxParticipants?: number | null };
+
 /** The product already carrying `handle`, with its first variant; null when there is none. Throws on a failed lookup. */
 async function findProductByHandle(
     storeDomain: string,
@@ -192,27 +196,34 @@ export async function createShopifySingleVariantProgram(
         const existing = handle ? await findProductByHandle(storeDomain, accessToken, handle) : null;
         if (existing) return { shopifyProductId: existing.productId, shopifyVariantId: existing.variantId };
 
-        const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
+        const productRes = await outboundCall(
+            'shopify.product.create',
+            { Program: { name, nonOrgMemberPriceCents: basePriceCents, maxParticipants } },
+            (stripped) => {
+                const program = stripped.Program as ProductCreateFields;
+                return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Shopify-Access-Token': accessToken,
+                    },
+                    body: JSON.stringify({
+                        product: {
+                            title: `${program.name} Program Enrollment`,
+                            ...(handle && { handle }),
+                            status: 'active',
+                            product_type: "Educational Services",
+                            variants: [{
+                                price: (program.nonOrgMemberPriceCents / 100).toFixed(2),
+                                requires_shipping: false,
+                                inventory_management: program.maxParticipants ? 'shopify' : null,
+                                inventory_policy: program.maxParticipants ? 'deny' : 'continue',
+                            }],
+                        }
+                    })
+                }, "Shopify create product");
             },
-            body: JSON.stringify({
-                product: {
-                    title: `${name} Program Enrollment`,
-                    ...(handle && { handle }),
-                    status: 'active',
-                    product_type: "Educational Services",
-                    variants: [{
-                        price: (basePriceCents / 100).toFixed(2),
-                        requires_shipping: false,
-                        inventory_management: maxParticipants ? 'shopify' : null,
-                        inventory_policy: maxParticipants ? 'deny' : 'continue',
-                    }],
-                }
-            })
-        }, "Shopify create product");
+        );
 
         if (!productRes.ok) {
             const errorData = await productRes.text();
@@ -297,25 +308,32 @@ export async function createClaimantProduct(
         let variantId = existing?.variantId;
         productId = existing?.productId ?? null;
         if (!existing) {
-            const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    product: {
-                        title: `${name} Program Enrollment (reserved seat)`,
-                        ...(handle && { handle }),
-                        status: 'draft',
-                        published: true,
-                        product_type: "Educational Services",
-                        variants: [{
-                            price: (basePriceCents / 100).toFixed(2),
-                            requires_shipping: false,
-                            inventory_management: null,
-                            inventory_policy: 'continue',
-                        }],
-                    },
-                }),
-            }, "Shopify create claimant product");
+            const productRes = await outboundCall(
+                'shopify.product.create',
+                { Program: { name, nonOrgMemberPriceCents: basePriceCents } },
+                (stripped) => {
+                    const program = stripped.Program as ProductCreateFields;
+                    return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                            product: {
+                                title: `${program.name} Program Enrollment (reserved seat)`,
+                                ...(handle && { handle }),
+                                status: 'draft',
+                                published: true,
+                                product_type: "Educational Services",
+                                variants: [{
+                                    price: (program.nonOrgMemberPriceCents / 100).toFixed(2),
+                                    requires_shipping: false,
+                                    inventory_management: null,
+                                    inventory_policy: 'continue',
+                                }],
+                            },
+                        }),
+                    }, "Shopify create claimant product");
+                },
+            );
             if (!productRes.ok) {
                 throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
             }
@@ -332,14 +350,21 @@ export async function createClaimantProduct(
                     userErrors { field message }
                 }
             }`;
-        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                query: mutation,
-                variables: { product: { id: `gid://shopify/Product/${productId}`, status: 'UNLISTED' } },
-            }),
-        }, "Shopify unlist claimant product");
+        const res = await outboundCall(
+            'shopify.product.update',
+            { Program: { claimantShopifyProductId: productId } },
+            (stripped) => {
+                const program = stripped.Program as { claimantShopifyProductId: string };
+                return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        query: mutation,
+                        variables: { product: { id: `gid://shopify/Product/${program.claimantShopifyProductId}`, status: 'UNLISTED' } },
+                    }),
+                }, "Shopify unlist claimant product");
+            },
+        );
         if (!res.ok) throw new Error(`Shopify productUpdate failed: ${res.status} ${await res.text()}`);
         const data = await res.json();
         if (data.errors) throw new Error(`Shopify productUpdate GraphQL errors: ${JSON.stringify(data.errors)}`);
