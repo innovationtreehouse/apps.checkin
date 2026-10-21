@@ -38,6 +38,10 @@ on:
     # so this must exist on both main (every future rel/* cut inherits it)
     # and rel/1.0 (so current release-line PRs get checks).
     branches: [main, 'rel/**']
+  # Required checks must also report on the merge queue's ref, or the entry
+  # waits forever. The jobs run for real there: two queued PRs whose
+  # migrations each pass alone can still collide once stacked.
+  merge_group:
 
 # pull_request runs share one group per ref, so a new push cancels the run it
 # supersedes. Every other event keys on run_id: a group of one, so main pushes,
@@ -67,11 +71,11 @@ jobs:
 
       - id: detect
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           echo "Changed files:"; printf '%s\n' "$changed"
           SELF='^\.github/(workflows/migration-safety\.yml$|actions/(ecr-public-login|start-postgres)/)'
           if printf '%s\n' "$changed" | grep -qE "^checkin-app/prisma/migrations/|$SELF"; then
@@ -491,7 +495,8 @@ jobs:
       - name: Check migrations added by this PR
         if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         env:
-          BASE_REF: ${{ github.base_ref }}
+          # github.base_ref is empty on merge_group; the queue only serves main.
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           set -euo pipefail
           git fetch --quiet origin "$BASE_REF"
