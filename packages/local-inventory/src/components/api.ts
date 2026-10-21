@@ -44,6 +44,13 @@ export function useCanManage(): boolean {
   return user?.isInventoryManager === true;
 }
 
+/** INVENTORY_MANAGER, FINANCE or BOARD: the receiving read gate, which also covers the inventory log (#2384). */
+export function useCanSeeReceiving(): boolean {
+  const { data } = useSession();
+  const user = data?.user as { isInventoryManager?: boolean; isFinance?: boolean; isBoardMember?: boolean } | undefined;
+  return user?.isInventoryManager === true || user?.isFinance === true || user?.isBoardMember === true;
+}
+
 export interface Loaded<T> {
   data: T | null;
   error: string | null;

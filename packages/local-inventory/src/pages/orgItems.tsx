@@ -7,7 +7,7 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCanSeeReceiving, useCatalogNames, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface LocationRef { id: number; name: string }
@@ -269,6 +269,7 @@ function InventoryLog() {
 /** /inventory/org-items — on-hand stock by location, items without a location, and the change log. */
 export default function OrgItemsPage() {
   const canManage = useCanManage();
+  const canSeeLog = useCanSeeReceiving();
   return (
     <>
       <Title order={3} mb="md">Organization Inventory</Title>
@@ -276,11 +277,11 @@ export default function OrgItemsPage() {
         <Tabs.List mb="md">
           <Tabs.Tab value="all">All Inventory</Tabs.Tab>
           {canManage && <Tabs.Tab value="attention" color="yellow">Needs a location</Tabs.Tab>}
-          <Tabs.Tab value="log">Inventory Log</Tabs.Tab>
+          {canSeeLog && <Tabs.Tab value="log">Inventory Log</Tabs.Tab>}
         </Tabs.List>
         <Tabs.Panel value="all"><ItemsTable unlocated={false} /></Tabs.Panel>
         {canManage && <Tabs.Panel value="attention"><ItemsTable unlocated /></Tabs.Panel>}
-        <Tabs.Panel value="log"><InventoryLog /></Tabs.Panel>
+        {canSeeLog && <Tabs.Panel value="log"><InventoryLog /></Tabs.Panel>}
       </Tabs>
     </>
   );
