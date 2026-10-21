@@ -43,10 +43,18 @@ Income and donation rules are in `revenue.md`.
 
 ### Receipts
 
-- Nobody makes a finance decision on a receipt that they or their household
-  uploaded or is reimbursed for. Until a receipt is finalized, its submitter
-  may correct its tax and date; a receipt whose tax or date its submitter
-  corrected goes to finance review.
+- Nobody takes a step on a receipt they are conflicted on if they could use it
+  to their own benefit or to hide or clear their own spending. A person is
+  conflicted when they, or someone in their household, uploaded the receipt or
+  is reimbursed for it. A conflicted person may not approve a line or raise an
+  exception on it, sign any sign-off seat, record Board authorization, choose
+  which QuickBooks entry an expense is matched to, or exclude a QuickBooks entry
+  from matching. Classifying a purchase that is already signed off is
+  bookkeeping, and any finance holder may do it: the capital or non-capital
+  designation, the depreciation cycle and owner bucket, the account set on a
+  mapping hold, and resubmitting a held expense. Until a receipt is finalized,
+  its submitter may correct its tax and date; a receipt whose tax or date its
+  submitter corrected goes to finance review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 ### Budget buckets
