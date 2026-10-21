@@ -246,6 +246,15 @@ describe('Protected-route role rejection', () => {
         });
     });
 
+    // ---- review-override — Board only; a sysadmin off the Board is denied -----
+    describe('POST /api/membership-ops/applications/review-override — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await REVIEW_OVERRIDE_POST(nreq('http://localhost/api/membership-ops/applications/review-override', 'POST', {}));
+            expect(res.status).toBe(403);
+        });
+    });
+
     // ---- certify-payment — Board only; a sysadmin off the Board is denied ------
     describe('POST /api/membership-ops/applications/certify-payment — sysadmin alone is denied', () => {
         it('403s a sysadmin who is not on the Board', async () => {

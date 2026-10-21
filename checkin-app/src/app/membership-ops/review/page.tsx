@@ -30,7 +30,7 @@ interface QueueItem {
 
 export default function MembershipReviewPage() {
   const { data: session, status: sessionStatus } = useSession();
-  const canReset = !!(session?.user?.isBoardMember || session?.user?.isSysadmin);
+  const canReset = !!session?.user?.isBoardMember;
   // No h1 here: this page always renders inside the Membership Ops layout, whose
   // tab bar already labels it (the standalone /membership/review route is gone).
   const [queue, setQueue] = useState<QueueItem[]>([]);
