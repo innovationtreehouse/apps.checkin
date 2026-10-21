@@ -8,7 +8,7 @@ import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/m
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
-import { addHouseholdLead, HouseholdLeadLimitError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
+import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
@@ -54,7 +54,7 @@ export class IntakeError extends Error {
  */
 export type IntakeRejection = {
     section: "secondaryParent";
-    code: "lead_limit" | "name_required";
+    code: "lead_limit" | "name_required" | "household_denied";
     message: string;
 };
 
@@ -284,6 +284,11 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     code: "lead_limit",
                     message: `We saved this person's details, but your household already lists the maximum of ${MAX_HOUSEHOLD_LEADS} parents/guardians, so they weren't added as a second guardian. Update or remove an existing parent/guardian to change that.`,
                 });
+                return;
+            }
+            if (e instanceof HouseholdLeadDeniedError) {
+                await raiseDeniedHouseholdActivity({ householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" });
+                rejections.push({ section: "secondaryParent", code: "household_denied", message: `We saved this person's details, but ${e.message.charAt(0).toLowerCase()}${e.message.slice(1)}` });
                 return;
             }
             throw e;

@@ -11,6 +11,7 @@
 import { PUT as PARTICIPANT_PUT } from '@/app/api/membership-ops/participants/[id]/route';
 import { POST as PARTICIPANT_POST } from '@/app/api/membership-ops/participants/route';
 import { POST as LEAD_POST } from '@/app/api/household/lead/route';
+import { PATCH as MEMBER_PATCH } from '@/app/api/household/member/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
@@ -124,6 +125,12 @@ describe('admin participant routes keep the own-household and denied rules', () 
             expect(await prisma.person.count({ where: { name: `Child ${TAG}` } })).toBe(0);
         });
 
+        it('finds the parent by a case variant of their address', async () => {
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Cased ${TAG}`, parentEmail: ` Spouse-${TAG}@Example.com `, parentName: 'Spouse' }));
+            expect(res.status).toBe(403);
+            expect(await prisma.person.count({ where: { name: `Cased ${TAG}` } })).toBe(0);
+        });
+
         it('refuses adding a person to a DENIED household and raises it to the board', async () => {
             const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Denied add ${TAG}`, householdId: deniedHouseholdId }));
             expect(res.status).toBe(409);
@@ -135,6 +142,26 @@ describe('admin participant routes keep the own-household and denied rules', () 
             const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Joined ${TAG}`, householdId: otherHouseholdId }));
             expect(res.status).toBe(200);
             expect((await prisma.person.findFirst({ where: { name: `Joined ${TAG}` } }))?.householdId).toBe(otherHouseholdId);
+        });
+    });
+
+    describe('household member PATCH lead promotion', () => {
+        it('refuses a sysadmin who does not lead their household', async () => {
+            actAs(boardId, { isSysadmin: true, isBoardMember: true });
+            const res = await MEMBER_PATCH(jsonReq('PATCH', { participantId: spouseId, isLead: true }));
+            expect(res.status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: spouseId } }))?.isHouseholdLead).toBe(false);
+        });
+
+        it('saves the edit but makes nobody a lead of a DENIED household', async () => {
+            const lead = await prisma.person.create({ data: { email: `denied-lead-${TAG}@example.com`, name: 'Denied Lead', isDeclaredAdult: true, isHouseholdLead: true, householdId: deniedHouseholdId } });
+            actAs(lead.id, {});
+            const res = await MEMBER_PATCH(jsonReq('PATCH', { participantId: deniedMemberId, isLead: true, name: 'Denied Renamed' }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).leadRejection).toMatch(/denied membership/);
+            const member = await prisma.person.findUnique({ where: { id: deniedMemberId } });
+            expect(member?.isHouseholdLead).toBe(false);
+            expect(member?.name).toBe('Denied Renamed');
         });
     });
 

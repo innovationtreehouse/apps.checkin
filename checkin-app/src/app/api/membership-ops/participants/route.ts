@@ -9,6 +9,7 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
+import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
@@ -54,7 +55,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         if (email) {
             const existingUser = await prisma.person.findUnique({
-                where: { email }
+                where: { email: normalizeEmail(email) }
             });
 
             if (existingUser) {
@@ -70,8 +71,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         let joinsExistingHousehold = false;
 
         if (parentEmail) {
+            // Reads are not normalized by the client extension, so a case variant of a
+            // stored address must still find that parent and their household.
             let parent = await prisma.person.findUnique({
-                where: { email: parentEmail }
+                where: { email: normalizeEmail(parentEmail) }
             });
 
             if (!parent) {
