@@ -227,8 +227,11 @@ preserve them exactly:
   runs `owner_approval → (capital_review → set_depreciation_cycle) → qb_pending`,
   and at `qb_pending` `expense-qb-processor.ts` resolves each line to one QB
   account, allocates tax/shipping/discount, and — in **one interactive
-  transaction** — writes a validated `QbExpenseEvent` row to the `ExpenseEvent`
-  table and advances `qb_pending → qb_complete`. The row is the durable outbox;
+  transaction** — writes each line's allocations and resolved account
+  (`ExpenseLineItem.resolvedQbAccount`), commits the `ExpenseEvent` outbox row
+  and advances `qb_pending → qb_complete`. The row is the durable outbox marker;
+  the poster and the drift check read the expense and its lines, not the row's
+  `payload`, which is still written until it is dropped;
   **something downstream posts it to QuickBooks.** In the source that downstream
   writer does not exist yet — the machine terminates the moment the event is
   committed. **The write path is exactly what §9 QB-2 builds** in
@@ -852,7 +855,7 @@ sign-off (owner), so expense never calls local-inventory.
 | **C — catalog lookups** | expense → catalog | **in-process read (caller)** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` (pathPrefix `/api/internal`) → catalog's org-bearer **machine** surface `/api/internal/[...path]` (#1286 §8) |
 | **X12 — reimbursement status** | receipt → expense | **in-process read (callee)** | `ReimbursementStatus.forReceipts` (§8c) | none; receipt stamped "reimbursed" by hand |
 | **S5 — provisional events** | catalog → expense | **post-commit call-out (consumer)** | `orgEventPayloadSchema` | catalog's `OrgEvent` table, HTTP-polled |
-| **QB — post** | expense → QuickBooks | **outbox** | `QbExpenseEventSchema` / `QbLineItemSchema` (schemaVersion 1) | `ExpenseEvent` outbox row; drained by the write path (§9) |
+| **QB — post** | expense → QuickBooks | **outbox** | the `Expense` and `ExpenseLineItem` rows (`resolvedQbAccount`, allocations) | `ExpenseEvent` outbox row; drained by the write path (§9) |
 
 ### 8a. Expense intake (S2) — in-process only; checkin cannot host the org-bearer route
 

@@ -342,6 +342,7 @@ async function commitQbProcessing(
       });
     }
 
+    const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
     for (const li of lineItems) {
       await tx.expenseLineItem.update({
         where: { id: li.id },
@@ -349,6 +350,7 @@ async function commitQbProcessing(
           allocatedTaxCents: taxAlloc.get(li.id) ?? 0,
           allocatedShippingCents: shippingAlloc.get(li.id) ?? 0,
           allocatedDiscountCents: discountAlloc.get(li.id) ?? 0,
+          resolvedQbAccount: accountByLine.get(li.id) ?? null,
         },
       });
     }
@@ -536,9 +538,10 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 // ── Finance retry of a failed QuickBooks post ─────────────────────────────────
 
 /**
- * Re-arms an expense whose post failed: rebuilds the outbox payload from the current account
- * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all under
- * the row lock so an in-flight post never reads a half-rewritten payload; then posts once.
+ * Re-arms an expense whose post failed: re-resolves each line's account from the current account
+ * mappings (so a fixed mapping takes effect) and rebuilds the outbox payload, resets the attempt count
+ * and records who asked, all under the row lock so an in-flight post never reads half-rewritten
+ * accounts; then posts once.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
 export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
@@ -554,6 +557,9 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
 
     const { payload } = await qbPayloadFor(expense, resolved, lineItems, tx);
     await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
+    for (const r of resolved) {
+      await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
+    }
     await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;

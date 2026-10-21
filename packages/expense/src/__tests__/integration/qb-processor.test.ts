@@ -75,6 +75,7 @@ describeDb("checkAndProcessExpense — happy path", () => {
     const lis = await db.expenseLineItem.findMany({ where: { expenseId: id } });
     expect(lis.find((l) => l.id === li1)!.allocatedTaxCents).toBe(8);
     expect(lis.find((l) => l.id === li2)!.allocatedTaxCents).toBe(2);
+    expect(lis.map((l) => l.resolvedQbAccount)).toEqual(["4000", "4000"]);
   });
 
   it("carries each line's budget bucket on the event; a line with no bucket carries null", async () => {
