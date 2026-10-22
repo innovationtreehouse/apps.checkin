@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Alert, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, dollars, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { parseQueue, reviewHref } from "../components/reviewQueue";
 
 interface Line {
   id: number;
@@ -37,9 +39,16 @@ interface AuditRow {
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
-/** /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the caller. */
+/**
+ * /receipts/[id] and /receipts/review/[id] — one receipt: its file, details and lines, and the
+ * actions its state allows the caller. Opened from a review queue, a decision returns to that queue.
+ */
 export default function ReceiptDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const queue = parseQueue(useSearchParams().get("queue"));
+  const fromReview = usePathname().startsWith("/receipts/review/");
+  const back = fromReview ? { href: reviewHref(queue), label: "Receipts review" } : { href: "/receipts", label: "My receipts" };
   const { data: session } = useSession();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
@@ -53,8 +62,13 @@ export default function ReceiptDetailPage() {
 
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
-  const act = async (path: string, method: string, body: unknown, success: string) => {
+  // `decides` marks an action that moves the receipt out of the queue it was opened from.
+  const act = async (path: string, method: string, body: unknown, success: string, decides = false) => {
     if (await send(`/${id}${path}`, method, body, success)) {
+      if (decides && fromReview) {
+        router.push(back.href);
+        return;
+      }
       setNote("");
       setEdit({});
       receipt.reload();
@@ -75,6 +89,7 @@ export default function ReceiptDetailPage() {
 
   return (
     <Stack>
+      <Anchor component={Link} href={back.href} size="sm">← {back.label}</Anchor>
       <Group justify="space-between">
         <Title order={3}>{r.retailer ?? "Receipt"}</Title>
         <Group gap="xs">
@@ -139,13 +154,13 @@ export default function ReceiptDetailPage() {
               </>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again")}>Read it again</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
             )}
             {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted")}>Resubmit</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted", true)}>Resubmit</Button>
             )}
             {(own || isFinance) && !TERMINAL.has(r.state) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded")}>Discard</Button>
+              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
             )}
           </Group>
 
@@ -157,17 +172,17 @@ export default function ReceiptDetailPage() {
                   <>
                     <Textarea label="Note (required when the reason is tax)" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
                     <Group gap="xs">
-                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved")}>Approve</Button>
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected")}>Reject</Button>
+                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved", true)}>Approve</Button>
+                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected", true)}>Reject</Button>
                     </Group>
                   </>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
                 {r.state === "duplicate_flagged" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared")}>Not a duplicate</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared", true)}>Not a duplicate</Button>
                 )}
                 {r.state === "flow_error" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted")}>Restart</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", true)}>Restart</Button>
                 )}
                 {r.state === "discarded" && (
                   <Group align="end">

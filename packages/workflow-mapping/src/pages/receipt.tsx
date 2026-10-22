@@ -70,8 +70,11 @@ function lateEdits(rows: AuditRow[] | null): Map<Leg, Set<number>> {
   return byLeg;
 }
 
-/** /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls. */
-export default function ReceiptPage() {
+/**
+ * /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls.
+ * `backHref` is the page it was opened from, which the back link returns to.
+ */
+export default function ReceiptPage({ backHref = "/inventory/receiving" }: { backHref?: string }) {
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
@@ -115,7 +118,7 @@ export default function ReceiptPage() {
 
   return (
     <>
-      <Anchor component={Link} href="/inventory/receiving" size="sm">← Receiving</Anchor>
+      <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
       <Group justify="space-between" my="md">
         <Stack gap={0}>
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>

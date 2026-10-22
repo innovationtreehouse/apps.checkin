@@ -55,7 +55,17 @@ describe("Test data toggle on the expense detail page", () => {
   it.each([["prod", false], ["stg", false], [undefined, false], ["dev", true], ["local", true]])("on %p the host page passes testDataToggle=%s", async (env, shown) => {
     if (env === undefined) delete process.env.CHECKIN_ENV;
     else process.env.CHECKIN_ENV = env;
-    const el = await Page({ params: Promise.resolve({ id: "e1" }) });
+    const el = await Page({ params: Promise.resolve({ id: "e1" }), searchParams: Promise.resolve({}) });
     expect(el.props.testDataToggle).toBe(shown);
+  });
+
+  it.each([
+    [{}, "/expense/expenses"],
+    [{ from: "/expense/holds" }, "/expense/holds"],
+    [{ from: "/expense/expenses?view=qb_pending&page=2" }, "/expense/expenses?view=qb_pending&page=2"],
+    [{ from: "//evil.example" }, "/expense/expenses"],
+  ])("with %p the back link returns to %s", async (searchParams, listHref) => {
+    const el = await Page({ params: Promise.resolve({ id: "e1" }), searchParams: Promise.resolve(searchParams) });
+    expect(el.props.listHref).toBe(listHref);
   });
 });

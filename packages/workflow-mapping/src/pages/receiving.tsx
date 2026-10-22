@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Anchor, Badge, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { STATE_LABEL, formatCents, useLoad } from "../components/api";
 
@@ -24,9 +24,14 @@ const QUEUES = {
 } as const;
 type Queue = keyof typeof QUEUES;
 
-/** /inventory/receiving — the receipt-mapping queue and the apply-failed queue. */
+const isQueue = (q: string | null): q is Queue => q !== null && q in QUEUES;
+const queueHref = (q: Queue) => `/inventory/receiving?queue=${q}`;
+
+/** /inventory/receiving — the receipt-mapping queue and the apply-failed queue. The queue rides in `?queue=`. */
 export default function ReceivingPage() {
-  const [queue, setQueue] = useState<Queue>("mapping");
+  const router = useRouter();
+  const param = useSearchParams().get("queue");
+  const queue: Queue = isQueue(param) ? param : "mapping";
   const counts = useLoad<Counts>("/receipts/counts");
   const rows = useLoad<ReceiptRow[]>(`/receipts${QUEUES[queue] ? `?state=${QUEUES[queue]}` : ""}`);
   const c = counts.data;
@@ -40,7 +45,7 @@ export default function ReceivingPage() {
       <SegmentedControl
         mb="md"
         value={queue}
-        onChange={(v) => setQueue(v as Queue)}
+        onChange={(v) => { if (isQueue(v)) router.replace(queueHref(v), { scroll: false }); }}
         data={[
           { value: "mapping", label: `Needs mapping${c ? ` (${c.pending_review})` : ""}` },
           { value: "failed", label: `Apply failed${c ? ` (${c.apply_failed + c.applying})` : ""}` },
@@ -66,7 +71,7 @@ export default function ReceivingPage() {
               {rows.data.map((r) => (
                 <Table.Tr key={r.id}>
                   <Table.Td>
-                    <Anchor component={Link} href={`/inventory/receiving/${r.id}`}>{new Date(r.createdAt).toLocaleString()}</Anchor>
+                    <Anchor component={Link} href={`/inventory/receiving/${r.id}?from=${encodeURIComponent(queueHref(queue))}`}>{new Date(r.createdAt).toLocaleString()}</Anchor>
                   </Table.Td>
                   <Table.Td>{r.vendorName ?? "—"}</Table.Td>
                   <Table.Td>{formatCents(r.receiptTotalCents, r.currency)}</Table.Td>

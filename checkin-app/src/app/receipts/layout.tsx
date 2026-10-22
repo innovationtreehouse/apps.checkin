@@ -16,8 +16,9 @@ const allowedLinks = (section: NavSection, user: NavUser | undefined) =>
 
 /**
  * /receipts hosts two sections: My Receipts (the list, upload and a receipt's
- * detail) and Receipt Review. The tab strip is the section the page belongs to;
- * a receipt's detail page shows Receipt Review to a reviewer who cannot submit.
+ * detail at /receipts/[id]) and Receipt Review (the queue and a receipt opened
+ * from it at /receipts/review/[id]). The tab strip is the section the page
+ * belongs to; /receipts/[id] shows Receipt Review to a reviewer who cannot submit.
  */
 export default function ReceiptsLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
@@ -49,7 +50,7 @@ export default function ReceiptsLayout({ children }: { children: React.ReactNode
 
   return (
     <PageContainer>
-      <SectionTabs links={links} mb="md" />
+      <SectionTabs links={links} prefixMatch mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

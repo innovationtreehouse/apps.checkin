@@ -45,7 +45,7 @@ export default function AuditLogPage() {
                   <Table.Td>{e.eventType}</Table.Td>
                   <Table.Td>
                     {e.receivedReceiptId
-                      ? <Anchor component={Link} href={`/inventory/receiving/${e.receivedReceiptId}`}>#{e.receivedReceiptId}</Anchor>
+                      ? <Anchor component={Link} href={`/inventory/receiving/${e.receivedReceiptId}?from=/inventory/receiving/audit-log`}>#{e.receivedReceiptId}</Anchor>
                       : "—"}
                   </Table.Td>
                   <Table.Td>{e.fromState || e.toState ? `${e.fromState ?? "—"} → ${e.toState ?? "—"}` : ""}</Table.Td>
