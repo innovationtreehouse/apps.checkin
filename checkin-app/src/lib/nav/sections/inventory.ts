@@ -2,7 +2,8 @@
  * The Inventory section (/catalog, /inventory). The catalog and local-inventory
  * libraries own their screen lists; workflow-mapping owns Receiving and bulk
  * donation the in-kind screen. Catalog and org inventory show to a catalog
- * viewer, org inventory's manager-only screens to an INVENTORY_MANAGER. A
+ * viewer, org inventory's manager-only screens to an INVENTORY_MANAGER, its
+ * receiving screens to INVENTORY_MANAGER, FINANCE or BOARD (#2384). A
  * viewer any tab admits is admitted to the section (FINANCE reaches Receiving).
  */
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@checkin/global-catalog/nav";
@@ -18,7 +19,7 @@ import { canSeeCatalog } from "@/lib/volunteer";
 const catalogViewer: NavGate = (u) => canSeeCatalog(u);
 const inventoryManager: NavGate = (u) => canSeeCatalog(u) && u?.isInventoryManager === true;
 
-/** The workflow-mapping read routes admit INVENTORY_MANAGER, FINANCE or BOARD. */
+/** The workflow-mapping and inventory receiving read routes admit INVENTORY_MANAGER, FINANCE or BOARD. */
 export const RECEIVING_ROLES: readonly RoleFlag[] = ["isInventoryManager", "isFinance", "isBoardMember"];
 /** The no-receipt in-kind list route admits FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER. */
 export const IN_KIND_ROLES: readonly RoleFlag[] = ["isFinance", "isBoardMember", "isOperations", "isInventoryManager"];
@@ -29,10 +30,10 @@ export const INVENTORY: NavSection = {
   href: CATALOG_TOP_NAV.href,
   links: [
     ...CATALOG_NAV_LINKS.map((l) => ({ ...l, library: "catalog" as const, visible: catalogViewer })),
-    ...INVENTORY_NAV_LINKS.map(({ managerOnly, ...l }) => ({
+    ...INVENTORY_NAV_LINKS.map(({ managerOnly, receiving, ...l }) => ({
       ...l,
       library: "local-inventory" as const,
-      visible: managerOnly ? inventoryManager : catalogViewer,
+      visible: managerOnly ? inventoryManager : receiving ? anyRole(RECEIVING_ROLES) : catalogViewer,
     })),
     {
       ...RECEIVING_NAV,

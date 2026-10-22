@@ -33,6 +33,7 @@ const SHOP = SHOP_OPS.visible;
 const CATALOG = linkGate(INVENTORY, '/catalog/items');
 const ORG_INVENTORY = linkGate(INVENTORY, '/inventory/org-items');
 const INVENTORY_MANAGER = linkGate(INVENTORY, '/inventory/merge-conflicts');
+const INVENTORY_RECEIVING = linkGate(INVENTORY, '/inventory/receive-queue');
 const RECEIVING = linkGate(INVENTORY, '/inventory/receiving');
 const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
@@ -104,12 +105,13 @@ export const PAGES: PageEntry[] = [
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
-  // Org inventory (#1287) — same viewer gate; the work-queue screens are
+  // Org inventory (#1287) — same viewer gate; the receiving screens are
+  // INVENTORY_MANAGER, FINANCE or BOARD (#2384) and the work-queue screens
   // INVENTORY_MANAGER-only, like their routes.
   { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: ORG_INVENTORY },
   { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: ORG_INVENTORY },
-  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: ORG_INVENTORY },
-  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: ORG_INVENTORY },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: INVENTORY_RECEIVING },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: INVENTORY_RECEIVING },
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
