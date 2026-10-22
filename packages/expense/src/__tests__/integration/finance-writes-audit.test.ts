@@ -151,4 +151,12 @@ describeDb("FINANCE writes are audited", () => {
     await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
     expect(await db.expenseOrgAuditLog.count()).toBe(1);
   });
+
+  it("excluding a QuickBooks entry answers 400 for a blank reason and 403 for a non-FINANCE caller, writing nothing", async () => {
+    await expect(excludeQbTxn(FINANCE, "qb-9", "   ")).rejects.toMatchObject({ status: 400 });
+    await expect(excludeQbTxn(principal(4, { isBoard: true }), "qb-9", "hand-booked")).rejects.toMatchObject({ status: 403 });
+
+    expect(await db.expenseQbMatchExclusion.count()).toBe(0);
+    expect(await db.expenseOrgAuditLog.count()).toBe(0);
+  });
 });
