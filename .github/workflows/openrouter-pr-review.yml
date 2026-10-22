@@ -50,7 +50,7 @@ jobs:
           else
             echo "::warning::No AI review config on the default branch yet; no review ran."
           fi
-      # Jev Router picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
+      # The decision model (DECISION_MODEL, Jev-like) picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
       # Routing and judging never fail the check; a failure skips or ends the review instead.
       - id: route
         if: steps.cfg.outputs.dir != ''
@@ -65,7 +65,7 @@ jobs:
           DECISION_MODEL: baseten/mammoth-1:free
           DECISION_STATE_MAX: "48000"
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
-          # fixed ladder says high; "false" lets Jev pick. The judge can still order a rerun.
+          # fixed ladder says high; "false" lets the decision model pick. The judge can still order a rerun.
           FIRST_ROUND_LOWEST: "true"
       - id: review
         if: steps.route.outputs.model != ''
@@ -89,7 +89,7 @@ jobs:
           review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
+      # The decision model judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
       - id: judge
         if: always() && steps.route.outputs.model != ''
         continue-on-error: true

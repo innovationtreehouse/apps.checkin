@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Route one PR's AI review with TypeSafe Jev 1.14, a structured decision model.
+"""Route one PR's AI review with a Jev-like decision model (default: TypeSafe Jev 1.14).
 
-`route` (before the review) makes two Jev calls: the first decides which review
+A Jev-like model takes a state plus typed questions on OpenRouter's `systemone` endpoint.
+`DECISION_MODEL` picks the model. The `jev*` names below name that protocol, not one model.
+
+`route` (before the review) makes two decision calls: the first decides which review
 profiles apply (one yes/no per profile; file-path matches are a hint), the second
 picks the review model from LADDER given those profiles. Each falls back on its
 own: path matches for profiles, a fixed ladder for the model.
 
-`adjudicate` (after the review) asks Jev whether the posted review is complete and,
+`adjudicate` (after the review) asks the decision model whether the posted review is complete and,
 if not, which stronger model on LADDER should rerun it.
 """
 import json, os, re, subprocess, sys, urllib.request, uuid
@@ -17,7 +20,7 @@ CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
 JEV = os.environ.get("DECISION_MODEL", "typesafe/jev-1.14")
 # Ordered cheapest to strongest; a rerun only moves up.
 LADDER = [
-    # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
+    # Fields: name, model, max tool rounds, max diff KB, description for the decision model, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
     ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
@@ -39,9 +42,11 @@ BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
-# Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
+# Calibrated on Jev: clean verify reviews scored 0.31-0.39 and a failed one 0.06.
+# Recalibrate from the decision log after a model swap.
 COMPLETE_THRESHOLD = 0.2
-# Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
+# State cap in bytes. The default is Jev's full-context ceiling (~375K tokens).
+# DECISION_STATE_MAX sets it per model. Oldest round diffs drop first above it.
 JEV_STATE_MAX = int(os.environ.get("DECISION_STATE_MAX", "1500000"))
 # Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
 MIN_CREDIT_USD = 5.0
@@ -152,7 +157,8 @@ def api(repo, path):
 def pr_state(pr, repo):
     meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
     files = [f["path"] for f in meta["files"]]
-    # Jev always gets the whole diff: it is cheap, and over ~32 KB it only switches to a slower long-context mode.
+    # The decision model gets the whole diff; fit_rounds trims older rounds to the state cap.
+    # On Jev the whole diff is cheap: over ~32 KB it only switches to a slower long-context mode.
     try:
         diff = gh("pr", "diff", pr, "-R", repo)
     except Exception as e:
@@ -198,7 +204,7 @@ def prior_rounds(pr, repo, skip_id=None):
     base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
     comments = {}
     for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
-        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach Jev
+        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach the decision model
             continue
         comments.setdefault(c.get("pull_request_review_id"), []).append(
             {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
@@ -222,7 +228,7 @@ def prior_rounds(pr, repo, skip_id=None):
 
 
 def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
-    """Blank the oldest rounds' diffs until the Jev state fits `limit` bytes; bodies and markers stay."""
+    """Blank the oldest rounds' diffs until the decision state fits `limit` bytes; bodies and markers stay."""
     for entry in rounds:
         if len(json.dumps(dict(state, untrusted_prior_review_rounds=rounds)).encode()) <= limit:
             break
@@ -233,7 +239,7 @@ def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
 
 
 def with_prior_rounds(state, pr, repo, skip_id=None):
-    # Earlier rounds are PR-derived text: data for Jev, never instructions.
+    # Earlier rounds are PR-derived text: data for the decision model, never instructions.
     try:
         return fit_rounds(state, prior_rounds(pr, repo, skip_id))
     except Exception as e:
@@ -494,7 +500,7 @@ def route():
         p_by = f"{JEV} " + ", ".join(f"{n}={v:.2f}" for n, v in probs.items())
         applied = [dict(p, paths=["**"]) for p in profiles if p["name"] in chosen]
     except Exception as e:
-        print(f"::warning::Jev profile call failed ({e}); using path matches", file=sys.stderr)
+        print(f"::warning::Decision-model profile call failed ({e}); using path matches", file=sys.stderr)
         chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
@@ -513,7 +519,7 @@ def route():
             tier = pick(a["probabilities"], ORDER)
             t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
         except Exception as e:
-            print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
+            print(f"::warning::Decision-model tier call failed ({e}); using the fixed ladder", file=sys.stderr)
             tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
     credit_override = None
@@ -597,7 +603,7 @@ def adjudicate():
         except OutOfCredit:
             by = "out of credit: a rerun would get HTTP 402 too"
         except Exception as e:
-            print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
+            print(f"::warning::Decision-model completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
                 nxt = higher[0]
             by = f"fallback: verdict {verdict or 'missing'}"
@@ -605,7 +611,7 @@ def adjudicate():
     print(summary)
     log_decision("completeness", tier=tier, model=RUNG[tier][1], verdict=verdict or None, mode=mode,
                  complete=None if p is None else round(p, 3), threshold=COMPLETE_THRESHOLD,
-                 rerun_probs=rerun_probs, rerun=nxt, decided_by="jev" if p is not None else "fallback")
+                 rerun_probs=rerun_probs, rerun=nxt, decided_by="model" if p is not None else "fallback")
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"rerun_tier={nxt}\n")
         if nxt != "none":
