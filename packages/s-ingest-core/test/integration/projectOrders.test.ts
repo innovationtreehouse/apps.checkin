@@ -15,21 +15,24 @@ const ORDER = "gid://shopify/Order/4001";
 const LINE_A = "gid://shopify/LineItem/5001";
 const LINE_B = "gid://shopify/LineItem/5002";
 
-const line = (id: string, sku: string) => ({
+type LineSpec = { id: string; sku: string; quantity?: number; currentQuantity?: number };
+
+const line = ({ id, sku, quantity = 1, currentQuantity }: LineSpec) => ({
   id,
   sku,
-  quantity: 1,
+  quantity,
+  ...(currentQuantity === undefined ? {} : { currentQuantity }),
   originalUnitPriceSet: { shopMoney: { amount: "10.00", currencyCode: "USD" } },
 });
 
-const orderWith = (lineIds: Array<{ id: string; sku: string }>) => ({
+const orderWith = (lineIds: LineSpec[]) => ({
   id: ORDER,
   legacyResourceId: "4001",
   name: "#4001",
   updatedAt: "2026-02-01T10:00:00Z",
   displayFinancialStatus: "PAID",
   currentTotalPriceSet: { shopMoney: { amount: "20.00", currencyCode: "USD" } },
-  lineItems: { nodes: lineIds.map((l) => line(l.id, l.sku)) },
+  lineItems: { nodes: lineIds.map(line) },
   refunds: [],
 });
 
@@ -69,8 +72,7 @@ describeDb("projectOrder line reconciliation", () => {
   });
 
   it("stores the current quantity next to the original, and null when the payload has none", async () => {
-    const node = orderWith([{ id: LINE_A, sku: "A" }, { id: LINE_B, sku: "B" }]);
-    node.lineItems.nodes[0] = { ...node.lineItems.nodes[0], quantity: 2, currentQuantity: 1 };
+    const node = orderWith([{ id: LINE_A, sku: "A", quantity: 2, currentQuantity: 1 }, { id: LINE_B, sku: "B" }]);
     await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node }], { storeId: STORE });
 
     const a = await prisma.shopOrderLine.findUnique({ where: { storeId_lineGid: { storeId: STORE, lineGid: LINE_A } } });
