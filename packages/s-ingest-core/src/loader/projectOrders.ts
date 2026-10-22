@@ -69,6 +69,7 @@ export async function projectOrder(
       sku: line.sku ?? null,
       title: line.title ?? null,
       quantity: line.quantity,
+      currentQuantity: line.currentQuantity ?? null,
       variantGid: line.variantGid ?? null,
       variantLegacyId: line.variantLegacyId ?? null,
       priceCents: line.priceCents,

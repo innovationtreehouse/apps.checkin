@@ -186,7 +186,7 @@ layered:
 src/
   repositories/   expense, org, orgEvents, provisionalItemMap, provisionalResolution   (Prisma access)
   services/       provisionalItemMapService                                            (domain logic)
-  workflows/      expense.machine + events/guards/invariants + expense-event-schema     (xstate lifecycle; QbLineItemSchema)
+  workflows/      expense.machine + events/guards/invariants                           (xstate lifecycle)
   lib/            expense-qb-processor, expense-rules, financial-flow, capital-register,
                   workflow-engine, expense-constants, catalog-schemas          (domain; portable)
                   inventory-client, api-client, org-events-poller, org-events-container (crossings)
@@ -227,8 +227,11 @@ preserve them exactly:
   runs `owner_approval → (capital_review → set_depreciation_cycle) → qb_pending`,
   and at `qb_pending` `expense-qb-processor.ts` resolves each line to one QB
   account, allocates tax/shipping/discount, and — in **one interactive
-  transaction** — writes a validated `QbExpenseEvent` row to the `ExpenseEvent`
-  table and advances `qb_pending → qb_complete`. The row is the durable outbox;
+  transaction** — writes each line's allocations and resolved account
+  (`ExpenseLineItem.resolvedQbAccount`), commits the `ExpenseEvent` outbox row
+  and advances `qb_pending → qb_complete`. The row is the durable outbox marker
+  and carries no data; the poster and the drift check read the expense and its
+  lines;
   **something downstream posts it to QuickBooks.** In the source that downstream
   writer does not exist yet — the machine terminates the moment the event is
   committed. **The write path is exactly what §9 QB-2 builds** in
@@ -852,7 +855,7 @@ sign-off (owner), so expense never calls local-inventory.
 | **C — catalog lookups** | expense → catalog | **in-process read (caller)** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` (pathPrefix `/api/internal`) → catalog's org-bearer **machine** surface `/api/internal/[...path]` (#1286 §8) |
 | **X12 — reimbursement status** | receipt → expense | **in-process read (callee)** | `ReimbursementStatus.forReceipts` (§8c) | none; receipt stamped "reimbursed" by hand |
 | **S5 — provisional events** | catalog → expense | **post-commit call-out (consumer)** | `orgEventPayloadSchema` | catalog's `OrgEvent` table, HTTP-polled |
-| **QB — post** | expense → QuickBooks | **outbox** | `QbExpenseEventSchema` / `QbLineItemSchema` (schemaVersion 1) | `ExpenseEvent` outbox row; drained by the write path (§9) |
+| **QB — post** | expense → QuickBooks | **outbox** | the `Expense` and `ExpenseLineItem` rows (`resolvedQbAccount`, allocations) | `ExpenseEvent` outbox row; drained by the write path (§9) |
 
 ### 8a. Expense intake (S2) — in-process only; checkin cannot host the org-bearer route
 
@@ -1090,9 +1093,9 @@ once every sign-off seat is filled (§6); until then it is held and nothing is
 committed for it.
 
 - **Exists in the source (checkin side of the port):** the `expense-qb-processor`
-  already builds and **validates** the outbound payload against `QbExpenseEventSchema`
-  / `QbLineItemSchema` (schemaVersion 1), resolves each line to **one** QB account
-  (rules → one account/line, **no category splits by design**), allocates
+  resolves each line to **one** QB account
+  (rules → one account/line, **no category splits by design**) and stores it on
+  the line (`resolvedQbAccount`), allocates
   tax/shipping/discount, and commits the `ExpenseEvent` **outbox row** in one
   transaction (`qb_pending → qb_complete`). The outbox, idempotency
   (`expense_events_org_expense_unique`), holds, and crash-recovery

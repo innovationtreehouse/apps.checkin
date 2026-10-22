@@ -46,7 +46,7 @@ const LEAD = 1;
 const CO_LEAD = 2;
 const KID = 3;
 
-const NO_GRANTS = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0 };
+const NO_GRANTS = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 };
 
 function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> = {}, lastBackgroundCheck: Date | null = null) {
     return {
@@ -54,6 +54,8 @@ function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> 
         householdId: 10,
         email: `p${id}@example.com`,
         lastBackgroundCheck,
+        canAccessStaging: false,
+        household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts, ...NO_GRANTS, ...grants },
     };
 }
@@ -130,6 +132,7 @@ describe("PATCH /api/household/member — granted-authority email lock", () => {
         ["a program volunteer row", { programVolunteers: 1 }],
         ["a background-check attestation", { bgAttestationsAsSubject: 1 }],
         ["a background-check process", { personBgProcesses: 1 }],
+        ["a tool certification level", { toolStatuses: 1 }],
     ])("refuses a lead changing the email of a member without a sign-in who holds %s", async (_label, grants) => {
         findPerson.mockResolvedValue(target(KID, 0, grants));
         const res = await patch({ participantId: KID, email: "other@example.com" });
@@ -143,6 +146,29 @@ describe("PATCH /api/household/member — granted-authority email lock", () => {
         const res = await patch({ participantId: KID, email: "other@example.com" });
         expect(res.status).toBe(400);
         expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses the change for a member admitted to staging", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), canAccessStaging: true });
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(GRANT_HELP);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses the change for a member of a Volunteer Family household", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), household: { orgMembership: { isVolunteerFamily: true } } });
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(GRANT_HELP);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("still lets a lead change the email of a member whose household has no membership row", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), household: { orgMembership: null } });
+        const res = await patch({ participantId: KID, email: "teen@example.com" });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBe("teen@example.com");
     });
 
     it("refuses clearing the email of a member holding a grant", async () => {

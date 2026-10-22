@@ -862,9 +862,48 @@ defineRoute({
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
 
+// src/lib/shopify/ surfaces → <SHOPIFY_STORE_DOMAIN> Admin API. Each write builds
+// its request only from the stripped bag inside outboundCall().
+
 defineOutbound({
     surface: 'shopify.product.create',
-    // Program name + prices + maxParticipants — all 'public' tier.
+    // src/lib/shopify/products.ts: the public and reserved-seat product creates.
+    // Program name, nonOrgMemberPriceCents and maxParticipants ('public'), plus a
+    // handle built from the program's id and name.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.product.update',
+    // src/lib/shopify/products.ts (unlist the reserved-seat product) and
+    // src/lib/shopify/stock.ts (variant price sync, product off sale). Program
+    // shopifyProductId / claimantShopifyProductId, shopifyVariantId /
+    // claimantShopifyVariantId and nonOrgMemberPriceCents ('public').
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.inventory.activate',
+    // src/lib/shopify/stock.ts inventoryActivate. Program id ('public') inside the
+    // idempotency key, plus Shopify's own inventory item and location ids.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.inventory.adjust',
+    // src/lib/shopify/stock.ts inventoryAdjustQuantities. The bag carries the whole
+    // Program.shopifyStockPendingWrite ('internal', a JSON string). The request takes
+    // from it the idempotency key (program id and stock reason), the delta (a seat
+    // count taken from shopifyStockCarry) and Shopify's inventory item and location
+    // ids; its reason, owedPart and sentAt are not sent.
+    tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'shopify.discount.create',
+    // src/lib/shopify/discounts.ts discountCodeBasicCreate. Program id and checkout
+    // variant id, Household id ('public') in the code's prefix, and the member
+    // discount (the gap between the two 'public' prices).
     tiers: ['public'],
 });
 

@@ -90,6 +90,7 @@ export const classifications = {
         sku: 'internal',
         title: 'internal',
         quantity: 'internal',
+        currentQuantity: 'internal',
         variantGid: 'internal',
         variantLegacyId: 'internal',
         priceCents: 'internal',

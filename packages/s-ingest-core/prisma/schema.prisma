@@ -286,6 +286,11 @@ model ShopOrderLine {
   title             String?
   /// @sensitivity:internal
   quantity          Int     @default(1)
+  /// Units still on the line after order edits and refunds (Shopify currentQuantity);
+  /// `quantity` is the original count. Null for rows synced before the column shipped —
+  /// readers fall back to `quantity`, and a backfill run repopulates them.
+  /// @sensitivity:internal
+  currentQuantity   Int?    @map("current_quantity")
   /// ProductVariant GID. Null for custom/deleted-product lines, and for rows synced
   /// before the variant columns shipped — a backfill run repopulates those.
   /// @sensitivity:internal

@@ -69,8 +69,10 @@ export const PATCH = withAuth(
                             programVolunteers: true,
                             bgAttestationsAsSubject: true,
                             personBgProcesses: true,
+                            toolStatuses: true,
                         },
                     },
+                    household: { select: { orgMembership: { select: { isVolunteerFamily: true } } } },
                 },
             });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
@@ -100,8 +102,10 @@ export const PATCH = withAuth(
             // equivalent address passes the check but is never written over the stored one.
             const { _count: held } = targetHouseholdMember;
             const holdsGrant = held.roles + held.programsLed + held.programVolunteers
-                + held.bgAttestationsAsSubject + held.personBgProcesses > 0
-                || Boolean(targetHouseholdMember.lastBackgroundCheck);
+                + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
+                || Boolean(targetHouseholdMember.lastBackgroundCheck)
+                || targetHouseholdMember.canAccessStaging
+                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);

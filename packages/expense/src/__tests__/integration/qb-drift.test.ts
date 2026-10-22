@@ -58,17 +58,13 @@ async function created(day: string, opts: { bill?: boolean; state?: string } = {
   const id = await seedExpense({ state: "qb_complete", receiptTotalCents: 1000, needsReimbursement: !!opts.bill, reimburseePersonId: opts.bill ? 9 : undefined });
   const l1 = await seedLineItem(id, { totalPriceCents: 700 });
   const l2 = await seedLineItem(id, { totalPriceCents: 300 });
-  const item = (lineItemId: number, cents: number, account: string) => ({
-    lineItemId, description: "Widget", quantity: 1, unitPriceCents: cents, totalPriceCents: cents,
-    allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0,
-    isDelayed: false, isCapital: false, capitalOwnerId: null, depreciationYears: null, account,
-  });
-  const payload = {
-    schemaVersion: 1, id, vendorName: "TEST-Acme", receiptDate: day, receiptTotalCents: 1000, orgId: ORG,
-    needsReimbursement: !!opts.bill, reimbursementFor: null, reimburseePersonId: opts.bill ? 9 : null,
-    items: [item(l1, 700, "60"), item(l2, 300, "61")],
-  };
-  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: JSON.stringify(payload) } });
+  for (const [lineId, account] of [[l1, "60"], [l2, "61"]] as const) {
+    await db.expenseLineItem.update({
+      where: { id: lineId },
+      data: { resolvedQbAccount: account, qbAccountId: account, allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0 },
+    });
+  }
+  await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
   const qbId = String(nextQbId++);
   const entity = opts.bill ? "Bill" : "Purchase";
   await db.expense.update({

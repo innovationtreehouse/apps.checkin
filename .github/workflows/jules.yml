@@ -14,8 +14,9 @@ jobs:
     # this is a public repo and the agent has write access:
     # - issues events: the issue author must be OWNER/MEMBER, and the issue is
     #   labelled 'jules' or its body mentions '@jules'.
-    # - issue_comment: the comment author must be OWNER/MEMBER, and the issue is
-    #   labelled 'jules' or the comment mentions '@jules'.
+    # - issue_comment: the comment author AND the issue author must both be
+    #   OWNER/MEMBER (the issue title and body reach the prompt too), and the
+    #   issue is labelled 'jules' or the comment mentions '@jules'.
     if: >
       !github.event.issue.pull_request && (
         (github.event_name == 'issues' &&
@@ -23,6 +24,7 @@ jobs:
           (contains(github.event.issue.labels.*.name, 'jules') || contains(github.event.issue.body, '@jules'))) ||
         (github.event_name == 'issue_comment' &&
           contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association) &&
+          contains(fromJSON('["OWNER", "MEMBER"]'), github.event.issue.author_association) &&
           (contains(github.event.issue.labels.*.name, 'jules') || contains(github.event.comment.body, '@jules')))
       )
     runs-on: ubuntu-latest
@@ -33,7 +35,7 @@ jobs:
 
     steps:
       - name: Run Jules
-        uses: google-labs-code/jules-action@v1.0.0
+        uses: google-labs-code/jules-action@bff7875eaa123cac6742b7cfc51005b95ba4d566 # v1.0.0
         with:
           prompt: |
             You are an AI agent for the CheckMeIn project. Before starting, read and follow CONSTITUTION.md. 

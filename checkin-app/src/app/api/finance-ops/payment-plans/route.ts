@@ -33,11 +33,19 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                 // wasOrgMemberAtApproval is null until approved, so it can't
                 // answer this. Derive live client-side; nothing new to stamp.
                 // householdMembers (leads) carry the family contact email.
+                // Selects stay narrow: finance holds everyones:pii here for the
+                // contact emails, so any other Person/Household column selected
+                // (intake note, date of birth, allergies) would reach them too.
                 person: {
-                    include: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        householdId: true,
                         household: {
-                            include: {
-                                orgMembership: true,
+                            select: {
+                                id: true,
+                                orgMembership: { select: { status: true } },
                                 householdMembers: {
                                     where: { isHouseholdLead: true, ...LIVE_PERSON },
                                     select: { id: true, name: true, email: true },
@@ -46,7 +54,10 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                         },
                     },
                 },
-                program: true, // carries startAt (public) — half of the next-year flag
+                // startAt is half of the next-year flag.
+                program: {
+                    select: { id: true, name: true, startAt: true, orgMemberPriceCents: true, nonOrgMemberPriceCents: true },
+                },
             },
             orderBy: {
                 pendingSince: 'asc'

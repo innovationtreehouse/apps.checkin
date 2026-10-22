@@ -115,8 +115,10 @@ export default function AdminParticipantsIndex() {
   // Edit Participant State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<PersonRow | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "", emailChangeReason: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "", bgCheckReason: "", emailChangeReason: "" });
   const [savingDetails, setSavingDetails] = useState(false);
+  const priorBgDate = editingParticipant?.lastBackgroundCheck?.slice(0, 10) ?? "";
+  const bgDateExtended = editForm.lastBackgroundCheck !== "" && editForm.lastBackgroundCheck > priorBgDate;
 
   // Admin edit of household's own info (name, address, emergency contact)
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
@@ -352,7 +354,7 @@ export default function AdminParticipantsIndex() {
                             )}
                             <Button size="xs" fz={15} variant="default" onClick={() => {
                               setEditingParticipant(p);
-                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "", emailChangeReason: "" });
+                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "", bgCheckReason: "", emailChangeReason: "" });
                               setEditModalOpen(true);
                             }}>
                               Details
@@ -497,6 +499,17 @@ export default function AdminParticipantsIndex() {
               value={editForm.lastBackgroundCheck}
               onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, lastBackgroundCheck: value })); }}
             />
+            {bgDateExtended && (me?.isBoardMember ? (
+              <Textarea
+                label="Why is this check current?"
+                description="A later date clears this person with no reviewer. State the check you are asserting happened."
+                required
+                value={editForm.bgCheckReason}
+                onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, bgCheckReason: value })); }}
+              />
+            ) : (
+              <Text size="sm" c="orange">Only a Board member can set a later background check date.</Text>
+            ))}
             {editingParticipant?.household && (
               <div>
                 <Text fw={500} size="sm" mb={4}>Household</Text>
@@ -524,7 +537,7 @@ export default function AdminParticipantsIndex() {
           </Stack>
           <Group justify="flex-end" mt="xl">
             <Button type="button" variant="default" onClick={() => { setEditModalOpen(false); setEditingParticipant(null); }} disabled={savingDetails}>Cancel</Button>
-            <Button type="submit" disabled={savingDetails} loading={savingDetails}>Save Details</Button>
+            <Button type="submit" disabled={savingDetails || (bgDateExtended && !me?.isBoardMember)} loading={savingDetails}>Save Details</Button>
           </Group>
         </form>
       </Modal>

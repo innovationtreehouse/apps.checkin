@@ -6,10 +6,11 @@
  * registry/generator wiring; asserts the boundary layer directly, independent of
  * the route files:
  *
- *   1. Every human inventory endpoint resolves in the registry, reads admit the
- *      reused `catalog-viewer` gate, writes and the manager work-queue reads
- *      admit INVENTORY_MANAGER only, and the machine surface and dead settings
- *      routes stay unregistered.
+ *   1. Every human inventory endpoint resolves in the registry, stock reads
+ *      admit the reused `catalog-viewer` gate, receiving reads admit
+ *      INVENTORY_MANAGER, FINANCE or BOARD and refuse a catalog viewer, writes
+ *      and the manager work-queue reads admit INVENTORY_MANAGER only, and the
+ *      machine surface and dead settings routes stay unregistered.
  *   2. The stripper honours the inventory classification map: a viewer view
  *      (public only) drops `internal` fields (orgId, actor attribution, free
  *      text, cross-app plumbing); the manager view (everyones:internal) keeps
@@ -19,8 +20,9 @@
  *      sets — the collision the distinct name exists to prevent.
  */
 import { stripValue } from '@/security/stripper';
-import type { CallerContext } from '@/security/access-resolvers';
+import { resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import { getRoute, classifications, type Role, type Token } from '@/security/core';
+import type { AuthenticatedUser } from '@/types/auth';
 import '@/security/registry';
 
 function ctx(opts: Partial<CallerContext> = {}): CallerContext {
@@ -52,11 +54,15 @@ const READ_ENDPOINTS = [
     'GET /api/inventory/locations',
     'GET /api/inventory/org-items',
     'GET /api/inventory/org-items/[gtin13]',
+    'GET /api/inventory/org-items/count',
+];
+
+// Receipts show spending (docs/rules/inventory.md, Access).
+const RECEIVING_ENDPOINTS = [
     'GET /api/inventory/receive-queue',
     'GET /api/inventory/inventory-log',
     'GET /api/inventory/received-inventory-deltas',
     'GET /api/inventory/inventory-log/count',
-    'GET /api/inventory/org-items/count',
     'GET /api/inventory/received-inventory-deltas/count',
 ];
 
@@ -95,6 +101,15 @@ describe('inventory route registry admission', () => {
         });
     }
 
+    for (const endpoint of RECEIVING_ENDPOINTS) {
+        it(`${endpoint} is registered and admits INVENTORY_MANAGER, FINANCE or BOARD`, () => {
+            const spec = getRoute(endpoint);
+            expect(spec).toBeDefined();
+            expect(spec!.authorize).toEqual({ anyRole: ['isInventoryManager', 'isFinance', 'isBoardMember'] });
+            expect(spec!.orderedView.map(([role]) => role)).toEqual(['isInventoryManager', 'isFinance', 'isBoardMember']);
+        });
+    }
+
     for (const endpoint of MANAGER_ENDPOINTS) {
         it(`${endpoint} is registered and admits INVENTORY_MANAGER only`, () => {
             const spec = getRoute(endpoint);
@@ -113,9 +128,61 @@ describe('inventory route registry admission', () => {
         for (const endpoint of READ_ENDPOINTS) {
             const viewer = tokensFor(endpoint, 'authenticated');
             expect(viewer).toEqual(['public']);
-            const manager = tokensFor(endpoint, 'isInventoryManager');
-            expect(manager).not.toContain('everyones:pii');
-            expect(manager).not.toContain('everyones:personal');
+        }
+        for (const endpoint of [...READ_ENDPOINTS, ...RECEIVING_ENDPOINTS]) {
+            for (const [, tokens] of getRoute(endpoint)!.orderedView) {
+                expect(tokens).not.toContain('everyones:pii');
+                expect(tokens).not.toContain('everyones:personal');
+            }
+        }
+    });
+});
+
+describe('receiving read admission', () => {
+    const noFlags: AuthenticatedUser = {
+        id: 1,
+        email: 'inv@x.test',
+        isSysadmin: false,
+        isBoardMember: false,
+        isKeyholder: false,
+        isBackgroundCheckReviewer: false,
+        isOperations: false,
+        isInventoryManager: false,
+        isFinance: false,
+    };
+    const as = (claims: Partial<AuthenticatedUser>): AuthenticatedUser => ({ ...noFlags, ...claims });
+    // A youth in an ACTIVE member household who volunteers: in the catalog audience, holds no role.
+    const memberYouth = as({ ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true });
+    const keyholder = as({ isKeyholder: true });
+    const sysadmin = as({ isSysadmin: true });
+    const manager = as({ isInventoryManager: true });
+    const finance = as({ isFinance: true });
+    const board = as({ isBoardMember: true });
+
+    async function allowed(endpoint: string, user: AuthenticatedUser): Promise<boolean> {
+        const result = await resolveAccess(getRoute(endpoint)!.authorize, {
+            auth: { type: 'session', user },
+            params: {},
+            callerContext: ctx(),
+        });
+        return result.allowed;
+    }
+
+    it('the refused callers are catalog viewers', async () => {
+        for (const user of [memberYouth, keyholder, sysadmin]) {
+            expect(await allowed('GET /api/inventory/org-items', user)).toBe(true);
+        }
+    });
+
+    it.each(RECEIVING_ENDPOINTS)('%s refuses a catalog viewer, a keyholder and a sysadmin', async (endpoint) => {
+        for (const user of [memberYouth, keyholder, sysadmin]) {
+            expect(await allowed(endpoint, user)).toBe(false);
+        }
+    });
+
+    it.each(RECEIVING_ENDPOINTS)('%s admits INVENTORY_MANAGER, FINANCE and BOARD', async (endpoint) => {
+        for (const user of [manager, finance, board]) {
+            expect(await allowed(endpoint, user)).toBe(true);
         }
     });
 });
@@ -151,9 +218,13 @@ describe('inventory field-stripping (InventoryLog)', () => {
         expect(out.receiptId).toBe('rcpt_9');
     });
 
-    it('viewer sees operational fields but NOT internal ones', () => {
-        const tokens = tokensFor(ENDPOINT, 'authenticated');
-        const out = stripValue('InventoryLog', row(), tokens, ctx()) as Record<string, unknown>;
+    it('finance and the board see the same fields as the manager', () => {
+        expect(tokensFor(ENDPOINT, 'isFinance')).toEqual(tokensFor(ENDPOINT, 'isInventoryManager'));
+        expect(tokensFor(ENDPOINT, 'isBoardMember')).toEqual(tokensFor(ENDPOINT, 'isInventoryManager'));
+    });
+
+    it('a public-only view sees operational fields but NOT internal ones', () => {
+        const out = stripValue('InventoryLog', row(), ['public'], ctx()) as Record<string, unknown>;
         // operational, posted in the building:
         expect(out.gtin13).toBe('0001112223334');
         expect(out.changeType).toBe('manual_edit');
@@ -221,9 +292,9 @@ describe('classification merge keeps inventory and catalog provisional models di
 describe('inventory count routes', () => {
     it('return the public InventoryCount synthetic model', () => {
         expect(classifications.InventoryCount).toEqual({ total: 'public' });
-        for (const endpoint of READ_ENDPOINTS.filter(e => e.endsWith('/count'))) {
+        for (const endpoint of [...READ_ENDPOINTS, ...RECEIVING_ENDPOINTS].filter(e => e.endsWith('/count'))) {
             expect(getRoute(endpoint)!.returns).toEqual(['InventoryCount']);
-            const out = stripValue('InventoryCount', { total: 42 }, tokensFor(endpoint, 'authenticated'), ctx());
+            const out = stripValue('InventoryCount', { total: 42 }, getRoute(endpoint)!.orderedView[0][1], ctx());
             expect(out).toEqual({ total: 42 });
         }
     });

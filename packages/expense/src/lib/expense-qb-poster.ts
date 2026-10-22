@@ -3,12 +3,11 @@
 import { findOrCreate, qbKey, qboDate, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
-import type { Expense } from "../db/schema";
+import type { Expense, ExpenseLineItem } from "../db/schema";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
-import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
-import { matchBaseline } from "./expense-qb-drift";
+import { lineCents, matchBaseline } from "./expense-qb-drift";
 import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
@@ -148,64 +147,64 @@ function withClaim<T>(orgId: string, expenseId: string, claim: Claim, fn: (tx: D
 
 type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { noClass: string } | { error: string };
 
-function lineCents(i: QbExpenseEvent["items"][number]): number {
-  return i.totalPriceCents + i.allocatedTaxCents + i.allocatedShippingCents - i.allocatedDiscountCents;
+/** What each outboxed expense posts: the sum of its lines, not the receipt total. */
+async function postedCentsByExpense(expenseIds: string[]): Promise<Map<string, number>> {
+  const lines = await db.expenseLineItem.findMany({
+    where: { expenseId: { in: expenseIds } },
+    select: { expenseId: true, totalPriceCents: true, allocatedTaxCents: true, allocatedShippingCents: true, allocatedDiscountCents: true },
+  });
+  const cents = new Map<string, number>();
+  for (const l of lines) cents.set(l.expenseId, (cents.get(l.expenseId) ?? 0) + lineCents(l));
+  return cents;
 }
 
-/** What an outboxed payload posts: the sum of its lines, not the receipt total. */
-export function payloadLineCents(payloadJson: string): number {
-  return QbExpenseEventSchema.parse(JSON.parse(payloadJson)).items.reduce((s, i) => s + lineCents(i), 0);
-}
-
-/** Each line's QuickBooks Class, from its budget bucket; an event without a bucketId reads the line's current bucket. */
-async function lineClasses(client: Db, items: QbExpenseEvent["items"]): Promise<Map<number, string> | { noClass: string }> {
-  const missing = items.filter((i) => i.bucketId == null).map((i) => i.lineItemId);
-  const approvals = missing.length
-    ? await client.lineItemOwnerApproval.findMany({ where: { lineItemId: { in: missing } }, select: { lineItemId: true, ownerId: true } })
-    : [];
-  const fallback = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+/** Each line's QuickBooks Class, from its budget bucket. */
+async function lineClasses(client: Db, expenseId: string, lines: ExpenseLineItem[]): Promise<Map<number, string> | { noClass: string }> {
+  const approvals = await client.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
+  const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
   const classes = new Map<number, string>();
-  for (const i of items) {
-    const bucketId = i.bucketId ?? fallback.get(i.lineItemId) ?? null;
+  for (const l of lines) {
+    const bucketId = bucketOf.get(l.id) ?? null;
     const bucket = bucketId === null ? undefined : buckets.get(bucketId);
-    if (!bucket) return { noClass: `Line "${i.description}" has no budget bucket, so it has no QuickBooks Class` };
+    if (!bucket) return { noClass: `Line "${l.description}" has no budget bucket, so it has no QuickBooks Class` };
     if (!bucket.quickBooksClassId) {
       return { noClass: `Budget bucket '${bucket.name}' has no QuickBooks Class; set it on the Budgets page` };
     }
-    classes.set(i.lineItemId, bucket.quickBooksClassId);
+    classes.set(l.id, bucket.quickBooksClassId);
   }
   return classes;
 }
 
 /** The entry to create for an outboxed expense; each line keeps its own account and its bucket's Class. */
-async function buildWrite(client: Db, orgId: string, payloadJson: string, posting: ExpensePosting): Promise<Built> {
-  const event = QbExpenseEventSchema.parse(JSON.parse(payloadJson));
-  if (!event.receiptDate) return { error: "the expense has no receipt date" };
-  const classes = await lineClasses(client, event.items);
+async function buildWrite(client: Db, orgId: string, expense: Expense, posting: ExpensePosting): Promise<Built> {
+  if (!expense.receiptDate) return { error: "the expense has no receipt date" };
+  const items = await client.expenseLineItem.findMany({ where: { expenseId: expense.id }, orderBy: { id: "asc" } });
+  if (items.length === 0) return { error: "the expense has no lines" };
+  const unresolved = items.find((l) => !l.resolvedQbAccount);
+  if (unresolved) return { error: `line "${unresolved.description}" has no resolved QuickBooks account` };
+  const accounts = new Map(items.map((l) => [l.id, l.resolvedQbAccount!]));
+  const classes = await lineClasses(client, expense.id, items);
   if ("noClass" in classes) return classes;
-  const lines = event.items.map((i) => ({
-    lineItemId: i.lineItemId,
-    amountCents: lineCents(i),
-    accountId: i.account,
-    classId: classes.get(i.lineItemId)!,
-    description: i.description,
+  const writeLines = items.map((l) => ({
+    amountCents: lineCents(l),
+    accountId: accounts.get(l.id)!,
+    classId: classes.get(l.id)!,
+    description: l.description,
   }));
-  const lineAccounts = new Map(lines.map((l) => [l.lineItemId, l.accountId]));
-  const writeLines = lines.map(({ amountCents, accountId, classId, description }) => ({ amountCents, accountId, classId, description }));
-  const memo = event.vendorName ?? undefined;
+  const memo = expense.vendorName ?? undefined;
 
-  if (event.needsReimbursement) {
-    const vendor = await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: event.reimburseePersonId! } });
+  if (expense.needsReimbursement) {
+    const vendor = await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId! } });
     if (!vendor) return { queue: "the reimbursee has no QuickBooks Vendor" };
-    return { write: { entity: "Bill", fields: { txnDate: event.receiptDate, vendorId: vendor.qbVendorId, lines: writeLines, memo } }, lineAccounts };
+    return { write: { entity: "Bill", fields: { txnDate: expense.receiptDate, vendorId: vendor.qbVendorId, lines: writeLines, memo } }, lineAccounts: accounts };
   }
   return {
     write: {
       entity: "Purchase",
-      fields: { txnDate: event.receiptDate, paymentType: posting.paymentType, accountId: posting.paymentAccountId, lines: writeLines, memo },
+      fields: { txnDate: expense.receiptDate, paymentType: posting.paymentType, accountId: posting.paymentAccountId, lines: writeLines, memo },
     },
-    lineAccounts,
+    lineAccounts: accounts,
   };
 }
 
@@ -243,7 +242,7 @@ export type PostOptions = {
  * flagged QB_OVER_CAP. At MAX_CREATES_PER_DAY the expense waits for the next UTC day, nothing
  * recorded. With no takeover date configured nothing is posted.
  *
- * Claim, call, settle: the payload, sign-off seats and line approvals are re-read under the row lock
+ * Claim, call, settle: the lines, sign-off seats and line approvals are re-read under the row lock
  * (a hold waits, and on a closed expense raises QB_POST_HELD) and the row is
  * claimed (POSTING); the QuickBooks call runs outside any transaction; the outcome is settled in a
  * new one only if the claim is still ours.
@@ -311,8 +310,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
   return withPostable(orgId, expenseId, async (tx, locked): Promise<PostOutcome | Claimed> => {
     // A stale claim is a post that died mid-call; it settles as a retry of a failed post.
     const current = locked.qbMatchState === POSTING ? { ...locked, qbMatchState: "POST_FAILED" } : locked;
-    const event = await tx.expenseEvent.findFirst({ where: { orgId, expenseId } });
-    if (!event) return "waiting";
+    if (!(await tx.expenseEvent.findFirst({ where: { orgId, expenseId }, select: { id: true } }))) return "waiting";
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
@@ -329,7 +327,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
 
     let built: Built;
     try {
-      built = await buildWrite(tx, orgId, event.payload, posting);
+      built = await buildWrite(tx, orgId, current, posting);
     } catch (e) {
       built = { error: e instanceof Error ? e.message : String(e) };
     }
@@ -431,14 +429,15 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
     logWarn("qb_drain_no_takeover_date", {});
     return "no_takeover_date";
   }
-  const payloads = new Map((await db.expenseEvent.findMany({ select: { expenseId: true, payload: true } })).map((e) => [e.expenseId, e.payload]));
+  const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
   const now = Date.now();
   const due = (
     await db.expense.findMany({
       where: { backfill: false, qbTxnId: null, qbMatchState: { in: [...POSTABLE_QB_STATES, POSTING] } },
       orderBy: [{ receiptDate: "asc" }, { submittedAt: "asc" }],
     })
-  ).filter((e) => payloads.has(e.id) && isPostable(e, now));
+  ).filter((e) => outboxed.has(e.id) && isPostable(e, now));
+  const centsOf = await postedCentsByExpense(due.map((e) => e.id));
 
   const counts: DrainCounts = {
     posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0,
@@ -453,12 +452,7 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
       logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: due.length - i });
       break;
     }
-    let cents: number;
-    try {
-      cents = payloadLineCents(payloads.get(e.id)!);
-    } catch {
-      cents = 0; // an unreadable payload is recorded as a failure by the post itself
-    }
+    const cents = centsOf.get(e.id) ?? 0;
     const alone = cents > MAX_CREATE_CENTS_PER_RUN && counts.posted === 0;
     if (!alone && (counts.posted >= MAX_CREATES_PER_RUN || postedCents + cents > MAX_CREATE_CENTS_PER_RUN)) {
       counts.capped = counts.posted >= MAX_CREATES_PER_RUN ? "count" : "cents";

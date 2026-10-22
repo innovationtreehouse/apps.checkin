@@ -112,6 +112,52 @@ describe("AdminParticipantsIndex", () => {
         expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
     });
 
+    it("asks a board member why a later check date is current and sends the reason", async () => {
+        const fetchMock = mockFetchJson({
+            "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] },
+            "/api/membership-ops/participants/1": { participant: alice },
+        });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        const dateInput = await screen.findByLabelText("Last Background Check Review");
+
+        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
+        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
+
+        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
+        fireEvent.change(screen.getByLabelText(/Why is this check current/), { target: { value: "Vendor report reviewed" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/participants/1",
+                expect.objectContaining({ method: "PUT", body: expect.stringContaining('"bgCheckReason":"Vendor report reviewed"') }),
+            ),
+        );
+    });
+
+    it("tells a sysadmin off the board that only the board sets a later check date, and blocks the save", async () => {
+        setSession({ id: 999, isSysadmin: true });
+        mockFetchJson({ "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] } });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        const dateInput = await screen.findByLabelText("Last Background Check Review");
+
+        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
+        expect(screen.getByText("Only a Board member can set a later background check date.")).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save Details" })).toBeDisabled();
+
+        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
+        expect(screen.getByRole("button", { name: "Save Details" })).toBeEnabled();
+    });
+
     it("assigns a new household to a participant with none", async () => {
         mockFetchJson({
             "/api/people/search": { people: [carol] },
