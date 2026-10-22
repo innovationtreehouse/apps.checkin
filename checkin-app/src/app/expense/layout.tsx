@@ -10,7 +10,7 @@ import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { sectionTabBadge } from "@/components/navBadges";
 import { TabBadge } from "@/components/ui/CountBadge";
 
-/** Expense Ops chrome, shared by /expense and /budgets. Admits FINANCE or BOARD. */
+/** Expense Ops chrome for /expense. Admits FINANCE or BOARD. */
 export default function ExpenseOpsLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, ready } = useRequireRole(EXPENSE_OPS_ROLES);
   const counts = useTodoCounts(ready);
