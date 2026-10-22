@@ -28,10 +28,10 @@ const member: SessionUser = { id: 4 };
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
 describe("Expense Ops tabs", () => {
-  it("shows Expenses then Settings to FINANCE and Board", () => {
-    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(["Expenses", "Settings"]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(["Expenses", "Settings"]);
-    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)).toEqual(["/expense", "/expense/settings"]);
+  it("shows Expenses, Budgets, then Settings to FINANCE and Board", () => {
+    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(["Expenses", "Budgets", "Settings"]);
+    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(["Expenses", "Budgets", "Settings"]);
+    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)).toEqual(["/expense", "/budgets", "/expense/settings"]);
   });
 
   it("hides them from a program lead and a plain member", () => {
@@ -41,7 +41,7 @@ describe("Expense Ops tabs", () => {
 
   it("hides them from FINANCE until expense is released, and keeps them for Board", () => {
     expect(visibleLinks(EXPENSE_OPS, finance, unreleased)).toEqual([]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(["Expenses", "Settings"]);
+    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(["Expenses", "Budgets", "Settings"]);
   });
 
   it("badges Expenses with holds plus open flags", () => {
