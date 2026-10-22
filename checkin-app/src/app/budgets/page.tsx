@@ -55,7 +55,7 @@ async function send(url: string, method: string, body?: unknown): Promise<string
 }
 
 function showError(title: string, message: string) {
-  notifications.show({ color: "red", title, message, autoClose: 8000 });
+  notifications.show({ color: "red", title, message, autoClose: false });
 }
 
 export default function BudgetsPage() {

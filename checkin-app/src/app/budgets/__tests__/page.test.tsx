@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 describe("budgets page write errors", () => {
-  it("shows the server's error and status in a red chip", async () => {
+  it("shows the server's error and status in a red chip that stays up", async () => {
     mockServer(async () => jsonResponse(409, { error: "That QuickBooks Class is already mapped to another bucket." }));
     await createBucket();
 
@@ -61,6 +61,7 @@ describe("budgets page write errors", () => {
       color: "red",
       title: "Bucket not created",
       message: "That QuickBooks Class is already mapped to another bucket. (409)",
+      autoClose: false,
     })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -113,6 +114,7 @@ describe("budgets page write errors", () => {
       color: "red",
       title: "Treasurer not updated",
       message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
+      autoClose: false,
     })));
   });
 });
