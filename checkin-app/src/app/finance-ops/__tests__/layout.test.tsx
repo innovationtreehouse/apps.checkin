@@ -108,16 +108,25 @@ describe("Revenue Ops layout role gate", () => {
 describe("Revenue Ops Shopify tab", () => {
   const board = { data: { user: { id: 1, isBoardMember: true } }, status: "authenticated" };
 
-  it.each(["/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock"])(
-    "selects Shopify and shows its three sub-tabs on %s",
+  it.each(["/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock", "/income/payouts", "/income/reconciliation"])(
+    "selects Shopify and shows its sub-tabs on %s",
     (pathname) => {
       renderLayout(pathname, board);
       expect(screen.getByRole("tab", { name: /Shopify$/, selected: true })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Shopify Hold Reconciliation/ })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Payment problems/ })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Unconfirmed Shopify stock/ })).toBeInTheDocument();
+      for (const name of [/Shopify Hold Reconciliation/, /Payment problems/, /Unconfirmed Shopify stock/, /Payouts/, /^\W*Reconciliation$/]) {
+        expect(screen.getByRole("tab", { name })).toBeInTheDocument();
+      }
+      expect(screen.queryByRole("tab", { name: /Item Categories/ })).not.toBeInTheDocument();
     },
   );
+
+  it("selects Income and shows its remaining sub-tabs on an income screen", () => {
+    renderLayout("/income/items", board);
+    expect(screen.getByRole("tab", { name: /Income$/, selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Item Categories/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /QB Exclusions/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Payouts/ })).not.toBeInTheDocument();
+  });
 
   it("hides the sub-tabs off the Shopify pages", () => {
     renderLayout("/finance-ops/payment-plan", board);
