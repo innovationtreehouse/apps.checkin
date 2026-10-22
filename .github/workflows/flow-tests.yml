@@ -32,10 +32,11 @@ env:
 
 jobs:
   # The flow job is a required check, so the workflow runs on every PR. A PR
-  # whose every changed file is under docs/ or client/, or is a *.md file,
-  # cannot change a journey: the flow job still runs and reports success, but
-  # skips the server and the tests. A workflow that never triggers never
-  # reports, and a required check that never reports blocks the merge.
+  # whose every changed file is under the top-level docs/ or client/, or is a
+  # *.md file anywhere, cannot change a journey: the flow job still runs and
+  # reports success, but skips the server and the tests. A workflow that never
+  # triggers never reports, and a required check that never reports blocks the
+  # merge.
   changes:
     name: Detect flow changes
     runs-on: ubuntu-latest
