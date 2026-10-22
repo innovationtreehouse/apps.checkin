@@ -66,6 +66,7 @@ jobs:
       client: ${{ steps.detect.outputs.client }}
       packages: ${{ steps.detect.outputs.packages }}
       scripts: ${{ steps.detect.outputs.scripts }}
+      aireview: ${{ steps.detect.outputs.aireview }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -109,6 +110,7 @@ jobs:
             echo "client=true" >> "$GITHUB_OUTPUT"
             echo "packages=true" >> "$GITHUB_OUTPUT"
             echo "scripts=true" >> "$GITHUB_OUTPUT"
+            echo "aireview=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
@@ -161,6 +163,12 @@ jobs:
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
             echo "scripts=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The AI-review router's self-tests run when the router, its config or this workflow changes.
+          if printf '%s\n' "$changed" | grep -qE '^(\.github/(scripts|ai-review)/|\.github/workflows/ci\.yml$)'; then
+            echo "aireview=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "aireview=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -749,11 +757,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Skip notice (no script change)
-        if: needs.changes.outputs.scripts != 'true'
-        run: echo "No dump-task-logs change — nothing to test; reporting success."
+        if: needs.changes.outputs.scripts != 'true' && needs.changes.outputs.aireview != 'true'
+        run: echo "No dump-task-logs or AI-review router change — nothing to test; reporting success."
 
       - name: Checkout code
-        if: needs.changes.outputs.scripts == 'true'
+        if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.aireview == 'true'
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
@@ -761,6 +769,12 @@ jobs:
       - name: Run dump-task-logs check
         if: needs.changes.outputs.scripts == 'true'
         run: bash scripts/test-dump-task-logs.sh
+
+      - name: Run AI-review router self-tests
+        if: needs.changes.outputs.aireview == 'true'
+        run: |
+          python3 .github/scripts/ai-review-route.py route-selftest
+          python3 .github/scripts/ai-review-route.py scrub-selftest
 
   deploy-build:
     name: Deploy build (no deploy)

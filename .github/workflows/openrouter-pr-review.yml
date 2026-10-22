@@ -60,6 +60,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
@@ -68,7 +69,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
+        uses: innovationtreehouse/openrouter-pr-review-action@c9f6e53263e5525777fe8ad29ff494d4ea690f7c # fork main: max_tokens cap + no 402 salvage (#6), compaction outcomes (#8), compaction none/rules (#7)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
@@ -80,11 +81,14 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
-          # Re-reviews only: cached brief of a long PR body and overflowing history.
-          # compaction defaults to auto; `off` stops only this brief, not history compaction.
+          # Round 2 (route sets these): whole-PR rebase review with verbatim history.
+          # Round 3+: auto, so history is compacted and long bodies get a cached brief.
+          review_scope: ${{ steps.route.outputs.review_scope || 'full-pr' }}
+          compaction: ${{ steps.route.outputs.compaction || 'auto' }}
           compaction_model: nvidia/nemotron-3.5-super-vl:free
-          # Continue the review loop only on new commits; label and reopen start fresh.
-          review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
+          # Route sets verify when a label, reopen or ready-for-review finds an earlier ledger, so the
+          # review picks up from the last one; otherwise new commits continue the loop and the rest start fresh.
+          review_mode: ${{ steps.route.outputs.review_mode || (github.event.action == 'synchronize' && 'auto' || 'initial') }}
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
@@ -105,7 +109,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
+        uses: innovationtreehouse/openrouter-pr-review-action@c9f6e53263e5525777fe8ad29ff494d4ea690f7c # fork main: max_tokens cap + no 402 salvage (#6), compaction outcomes (#8), compaction none/rules (#7)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
@@ -117,8 +121,12 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.rerun_instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
-          # The escalated rerun is a fresh review, not a verify round of the one the judge rejected.
-          review_mode: initial
+          # With an earlier ledger, a whole-PR verify round that keeps the review history (route's
+          # rerun_plan); a round-1 rerun stays a fresh initial review.
+          review_mode: ${{ steps.route.outputs.rerun_review_mode || 'initial' }}
+          review_scope: ${{ steps.route.outputs.rerun_review_scope || 'full-pr' }}
+          compaction: ${{ steps.route.outputs.rerun_compaction || 'auto' }}
+          compaction_model: nvidia/nemotron-3.5-super-vl:free
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Advisory only: a recommendation line on the final review plus the ai-recommends-approve label.
