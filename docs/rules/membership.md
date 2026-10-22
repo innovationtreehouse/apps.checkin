@@ -164,8 +164,10 @@ Procedure below is built on them.
 
 - A background check is cleared within days of being performed, so dating the
   clearance rather than the check itself is immaterial against a window measured
-  in months. Board and sysadmin can correct the date on the rare occasion it is
-  not.
+  in months. Board and sysadmin can move the date earlier or remove it on the
+  rare occasion it is wrong. Only the Board can move it later, with a written
+  reason asserting the check happened, because a later date clears the person
+  with no reviewer.
 
 - The background-check vendor has no API. A check is started through a hosted
   consent link and its result comes back by hand. That is the arrangement, not a
