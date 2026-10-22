@@ -495,12 +495,17 @@ jobs:
       - name: Check migrations added by this PR
         if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         env:
-          # github.base_ref is empty on merge_group; the queue only serves main.
-          BASE_REF: ${{ github.base_ref || 'main' }}
+          BASE_REF: ${{ github.base_ref }}
+          # Set only on merge_group, where github.base_ref is empty.
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          git fetch --quiet origin "$BASE_REF"
-          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          if [ -n "$QUEUE_BASE_SHA" ]; then
+            BASE="$QUEUE_BASE_SHA"
+          else
+            git fetch --quiet origin "$BASE_REF"
+            BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          fi
           FAILED=0
           while read -r f; do
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
