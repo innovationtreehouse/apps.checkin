@@ -2,12 +2,13 @@
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
 import { findOrCreate, qbKey, qboDate, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
-import type { ExpensePosting } from "../contract";
-import type { Expense, ExpenseLineItem } from "../db/schema";
+import type { ExpensePosting, OutboundBag } from "../contract";
+import type { Expense } from "../db/schema";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
 import { writeAudit } from "./audit";
-import { lineCents, matchBaseline } from "./expense-qb-drift";
+import { matchBaseline } from "./expense-qb-drift";
+import { composeWrite, lineCents, type Built } from "../qb-write";
 import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
@@ -145,7 +146,6 @@ function withClaim<T>(orgId: string, expenseId: string, claim: Claim, fn: (tx: D
   });
 }
 
-type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { noClass: string } | { error: string };
 
 /** What each outboxed expense posts: the sum of its lines, not the receipt total. */
 async function postedCentsByExpense(expenseIds: string[]): Promise<Map<string, number>> {
@@ -158,54 +158,29 @@ async function postedCentsByExpense(expenseIds: string[]): Promise<Map<string, n
   return cents;
 }
 
-/** Each line's QuickBooks Class, from its budget bucket. */
-async function lineClasses(client: Db, expenseId: string, lines: ExpenseLineItem[]): Promise<Map<number, string> | { noClass: string }> {
-  const approvals = await client.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
-  const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
-  const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
-  const classes = new Map<number, string>();
-  for (const l of lines) {
-    const bucketId = bucketOf.get(l.id) ?? null;
-    const bucket = bucketId === null ? undefined : buckets.get(bucketId);
-    if (!bucket) return { noClass: `Line "${l.description}" has no budget bucket, so it has no QuickBooks Class` };
-    if (!bucket.quickBooksClassId) {
-      return { noClass: `Budget bucket '${bucket.name}' has no QuickBooks Class; set it on the Budgets page` };
-    }
-    classes.set(l.id, bucket.quickBooksClassId);
-  }
-  return classes;
+/** The rows an expense's entry is built from, keyed by model name for the outbound gateway. */
+async function writeRows(client: Db, orgId: string, expense: Expense): Promise<OutboundBag> {
+  const items = await client.expenseLineItem.findMany({ where: { expenseId: expense.id }, orderBy: { id: "asc" } });
+  const approvals = await client.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } });
+  const bucketIds = new Set(approvals.map((a) => a.ownerId));
+  const buckets = (await getExpenseRuntime().budgetOwners.list()).filter((b) => bucketIds.has(b.id));
+  const vendor =
+    expense.needsReimbursement && expense.reimburseePersonId !== null
+      ? await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId } })
+      : null;
+  return {
+    Expense: expense,
+    ExpenseLineItem: items,
+    LineItemOwnerApproval: approvals,
+    BudgetOwner: buckets,
+    ExpenseReimburseeVendor: vendor ? [vendor] : [],
+  };
 }
 
-/** The entry to create for an outboxed expense; each line keeps its own account and its bucket's Class. */
+/** The entry to create for an outboxed expense, built only from what quickbooks.create's tiers let leave. */
 async function buildWrite(client: Db, orgId: string, expense: Expense, posting: ExpensePosting): Promise<Built> {
-  if (!expense.receiptDate) return { error: "the expense has no receipt date" };
-  const items = await client.expenseLineItem.findMany({ where: { expenseId: expense.id }, orderBy: { id: "asc" } });
-  if (items.length === 0) return { error: "the expense has no lines" };
-  const unresolved = items.find((l) => !l.resolvedQbAccount);
-  if (unresolved) return { error: `line "${unresolved.description}" has no resolved QuickBooks account` };
-  const accounts = new Map(items.map((l) => [l.id, l.resolvedQbAccount!]));
-  const classes = await lineClasses(client, expense.id, items);
-  if ("noClass" in classes) return classes;
-  const writeLines = items.map((l) => ({
-    amountCents: lineCents(l),
-    accountId: accounts.get(l.id)!,
-    classId: classes.get(l.id)!,
-    description: l.description,
-  }));
-  const memo = expense.vendorName ?? undefined;
-
-  if (expense.needsReimbursement) {
-    const vendor = await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId! } });
-    if (!vendor) return { queue: "the reimbursee has no QuickBooks Vendor" };
-    return { write: { entity: "Bill", fields: { txnDate: expense.receiptDate, vendorId: vendor.qbVendorId, lines: writeLines, memo } }, lineAccounts: accounts };
-  }
-  return {
-    write: {
-      entity: "Purchase",
-      fields: { txnDate: expense.receiptDate, paymentType: posting.paymentType, accountId: posting.paymentAccountId, lines: writeLines, memo },
-    },
-    lineAccounts: accounts,
-  };
+  const rows = await writeRows(client, orgId, expense);
+  return getExpenseRuntime().outbound("quickbooks.create", rows, async (stripped) => composeWrite(stripped, posting));
 }
 
 type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };

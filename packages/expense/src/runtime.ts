@@ -2,6 +2,7 @@ import { defineRuntime } from "@checkin/component-kit";
 import {
   inertCatalogEventSource,
   inertCatalogReader,
+  inertOutbound,
   inertOwnerDirectory,
   inertPeopleDirectory,
   inertQbReader,
@@ -13,6 +14,7 @@ import {
   type ExpenseAuth,
   type ExpensePrincipal,
   type OrgIdentity,
+  type Outbound,
   type OwnerDirectory,
   type PeopleDirectory,
   type QbReader,
@@ -43,6 +45,8 @@ export interface ExpenseConfig {
   /** Display names, for showing who a reimbursee is. */
   people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
+  /** The host's outbound gateway; unbound, every outbound send throws. */
+  outbound?: Outbound;
 }
 
 export interface ExpenseRuntime {
@@ -54,6 +58,7 @@ export interface ExpenseRuntime {
   catalogEvents: CatalogEventSource;
   people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
+  outbound: Outbound;
 }
 
 export const expenseRuntime = defineRuntime<ExpenseRuntime, ExpensePrincipal>("expense");
@@ -74,6 +79,7 @@ export function configureExpense(config: ExpenseConfig): void {
       vendors: config.quickbooks?.vendors ?? inertQbVendors,
       posting: config.quickbooks?.posting ?? null,
     },
+    outbound: config.outbound ?? inertOutbound,
   });
 }
 

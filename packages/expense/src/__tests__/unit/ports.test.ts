@@ -1,8 +1,8 @@
 /** Crossing guards and inert adapters — no database. */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
-import { inertOwnerDirectory } from "../../contract";
+import { inertOutbound, inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
 import { detectIntakeFlags, FLAG_AUDIENCE } from "../../lib/flags";
@@ -31,6 +31,12 @@ describe("runtime", () => {
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], leader: null });
     expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
     expect(rt.quickbooks.posting).toBeNull();
+  });
+
+  it("the inert outbound gateway sends nothing", async () => {
+    const send = vi.fn(async () => "sent");
+    await expect(inertOutbound("quickbooks.create", { Expense: { id: "e1" } }, send)).rejects.toThrow(/no outbound gateway/);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("assertOrg accepts only the injected org", async () => {

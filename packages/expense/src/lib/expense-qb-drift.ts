@@ -7,7 +7,7 @@ import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
 import { raiseFlag } from "../services/flagService";
-import type { ExpenseLineItem } from "../db/schema";
+import { lineCents } from "../qb-write";
 import { logError } from "./logger";
 
 /** QuickBooks reads per run: one windowed read per checked expense. */
@@ -123,13 +123,6 @@ export async function matchBaseline(entity: string, qbTxnId: string, receiptDate
 }
 
 export type DriftCounts = { checked: number; drifted: number; failed: number };
-
-type LineAmounts = Pick<ExpenseLineItem, "totalPriceCents" | "allocatedTaxCents" | "allocatedShippingCents" | "allocatedDiscountCents">;
-
-/** What a line posts: its price plus its share of tax and shipping, less its share of the discount. */
-export function lineCents(l: LineAmounts): number {
-  return l.totalPriceCents + (l.allocatedTaxCents ?? 0) + (l.allocatedShippingCents ?? 0) - (l.allocatedDiscountCents ?? 0);
-}
 
 /** What the drain posted for a CREATED expense: its lines' amounts and the account each was posted to. */
 async function postedEntry(id: string, vendorId: string | null): Promise<PostedEntry> {

@@ -1,4 +1,4 @@
-import type { PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -17,7 +17,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors } }]>();
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors }; outbound: Outbound }]>();
 const reimburseeVendorId = jest.fn();
 jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId }));
 const createVendor = jest.fn();
@@ -36,6 +36,15 @@ async function signoff(): Promise<SignoffDirectory> {
 }
 
 beforeEach(() => jest.clearAllMocks());
+
+it("binds the library's outbound port to checkin's gateway", async () => {
+  let gateway: unknown;
+  await jest.isolateModulesAsync(async () => {
+    gateway = (await import("@/security/outbound")).outboundCall;
+    (await import("../configure")).configureRuntime();
+  });
+  expect(configureExpense.mock.calls.at(-1)![0].outbound).toBe(gateway);
+});
 
 describe("expense signer directory excludes people in a DENIED household", () => {
   it("FINANCE and BOARD holders", async () => {
