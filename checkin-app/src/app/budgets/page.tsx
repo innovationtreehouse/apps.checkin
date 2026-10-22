@@ -55,7 +55,6 @@ export default function BudgetsPage() {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const [classes, setClasses] = useState<ClassOption[] | null>(null);
-  const [classesError, setClassesError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -80,10 +79,10 @@ export default function BudgetsPage() {
       if (p.ok) setPrograms(await p.json());
       if (c.ok) {
         setClasses(await c.json());
-        setClassesError("");
       } else {
         const data = await c.json().catch(() => ({}));
-        setClassesError(typeof data.error === "string" ? data.error : "QuickBooks Classes could not be loaded.");
+        const reason = typeof data.error === "string" ? data.error : "QuickBooks Classes could not be loaded.";
+        notifications.show({ color: "red", message: `QuickBooks Classes are unavailable: ${reason}` });
       }
     })
     .finally(() => {
@@ -146,7 +145,6 @@ export default function BudgetsPage() {
           treasurers; an org-level bucket has no approvers.
         </Text>
         <AlertBanner message={message} tone="error" />
-        <AlertBanner message={classesError && `QuickBooks Classes are unavailable: ${classesError}`} tone="warning" />
 
         {isFinance && (
           <Card withBorder radius="md" padding="lg">
