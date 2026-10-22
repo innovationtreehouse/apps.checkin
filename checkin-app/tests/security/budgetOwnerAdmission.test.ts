@@ -61,6 +61,7 @@ const ctx = (auth: AuthResult): ResolverContext => ({
 const FINANCE_OR_BOARD = [
     'GET /api/budget-owners',
     'GET /api/budget-owners/program-options',
+    'GET /api/budget-owners/quickbooks-classes',
     'GET /api/programs/[id]/treasurers',
 ];
 const FINANCE_ONLY = [

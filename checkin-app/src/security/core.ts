@@ -69,6 +69,7 @@ import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
 import * as programSynthetic from './programSyntheticClassifications';
+import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
@@ -99,6 +100,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
     { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
     { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
+    { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations },
     { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations },
     { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations },
 ] as const;

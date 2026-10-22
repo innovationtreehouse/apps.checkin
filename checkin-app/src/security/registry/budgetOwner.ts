@@ -21,6 +21,9 @@ const BOARD_VIEW: readonly OrderedViewEntry[] = [['isBoardMember', ['everyones:i
 // members-only included) for the bucket form's program picker.
 defineRoute({ endpoint: 'GET /api/budget-owners', authorize: 'finance-or-board', envelope: null, returns: ['BudgetOwner', 'Program'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/budget-owners/program-options', authorize: 'finance-or-board', envelope: null, returns: ['Program'], orderedView: FINANCE_OR_BOARD_VIEW });
+// QuickBooks Classes (active and inactive) for the bucket form's Class picker and
+// the table's Class names.
+defineRoute({ endpoint: 'GET /api/budget-owners/quickbooks-classes', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksClassOption'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/budget-owners', authorize: 'finance', envelope: null, returns: ['BudgetOwner'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PATCH /api/budget-owners/[id]', authorize: 'finance', envelope: null, returns: ['BudgetOwner'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/budget-owners/[id]/archive', authorize: 'finance', envelope: null, returns: ['BudgetOwner'], orderedView: FINANCE_VIEW });
