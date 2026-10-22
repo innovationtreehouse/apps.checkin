@@ -13,8 +13,6 @@ export interface NavLink {
   name: string;
   href: string;
   icon?: string;
-  /** Pages grouped under this tab, shown as a second tab row; the tab opens the first. */
-  subLinks?: readonly NavLink[];
 }
 
 /** The session claims a nav gate reads; the NextAuth session user satisfies it. */
@@ -33,6 +31,8 @@ export interface SectionLink extends NavLink {
   library?: LibraryKey;
   /** The tab's pill; null hides it. */
   badge?: (counts: TodoCounts | null) => NavBadge | null;
+  /** Pages grouped under this tab, shown as a second tab row; each inherits this tab's gate unless it sets its own. */
+  subLinks?: readonly SectionLink[];
 }
 
 export interface NavSection {

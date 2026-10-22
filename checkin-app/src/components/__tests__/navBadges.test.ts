@@ -308,6 +308,22 @@ describe('sectionTabBadge — grouped tabs', () => {
     expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/shopify-holds', counts)).toBeNull();
   });
 
+  it('a grouped tab prefers a red sub-tab pill over a green one, and folds same-color pills', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const red = (n: number) => ({ count: n, color: 'red', label: `${n} red` });
+    const group = (reds: number[]) => [{
+      name: 'Group',
+      href: '/finance-ops/payments',
+      subLinks: [
+        { name: 'Payments', href: '/finance-ops/payments' },
+        ...reds.map((n, i) => ({ name: `Red ${i}`, href: `/red/${i}`, badge: () => red(n) })),
+      ],
+    }];
+    expect(sectionTabBadge(group([2]), '/finance-ops/payments', counts)).toEqual(red(2));
+    expect(sectionTabBadge(group([2, 3]), '/finance-ops/payments', counts)?.count).toBe(5);
+    expect(sectionTabBadge(group([]), '/finance-ops/payments', counts)?.color).toBe('treehouseGreen');
+  });
+
   it('no Shopify tab pill when its sub-tabs have none', () => {
     const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
     expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, admin())).toBeNull();

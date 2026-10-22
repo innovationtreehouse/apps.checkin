@@ -6,7 +6,7 @@
 import type { RoleFlag } from "@/lib/roles";
 import { INCOME_NAV_LINKS, INCOME_TAB, type IncomeNavCount } from "@checkin/income/nav";
 import { DONATIONS_TAB } from "@checkin/bulk-donation/nav";
-import type { NavLink, NavSection } from "@/lib/nav/types";
+import type { NavSection, SectionLink } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
 import { libraryCount, type NavBadge } from "@/components/navBadges";
@@ -15,13 +15,13 @@ import { libraryCount, type NavBadge } from "@/components/navBadges";
 export const FINANCE_TOOL_ROLES: readonly RoleFlag[] = ["isBoardMember"];
 export const REVENUE_OPS_ROLES = FINANCE_OR_BOARD;
 
-export const SHOPIFY_NAV_LINKS: readonly NavLink[] = [
+export const SHOPIFY_NAV_LINKS: readonly SectionLink[] = [
   { name: "Shopify Hold Reconciliation", href: "/finance-ops/shopify-holds", icon: "🪑" },
   { name: "Payment problems", href: "/finance-ops/payments", icon: "⚠️" },
   { name: "Unconfirmed Shopify stock", href: "/finance-ops/shopify-stock", icon: "📦" },
 ];
 
-export const FINANCE_NAV_LINKS: readonly NavLink[] = [
+export const FINANCE_NAV_LINKS: readonly SectionLink[] = [
   { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳" },
   { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳" },
   { name: "Shopify", href: SHOPIFY_NAV_LINKS[0].href, icon: "🛍️", subLinks: SHOPIFY_NAV_LINKS },

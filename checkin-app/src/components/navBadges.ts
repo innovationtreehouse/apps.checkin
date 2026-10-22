@@ -25,23 +25,28 @@ export function foldBadges(badges: NavBadge[]): NavBadge[] {
   return [...byColor.values()];
 }
 
-/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' pills, folded. */
+/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' and sub-tabs' pills, folded. */
 export function sectionBadges(href: string, tabs: readonly SectionLink[], counts: TodoCounts | null): NavBadge[] {
-  const tabBadges = tabs.flatMap((t) => {
+  const tabBadges = tabs.flatMap((t) => [t, ...(t.subLinks ?? [])]).flatMap((t) => {
     const b = t.badge?.(counts);
     return b ? [b] : [];
   });
   return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
 }
 
-/** A section tab's pill: its sub-tabs' pills folded, else the shared tabBadgeFor, else the tab's own badge function. */
+/**
+ * A section tab's pill: the shared tabBadgeFor, else the tab's own badge function.
+ * A grouped tab shows its sub-tabs' pills folded, red first, since a tab holds one pill.
+ */
 export function sectionTabBadge(tabs: readonly SectionLink[], href: string, counts: TodoCounts | null): NavBadge | null {
   const tab = tabs.find((t) => t.href === href);
   if (tab?.subLinks) {
-    return foldBadges(tab.subLinks.flatMap((s) => {
-      const b = tabBadgeFor(s.href, counts);
+    const subs = tab.subLinks;
+    const folded = foldBadges(subs.flatMap((s) => {
+      const b = sectionTabBadge(subs, s.href, counts);
       return b ? [b] : [];
-    }))[0] ?? null;
+    }));
+    return folded.find((b) => b.color === 'red') ?? folded[0] ?? null;
   }
   return tabBadgeFor(href, counts) ?? tab?.badge?.(counts) ?? null;
 }

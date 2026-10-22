@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Tabs } from "@mantine/core";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { useConfirmNav } from "@/components/UnsavedChangesProvider";
-import type { NavLink } from "@/lib/nav/types";
+import type { SectionLink } from "@/lib/nav/types";
 
 /**
  * The one shared section-tab bar. Owns the active-tab computation, the single
@@ -15,7 +15,7 @@ import type { NavLink } from "@/lib/nav/types";
  * Auth/loading gates stay in each layout (different hooks, different copy).
  */
 interface SectionTabsProps {
-  links: readonly NavLink[];
+  links: readonly SectionLink[];
   /** Match sub-routes (/foo/123) to their parent tab via longest-prefix. Default: exact match. */
   prefixMatch?: boolean;
   /** Optional right-aligned content (e.g. a count badge) for a given tab href. */
@@ -27,7 +27,7 @@ interface SectionTabsProps {
 }
 
 /** The tab owning `pathname`: the longest matching href, a tab's sub-links included. */
-export function activeTab<T extends NavLink>(links: readonly T[], pathname: string, prefixMatch = false): T | undefined {
+export function activeTab<T extends SectionLink>(links: readonly T[], pathname: string, prefixMatch = false): T | undefined {
   const hit = (href: string) => pathname === href || (prefixMatch && pathname.startsWith(`${href}/`));
   let best: T | undefined;
   let bestLength = -1;

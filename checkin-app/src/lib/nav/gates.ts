@@ -26,9 +26,18 @@ function released(link: SectionLink, user: NavUser | undefined, counts: TodoCoun
   return !link.library || isLibraryVisible(link.library, { isBoardMember: user?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
 }
 
-/** The section's links this viewer may open: allowed, and their library released. */
+/**
+ * The section's links this viewer may open: allowed, and their library released.
+ * A grouped tab keeps only its visible sub-links, opens the first, and hides when none is left.
+ */
 export function visibleLinks(section: NavSection, user: NavUser | undefined, counts: TodoCounts | null): SectionLink[] {
-  return section.links.filter((l) => linkAllowed(section, l, user, counts) && released(l, user, counts));
+  return section.links.flatMap((l) => {
+    if (!linkAllowed(section, l, user, counts) || !released(l, user, counts)) return [];
+    if (!l.subLinks) return [l];
+    const gate = l.visible ?? section.visible;
+    const subLinks = l.subLinks.filter((s) => (s.visible ?? gate)(user, counts) && released(s, user, counts));
+    return subLinks.length > 0 ? [{ ...l, href: subLinks[0].href, subLinks }] : [];
+  });
 }
 
 /** Whether the section's sidebar entry shows: admitted, and a tab to open if it has tabs. */
