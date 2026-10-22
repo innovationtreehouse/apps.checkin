@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, useIsFinance, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface ExclusionRow {
@@ -31,6 +31,7 @@ export default function ExclusionsPage() {
       setQbTxnId("");
       setReason("");
       rows.reload();
+      notifyNavCounts();
     } catch (err) {
       notifications.show({ message: errorMessage(err), color: "red" });
     } finally {

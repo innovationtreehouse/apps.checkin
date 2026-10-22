@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, useIsFinance, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface ItemRow {
@@ -41,6 +41,7 @@ export default function ItemsPage() {
         : { method: "PUT", body: JSON.stringify({ budgetOwnerId }) });
       notifications.show({ message: "Category saved; applies to deposits created from now on", color: "green" });
       items.reload();
+      notifyNavCounts();
     } catch (err) {
       notifications.show({ message: errorMessage(err), color: "red" });
     } finally {

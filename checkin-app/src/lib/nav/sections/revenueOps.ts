@@ -23,10 +23,12 @@ export const FINANCE_NAV_LINKS: readonly NavLink[] = [
   { name: "Unconfirmed Shopify stock", href: "/finance-ops/shopify-stock", icon: "📦" },
 ];
 
+const INCOME_COUNT_NOUNS: Record<IncomeNavCount, string> = { openReconciliation: "open income reconciliation items" };
+
 /** Red pill for income's counts: the Income tab sums every screen's, each income screen tab shows its own. */
 export function incomeBadge(c: TodoCounts | null, keys: readonly IncomeNavCount[]): NavBadge | null {
   const n = keys.reduce((sum, k) => sum + libraryCount(c, "income", k), 0);
-  return n > 0 ? { count: n, color: "red", label: `${n} open income reconciliation items` } : null;
+  return n > 0 ? { count: n, color: "red", label: `${n} ${keys.map((k) => INCOME_COUNT_NOUNS[k]).join(" and ")}` } : null;
 }
 
 export const REVENUE_OPS: NavSection = {
@@ -38,7 +40,7 @@ export const REVENUE_OPS: NavSection = {
     {
       ...INCOME_TAB,
       library: "income",
-      badge: (c) => incomeBadge(c, INCOME_NAV_LINKS.flatMap((l) => l.badge ?? [])),
+      badge: (c) => incomeBadge(c, INCOME_NAV_LINKS.flatMap((l) => (l.badge ? [l.badge] : []))),
     },
     {
       ...DONATIONS_TAB,
