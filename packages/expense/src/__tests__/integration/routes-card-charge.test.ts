@@ -6,7 +6,7 @@ import { bindPorts, directory, principal, seedExpense, seedLineItem } from "../h
 import { expenses } from "../../routes";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
-// purchaser 1 · leader 2 · finance 3 and 4 · board 5
+// purchaser 1 · owner 2 · finance 3 and 4 · board 5
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 

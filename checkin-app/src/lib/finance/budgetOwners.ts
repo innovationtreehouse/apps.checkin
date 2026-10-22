@@ -6,17 +6,15 @@ import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { logger } from "@/lib/logger";
 
-// Budget-owner buckets (#1280 §6) and program treasurers. FINANCE manages
-// buckets; the BOARD sets treasurers. Approvers are derived, never stored: a
-// program bucket's are the program's leader plus its treasurers.
+// Budget-owner buckets (#1280 §6) and their approvers. FINANCE manages buckets;
+// the BOARD sets each bucket's owner and treasurers.
 
 const BUCKET_SELECT = {
     id: true,
     name: true,
-    programId: true,
+    isOrgLevel: true,
     archivedAt: true,
     quickBooksClassId: true,
-    program: { select: { id: true, name: true } },
 } as const;
 
 export const OWN_HOUSEHOLD_MESSAGE =
@@ -41,10 +39,6 @@ export async function listQuickBooksClasses() {
     return classes
         .map((c) => ({ id: c.Id, name: c.FullyQualifiedName, active: c.Active !== false }))
         .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function listProgramOptions() {
-    return prisma.program.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } });
 }
 
 function readName(value: unknown): string {
@@ -72,29 +66,21 @@ function rethrowClassTaken(error: unknown): never {
 export async function createBudgetOwner(actorId: number, body: Record<string, unknown>) {
     const name = readName(body.name);
     const quickBooksClassId = body.quickBooksClassId === undefined ? null : readClassId(body.quickBooksClassId);
-    let programId: number | null = null;
-    if (body.programId !== undefined && body.programId !== null) {
-        if (typeof body.programId !== "number" || !Number.isInteger(body.programId)) {
-            throw badRequest("programId must be an integer or null");
-        }
-        programId = body.programId;
-        if (!(await prisma.program.findUnique({ where: { id: programId }, select: { id: true } }))) {
-            throw badRequest("Program not found");
-        }
-    }
+    if (body.isOrgLevel !== undefined && typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
+    const isOrgLevel = body.isOrgLevel === true;
     return prisma.$transaction(async (tx) => {
         const bucket = await tx.budgetOwner
-            .create({ data: { name, programId, quickBooksClassId }, select: BUCKET_SELECT })
+            .create({ data: { name, isOrgLevel, quickBooksClassId }, select: BUCKET_SELECT })
             .catch(rethrowClassTaken);
         await tx.auditLog.create({
-            data: { ...personActor(actorId), action: "CREATE", tableName: "BudgetOwner", affectedEntityId: bucket.id, newData: { name, programId, quickBooksClassId } },
+            data: { ...personActor(actorId), action: "CREATE", tableName: "BudgetOwner", affectedEntityId: bucket.id, newData: { name, isOrgLevel, quickBooksClassId } },
         });
         return bucket;
     });
 }
 
-// Rename and QuickBooks Class mapping. A bucket's program never changes: library
-// rows already booked against it would silently move programs.
+// Rename and QuickBooks Class mapping. Whether a bucket is org-level never
+// changes: lines already approved by assignment would silently need approvers.
 export async function updateBudgetOwner(actorId: number, id: number, body: Record<string, unknown>) {
     const data: { name?: string; quickBooksClassId?: string | null } = {};
     if (body.name !== undefined) data.name = readName(body.name);
@@ -126,45 +112,92 @@ export async function archiveBudgetOwner(actorId: number, id: number) {
     });
 }
 
-export async function listProgramTreasurers(programId: number) {
-    if (!(await prisma.program.findUnique({ where: { id: programId }, select: { id: true } }))) {
-        throw notFound("Program not found");
-    }
-    return prisma.programVolunteer.findMany({
-        where: { programId, person: LIVE_PERSON },
-        select: { programId: true, personId: true, isTreasurer: true, person: { select: { id: true, name: true } } },
-        orderBy: { person: { name: "asc" } },
+export type ApproverRole = "OWNER" | "TREASURER";
+
+/** A bucket's owner, then its treasurers by name. */
+export async function listBucketApprovers(budgetOwnerId: number) {
+    const bucket = await prisma.budgetOwner.findUnique({
+        where: { id: budgetOwnerId },
+        select: {
+            owner: { select: { id: true, name: true } },
+            treasurers: { select: { person: { select: { id: true, name: true } } }, orderBy: { person: { name: "asc" } } },
+        },
     });
+    if (!bucket) throw notFound("Bucket not found");
+    const row = (person: { id: number; name: string }, role: ApproverRole) => ({ budgetOwnerId, personId: person.id, name: person.name, role });
+    return [
+        ...(bucket.owner ? [row(bucket.owner, "OWNER")] : []),
+        ...bucket.treasurers.map((t) => row(t.person, "TREASURER")),
+    ];
 }
 
-/**
- * Sets or clears a program volunteer's treasurer flag. Nobody sets a role or flag
- * on themself or anyone in their own household, board members included.
- */
-export async function setProgramTreasurer(actorId: number, programId: number, personId: number, on: boolean) {
+/** Every live person, by name, for the Board's owner and treasurer pickers. */
+export async function listApproverOptions() {
+    return prisma.person.findMany({ where: LIVE_PERSON, select: { id: true, name: true }, orderBy: { name: "asc" } });
+}
+
+/** Refuses a missing or org-level bucket, a missing person, and the actor or their household. */
+async function assertMayName(actorId: number, budgetOwnerId: number, personId: number) {
+    const bucket = await prisma.budgetOwner.findUnique({ where: { id: budgetOwnerId }, select: { isOrgLevel: true } });
+    if (!bucket) throw notFound("Bucket not found");
+    if (bucket.isOrgLevel) throw new ApiResponseError(409, "An org-level bucket has no owner or treasurers.");
     const target = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
     if (!target) throw notFound("Person not found");
     if (actorId === personId || (await hasHouseholdConflict(prisma, actorId, target.householdId))) {
         throw forbidden(OWN_HOUSEHOLD_MESSAGE);
     }
-    return prisma.$transaction(async (tx) => {
-        const key = { programId_personId: { programId, personId } };
-        const select = { programId: true, personId: true, isTreasurer: true } as const;
-        const row = await tx.programVolunteer.findUnique({ where: key, select });
-        if (!row) throw notFound("That person is not a volunteer on this program.");
-        if (row.isTreasurer === on) return row;
-        const updated = await tx.programVolunteer.update({ where: key, data: { isTreasurer: on }, select });
+}
+
+/**
+ * Sets or clears a bucket's owner. Nobody names, or removes, themself or anyone
+ * in their own household, board members included.
+ */
+export async function setBucketOwner(actorId: number, budgetOwnerId: number, personId: number | null) {
+    const before = await prisma.budgetOwner.findUnique({ where: { id: budgetOwnerId }, select: { ownerId: true } });
+    if (!before) throw notFound("Bucket not found");
+    for (const subject of new Set([personId, before.ownerId])) {
+        if (subject !== null) await assertMayName(actorId, budgetOwnerId, subject);
+    }
+    if (before.ownerId !== personId) {
+        await prisma.$transaction(async (tx) => {
+            await tx.budgetOwner.update({ where: { id: budgetOwnerId }, data: { ownerId: personId } });
+            await tx.auditLog.create({
+                data: {
+                    ...personActor(actorId),
+                    action: "EDIT",
+                    tableName: "BudgetOwner",
+                    affectedEntityId: budgetOwnerId,
+                    oldData: { ownerId: before.ownerId },
+                    newData: { ownerId: personId },
+                },
+            });
+        });
+    }
+    return listBucketApprovers(budgetOwnerId);
+}
+
+/**
+ * Adds or removes a bucket treasurer. Nobody sets or clears it on themself or
+ * anyone in their own household, board members included.
+ */
+export async function setBucketTreasurer(actorId: number, budgetOwnerId: number, personId: number, on: boolean) {
+    await assertMayName(actorId, budgetOwnerId, personId);
+    const key = { budgetOwnerId_personId: { budgetOwnerId, personId } };
+    await prisma.$transaction(async (tx) => {
+        const isTreasurer = (await tx.budgetOwnerTreasurer.findUnique({ where: key, select: { personId: true } })) !== null;
+        if (isTreasurer === on) return;
+        if (on) await tx.budgetOwnerTreasurer.create({ data: { budgetOwnerId, personId } });
+        else await tx.budgetOwnerTreasurer.delete({ where: key });
         await tx.auditLog.create({
             data: {
                 ...personActor(actorId),
-                action: "EDIT",
-                tableName: "ProgramVolunteer",
+                action: on ? "CREATE" : "DELETE",
+                tableName: "BudgetOwnerTreasurer",
                 affectedEntityId: personId,
-                secondaryAffectedEntity: programId,
-                oldData: { isTreasurer: row.isTreasurer },
-                newData: { isTreasurer: on },
+                secondaryAffectedEntity: budgetOwnerId,
+                newData: { budgetOwnerId, personId, isTreasurer: on },
             },
         });
-        return updated;
     });
+    return listBucketApprovers(budgetOwnerId);
 }

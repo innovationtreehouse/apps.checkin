@@ -23,7 +23,7 @@ export type LibraryCountProvider = {
 export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   {
     library: "expense",
-    // Any signed-in person: a program treasurer holds no session flag, so the provider decides.
+    // Any signed-in person: a bucket approver holds no session flag, so the provider decides.
     visible: (u) => typeof u.id === "number",
     // An unconfigured library contributes no counts; lazy so the expense library loads only when used.
     count: async (u) =>

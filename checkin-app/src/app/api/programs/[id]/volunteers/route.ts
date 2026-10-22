@@ -122,17 +122,6 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             return apiError("Forbidden: Not authorized to remove volunteers", 403);
         }
 
-        // A treasurer is set by the board in the program's budget agreement; the lead can't undo it.
-        if (!isSysAdminOrBoard) {
-            const existing = await prisma.programVolunteer.findUnique({
-                where: { programId_personId: { programId, personId: participantId } },
-                select: { isTreasurer: true }
-            });
-            if (existing?.isTreasurer) {
-                return apiError("This volunteer is the program's treasurer. Only the board can remove them.", 403);
-            }
-        }
-
         const assignment = await prisma.programVolunteer.delete({
             where: {
                 programId_personId: {

@@ -71,7 +71,7 @@ describe("Board authorization", () => {
   });
 });
 
-// 1 purchaser · 2 program leader · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
+// 1 purchaser · 2 bucket owner · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
 const card: SignoffFacts = {
   kind: "card_charge",
   submitterId: 1,
@@ -81,7 +81,7 @@ const card: SignoffFacts = {
   finance: [3, 4],
   board: [5, 6],
   conflicted: [1, 8],
-  leaderHousehold: [],
+  ownerHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
   needsBoardAuthorization: true,
@@ -100,14 +100,14 @@ describe("who records the Board authorization", () => {
     expect(boardAuthorizationRefusal([self], 4)).toBeNull();
   });
 
-  it("a FINANCE holder in any line's Program Leader household is refused", () => {
-    const led = { ...card, leaderHousehold: [2, 4] };
+  it("a FINANCE holder in any line's bucket owner household is refused", () => {
+    const led = { ...card, ownerHousehold: [2, 4] };
     expect(boardAuthorizationRefusal([card, led], 4)).toMatch(/conflicted Treasurer/);
     expect(boardAuthorizationRefusal([card, led], 3)).toBeNull();
   });
 
   it("with every FINANCE holder conflicted, a Board member without a conflict records it", () => {
-    const allConflicted = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const allConflicted = { ...card, conflicted: [1, 3, 8], ownerHousehold: [2, 4] };
     expect(boardAuthorizationRefusal([allConflicted], 5)).toBeNull();
     expect(boardAuthorizationRefusal([{ ...allConflicted, conflicted: [1, 3, 5, 8] }], 5)).toMatch(/conflicted Treasurer/);
     expect(boardAuthorizationRefusal([allConflicted], 2)).toMatch(/conflicted Treasurer/);
@@ -123,7 +123,7 @@ describe("the Treasurer seat on a card charge", () => {
   });
 
   it("with no FINANCE holder free, a Board member without a conflict signs", () => {
-    const none = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const none = { ...card, conflicted: [1, 3, 8], ownerHousehold: [2, 4] };
     expect(signoffRefusal(none, [], "TREASURER", 5)).toBeNull();
   });
 });

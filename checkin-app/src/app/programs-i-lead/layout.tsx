@@ -19,7 +19,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 /**
  * Program-leader "Programs I Lead" chrome: section title + subtabs (Attendance inbox /
  * Conflicts) for program lead mentors, plus library tabs for whoever they admit
- * (Expense approvals: leads and program treasurers). Lead status rides in on the
+ * (Expense approvals: bucket owners and treasurers). Lead status rides in on the
  * todo-counts payload the nav already fetches — no new session field. Matches the
  * program-ops layout's route-driven Tabs pattern.
  */
@@ -30,8 +30,8 @@ export default function ProgramsILeadLayout({ children }: { children: React.Reac
   const authed = status === "authenticated";
   const counts = useTodoCounts(authed);
   const { conflicts } = useConflicts(authed);
-  // Attendance/Conflicts are lead-only; Expense approvals also admits a program
-  // treasurer who leads no program.
+  // Attendance/Conflicts are lead-only; Expense approvals admits a bucket owner
+  // or treasurer, who may lead no program.
   const links = visibleLinks(PROGRAMS_I_LEAD, session?.user, counts);
   const admitted = links.length > 0;
 

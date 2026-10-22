@@ -6,7 +6,7 @@
  *
  * The expense seed names checkin ids from a fresh baseline: bucket 2 is the first program's
  * ("Woodworking 101"), and person 10 (tool.certifier) submitted every seeded expense. The
- * approver is inventory.manager, made that program's lead for this suite and restored after.
+ * approver is inventory.manager, made that bucket's owner for this suite and cleared after.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -85,33 +85,30 @@ const send = (s: Session | null, method: string, path: string, body?: unknown) =
 
 const denied = (status: number) => status === 401 || status === 403;
 
-type ProgramRow = { id: number; name: string; leadMentorId?: number | null };
+type BucketRow = { id: number; name: string };
 type ExpenseRow = { id: string; submitterId?: number; state: string; vendorName: string | null };
 type Approval = { id: number; lineItemId: number; ownerId: number | null; status: string };
 type SignoffStatus = { lineItemId: number; filled: string[]; missing: string[] };
 
-let program: ProgramRow;
-let originalLead: number;
+let bucketId: number;
 
-async function setLead(board: Session, personId: number): Promise<void> {
-  const res = await send(board, "PATCH", `/api/programs/${program.id}`, { leadMentorId: personId });
+async function setOwner(board: Session, personId: number | null): Promise<void> {
+  const res = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId });
   expect(res.status).toBe(200);
 }
 
 beforeAll(async () => {
   expect((await loginAs(SUBMITTER)).personaId).toBe(10); // the seed's submitter id
   const board = await loginAs(BOARD);
-  const programs = await api<ProgramRow[]>(board, "/api/programs");
-  program = programs.json.find((p) => p.name === PROGRAM)!;
-  expect(program).toBeDefined();
-  originalLead = program.leadMentorId ?? board.personaId;
-  await setLead(board, (await loginAs(APPROVER)).personaId);
+  const buckets = await api<BucketRow[]>(board, "/api/budget-owners");
+  const bucket = buckets.json.find((b) => b.name === PROGRAM);
+  expect(bucket).toBeDefined();
+  bucketId = bucket!.id;
+  await setOwner(board, (await loginAs(APPROVER)).personaId);
 });
 
 afterAll(async () => {
-  const board = await loginAs(BOARD);
-  // Nobody makes themself a program lead, so the board persona cannot take the seeded lead back.
-  if (originalLead !== board.personaId) await setLead(board, originalLead);
+  await setOwner(await loginAs(BOARD), null);
 });
 
 describe("expense — persona matrix", () => {

@@ -42,28 +42,24 @@ async function roleHolders(role: PersonRoleKind): Promise<number[]> {
   return rows.map((r) => r.personId);
 }
 
-/** Approvers are derived, never stored: a program bucket's lead mentor and its program treasurers. */
+/** A bucket's approvers are its owner and treasurers, set by the Board; an org-level bucket has none. */
 export const signoff: SignoffDirectory = {
   async bucketApprovers(bucketId) {
     const { orgMembershipStatusBlocksLogin } = await import("@/lib/orgMembership");
     const bucket = await (await db()).budgetOwner.findUnique({
       where: { id: bucketId },
       select: {
-        programId: true,
-        program: {
-          select: {
-            leadMentor: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
-            volunteers: { where: { isTreasurer: true, person: await eligibleSigner() }, select: { personId: true } },
-          },
-        },
+        isOrgLevel: true,
+        owner: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
+        treasurers: { where: { person: await eligibleSigner() }, select: { personId: true } },
       },
     });
-    if (!bucket) return { orgLevel: false, approvers: [], leader: null };
-    if (bucket.programId === null || !bucket.program) return { orgLevel: true, approvers: [], leader: null };
-    const lead = bucket.program.leadMentor;
-    const leadEligible = lead && lead.mergedIntoId === null && !orgMembershipStatusBlocksLogin(lead.household?.orgMembership?.status);
-    const approvers = [...(leadEligible ? [lead.id] : []), ...bucket.program.volunteers.map((v) => v.personId)];
-    return { orgLevel: false, approvers: [...new Set(approvers)], leader: lead ? (lead.mergedIntoId ?? lead.id) : null };
+    if (!bucket) return { orgLevel: false, approvers: [], owner: null };
+    if (bucket.isOrgLevel) return { orgLevel: true, approvers: [], owner: null };
+    const owner = bucket.owner;
+    const ownerEligible = owner && owner.mergedIntoId === null && !orgMembershipStatusBlocksLogin(owner.household?.orgMembership?.status);
+    const approvers = [...(ownerEligible ? [owner.id] : []), ...bucket.treasurers.map((t) => t.personId)];
+    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner ? (owner.mergedIntoId ?? owner.id) : null };
   },
 
   async bucketsApprovedBy(personId) {

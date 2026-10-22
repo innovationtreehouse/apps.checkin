@@ -10,16 +10,16 @@ export function eligibleSigner(): Prisma.PersonWhereInput {
     return { ...LIVE_PERSON, NOT: { household: { orgMembership: { status: "DENIED" } } } };
 }
 
-/** The buckets this person approves: those of the programs they lead or are a treasurer of. */
+/** The live, non-org-level buckets this person owns or is a treasurer of. */
 export async function bucketsApprovedBy(personId: number): Promise<number[]> {
     const rows = await prisma.budgetOwner.findMany({
         where: {
-            program: {
-                OR: [
-                    { leadMentorId: personId, leadMentor: eligibleSigner() },
-                    { volunteers: { some: { personId, isTreasurer: true, person: eligibleSigner() } } },
-                ],
-            },
+            isOrgLevel: false,
+            archivedAt: null,
+            OR: [
+                { ownerId: personId, owner: eligibleSigner() },
+                { treasurers: { some: { personId, person: eligibleSigner() } } },
+            ],
         },
         select: { id: true },
     });
