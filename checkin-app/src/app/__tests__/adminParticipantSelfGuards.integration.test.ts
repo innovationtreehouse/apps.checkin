@@ -15,6 +15,7 @@ import { PATCH as MEMBER_PATCH } from '@/app/api/household/member/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
+import { saveIntake } from '@/lib/membership/intake';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -162,6 +163,19 @@ describe('admin participant routes keep the own-household and denied rules', () 
             const member = await prisma.person.findUnique({ where: { id: deniedMemberId } });
             expect(member?.isHouseholdLead).toBe(false);
             expect(member?.name).toBe('Denied Renamed');
+        });
+    });
+
+    describe('intake save', () => {
+        it('a DENIED household re-saving its standing second guardian gets no rejection and no board alert', async () => {
+            const household = await prisma.household.create({ data: { name: `Denied intake ${TAG}`, orgMembership: { create: { status: 'DENIED' } } } });
+            const first = await prisma.person.create({ data: { email: `intake-first-${TAG}@example.com`, name: 'First Guardian', isDeclaredAdult: true, isHouseholdLead: true, householdId: household.id } });
+            const second = await prisma.person.create({ data: { email: `intake-second-${TAG}@example.com`, name: 'Second Guardian', isDeclaredAdult: true, isHouseholdLead: true, householdId: household.id } });
+
+            const { rejections } = await saveIntake(first.id, { secondaryParent: { id: second.id, name: 'Second Guardian' } });
+
+            expect(rejections).toEqual([]);
+            expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: { in: [first.id, second.id] } } })).toBe(0);
         });
     });
 
