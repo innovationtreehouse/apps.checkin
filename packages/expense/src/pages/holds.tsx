@@ -5,7 +5,6 @@ import { formatCents } from "@checkin/money";
 import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Hold {
   id: number;
@@ -35,7 +34,6 @@ export default function HoldsPage() {
 
   return (
     <>
-      <ExpenseSubNav current="/expense/holds" />
       <Title order={3} mb="md">Account holds</Title>
       {holds.error && <LoadError what="holds" message={holds.error} onRetry={holds.reload} />}
       {holds.data?.length === 0 && <Text c="dimmed">No pending holds.</Text>}

@@ -25,13 +25,15 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
+const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QB Accounts", "Ownership Map", "Capital Seed", "Budgets", "Settings"];
+
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
 describe("Expense Ops tabs", () => {
-  it("shows Expenses, Budgets, then Settings to FINANCE and Board", () => {
-    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(["Expenses", "Budgets", "Settings"]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(["Expenses", "Budgets", "Settings"]);
-    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)).toEqual(["/expense", "/budgets", "/expense/settings"]);
+  it("shows the expense screens, Budgets, then Settings to FINANCE and Board", () => {
+    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(TABS);
+    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(TABS);
+    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)[0]).toBe("/expense/expenses");
   });
 
   it("hides them from a program lead and a plain member", () => {
@@ -41,17 +43,16 @@ describe("Expense Ops tabs", () => {
 
   it("hides them from FINANCE until expense is released, and keeps them for Board", () => {
     expect(visibleLinks(EXPENSE_OPS, finance, unreleased)).toEqual([]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(["Expenses", "Budgets", "Settings"]);
+    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(TABS);
   });
 
-  it("badges Expenses with holds plus open flags", () => {
-    const [expenses] = EXPENSE_OPS.links;
-    expect(expenses.badge?.(counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } }))).toEqual({
-      count: 3,
-      color: "red",
-      label: "3 expense holds and flags",
-    });
-    expect(expenses.badge?.(released)).toBeNull();
+  it("badges Holds and Flags with their own counts, and nothing else", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } });
+    const badges = Object.fromEntries(EXPENSE_OPS.links.map((t) => [t.name, t.badge?.(c) ?? null]));
+    expect(badges.Holds).toEqual({ count: 2, color: "red", label: "2 expense holds" });
+    expect(badges.Flags).toEqual({ count: 1, color: "red", label: "1 open expense flags" });
+    expect(Object.values(badges).filter(Boolean)).toHaveLength(2);
+    expect(EXPENSE_OPS.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
 });
 

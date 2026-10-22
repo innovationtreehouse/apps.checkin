@@ -38,7 +38,7 @@ const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
-const EXPENSES = linkGate(EXPENSE_OPS, '/expense');
+const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
 const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
 const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);

@@ -5,7 +5,6 @@ import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface ExpenseRow {
   id: string;
@@ -31,14 +30,14 @@ const VIEWS = [
 
 /** /expense/expenses — FINANCE and Board's expense queue. */
 export default function ExpensesPage() {
-  return <ExpenseList detailBase="/expense/expenses" defaultView="all" subNav />;
+  return <ExpenseList detailBase="/expense/expenses" defaultView="all" />;
 }
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
  * same list serves Expense Ops and the approver's Programs I Lead tab.
  */
-export function ExpenseList({ detailBase, defaultView, subNav = false }: { detailBase: string; defaultView: string; subNav?: boolean }) {
+export function ExpenseList({ detailBase, defaultView }: { detailBase: string; defaultView: string }) {
   const [view, setView] = useState(defaultView);
   const [page, setPage] = useState(1);
   const counts = useLoad<Record<string, number>>("/counts");
@@ -52,7 +51,6 @@ export function ExpenseList({ detailBase, defaultView, subNav = false }: { detai
 
   return (
     <>
-      {subNav && <ExpenseSubNav current="/expense/expenses" />}
       <Title order={3} mb="md">Expenses</Title>
       <SegmentedControl
         mb="md"
