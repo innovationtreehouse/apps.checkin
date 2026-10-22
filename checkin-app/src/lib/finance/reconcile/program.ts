@@ -11,8 +11,7 @@ import { isPaid, isReversed } from "./orderStatus";
 /** The order facts a program entitlement is judged on — built from the webhook
  *  payload or the mirror, so both paths judge the same thing. */
 export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
-    /** `quantity` is the original count; `currentQuantity` excludes units an edit or refund took off. */
-    lines: { variantId: string; quantity: number; currentQuantity: number }[];
+    lines: { variantId: string; quantity: number }[];
 }
 
 /** A paid seat no pending enrollment consumes, raised for the board alongside (or instead of) activation. */
