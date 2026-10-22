@@ -25,7 +25,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 /** Tells the host nav to refetch its count pills after a write that can move a receipt's state. */
 export function notifyNavCounts(): void {
-  window.dispatchEvent(new Event("nav-counts-mutated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("nav-counts-mutated"));
 }
 
 export function errorMessage(e: unknown): string {
