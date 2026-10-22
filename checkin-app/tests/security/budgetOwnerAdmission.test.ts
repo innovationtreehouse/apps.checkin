@@ -63,6 +63,7 @@ const FINANCE_OR_BOARD = [
     'GET /api/budget-owners/program-options',
     'GET /api/budget-owners/quickbooks-classes',
     'GET /api/programs/[id]/treasurers',
+    'GET /api/budget-owners/[id]/approvers',
 ];
 const FINANCE_ONLY = [
     'POST /api/budget-owners',
@@ -72,6 +73,10 @@ const FINANCE_ONLY = [
 const BOARD_ONLY = [
     'PUT /api/programs/[id]/treasurers/[personId]',
     'DELETE /api/programs/[id]/treasurers/[personId]',
+    'GET /api/budget-owners/approver-options',
+    'PUT /api/budget-owners/[id]/owner',
+    'PUT /api/budget-owners/[id]/treasurers/[personId]',
+    'DELETE /api/budget-owners/[id]/treasurers/[personId]',
 ];
 const ENDPOINTS = [...FINANCE_OR_BOARD, ...FINANCE_ONLY, ...BOARD_ONLY];
 

@@ -248,9 +248,9 @@ export type Authorize =
     // FINANCE or BOARD: the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.
     | 'finance-or-board'
-    // A budget-bucket approver: FINANCE, BOARD, a program leader,
-    // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
-    // to the buckets the caller approves.
+    // A budget-bucket approver: FINANCE, BOARD, or anyone who approves
+    // some bucket. No sysadmin auto-admit. Rows stay handler-filtered to the
+    // buckets the caller approves.
     | 'expense-approver'
     // Expense sign-off admission: `receipt-submitter` (an adult member or
     // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
