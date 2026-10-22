@@ -15,12 +15,16 @@ import { libraryCount, type NavBadge } from "@/components/navBadges";
 export const FINANCE_TOOL_ROLES: readonly RoleFlag[] = ["isBoardMember"];
 export const REVENUE_OPS_ROLES = FINANCE_OR_BOARD;
 
-export const FINANCE_NAV_LINKS: readonly NavLink[] = [
-  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳" },
-  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳" },
+export const SHOPIFY_NAV_LINKS: readonly NavLink[] = [
   { name: "Shopify Hold Reconciliation", href: "/finance-ops/shopify-holds", icon: "🪑" },
   { name: "Payment problems", href: "/finance-ops/payments", icon: "⚠️" },
   { name: "Unconfirmed Shopify stock", href: "/finance-ops/shopify-stock", icon: "📦" },
+];
+
+export const FINANCE_NAV_LINKS: readonly NavLink[] = [
+  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳" },
+  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳" },
+  { name: "Shopify", href: SHOPIFY_NAV_LINKS[0].href, icon: "🛍️", subLinks: SHOPIFY_NAV_LINKS },
 ];
 
 const INCOME_COUNT_NOUNS: Record<IncomeNavCount, string> = { openReconciliation: "open income reconciliation items" };

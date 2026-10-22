@@ -5,7 +5,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { waitFor } from "@testing-library/react";
 import { renderWithProviders, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { visibleLinks } from "@/lib/nav/gates";
-import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
+import { FINANCE_NAV_LINKS, REVENUE_OPS, SHOPIFY_NAV_LINKS } from "@/lib/nav/sections/revenueOps";
 import PaymentPlanPage from "../payment-plan/page";
 import MembershipPaymentPlanPage from "../membership-payment-plan/page";
 import ShopifyHoldsPage from "../shopify-holds/page";
@@ -24,7 +24,7 @@ describe.each([
   ["/finance-ops/shopify-stock", UnconfirmedShopifyStockPage],
 ])("%s", (href, Page) => {
   it("is a Revenue Ops legacy tab", () => {
-    expect(FINANCE_NAV_LINKS.map((l) => l.href)).toContain(href);
+    expect([...FINANCE_NAV_LINKS, ...SHOPIFY_NAV_LINKS].map((l) => l.href)).toContain(href);
   });
 
   it("refuses a FINANCE-only user by URL", async () => {

@@ -105,6 +105,27 @@ describe("Revenue Ops layout role gate", () => {
   });
 });
 
+describe("Revenue Ops Shopify tab", () => {
+  const board = { data: { user: { id: 1, isBoardMember: true } }, status: "authenticated" };
+
+  it.each(["/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock"])(
+    "selects Shopify and shows its three sub-tabs on %s",
+    (pathname) => {
+      renderLayout(pathname, board);
+      expect(screen.getByRole("tab", { name: /Shopify$/, selected: true })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Shopify Hold Reconciliation/ })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Payment problems/ })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Unconfirmed Shopify stock/ })).toBeInTheDocument();
+    },
+  );
+
+  it("hides the sub-tabs off the Shopify pages", () => {
+    renderLayout("/finance-ops/payment-plan", board);
+    expect(screen.getByRole("tab", { name: /Shopify$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Payment problems/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("/income layout", () => {
   it("renders the Revenue Ops top row, Income tab included", () => {
     mockPathname = "/income/reconciliation";

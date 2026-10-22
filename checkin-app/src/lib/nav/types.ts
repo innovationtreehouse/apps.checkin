@@ -13,6 +13,8 @@ export interface NavLink {
   name: string;
   href: string;
   icon?: string;
+  /** Pages grouped under this tab, shown as a second tab row; the tab opens the first. */
+  subLinks?: readonly NavLink[];
 }
 
 /** The session claims a nav gate reads; the NextAuth session user satisfies it. */

@@ -34,9 +34,16 @@ export function sectionBadges(href: string, tabs: readonly SectionLink[], counts
   return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
 }
 
-/** A section tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+/** A section tab's pill: its sub-tabs' pills folded, else the shared tabBadgeFor, else the tab's own badge function. */
 export function sectionTabBadge(tabs: readonly SectionLink[], href: string, counts: TodoCounts | null): NavBadge | null {
-  return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
+  const tab = tabs.find((t) => t.href === href);
+  if (tab?.subLinks) {
+    return foldBadges(tab.subLinks.flatMap((s) => {
+      const b = tabBadgeFor(s.href, counts);
+      return b ? [b] : [];
+    }))[0] ?? null;
+  }
+  return tabBadgeFor(href, counts) ?? tab?.badge?.(counts) ?? null;
 }
 
 /** True when the caller leads ≥1 program — gates the "Programs I Lead" nav item. */

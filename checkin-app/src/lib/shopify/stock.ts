@@ -527,12 +527,12 @@ async function pushProgramStock(
             );
         }
         if (result.expiredKey) {
-            // The board settles it on Revenue Ops > Unconfirmed Shopify stock (settleUnconfirmedStock).
+            // The board settles it on Revenue Ops > Shopify > Unconfirmed Shopify stock (settleUnconfirmedStock).
             await reportShopifyFailure(
                 "adjustProgramInventory",
                 new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
                 { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, parked: row?.shopifyStockParked ?? null },
-                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Unconfirmed Shopify stock.`,
+                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Shopify &gt; Unconfirmed Shopify stock.`,
             );
         }
         return result.error === null && result.expiredKey === null;

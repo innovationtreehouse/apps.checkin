@@ -1,5 +1,6 @@
-import { navBadgeFor, tabBadgeFor, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
+import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
 import type { TodoCounts } from '@/lib/nav/todoCounts';
+import { FINANCE_NAV_LINKS, SHOPIFY_NAV_LINKS } from '@/lib/nav/sections/revenueOps';
 
 const base: TodoCounts = {
   member: { household: [], programs: [], programsAwaitingFinance: 0 },
@@ -295,6 +296,21 @@ describe('finance-ops nav ↔ tab agreement', () => {
 
   it('no section badge when both queues are empty', () => {
     expect(navBadgeFor('/finance-ops', admin())).toEqual([]);
+  });
+});
+
+describe('sectionTabBadge — grouped tabs', () => {
+  it('the Shopify tab carries its Payment problems sub-tab pill', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, counts)).toEqual(tabBadgeFor('/finance-ops/payments', counts));
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/payments', counts)?.count).toBe(4);
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/shopify-holds', counts)).toBeNull();
+  });
+
+  it('no Shopify tab pill when its sub-tabs have none', () => {
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, admin())).toBeNull();
   });
 });
 
