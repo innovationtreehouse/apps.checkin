@@ -11,7 +11,7 @@ interface QbAccount {
   qbAccount: string;
 }
 
-/** /expense/qb-accounts — the QuickBooks accounts account-mapping rules and holds may name. */
+/** /expense/qb-accounts — the QuickBooks accounts that account-mapping rules and holds may name. */
 export default function QbAccountsPage() {
   const { isFinance } = useRoles();
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
@@ -20,7 +20,12 @@ export default function QbAccountsPage() {
 
   return (
     <>
-      <Title order={3} mb="md">QuickBooks accounts</Title>
+      <Title order={3} mb="xs">QuickBooks accounts</Title>
+      <Text c="dimmed" mb="md">
+        An account says what the money was spent on, such as supplies or equipment. Account mapping picks one for
+        each expense line. Whose budget pays is a separate choice: the line&apos;s bucket, which is a QuickBooks
+        Class set on Budgets.
+      </Text>
       {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
       <Table maw={640}>
         <Table.Tbody>
@@ -43,7 +48,7 @@ export default function QbAccountsPage() {
       {isFinance && (
         <Group mt="md" align="end">
           <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
-          <TextInput label="QuickBooks account" value={qbAccount} onChange={(e) => setQbAccount(e.currentTarget.value)} />
+          <TextInput label="QuickBooks account id" description="The account's id in QuickBooks" value={qbAccount} onChange={(e) => setQbAccount(e.currentTarget.value)} />
           <Button
             disabled={!name.trim() || !qbAccount.trim()}
             onClick={async () => { if (await send("/qb-accounts", "POST", { name, qbAccount }, "Account added")) { setName(""); setQbAccount(""); accounts.reload(); } }}

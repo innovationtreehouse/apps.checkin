@@ -191,8 +191,8 @@ export const PAGES: PageEntry[] = [
   { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: EXPENSES },
   { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: EXPENSES },
   { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: EXPENSES },
-  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list', visible: EXPENSES },
-  { href: '/expense/ownership-map', label: 'Ownership Map', section: 'Expense Ops', keywords: 'budget owner bucket part', visible: EXPENSES },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
+  { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Expense Ops', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
   { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: EXPENSES },
   { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: EXPENSES },
 

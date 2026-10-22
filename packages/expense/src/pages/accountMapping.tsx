@@ -41,7 +41,11 @@ export default function AccountMappingPage() {
 
   return (
     <>
-      <Title order={3} mb="md">Account mapping</Title>
+      <Title order={3} mb="xs">Account mapping</Title>
+      <Text c="dimmed" mb="md">
+        Rules that pick the QuickBooks account for an expense line: what the money was spent on. They do not pick
+        the bucket, which says whose budget pays.
+      </Text>
       {mappings.error && <LoadError what="account mapping" message={mappings.error} onRetry={mappings.reload} />}
       <Table>
         <Table.Thead>
@@ -75,7 +79,7 @@ export default function AccountMappingPage() {
           <Select label="Delayed" data={TRI} value={form.isDelayed} onChange={(v) => setForm({ ...form, isDelayed: v ?? "any" })} w={90} />
           <Select label="Capital" data={TRI} value={form.isCapital} onChange={(v) => setForm({ ...form, isCapital: v ?? "any" })} w={90} />
           <Select
-            label="QB account"
+            label="QuickBooks account"
             data={(accounts.data ?? []).map((a) => ({ value: a.qbAccount, label: a.name }))}
             value={form.qbAccount || null}
             onChange={(v) => setForm({ ...form, qbAccount: v ?? "" })}

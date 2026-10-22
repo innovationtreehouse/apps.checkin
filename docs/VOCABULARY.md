@@ -116,6 +116,11 @@ Rules:
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.
 
+**Bucket vs account** (two separate QuickBooks dimensions; every booked line carries one of each):
+- **Bucket** — a budget that spending or a gift comes out of; maps to one **QuickBooks Class**. Answers *whose budget*. `BudgetOwner` (`quickBooksClassId`); screen: Budgets. Retire "budget owner" in UI copy.
+- **QuickBooks account** — the chart-of-accounts entry. Answers *what the money was spent on* (supplies, equipment). `ExpenseQbAccount`; screens: QuickBooks Accounts, and **Account mapping** (rules that pick the account for a line).
+- **Part buckets** — the bucket a part's spending goes to, by barcode (`PartOwnerMap`). It picks a bucket, not an account.
+
 ## Background check
 
 One flow, three acts to keep apart. **Reviewing is the job; attesting is the act
