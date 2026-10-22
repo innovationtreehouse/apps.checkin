@@ -521,7 +521,7 @@ export default function AdminParticipantsIndex() {
           </Stack>
           <Group justify="flex-end" mt="xl">
             <Button type="button" variant="default" onClick={() => { setEditModalOpen(false); setEditingParticipant(null); }} disabled={savingDetails}>Cancel</Button>
-            <Button type="submit" disabled={savingDetails} loading={savingDetails}>Save Details</Button>
+            <Button type="submit" disabled={savingDetails || (bgDateExtended && !me?.isBoardMember)} loading={savingDetails}>Save Details</Button>
           </Group>
         </form>
       </Modal>
