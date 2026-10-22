@@ -135,6 +135,17 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByRole("button", { name: /Certify payment plan/ })).not.toBeInTheDocument();
     });
 
+    it("offers no review reset or override to a sysadmin off the board", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.queryByRole("button", { name: "Discard approvals — start the review over" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Override →/ })).not.toBeInTheDocument();
+        expect(screen.getByText("A board member can reset or override this review.")).toBeInTheDocument();
+    });
+
     it("drives the external-action, certify, and override controls", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
@@ -173,6 +184,7 @@ describe("AdminMembershipPage", () => {
     });
 
     it("clears a still-open review's approvals, behind a confirmation", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
             "/api/membership-ops/applications/review-override": { ok: true },

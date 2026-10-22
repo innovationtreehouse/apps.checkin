@@ -3,7 +3,7 @@
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
-import { writeAudit } from "../lib/audit";
+import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchBaseline } from "../lib/expense-qb-drift";
 import { actorOf } from "../lib/caller";
 import { lockExpense, unsignedLines } from "../lib/signoff-facts";
@@ -65,9 +65,13 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string,
   requireFinance(principal);
   const actor = actorOf(principal);
   if (!reason.trim()) throw new ServiceError(400, "A reason is required");
+  const orgId = await getOrgId();
   try {
-    await db.expenseQbMatchExclusion.create({
-      data: { orgId: await getOrgId(), qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
+    await db.$transaction(async (tx) => {
+      await tx.expenseQbMatchExclusion.create({
+        data: { orgId, qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
+      });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_txn", entityId: qbTxnId, action: "excluded", after: { reason: reason.trim() } });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, "Already excluded");
