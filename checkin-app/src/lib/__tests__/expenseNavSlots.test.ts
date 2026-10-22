@@ -25,12 +25,12 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
-const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QB Accounts", "Ownership Map", "Capital Seed", "Settings"];
+const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QB Accounts", "Ownership Map", "Capital Seed", "Budgets", "Settings"];
 
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
 describe("Expense Ops tabs", () => {
-  it("shows the expense screens then Settings to FINANCE and Board", () => {
+  it("shows the expense screens, Budgets, then Settings to FINANCE and Board", () => {
     expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(TABS);
     expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(TABS);
     expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)[0]).toBe("/expense/expenses");

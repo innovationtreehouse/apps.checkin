@@ -1,4 +1,4 @@
-/** The Expense Ops section (expense/layout.tsx, shared by /expense and /budgets). FINANCE or BOARD. */
+/** The Expense Ops section: the expense library's screens and the host's /budgets. FINANCE or BOARD. */
 import { EXPENSE_OPS_TABS, EXPENSE_TABS, type ExpenseNavCount } from "@checkin/expense/nav";
 import type { NavSection, SectionLink } from "@/lib/nav/types";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
@@ -23,6 +23,7 @@ export const EXPENSE_OPS: NavSection = {
           }
         : undefined,
     })),
+    { name: "Budgets", href: "/budgets", icon: "💰", library: "expense" },
     { ...EXPENSE_TABS.settings, library: "expense" },
   ],
   visible: anyRole(EXPENSE_OPS_ROLES),

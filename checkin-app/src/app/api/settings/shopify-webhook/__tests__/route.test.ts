@@ -79,6 +79,9 @@ describe('GET /api/settings/shopify-webhook', () => {
                 orderId: '820982911946154508',
                 outcome: 'rejected: bad hmac',
                 receivedAt: '2026-07-15T12:00:00.000Z',
+                deliveryId: null,
+                triggeredAt: null,
+                retry: null,
             },
         ]);
 
@@ -87,6 +90,34 @@ describe('GET /api/settings/shopify-webhook', () => {
             where: { tableName: 'ShopifyWebhookReceipt' },
             orderBy: { id: 'desc' },
             take: 20,
+        });
+    });
+
+    it('passes the delivery id, trigger time, and retry flag through', async () => {
+        mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+        findMany.mockResolvedValue([
+            {
+                id: 43,
+                newData: {
+                    topic: 'orders/paid',
+                    shopDomain: 'test-store.example.com',
+                    deliveryId: 'b54557e4-bdd9-4b37-8a5f-bf7d70bcd043',
+                    triggeredAt: '2026-07-15T11:59:58.000Z',
+                    retry: true,
+                    hmacValid: true,
+                    test: false,
+                    orderId: '999001',
+                    outcome: 'already settled',
+                    receivedAt: '2026-07-15T12:00:00.000Z',
+                },
+            },
+        ]);
+
+        const body = await (await GET(req())).json();
+        expect(body.receipts[0]).toMatchObject({
+            deliveryId: 'b54557e4-bdd9-4b37-8a5f-bf7d70bcd043',
+            triggeredAt: '2026-07-15T11:59:58.000Z',
+            retry: true,
         });
     });
 
