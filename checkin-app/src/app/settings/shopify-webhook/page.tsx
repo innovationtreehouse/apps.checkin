@@ -30,6 +30,12 @@ interface Status {
   receipts: Receipt[];
 }
 
+// The header value is stored as sent; show it raw when it is not a parseable date.
+function formatTriggeredAt(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 /**
  * Shopify Webhook settings tab — verifies the store's webhook wiring
  * end-to-end from the RECEIVING side. Shopify's Admin API cannot trigger its
@@ -176,7 +182,7 @@ export default function ShopifyWebhookSettingsPage() {
                         <Table.Td>
                           {r.deliveryId ? (
                             <Group gap={4} wrap="nowrap">
-                              <Code title={r.triggeredAt ? `Triggered at ${new Date(r.triggeredAt).toLocaleString()}` : undefined}>{r.deliveryId}</Code>
+                              <Code title={r.triggeredAt ? `Triggered at ${formatTriggeredAt(r.triggeredAt)}` : undefined}>{r.deliveryId}</Code>
                               {r.retry && <Badge color="orange" variant="light">retry</Badge>}
                             </Group>
                           ) : <Text c="dimmed">—</Text>}

@@ -30,8 +30,8 @@ export interface ShopifyWebhookReceipt {
     /** X-Shopify-Triggered-At header — when Shopify raised the event; null if absent. */
     triggeredAt: string | null;
     /**
-     * True when an earlier receipt carries the same deliveryId, i.e. Shopify
-     * re-sent a delivery it already made. null when there is no deliveryId or
+     * True when a receipt from the last 48 hours carries the same deliveryId,
+     * i.e. Shopify re-sent a delivery it already made. null when there is no deliveryId or
      * the lookup failed. Display only: settlement never reads it.
      */
     retry: boolean | null;
@@ -86,11 +86,20 @@ export function isShopifyTestNotification(order: unknown): boolean {
     return String(o.id) === SHOPIFY_SAMPLE_ORDER_ID || Number(o.id) === Number(SHOPIFY_SAMPLE_ORDER_ID);
 }
 
-async function isRetriedDelivery(deliveryId: string | null): Promise<boolean | null> {
+// Shopify stops retrying a delivery within 48 hours. Bounding the lookup to
+// that window keeps it a range scan on AuditLog's [tableName, timestamp] index
+// instead of a read of every receipt ever written.
+const RETRY_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+async function isRetriedDelivery(deliveryId: string | null, now: Date): Promise<boolean | null> {
     if (deliveryId === null) return null;
     try {
         const earlier = await prisma.auditLog.findFirst({
-            where: { tableName: SHOPIFY_WEBHOOK_RECEIPT_TABLE, newData: { path: ["deliveryId"], equals: deliveryId } },
+            where: {
+                tableName: SHOPIFY_WEBHOOK_RECEIPT_TABLE,
+                timestamp: { gte: new Date(now.getTime() - RETRY_WINDOW_MS) },
+                newData: { path: ["deliveryId"], equals: deliveryId },
+            },
             select: { id: true },
         });
         return earlier !== null;
@@ -112,18 +121,19 @@ export async function recordShopifyWebhookReceipt(
 ): Promise<void> {
     try {
         const o = (typeof order === "object" && order !== null ? order : {}) as { id?: unknown };
+        const now = new Date();
         const deliveryId = req.headers.get("x-shopify-webhook-id");
         const receipt: ShopifyWebhookReceipt = {
             topic: req.headers.get("x-shopify-topic"),
             shopDomain: req.headers.get("x-shopify-shop-domain"),
             deliveryId,
             triggeredAt: req.headers.get("x-shopify-triggered-at"),
-            retry: await isRetriedDelivery(deliveryId),
+            retry: await isRetriedDelivery(deliveryId, now),
             hmacValid: opts.hmacValid,
             test: isShopifyTestNotification(order),
             orderId: o.id === undefined || o.id === null ? null : String(o.id),
             outcome: opts.outcome,
-            receivedAt: new Date().toISOString(),
+            receivedAt: now.toISOString(),
         };
         await prisma.auditLog.create({
             data: {

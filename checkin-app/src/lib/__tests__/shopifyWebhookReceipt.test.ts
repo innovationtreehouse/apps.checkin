@@ -119,10 +119,11 @@ describe('recordShopifyWebhookReceipt', () => {
             { id: 999001 },
             { hmacValid: true, outcome: 'settled process 12' },
         );
-        expect(auditFindFirst).toHaveBeenCalledWith({
-            where: { tableName: SHOPIFY_WEBHOOK_RECEIPT_TABLE, newData: { path: ['deliveryId'], equals: 'delivery-1' } },
-            select: { id: true },
-        });
+        const { where } = auditFindFirst.mock.calls[0][0];
+        expect(where.tableName).toBe(SHOPIFY_WEBHOOK_RECEIPT_TABLE);
+        expect(where.newData).toEqual({ path: ['deliveryId'], equals: 'delivery-1' });
+        const receivedAt = Date.parse(auditCreate.mock.calls[0][0].data.newData.receivedAt);
+        expect(receivedAt - where.timestamp.gte.getTime()).toBe(48 * 60 * 60 * 1000);
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
             deliveryId: 'delivery-1',
             triggeredAt: '2026-10-21T12:00:00.000Z',
