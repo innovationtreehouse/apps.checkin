@@ -18,6 +18,7 @@ import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -54,7 +55,7 @@ export class IntakeError extends Error {
  */
 export type IntakeRejection = {
     section: "secondaryParent";
-    code: "lead_limit" | "name_required" | "household_denied";
+    code: "lead_limit" | "name_required" | "household_denied" | "not_lead";
     message: string;
 };
 
@@ -275,6 +276,20 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     // what happened, instead of failing the whole save with a single error.
     const rejections: IntakeRejection[] = [];
     const addLeadOrRecord = async (participantId: number) => {
+        // A sysadmin manages their household's intake without leading it, so making
+        // someone its lead that way is a grant to their own household.
+        const alreadyLead = (user.household?.householdMembers ?? []).some((p) => p.id === participantId && p.isHouseholdLead);
+        if (!user.isHouseholdLead && !alreadyLead && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId }, {
+            table: "Person",
+            attempted: { isHouseholdLead: true },
+        })) {
+            rejections.push({
+                section: "secondaryParent",
+                code: "not_lead",
+                message: "We saved this person's details, but only a lead of this household can add them as a parent/guardian.",
+            });
+            return;
+        }
         try {
             await addHouseholdLead(prisma, householdId, participantId);
         } catch (e) {

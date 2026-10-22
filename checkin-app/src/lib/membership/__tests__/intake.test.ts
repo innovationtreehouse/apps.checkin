@@ -11,6 +11,7 @@
  */
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
+import { refuseSelfGrant } from '@/lib/membership/selfGrantGuard';
 
 const txMembershipProcess = { findMany: jest.fn(), create: jest.fn() };
 const txAuditLog = { create: jest.fn() };
@@ -57,6 +58,7 @@ jest.mock('@/lib/membership/householdStatus', () => ({
     raiseDeniedHouseholdActivity: jest.fn(),
 }));
 jest.mock('@/lib/membership/review', () => ({ applyVolunteerFamilyStatus: jest.fn() }));
+jest.mock('@/lib/membership/selfGrantGuard', () => ({ refuseSelfGrant: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const prisma = require('@/lib/prisma').default;
@@ -527,6 +529,18 @@ describe('saveIntake', () => {
                 message: expect.stringContaining(String(MAX_HOUSEHOLD_LEADS)),
             },
         ]);
+    });
+
+    it('a sysadmin who does not lead the household cannot promote a guardian through intake', async () => {
+        jest.mocked(refuseSelfGrant).mockResolvedValue(true);
+        prisma.person.create.mockResolvedValue({ id: 4 });
+        prisma.person.findUnique.mockResolvedValueOnce({ ...user, isHouseholdLead: false, isSysadmin: true });
+
+        const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
+
+        expect(refuseSelfGrant).toHaveBeenCalledWith(prisma, 1, { personId: expect.any(Number), householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(addHouseholdLead).not.toHaveBeenCalled();
+        expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
     });
 
     it('a lead promotion in a DENIED household is a rejection raised to the board', async () => {
