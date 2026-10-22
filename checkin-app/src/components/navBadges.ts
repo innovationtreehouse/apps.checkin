@@ -3,7 +3,7 @@
 // and leadsAnyProgram for the "Programs I Lead" visibility gate.
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { LibraryKey } from '@/lib/libraryRelease';
-import type { SectionLink } from '@/lib/nav/types';
+import type { SectionLink, SubLink } from '@/lib/nav/types';
 
 export type NavBadge = { count: number; color: string; label: string };
 
@@ -34,21 +34,22 @@ export function sectionBadges(href: string, tabs: readonly SectionLink[], counts
   return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
 }
 
+/** A single page tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+function pageTabBadge(tab: SubLink, counts: TodoCounts | null): NavBadge | null {
+  return tabBadgeFor(tab.href, counts) ?? tab.badge?.(counts) ?? null;
+}
+
 /**
- * A section tab's pill: the shared tabBadgeFor, else the tab's own badge function.
- * A grouped tab shows its sub-tabs' pills folded, red first, since a tab holds one pill.
+ * A section tab's pill. A grouped tab folds its own badge with its sub-tabs'
+ * pills and shows one, red first, since a tab holds a single pill.
  */
 export function sectionTabBadge(tabs: readonly SectionLink[], href: string, counts: TodoCounts | null): NavBadge | null {
   const tab = tabs.find((t) => t.href === href);
-  if (tab?.subLinks) {
-    const subs = tab.subLinks;
-    const folded = foldBadges(subs.flatMap((s) => {
-      const b = sectionTabBadge(subs, s.href, counts);
-      return b ? [b] : [];
-    }));
-    return folded.find((b) => b.color === 'red') ?? folded[0] ?? null;
-  }
-  return tabBadgeFor(href, counts) ?? tab?.badge?.(counts) ?? null;
+  if (!tab) return tabBadgeFor(href, counts);
+  if (!tab.subLinks) return pageTabBadge(tab, counts);
+  const folded = foldBadges([tab.badge?.(counts) ?? null, ...tab.subLinks.map((s) => pageTabBadge(s, counts))]
+    .filter((b): b is NavBadge => b !== null));
+  return folded.find((b) => b.color === 'red') ?? folded[0] ?? null;
 }
 
 /** True when the caller leads ≥1 program — gates the "Programs I Lead" nav item. */

@@ -324,6 +324,12 @@ describe('sectionTabBadge — grouped tabs', () => {
     expect(sectionTabBadge(group([]), '/finance-ops/payments', counts)?.color).toBe('treehouseGreen');
   });
 
+  it("folds a grouped tab's own badge with its sub-tabs' pills", () => {
+    const gray = { count: 2, color: 'gray', label: '2 own' };
+    const tabs = [{ name: 'Group', href: '/g', badge: () => gray, subLinks: [{ name: 'Quiet', href: '/g/quiet' }] }];
+    expect(sectionTabBadge(tabs, '/g', admin())).toEqual(gray);
+  });
+
   it('no Shopify tab pill when its sub-tabs have none', () => {
     const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
     expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, admin())).toBeNull();

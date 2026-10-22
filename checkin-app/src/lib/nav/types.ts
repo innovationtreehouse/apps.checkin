@@ -32,8 +32,11 @@ export interface SectionLink extends NavLink {
   /** The tab's pill; null hides it. */
   badge?: (counts: TodoCounts | null) => NavBadge | null;
   /** Pages grouped under this tab, shown as a second tab row; each inherits this tab's gate unless it sets its own. */
-  subLinks?: readonly SectionLink[];
+  subLinks?: readonly SubLink[];
 }
+
+/** A page under a grouped tab. Groups nest one level. */
+export type SubLink = Omit<SectionLink, "subLinks">;
 
 export interface NavSection {
   id: string;

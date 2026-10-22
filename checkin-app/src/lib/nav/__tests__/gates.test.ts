@@ -1,5 +1,6 @@
 import { anyRole, everyone, sectionShown, visibleLinks } from "@/lib/nav/gates";
 import type { NavSection } from "@/lib/nav/types";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 const board = anyRole(["isBoardMember"]);
 
@@ -48,5 +49,25 @@ describe("visibleLinks — grouped tabs", () => {
     const allBoard: NavSection = { ...SECTION, links: [SECTION.links[1]].map((l) => ({ ...l, subLinks: l.subLinks?.slice(0, 1) })) };
     expect(visibleLinks(allBoard, { isFinance: true }, null)).toEqual([]);
     expect(sectionShown(allBoard, { isFinance: true }, null)).toBe(false);
+  });
+});
+
+describe("visibleLinks — sub-link library release", () => {
+  const LIBRARY_SECTION: NavSection = {
+    ...SECTION,
+    links: [{ name: "Group", href: "/grouped/shared-page", subLinks: [
+      { name: "Shared page", href: "/grouped/shared-page" },
+      { name: "Income page", href: "/grouped/income-page", library: "income" },
+    ] }],
+  };
+  const releasing = (releasedLibraries: string[]) => ({ releasedLibraries }) as TodoCounts;
+
+  it("hides a sub-link until its library is released", () => {
+    expect(visibleLinks(LIBRARY_SECTION, { isFinance: true }, releasing([]))[0].subLinks?.map((s) => s.name)).toEqual(["Shared page"]);
+    expect(visibleLinks(LIBRARY_SECTION, { isFinance: true }, releasing(["income"]))[0].subLinks?.map((s) => s.name)).toEqual(["Shared page", "Income page"]);
+  });
+
+  it("shows an unreleased library's sub-link to the Board", () => {
+    expect(visibleLinks(LIBRARY_SECTION, { isBoardMember: true }, releasing([]))[0].subLinks?.map((s) => s.name)).toEqual(["Shared page", "Income page"]);
   });
 });
