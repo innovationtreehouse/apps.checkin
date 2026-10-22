@@ -891,10 +891,11 @@ defineOutbound({
 
 defineOutbound({
     surface: 'shopify.inventory.adjust',
-    // src/lib/shopify/stock.ts inventoryAdjustQuantities. The write recorded in
-    // Program.shopifyStockPendingWrite ('internal'): its idempotency key (program id
-    // and stock reason), its delta (a seat count taken from shopifyStockCarry) and
-    // Shopify's inventory item and location ids. Its other fields stay behind.
+    // src/lib/shopify/stock.ts inventoryAdjustQuantities. The bag carries the whole
+    // Program.shopifyStockPendingWrite ('internal', a JSON string). The request takes
+    // from it the idempotency key (program id and stock reason), the delta (a seat
+    // count taken from shopifyStockCarry) and Shopify's inventory item and location
+    // ids; its reason, owedPart and sentAt are not sent.
     tiers: ['public', 'internal'],
 });
 

@@ -1,7 +1,6 @@
 /**
  * The Shopify write surfaces' tier lists: what each one lets leave from a
- * Program/Household bag. The request bodies themselves are pinned beside the
- * writers (src/lib/__tests__/shopify-outbound-bodies.test.ts).
+ * Program/Household bag.
  */
 import { outboundCall, type OutboundPayload } from '@/security/outbound';
 import { getOutbound } from '@/security/core';
@@ -14,6 +13,7 @@ const PROGRAM = {
     id: 7,                                          // public
     name: 'Robotics',                               // public
     nonOrgMemberPriceCents: 12500,                  // public
+    maxParticipants: 10,                            // public
     shopifyProductId: '111',                        // public
     shopifyVariantId: '222',                        // public
     shopifyStockCarry: 3,                           // internal
@@ -28,7 +28,7 @@ describe('Shopify write surfaces', () => {
         async (surface) => {
             expect(getOutbound(surface)?.tiers).toEqual(['public']);
             const out = (await capture(surface, { Program: PROGRAM, Household: HOUSEHOLD })) as Record<string, Record<string, unknown>>;
-            expect(out.Program).toEqual({ id: 7, name: 'Robotics', nonOrgMemberPriceCents: 12500, shopifyProductId: '111', shopifyVariantId: '222' });
+            expect(out.Program).toEqual({ id: 7, name: 'Robotics', nonOrgMemberPriceCents: 12500, maxParticipants: 10, shopifyProductId: '111', shopifyVariantId: '222' });
             expect(out.Household).toEqual({ id: 9, name: 'Doe' });
         },
     );
