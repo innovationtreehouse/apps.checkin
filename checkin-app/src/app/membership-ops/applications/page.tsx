@@ -465,7 +465,7 @@ function ApplicationsBoard() {
                   </Text>
                   {/* The board's way back from a reviewer's misclick: the review is still
                       open, so discarding the attestations undoes it with nothing to unwind. */}
-                  {approvals(r) > 0 && (
+                  {me?.isBoardMember && approvals(r) > 0 && (
                     <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                       Discard approvals — start the review over
                     </Button>
@@ -503,38 +503,44 @@ function ApplicationsBoard() {
                   {/* A force-approve must say which adult it covers: a blocked review has
                       no second approval to count, so an unnamed override would set
                       bgClearedAt with nobody recorded as checked. */}
-                  <Stack gap={4} mb="sm">
-                    {leads(r).length === 0 ? (
-                      <Text size="sm" c="dimmed">No household leads on file — this application cannot be overridden.</Text>
-                    ) : (
-                      <Radio.Group
-                        label="Whose background check does an override cover?"
-                        value={String(overrideSubjects[r.id] ?? "")}
-                        onChange={(v) => pickOverrideSubject(r.id, Number(v))}
-                      >
-                        <Stack gap={4} mt={4}>
-                          {leads(r).map((p) => (
-                            <Radio key={p.id} size="xs" value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
-                          ))}
-                        </Stack>
-                      </Radio.Group>
-                    )}
-                  </Stack>
-                  <Group gap="sm" wrap="wrap">
-                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "reset")}>
-                      Reset for re-review
-                    </Button>
-                    <Button
-                      size="xs"
-                      fz={15}
-                      disabled={busyId === r.id || ownHousehold(r) || overrideSubjects[r.id] === undefined}
-                      onClick={() => override(r.id, "approve")}
-                    >
-                      Override → {r.paidAt ? "activate" : "payment"}
-                    </Button>
-                  </Group>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — someone outside your household must.</Text>
+                  {me?.isBoardMember ? (
+                    <>
+                      <Stack gap={4} mb="sm">
+                        {leads(r).length === 0 ? (
+                          <Text size="sm" c="dimmed">No household leads on file — this application cannot be overridden.</Text>
+                        ) : (
+                          <Radio.Group
+                            label="Whose background check does an override cover?"
+                            value={String(overrideSubjects[r.id] ?? "")}
+                            onChange={(v) => pickOverrideSubject(r.id, Number(v))}
+                          >
+                            <Stack gap={4} mt={4}>
+                              {leads(r).map((p) => (
+                                <Radio key={p.id} size="xs" value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
+                              ))}
+                            </Stack>
+                          </Radio.Group>
+                        )}
+                      </Stack>
+                      <Group gap="sm" wrap="wrap">
+                        <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "reset")}>
+                          Reset for re-review
+                        </Button>
+                        <Button
+                          size="xs"
+                          fz={15}
+                          disabled={busyId === r.id || ownHousehold(r) || overrideSubjects[r.id] === undefined}
+                          onClick={() => override(r.id, "approve")}
+                        >
+                          Override → {r.paidAt ? "activate" : "payment"}
+                        </Button>
+                      </Group>
+                      {ownHousehold(r) && (
+                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — someone outside your household must.</Text>
+                      )}
+                    </>
+                  ) : (
+                    <Text size="sm" c="dimmed">A board member can reset or override this review.</Text>
                   )}
                 </Alert>
               )}

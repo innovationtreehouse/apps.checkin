@@ -38,7 +38,8 @@ const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
-const EXPENSES = linkGate(EXPENSE_OPS, '/expense');
+const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
+const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
 const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
@@ -183,7 +184,7 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE_TOOLS },
 
   // Expense Ops — FINANCE or BOARD
-  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: EXPENSE_OPS.visible },
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: BUDGETS },
   { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
   { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: EXPENSES },
   { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: EXPENSES },

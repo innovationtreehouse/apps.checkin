@@ -2,9 +2,8 @@
 import { Fragment, useState } from "react";
 import { Anchor, Badge, Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, money, useIsFinance, useLoad } from "../components/api";
+import { api, errorMessage, money, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
-import IncomeSubnav from "../components/IncomeSubnav";
 
 interface ReconRow {
   id: number;
@@ -144,6 +143,7 @@ export default function ReconciliationPage() {
     setOpen(null);
     rows.reload();
     count.reload();
+    notifyNavCounts();
   };
 
   async function runNow() {
@@ -164,7 +164,6 @@ export default function ReconciliationPage() {
 
   return (
     <>
-      <IncomeSubnav />
       <Group justify="space-between" mb="md">
         <Title order={3}>Reconciliation {count.data ? <Badge ml="xs">{count.data.total}</Badge> : null}</Title>
         {isFinance && <Button size="sm" loading={running} onClick={runNow}>Run now</Button>}

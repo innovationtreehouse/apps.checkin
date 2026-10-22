@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, formatCents, useCanManage, useLoad } from "../components/api";
+import { STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 
 interface Receipt {
   id: number;
@@ -99,6 +99,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       setBusy(false);
       detail.reload();
       audit.reload();
+      notifyNavCounts();
     }
   }
 

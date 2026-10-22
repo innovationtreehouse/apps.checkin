@@ -4,11 +4,12 @@
  * board-only, and Income and Donations are the libraries' tabs.
  */
 import type { RoleFlag } from "@/lib/roles";
-import { INCOME_TAB } from "@checkin/income/nav";
+import { INCOME_NAV_LINKS, INCOME_TAB, type IncomeNavCount } from "@checkin/income/nav";
 import { DONATIONS_TAB } from "@checkin/bulk-donation/nav";
 import type { NavLink, NavSection } from "@/lib/nav/types";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
-import { libraryCount } from "@/components/navBadges";
+import { libraryCount, type NavBadge } from "@/components/navBadges";
 
 /** The finance tools' gate; each of those pages and its API routes enforce it too. */
 export const FINANCE_TOOL_ROLES: readonly RoleFlag[] = ["isBoardMember"];
@@ -22,6 +23,14 @@ export const FINANCE_NAV_LINKS: readonly NavLink[] = [
   { name: "Unconfirmed Shopify stock", href: "/finance-ops/shopify-stock", icon: "📦" },
 ];
 
+const INCOME_COUNT_NOUNS: Record<IncomeNavCount, string> = { openReconciliation: "open income reconciliation items" };
+
+/** Red pill for income's counts: the Income tab sums every screen's, each income screen tab shows its own. */
+export function incomeBadge(c: TodoCounts | null, keys: readonly IncomeNavCount[]): NavBadge | null {
+  const n = keys.reduce((sum, k) => sum + libraryCount(c, "income", k), 0);
+  return n > 0 ? { count: n, color: "red", label: `${n} ${keys.map((k) => INCOME_COUNT_NOUNS[k]).join(" and ")}` } : null;
+}
+
 export const REVENUE_OPS: NavSection = {
   id: "revenue-ops",
   label: "Revenue Ops",
@@ -31,10 +40,7 @@ export const REVENUE_OPS: NavSection = {
     {
       ...INCOME_TAB,
       library: "income",
-      badge: (c) => {
-        const n = libraryCount(c, "income", "openReconciliation");
-        return n > 0 ? { count: n, color: "red", label: `${n} open income reconciliation items` } : null;
-      },
+      badge: (c) => incomeBadge(c, INCOME_NAV_LINKS.flatMap((l) => (l.badge ? [l.badge] : []))),
     },
     {
       ...DONATIONS_TAB,

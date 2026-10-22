@@ -2,9 +2,8 @@
 import { useState } from "react";
 import { Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, useIsFinance, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
-import IncomeSubnav from "../components/IncomeSubnav";
 
 interface ExclusionRow {
   id: number;
@@ -32,6 +31,7 @@ export default function ExclusionsPage() {
       setQbTxnId("");
       setReason("");
       rows.reload();
+      notifyNavCounts();
     } catch (err) {
       notifications.show({ message: errorMessage(err), color: "red" });
     } finally {
@@ -41,7 +41,6 @@ export default function ExclusionsPage() {
 
   return (
     <>
-      <IncomeSubnav />
       <Title order={3} mb="md">QuickBooks Exclusions</Title>
       {isFinance && (
         <Group gap="xs" align="end" mb="md">

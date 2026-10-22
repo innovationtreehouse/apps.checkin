@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db";
 import { configureExpense } from "../../runtime";
-import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "../../contract";
+import type { ExpensePrincipal, Outbound, OwnerDirectory, SignoffDirectory } from "../../contract";
 
 export const ORG = "org-1";
 
@@ -12,6 +12,9 @@ export const TEST_BUCKETS: OwnerDirectory = {
     { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01"), quickBooksClassId: "9999" },
   ],
 };
+
+/** A gateway that passes rows through unstripped; checkin-app's tests run the real one's tiers. */
+export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
 
 export async function seedOrgSettings(opts?: {
   orgId?: string;
@@ -170,7 +173,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 
 /** Rebinds the runtime with test ports (org stays ORG). */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, ...ports });
+  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, ...ports });
 }
 
 /**

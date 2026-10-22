@@ -1,5 +1,6 @@
 import { visibleLinks } from "@/lib/nav/gates";
-import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
+import { FINANCE_NAV_LINKS, REVENUE_OPS, incomeBadge } from "@/lib/nav/sections/revenueOps";
+import { INCOME_NAV_LINKS } from "@checkin/income/nav";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
@@ -54,6 +55,14 @@ describe("Revenue Ops Income tab", () => {
     const c = counts([...LIBRARY_KEYS], { income: { openReconciliation: 3 } });
     expect(income?.badge?.(c)).toEqual({ count: 3, color: "red", label: "3 open income reconciliation items" });
     expect(income?.badge?.(released)).toBeNull();
+  });
+
+  it("sums its screen tabs' pills, and the Reconciliation screen tab shows its own", () => {
+    const c = counts([...LIBRARY_KEYS], { income: { openReconciliation: 3 } });
+    const screenTotal = INCOME_NAV_LINKS.reduce((sum, l) => sum + (l.badge ? incomeBadge(c, [l.badge])?.count ?? 0 : 0), 0);
+    expect(REVENUE_OPS.links.find((t) => t.href === "/income")?.badge?.(c)?.count).toBe(screenTotal);
+    const recon = INCOME_NAV_LINKS.find((l) => l.href === "/income/reconciliation");
+    expect(recon?.badge && incomeBadge(c, [recon.badge])?.count).toBe(3);
   });
 });
 

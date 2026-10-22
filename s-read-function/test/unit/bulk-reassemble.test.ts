@@ -17,6 +17,7 @@ describe("reassembleOrders (bulk JSONL parent/child)", () => {
       sku: "WIDGET-1",
       title: "Widget",
       quantity: 2,
+      currentQuantity: 1,
       originalUnitPriceSet: { shopMoney: { amount: "50.00", currencyCode: "USD" } },
     },
     {
@@ -34,6 +35,7 @@ describe("reassembleOrders (bulk JSONL parent/child)", () => {
     expect(n.legacyId).toBe("1001"); // derived from gid when absent in bulk output
     expect(n.lines).toHaveLength(1);
     expect(n.lines[0].priceCents).toBe(5000);
+    expect(n.lines[0]).toMatchObject({ quantity: 2, currentQuantity: 1 });
     expect(n.refunds).toHaveLength(1);
     expect(n.refunds[0].totalRefundedCents).toBe(2000);
   });
@@ -55,6 +57,7 @@ describe("reassembleOrders (bulk JSONL parent/child)", () => {
         __parentId: "gid://shopify/Order/1002",
         sku: "GADGET-1",
         quantity: 1,
+        currentQuantity: 1,
         originalUnitPriceSet: { shopMoney: { amount: "80.00", currencyCode: "USD" } },
       },
     ];

@@ -34,7 +34,7 @@ describe("AppFrame library nav slots", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
     expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Expense Ops")).toBe("/expense/expenses");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
     expect(hrefOf("My Receipts")).toBe("/receipts");
     expect(screen.queryByText("Programs I Lead")).not.toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("AppFrame library nav slots", () => {
     setSession({ id: 2, isFinance: true });
     renderFrame();
     expect(hrefOf("Revenue Ops")).toBe("/income");
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Expense Ops")).toBe("/expense/expenses");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });
 
@@ -89,7 +89,7 @@ describe("AppFrame library nav slots", () => {
     unmount();
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Expense Ops")).toBe("/expense/expenses");
   });
 
   it("FINANCE with only workflow-mapping released: Inventory lands on Receiving", () => {
@@ -112,7 +112,7 @@ describe("AppFrame library nav slots", () => {
     setPathname("/expense/42");
     mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { holds: 2, openFlags: 1 } } }));
     renderFrame();
-    expect(screen.getByLabelText("3 expense holds and flags")).toHaveTextContent("3");
+    expect(screen.getByLabelText("2 expense holds; 1 open expense flags")).toHaveTextContent("3");
     expect(screen.getByText("Expense Ops").closest("a")).toHaveAttribute("data-active", "true");
     expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
   });

@@ -4,7 +4,8 @@
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
- * The posting writer stays unbound (inert); it is a later crossing.
+ * The posting writer stays unbound (inert); it is a later crossing. Whatever the library sends
+ * out goes through checkin's outbound gateway, which strips it to the surface's declared tiers.
  */
 import { configureExpense, reimburseeVendorId } from "@checkin/expense";
 import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
@@ -13,6 +14,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { outboundCall } from "@/security/outbound";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -205,5 +207,6 @@ export function configureRuntime(): void {
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
+    outbound: outboundCall,
   });
 }

@@ -30,10 +30,14 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Error";
 }
 
-/** Sends a write, toasts the outcome, and reports whether it succeeded. */
+/**
+ * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
+ * host nav to refetch its pills, since any write can change the holds, flags or sign-off counts.
+ */
 export async function send(path: string, method: string, body: unknown, success: string): Promise<boolean> {
   try {
     await api(path, { method, body: JSON.stringify(body) });
+    window.dispatchEvent(new Event("nav-counts-mutated"));
     notifications.show({ message: success, color: "green" });
     return true;
   } catch (err) {
