@@ -1,24 +1,28 @@
 /** The Expense Ops section (expense/layout.tsx, shared by /expense and /budgets). FINANCE or BOARD. */
-import { EXPENSE_TABS } from "@checkin/expense/nav";
-import type { NavSection } from "@/lib/nav/types";
+import { EXPENSE_OPS_TABS, EXPENSE_TABS, type ExpenseNavCount } from "@checkin/expense/nav";
+import type { NavSection, SectionLink } from "@/lib/nav/types";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
 import { libraryCount } from "@/components/navBadges";
 
 export const EXPENSE_OPS_ROLES = FINANCE_OR_BOARD;
+
+const COUNT_NOUNS: Record<ExpenseNavCount, string> = { holds: "expense holds", openFlags: "open expense flags" };
 
 export const EXPENSE_OPS: NavSection = {
   id: "expense-ops",
   label: "Expense Ops",
   href: "/expense",
   links: [
-    {
-      ...EXPENSE_TABS.expenses,
+    ...EXPENSE_OPS_TABS.map(({ badge: key, ...tab }): SectionLink => ({
+      ...tab,
       library: "expense",
-      badge: (c) => {
-        const n = libraryCount(c, "expense", "holds") + libraryCount(c, "expense", "openFlags");
-        return n > 0 ? { count: n, color: "red", label: `${n} expense holds and flags` } : null;
-      },
-    },
+      badge: key
+        ? (c) => {
+            const n = libraryCount(c, "expense", key);
+            return n > 0 ? { count: n, color: "red", label: `${n} ${COUNT_NOUNS[key]}` } : null;
+          }
+        : undefined,
+    })),
     { ...EXPENSE_TABS.settings, library: "expense" },
   ],
   visible: anyRole(EXPENSE_OPS_ROLES),

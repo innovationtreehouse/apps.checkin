@@ -4,7 +4,6 @@ import { Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/cor
 import { notifications } from "@mantine/notifications";
 import { api, errorMessage, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
-import IncomeSubnav from "../components/IncomeSubnav";
 
 interface ExclusionRow {
   id: number;
@@ -41,7 +40,6 @@ export default function ExclusionsPage() {
 
   return (
     <>
-      <IncomeSubnav />
       <Title order={3} mb="md">QuickBooks Exclusions</Title>
       {isFinance && (
         <Group gap="xs" align="end" mb="md">

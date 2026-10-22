@@ -5,7 +5,6 @@ import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Mapping {
   id: number;
@@ -42,7 +41,6 @@ export default function AccountMappingPage() {
 
   return (
     <>
-      <ExpenseSubNav current="/expense/account-mapping" />
       <Title order={3} mb="md">Account mapping</Title>
       {mappings.error && <LoadError what="account mapping" message={mappings.error} onRetry={mappings.reload} />}
       <Table>

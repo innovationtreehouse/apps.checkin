@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { Button, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
 import { api, errorMessage } from "../components/api";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface SeedResult {
   created: number;
@@ -32,7 +31,6 @@ export default function CapitalSeedPage() {
 
   return (
     <>
-      <ExpenseSubNav current="/expense/capital-seed" />
       <Title order={3} mb="md">Capital register seed</Title>
       <Paper withBorder p="md" maw={720}>
         <Stack>
