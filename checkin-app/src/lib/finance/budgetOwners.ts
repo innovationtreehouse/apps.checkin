@@ -29,6 +29,16 @@ export async function listBudgetOwners(includeArchived: boolean) {
     });
 }
 
+/** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
+export async function listQuickBooksClasses() {
+    const qb = await (await import("@/lib/quickbooks/client")).getQuickBooks();
+    if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
+    const classes = await qb.classes();
+    return classes
+        .map((c) => ({ id: c.Id, name: c.FullyQualifiedName, active: c.Active !== false }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function listProgramOptions() {
     return prisma.program.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } });
 }

@@ -7,7 +7,8 @@
  * permitted change writes the flag and one audit row together. A merged-away
  * (tombstoned) person is refused as not found.
  */
-import { createBudgetOwner, setProgramTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
+import { createBudgetOwner, listQuickBooksClasses, setProgramTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
+import { getQuickBooks } from '@/lib/quickbooks/client';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30 };
 const mergedInto: Record<number, number> = { 4: 3 };
@@ -15,6 +16,7 @@ const tx = {
     programVolunteer: { findUnique: jest.fn(), update: jest.fn() },
     auditLog: { create: jest.fn() },
 };
+jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -76,5 +78,26 @@ describe('QuickBooks Class id', () => {
         await expect(createBudgetOwner(1, { name: 'Robotics', quickBooksClassId: classId })).rejects.toMatchObject({ status: 400 });
         await expect(updateBudgetOwner(1, 5, { quickBooksClassId: classId })).rejects.toMatchObject({ status: 400 });
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('listQuickBooksClasses', () => {
+    test('lists every Class by full name, sorted, with inactive ones flagged', async () => {
+        const classes = jest.fn().mockResolvedValue([
+            { Id: '9', Name: 'Robotics', FullyQualifiedName: 'Programs:Robotics' },
+            { Id: '3', Name: 'Facility', FullyQualifiedName: 'Facility', Active: true },
+            { Id: '4', Name: 'Old', FullyQualifiedName: 'Old', Active: false },
+        ]);
+        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
+        await expect(listQuickBooksClasses()).resolves.toEqual([
+            { id: '3', name: 'Facility', active: true },
+            { id: '4', name: 'Old', active: false },
+            { id: '9', name: 'Programs:Robotics', active: true },
+        ]);
+    });
+
+    test('answers 503 while QuickBooks is off', async () => {
+        jest.mocked(getQuickBooks).mockResolvedValue(null);
+        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503 });
     });
 });
