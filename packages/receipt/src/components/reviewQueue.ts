@@ -17,7 +17,13 @@ export function parseQueue(param: string | null): string {
   return QUEUES.some((q) => q.value && q.value === param) ? (param as string) : DEFAULT_QUEUE;
 }
 
-const queueParam = (queue: string) => `queue=${queue || ALL}`;
+/** The queue a receipt opened under review returns to: `?queue=` when given, else the queue its state is in. */
+export function returnQueue(param: string | null, state: string): string {
+  if (param !== null) return parseQueue(param);
+  return QUEUES.some((q) => q.value && q.value === state) ? state : DEFAULT_QUEUE;
+}
+
+const queueParam =(queue: string) => `queue=${queue || ALL}`;
 
 /** The review screen showing `queue`. */
 export const reviewHref = (queue: string) => `/receipts/review?${queueParam(queue)}`;

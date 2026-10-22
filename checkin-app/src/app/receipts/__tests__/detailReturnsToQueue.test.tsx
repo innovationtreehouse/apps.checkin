@@ -76,6 +76,13 @@ describe("a receipt opened from the review queue", () => {
     await waitFor(() => expect(mockSend).toHaveBeenCalled());
     expect(mockPush).not.toHaveBeenCalled();
   });
+
+  it("without ?queue= returns to the queue the receipt's state is in", () => {
+    mockSearch = new URLSearchParams();
+    mockLoads["/r1"] = { ...receipt, state: "ocr_failed" };
+    wrap(<ReceiptDetailPage />);
+    expect(screen.getByRole("link", { name: "← Receipts review" })).toHaveAttribute("href", "/receipts/review?queue=ocr_failed");
+  });
 });
 
 describe("a receipt opened at /receipts/[id]", () => {

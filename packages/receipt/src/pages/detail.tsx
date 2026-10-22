@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, dollars, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { parseQueue, reviewHref } from "../components/reviewQueue";
+import { returnQueue, reviewHref } from "../components/reviewQueue";
 
 interface Line {
   id: number;
@@ -46,9 +46,8 @@ const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 export default function ReceiptDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const queue = parseQueue(useSearchParams().get("queue"));
+  const queueParam = useSearchParams().get("queue");
   const fromReview = usePathname().startsWith("/receipts/review/");
-  const back = fromReview ? { href: reviewHref(queue), label: "Receipts review" } : { href: "/receipts", label: "My receipts" };
   const { data: session } = useSession();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
@@ -59,6 +58,10 @@ export default function ReceiptDetailPage() {
   const r = receipt.data;
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
   if (!r) return <Text>Loading…</Text>;
+
+  const back = fromReview
+    ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
+    : { href: "/receipts", label: "My receipts" };
 
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
