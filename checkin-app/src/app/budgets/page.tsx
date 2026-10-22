@@ -5,7 +5,6 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { AlertBanner } from "@/components/admin/AlertBanner";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
@@ -31,15 +30,32 @@ interface TreasurerRow {
   person: { id: number; name: string };
 }
 
+/** Sends a write; returns null on success, else a message saying why it failed. */
 async function send(url: string, method: string, body?: unknown): Promise<string | null> {
-  const res = await fetch(url, {
-    method,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    return "Couldn't reach the server. Check your connection and try again.";
+  }
   if (res.ok) return null;
-  const data = await res.json().catch(() => ({}));
-  return typeof data.error === "string" ? data.error : "Request failed.";
+  const data: unknown = await res.json().catch(() => null);
+  if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+    return `${data.error} (${res.status})`;
+  }
+  // No JSON error body: the reply came from in front of the app, not from its routes.
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return `The server is unavailable (${res.status}). Try again in a minute.`;
+  }
+  return `The server returned an unexpected error (${res.status}).`;
+}
+
+function showError(title: string, message: string) {
+  notifications.show({ color: "red", title, message, autoClose: 8000 });
 }
 
 export default function BudgetsPage() {
@@ -51,7 +67,6 @@ export default function BudgetsPage() {
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
 
   const [newName, setNewName] = useState("");
   const [newProgramId, setNewProgramId] = useState<string | null>(null);
@@ -78,10 +93,9 @@ export default function BudgetsPage() {
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
-  const run = async (url: string, method: string, body: unknown, done: string) => {
-    setMessage("");
+  const run = async (url: string, method: string, body: unknown, done: string, failed: string) => {
     const error = await send(url, method, body);
-    if (error) { setMessage(error); return false; }
+    if (error) { showError(failed, error); return false; }
     notifications.show({ message: done });
     setLoading(true);
     await load();
@@ -93,7 +107,7 @@ export default function BudgetsPage() {
       name: newName,
       programId: newProgramId ? Number(newProgramId) : null,
       quickBooksClassId: newClassId || null,
-    }, "Bucket created.");
+    }, "Bucket created.", "Bucket not created");
     if (ok) { setNewName(""); setNewProgramId(null); setNewClassId(""); }
   };
 
@@ -102,13 +116,13 @@ export default function BudgetsPage() {
     const ok = await run(`/api/budget-owners/${editing.id}`, "PATCH", {
       name: editName,
       quickBooksClassId: editClassId || null,
-    }, "Bucket saved.");
+    }, "Bucket saved.", "Bucket not saved");
     if (ok) setEditing(null);
   };
 
   const archive = (bucket: Bucket) => {
     if (!window.confirm(`Archive "${bucket.name}"? It stays on record but leaves the active list.`)) return;
-    void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.");
+    void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.", "Bucket not archived");
   };
 
   if (authLoading) return <PageLoader />;
@@ -122,7 +136,6 @@ export default function BudgetsPage() {
           Budget-owner buckets. A program bucket is approved by the program&apos;s leader and its
           treasurers; an org-level bucket has no approvers.
         </Text>
-        <AlertBanner message={message} tone="error" />
 
         {isFinance && (
           <Card withBorder radius="md" padding="lg">
@@ -236,7 +249,6 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<TreasurerRow[] | null>(null);
-  const [error, setError] = useState("");
 
   const [version, setVersion] = useState(0);
 
@@ -249,9 +261,8 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
   }, [programId, version]);
 
   const toggle = async (row: TreasurerRow, on: boolean) => {
-    setError("");
     const failure = await send(`/api/programs/${row.programId}/treasurers/${row.personId}`, on ? "PUT" : "DELETE");
-    if (failure) setError(failure);
+    if (failure) showError("Treasurer not updated", failure);
     setVersion((v) => v + 1);
   };
 
@@ -262,7 +273,6 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
           Treasurers come from the Board-approved program budget; only the Board sets them. Nobody may
           set themself or anyone in their own household.
         </Text>
-        <AlertBanner message={error} tone="error" />
         {rows === null ? (
           <Center><Loader size="sm" /></Center>
         ) : rows.length === 0 ? (
