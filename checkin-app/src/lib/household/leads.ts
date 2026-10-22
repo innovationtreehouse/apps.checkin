@@ -112,9 +112,7 @@ async function addHouseholdLeadTx(
     // The OrgMembership lock comes before the Household lock, the order every
     // caller that also checks for a deny takes them in, so a deny of this
     // household serializes with the promotion.
-    if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) {
-        throw new HouseholdLeadDeniedError(householdId, participantId);
-    }
+    const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
 
     // FOR UPDATE serializes lead additions for this household. Postgres' default
     // Read Committed isolation does NOT prevent two transactions from both
@@ -133,6 +131,8 @@ async function addHouseholdLeadTx(
         throw new HouseholdLeadMismatchError(householdId, participantId);
     }
     if (person?.isHouseholdLead) return { created: false };
+    // Checked after the already-lead return: re-saving an existing lead promotes nobody.
+    if (denied) throw new HouseholdLeadDeniedError(householdId, participantId);
     // Youth exclusion (server-side; UI also filters). null/unknown DOB is allowed.
     if (person && isYouth(person.dateOfBirth)) {
         throw new HouseholdLeadYouthError(householdId, participantId);

@@ -181,6 +181,16 @@ describe('admin participant routes keep the own-household and denied rules', () 
             expect((await prisma.person.findUnique({ where: { id: deniedMemberId } }))?.isHouseholdLead).toBe(false);
         });
 
+        it('treats an existing lead of a DENIED household as already a lead, with no board alert', async () => {
+            const lead = await prisma.person.create({ data: { email: `standing-lead-${TAG}@example.com`, name: 'Standing Lead', isDeclaredAdult: true, isHouseholdLead: true, householdId: deniedHouseholdId } });
+            const alertsBefore = await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: lead.id } });
+            actAs(sysadminId, { isSysadmin: true });
+            const res = await LEAD_POST(jsonReq('POST', { participantId: lead.id }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).message).toBe('Member is already a lead');
+            expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: lead.id } })).toBe(alertsBefore);
+        });
+
         it('promotes a lead in another household', async () => {
             actAs(sysadminId, { isSysadmin: true });
             const res = await LEAD_POST(jsonReq('POST', { participantId: outsiderId }));
