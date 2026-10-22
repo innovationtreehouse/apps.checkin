@@ -24,7 +24,7 @@ const QUEUES = {
 } as const;
 type Queue = keyof typeof QUEUES;
 
-const isQueue = (q: string | null): q is Queue => q !== null && q in QUEUES;
+const isQueue = (q: string | null): q is Queue => q !== null && Object.hasOwn(QUEUES, q);
 const queueHref = (q: Queue) => `/inventory/receiving?queue=${q}`;
 
 /** /inventory/receiving — the receipt-mapping queue and the apply-failed queue. The queue rides in `?queue=`. */
