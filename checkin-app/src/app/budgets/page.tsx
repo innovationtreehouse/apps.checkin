@@ -82,7 +82,7 @@ export default function BudgetsPage() {
       } else {
         const data = await c.json().catch(() => ({}));
         const reason = typeof data.error === "string" ? data.error : "QuickBooks Classes could not be loaded.";
-        notifications.show({ color: "red", message: `QuickBooks Classes are unavailable: ${reason}` });
+        notifications.show({ color: "red", autoClose: false, message: `QuickBooks Classes are unavailable: ${reason}` });
       }
     })
     .finally(() => {
