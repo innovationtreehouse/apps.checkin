@@ -44,8 +44,11 @@ jobs:
   # Required status checks on main: "Deploy build (no deploy)", "Coverage gate
   # (merged)", "Run Tests (unit)", "Run Tests (integration)", "Package & function
   # tests (Vitest)", "Kiosk client tests (Python)", "isolation"
-  # (security-boundary-isolation.yml), and "User-journey flow tests (docker dev
-  # server)" (flow-tests.yml).
+  # (security-boundary-isolation.yml), migration-safety.yml's "Migrations
+  # apply to populated DB", "Library migrations apply to populated DB",
+  # "Released migrations immutable (+ accumulation warning)" and "New
+  # migrations wrap in a transaction", and flow-tests.yml's "User-journey flow
+  # tests (docker dev server)".
   # The Python kiosk client (client/**) has no NODE tests — it has its own tier
   # (`client-tests` below) — so a client-only change has no Node work to do. But
   # skipping the workflow via `paths-ignore` left those required

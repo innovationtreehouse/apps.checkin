@@ -17,8 +17,11 @@ name: Migration safety (populated DB)
 # applied a NEW migration on top of a POPULATED database. This job closes
 # that gap.
 #
-# Only runs when migrations (or this file) change — most PRs don't touch
-# migrations/prisma/schema.prisma, so there's nothing new to verify.
+# Every job is a required check on main, so the workflow runs on every PR.
+# The `changes` job decides which migration chains the PR touches; each job
+# below always runs and reports success, doing its real work only when its
+# chains (or this workflow) changed. A workflow that never triggers never
+# reports, and a required check that never reports blocks the merge.
 #
 # Coalesce PRs (checkin-app/scripts/coalesce-migrations.ts — see
 # docs/ops/MIGRATION_COALESCE_FLOW.md) are a special case the normal
@@ -35,14 +38,10 @@ on:
     # so this must exist on both main (every future rel/* cut inherits it)
     # and rel/1.0 (so current release-line PRs get checks).
     branches: [main, 'rel/**']
-    paths:
-      - 'checkin-app/prisma/migrations/**'
-      # Library chains (checkin-app/libraries.json) and the s-ingest-core mirror
-      # chain. Each populated-DB job skips itself when its own chains are unchanged.
-      - 'packages/*/prisma/migrations/**'
-      - '.github/workflows/migration-safety.yml'
-      - '.github/actions/ecr-public-login/**'
-      - '.github/actions/start-postgres/**'
+  # Required checks must also report on the merge queue's ref, or the entry
+  # waits forever. The jobs run for real there: two queued PRs whose
+  # migrations each pass alone can still collide once stacked.
+  merge_group:
 
 # pull_request runs share one group per ref, so a new push cancels the run it
 # supersedes. Every other event keys on run_id: a group of one, so main pushes,
@@ -53,8 +52,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # checkin: the checkin-app chain. libraries: the library chains
+  # (checkin-app/libraries.json) and the s-ingest-core mirror chain under
+  # packages/. Editing this workflow or the actions it uses sets both, so the
+  # PR that changes a job exercises it. Each populated-DB job then narrows to
+  # the chains that actually changed.
+  changes:
+    name: Detect migration changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      checkin: ${{ steps.detect.outputs.checkin }}
+      libraries: ${{ steps.detect.outputs.libraries }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          echo "Changed files:"; printf '%s\n' "$changed"
+          SELF='^\.github/(workflows/migration-safety\.yml$|actions/(ecr-public-login|start-postgres)/)'
+          if printf '%s\n' "$changed" | grep -qE "^checkin-app/prisma/migrations/|$SELF"; then
+            echo "checkin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "checkin=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$changed" | grep -qE "^packages/[^/]+/prisma/migrations/|$SELF"; then
+            echo "libraries=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "libraries=false" >> "$GITHUB_OUTPUT"
+          fi
+
   migrate-populated:
     name: Migrations apply to populated DB
+    needs: changes
+    # A job whose `needs` failed is skipped, and a skipped required check
+    # passes. Each job below runs anyway and fails, so a broken detector
+    # blocks the merge.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -69,14 +110,26 @@ jobs:
       DATABASE_URL: postgresql://testuser:testpassword@localhost:5432/checkmein_migtest
 
     steps:
-      # fetch-depth: 0 so origin/main's full history is available locally —
-      # needed to compute the merge-base below.
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect migration changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No checkin migration changes
+        if: needs.changes.outputs.checkin != 'true'
+        run: echo "No checkin-app migration changes — nothing to verify."
+
+      # fetch-depth: 0 so the base branch's full history is available
+      # locally — needed to compute the merge-base below.
       - name: Checkout PR
+        if: needs.changes.outputs.checkin == 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.checkin == 'true'
         uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
@@ -87,17 +140,27 @@ jobs:
       # The DB runs as a step, not a service container: services start before
       # any step, so their pull can't use the ECR Public login above.
       - name: Start Postgres
+        if: needs.changes.outputs.checkin == 'true'
         uses: ./.github/actions/start-postgres
         with:
           db: checkmein_migtest
 
       - name: Determine base + check for migration changes
+        if: needs.changes.outputs.checkin == 'true'
         id: base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          # Set only on merge_group, where github.base_ref is empty.
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          git fetch origin main
-          BASE=$(git merge-base origin/main HEAD)
-          echo "Merge base with origin/main: $BASE"
+          if [ -n "$QUEUE_BASE_SHA" ]; then
+            BASE="$QUEUE_BASE_SHA"
+          else
+            git fetch origin "$BASE_REF"
+            BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          fi
+          echo "Base: $BASE"
           echo "sha=$BASE" >> "$GITHUB_OUTPUT"
           if git diff --quiet "$BASE" HEAD -- checkin-app/prisma/migrations; then
             echo "No migration changes vs $BASE — nothing to verify, exiting early."
@@ -259,6 +322,8 @@ jobs:
   # coalesce flow and no Event/RSVP tables, so those checkin steps don't apply.
   migrate-populated-libraries:
     name: Library migrations apply to populated DB
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -272,18 +337,38 @@ jobs:
       PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
 
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect migration changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No library migration changes
+        if: needs.changes.outputs.libraries != 'true'
+        run: echo "No library migration changes — nothing to verify."
+
       - name: Checkout PR
+        if: needs.changes.outputs.libraries == 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Determine base + libraries with migration changes
+        if: needs.changes.outputs.libraries == 'true'
         id: base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          # Set only on merge_group, where github.base_ref is empty.
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          git fetch origin main
-          BASE=$(git merge-base origin/main HEAD)
-          echo "Merge base with origin/main: $BASE"
+          if [ -n "$QUEUE_BASE_SHA" ]; then
+            BASE="$QUEUE_BASE_SHA"
+          else
+            git fetch origin "$BASE_REF"
+            BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          fi
+          echo "Base: $BASE"
           echo "sha=$BASE" >> "$GITHUB_OUTPUT"
           CHANGED="${{ runner.temp }}/changed-libraries"
           : > "$CHANGED"
@@ -374,14 +459,28 @@ jobs:
   #    because branch protection pins required checks by name.)
   history:
     name: Released migrations immutable (+ accumulation warning)
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect migration changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No migration changes
+        if: ${{ !(needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true') }}
+        run: echo "No migration changes — released history untouched."
+
       - uses: actions/checkout@v5
+        if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         with:
           fetch-depth: 0
 
       - name: Check history against the previous release
+        if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         run: |
           set -euo pipefail
           git fetch --tags --quiet origin
@@ -420,20 +519,40 @@ jobs:
   # holds reconcile.sql), which only ever runs on an empty database.
   transaction-lint:
     name: New migrations wrap in a transaction
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect migration changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No migration changes
+        if: ${{ !(needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true') }}
+        run: echo "No migration changes — no new migrations to lint."
+
       - uses: actions/checkout@v5
+        if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         with:
           fetch-depth: 0
 
       - name: Check migrations added by this PR
+        if: needs.changes.outputs.checkin == 'true' || needs.changes.outputs.libraries == 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
+          # Set only on merge_group, where github.base_ref is empty.
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          git fetch --quiet origin "$BASE_REF"
-          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          if [ -n "$QUEUE_BASE_SHA" ]; then
+            BASE="$QUEUE_BASE_SHA"
+          else
+            git fetch --quiet origin "$BASE_REF"
+            BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          fi
           FAILED=0
           while read -r f; do
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
