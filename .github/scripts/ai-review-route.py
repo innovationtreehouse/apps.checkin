@@ -13,7 +13,8 @@ import json, os, re, subprocess, sys, urllib.request, uuid
 
 # The workflow points this at the default branch's copy, so a PR cannot edit its own reviewer.
 CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
-JEV = "typesafe/jev-1.14"
+# The decision model and its state cap come from the workflow so a swap is one env edit.
+JEV = os.environ.get("DECISION_MODEL", "typesafe/jev-1.14")
 # Ordered cheapest to strongest; a rerun only moves up.
 LADDER = [
     # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
@@ -41,7 +42,7 @@ PROFILE_THRESHOLD = 0.5
 # Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
 COMPLETE_THRESHOLD = 0.2
 # Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
-JEV_STATE_MAX = 1_500_000
+JEV_STATE_MAX = int(os.environ.get("DECISION_STATE_MAX", "1500000"))
 # Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
 MIN_CREDIT_USD = 5.0
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.

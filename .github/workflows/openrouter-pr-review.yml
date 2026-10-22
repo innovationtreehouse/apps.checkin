@@ -62,6 +62,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DECISION_MODEL: baseten/mammoth-1:free
+          DECISION_STATE_MAX: "48000"
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
           # fixed ladder says high; "false" lets Jev pick. The judge can still order a rerun.
           FIRST_ROUND_LOWEST: "true"
@@ -98,6 +100,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DECISION_MODEL: baseten/mammoth-1:free
+          DECISION_STATE_MAX: "48000"
           TIER: ${{ steps.route.outputs.tier }}
           PROFILES: ${{ steps.route.outputs.profiles }}
           VERDICT: ${{ steps.review.outputs.verdict }}
