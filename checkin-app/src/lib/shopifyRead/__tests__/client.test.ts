@@ -223,9 +223,14 @@ describe('order reads', () => {
     });
 
     it('orderLines drops removed and variant-less lines', async () => {
-        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2 }]);
-        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2 }]);
+        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2, currentQuantity: 1 }]);
+        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2, currentQuantity: 1 }]);
         expect(whereOf(db.shopOrderLine.findMany)).toEqual({ orderGid: 'gid://shopify/Order/1', variantLegacyId: { not: null }, removed: false });
+    });
+
+    it('orderLines falls back to the original quantity for a row synced before current_quantity', async () => {
+        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2, currentQuantity: null }]);
+        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2, currentQuantity: 2 }]);
     });
 
     it('orderLineVariantIds reads distinct non-null variants', async () => {
@@ -344,10 +349,12 @@ describe('income reads', () => {
 
     it('incomeOrderLines reads live lines in order and names the variant id', async () => {
         db.shopOrderLine.findMany.mockResolvedValue([
-            { orderGid: 'g1', variantLegacyId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantLegacyId: '111', title: 'Membership Fee', sku: null, quantity: 1, currentQuantity: null, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantLegacyId: '222', title: 'Class Seat', sku: null, quantity: 3, currentQuantity: 2, priceCents: 2500, discountCents: 0 },
         ]);
         expect(await freshClient().incomeOrderLines(['g1'])).toEqual([
-            { orderGid: 'g1', variantId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantId: '111', title: 'Membership Fee', sku: null, quantity: 1, currentQuantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantId: '222', title: 'Class Seat', sku: null, quantity: 3, currentQuantity: 2, priceCents: 2500, discountCents: 0 },
         ]);
         const args = db.shopOrderLine.findMany.mock.calls[0][0];
         expect(args.where).toEqual({ orderGid: { in: ['g1'] }, removed: false });
