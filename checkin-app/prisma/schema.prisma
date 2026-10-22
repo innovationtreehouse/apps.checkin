@@ -1105,7 +1105,6 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
-  budgetOwners BudgetOwner[]
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
@@ -1164,9 +1163,6 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
-  /// Unread; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops it.
-  /// @sensitivity:internal
-  isTreasurer   Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1908,9 +1904,6 @@ model BudgetOwner {
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Unread; a later migration drops it.
-  /// @sensitivity:internal
-  programId            Int?
   /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
   /// @sensitivity:internal
   isOrgLevel           Boolean   @default(false)
@@ -1926,11 +1919,9 @@ model BudgetOwner {
 
   // Restrict: a program with a bucket is not deleted out from under it, and
   // SetNull would silently turn a program bucket into an org-level one.
-  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict)
   owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   treasurers BudgetOwnerTreasurer[]
 
-  @@index([programId])
   @@index([ownerId])
 }
 
