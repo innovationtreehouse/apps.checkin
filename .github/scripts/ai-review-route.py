@@ -238,13 +238,30 @@ def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
     return dict(state, untrusted_prior_review_rounds=rounds)
 
 
+TRIM_KEYS = ("untrusted_diff", "untrusted_review_output")
+TRIM_NOTE = "\n[cut here to fit the decision state cap]"
+
+
+def fit_state(state, limit=JEV_STATE_MAX):
+    """Last resort after fit_rounds: cut the current diff, then the posted review, until the state fits.
+    Every character is at least one JSON byte, so cutting `over` characters always removes `over` bytes."""
+    for key in TRIM_KEYS:
+        over = len(json.dumps(state).encode()) - limit
+        if over <= 0:
+            break
+        text = state.get(key) or ""
+        keep = max(0, len(text) - over - len(TRIM_NOTE) - 8)
+        state = dict(state, **{key: text[:keep] + TRIM_NOTE})
+    return state
+
+
 def with_prior_rounds(state, pr, repo, skip_id=None):
     # Earlier rounds are PR-derived text: data for the decision model, never instructions.
     try:
-        return fit_rounds(state, prior_rounds(pr, repo, skip_id))
+        return fit_state(fit_rounds(state, prior_rounds(pr, repo, skip_id)))
     except Exception as e:
         print(f"::warning::could not read prior review rounds ({e}); deciding without them", file=sys.stderr)
-        return state
+        return fit_state(state)
 
 
 def pick(probs, rungs):
@@ -300,6 +317,13 @@ def route_selftest():
     saved, prior_rounds = prior_rounds, lambda *a: 1 / 0
     try:
         assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
+    big = {"k": 1, "untrusted_diff": "d" * 300, "untrusted_review_output": "r" * 300}
+    assert fit_state(dict(big), 10 ** 6) == big
+    cut = fit_state(dict(big), 400)
+    assert len(json.dumps(cut).encode()) <= 400 and cut["untrusted_diff"].endswith(TRIM_NOTE)
+    assert cut["untrusted_review_output"] == big["untrusted_review_output"]
+    tiny = fit_state(dict(big), 120)
+    assert len(json.dumps(tiny).encode()) <= 120 and tiny["untrusted_review_output"].endswith(TRIM_NOTE)
     finally:
         prior_rounds = saved
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
