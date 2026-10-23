@@ -9,14 +9,14 @@
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { routes } from '@checkin/bulk-donation';
-import { signoff } from '@/lib/expense/configure';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import { GET } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({
     routes: { inKind: { listByBucket: jest.fn(() => async () => ({ InKindBucketGiftView: [] })) } },
 }));
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 type Flags = { isFinance?: boolean; isBoardMember?: boolean; programsLed?: number[] };
 
@@ -34,7 +34,7 @@ const get = () =>
 describe('GET /api/donations/in-kind/by-bucket', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        jest.mocked(signoff.bucketsApprovedBy).mockResolvedValue([]);
+        jest.mocked(bucketsApprovedBy).mockResolvedValue([]);
     });
 
     it.each([{ isFinance: true }, { isBoardMember: true }])('shows %p every bucket', async (flags) => {
@@ -44,7 +44,7 @@ describe('GET /api/donations/in-kind/by-bucket', () => {
     });
 
     it("limits a bucket approver to the buckets they approve", async () => {
-        jest.mocked(signoff.bucketsApprovedBy).mockResolvedValue([4]);
+        jest.mocked(bucketsApprovedBy).mockResolvedValue([4]);
         signIn({});
         expect((await get()).status).toBe(200);
         expect(routes.inKind.listByBucket).toHaveBeenCalledWith(false);
