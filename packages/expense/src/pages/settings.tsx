@@ -6,7 +6,7 @@ import LoadError from "../components/LoadError";
 
 const FIELDS = [
   { key: "capitalEquipmentUnitCents", label: "Capital-equipment flag: unit price at or over", min: 0.01 },
-  { key: "boardReviewTotalCents", label: "Board-review flag: total at or over", min: 0.01 },
+  { key: "boardReviewTotalCents", label: "Board review: receipt total at or over (flagged, and held until the Board's approval is recorded)", min: 0.01 },
   { key: "capitalTotalThresholdCents", label: "Capital review: receipt total over (0 = off)", min: 0 },
   { key: "capitalLineItemThresholdCents", label: "Capital review: line total over (0 = off)", min: 0 },
 ] as const;

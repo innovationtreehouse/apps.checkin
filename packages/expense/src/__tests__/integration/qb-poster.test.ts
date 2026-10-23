@@ -694,11 +694,11 @@ describeDb("QB-2 posting — checks at post time", () => {
     await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
 
     await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: lines[0], seat: "TREASURER", signerUserId: 9002 } });
-    await db.expense.update({ where: { id }, data: { everydayWithinLimits: false, boardAuthorization: null } });
+    await db.lineItemOwnerApproval.updateMany({ where: { expenseId: id }, data: { status: "pending" } });
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
 
     expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { detail: true, checkedOffAt: true } })).toEqual([
-      { detail: "closed but not posted: the Board authorization is missing", checkedOffAt: null },
+      { detail: "closed but not posted: a line is not approved: it is pending, under exception, or rejected", checkedOffAt: null },
     ]);
   });
 

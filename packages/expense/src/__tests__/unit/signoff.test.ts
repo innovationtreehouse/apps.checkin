@@ -23,7 +23,7 @@ const base: SignoffFacts = {
   ownerHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
-  needsBoardAuthorization: false,
+  boardSeat: false,
 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 

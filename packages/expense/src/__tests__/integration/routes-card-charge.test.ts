@@ -36,7 +36,7 @@ describeDb("card-charge sign-off routes", () => {
       ExpenseLineSignoffStatus: { missing: string[] }[];
     };
     expect(res.ExpenseLineSignoffStatus).toHaveLength(1);
-    expect(res.ExpenseLineSignoffStatus[0].missing).not.toContain("BOARD_AUTHORIZATION");
+    expect(res.ExpenseLineSignoffStatus[0].missing).not.toContain("BOARD");
     expect((await db.expense.findUnique({ where: { id } }))?.boardAuthorization).toBe("Board vote, 2026-10-01");
   });
 
