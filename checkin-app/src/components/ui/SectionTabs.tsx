@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Tabs } from "@mantine/core";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { useConfirmNav } from "@/components/UnsavedChangesProvider";
+import { tabHrefs } from "@/lib/nav/gates";
 import type { SectionLink } from "@/lib/nav/types";
 
 /**
@@ -32,7 +33,7 @@ export function activeTab<T extends SectionLink>(links: readonly T[], pathname: 
   let best: T | undefined;
   let bestLength = -1;
   for (const link of links) {
-    for (const href of [link.href, ...(link.subLinks ?? []).map((s) => s.href)]) {
+    for (const href of tabHrefs(link)) {
       if (hit(href) && href.length > bestLength) {
         best = link;
         bestLength = href.length;

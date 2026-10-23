@@ -38,6 +38,7 @@ const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
+const REVENUE = (href: string): NavGate => linkGate(REVENUE_OPS, href);
 const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
 const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
 const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
@@ -121,12 +122,12 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: RECEIVING },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
-  // The index redirects to the reconciliation queue.
+  // The index redirects to Item Categories; Payouts and Reconciliation sit under the Shopify tab.
   { href: '/income', label: 'Income', section: 'Income', keywords: 'shopify payout quickbooks', visible: INCOME },
-  { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: INCOME },
-  { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: INCOME },
-  { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: INCOME },
-  { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: INCOME },
+  { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: REVENUE('/income/payouts') },
+  { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: REVENUE('/income/reconciliation') },
+  { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: REVENUE('/income/items') },
+  { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: REVENUE('/income/exclusions') },
 
   // My Receipts — anyone who may upload; Receipt Review — finance.
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
@@ -179,9 +180,9 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops', label: 'Revenue Ops', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },
-  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE_TOOLS },
-  { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: FINANCE_TOOLS },
-  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE_TOOLS },
+  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: REVENUE('/finance-ops/shopify-holds') },
+  { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: REVENUE('/finance-ops/shopify-stock') },
+  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: REVENUE('/finance-ops/payments') },
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: BUDGETS },

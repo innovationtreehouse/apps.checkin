@@ -116,4 +116,16 @@ describe("AppFrame library nav slots", () => {
     expect(screen.getByText("Expense Ops").closest("a")).toHaveAttribute("data-active", "true");
     expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
   });
+
+  it.each([
+    ["FINANCE", "/income/reconciliation", { id: 2, isFinance: true }],
+    ["FINANCE", "/income/exclusions", { id: 2, isFinance: true }],
+    ["Board", "/income/payouts", { id: 1, isBoardMember: true }],
+    ["Board", "/finance-ops/payments", { id: 1, isBoardMember: true }],
+  ])("%s: highlights Revenue Ops on a grouped tab's sub-page %s", (_who, pathname, user) => {
+    setSession(user);
+    setPathname(pathname);
+    renderFrame();
+    expect(screen.getByText("Revenue Ops").closest("a")).toHaveAttribute("data-active", "true");
+  });
 });

@@ -142,8 +142,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
-    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/payouts') },
-    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
+    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
+    { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
+    { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
     { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {

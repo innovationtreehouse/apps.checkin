@@ -1,4 +1,4 @@
-import { anyRole, everyone, sectionShown, visibleLinks } from "@/lib/nav/gates";
+import { anyRole, everyone, linkGate, sectionShown, tabHrefs, visibleLinks } from "@/lib/nav/gates";
 import type { NavSection } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
@@ -69,5 +69,39 @@ describe("visibleLinks — sub-link library release", () => {
 
   it("shows an unreleased library's sub-link to the Board", () => {
     expect(visibleLinks(LIBRARY_SECTION, { isBoardMember: true }, releasing([]))[0].subLinks?.map((s) => s.name)).toEqual(["Shared page", "Income page"]);
+  });
+
+  it("gates a library sub-link by its release through linkGate", () => {
+    expect(linkGate(LIBRARY_SECTION, "/grouped/income-page")({ isFinance: true }, releasing([]))).toBe(false);
+    expect(linkGate(LIBRARY_SECTION, "/grouped/income-page")({ isFinance: true }, releasing(["income"]))).toBe(true);
+  });
+});
+
+describe("linkGate — grouped tabs", () => {
+  it("resolves a sub-link's own gate, ahead of a group sharing its href", () => {
+    expect(linkGate(SECTION, "/grouped/board-page")({ isFinance: true }, null)).toBe(false);
+    expect(linkGate(SECTION, "/grouped/board-page")({ isBoardMember: true }, null)).toBe(true);
+    expect(linkGate(SECTION, "/grouped/shared-page")({ isFinance: true }, null)).toBe(true);
+  });
+
+  it("refuses a sub-link the group's own gate refuses", () => {
+    expect(linkGate(SECTION, "/grouped/open")({ isFinance: true }, null)).toBe(false);
+    expect(linkGate(SECTION, "/grouped/open")({ isBoardMember: true }, null)).toBe(true);
+  });
+
+  it("agrees with visibleLinks for every sub-link and viewer", () => {
+    for (const user of [{ isFinance: true }, { isBoardMember: true }, {}]) {
+      const shown = visibleLinks(SECTION, user, null).flatMap((l) => l.subLinks ?? []).map((s) => s.href);
+      for (const href of SECTION.links.flatMap((l) => l.subLinks ?? []).map((s) => s.href)) {
+        expect([href, linkGate(SECTION, href)(user, null)]).toEqual([href, shown.includes(href)]);
+      }
+    }
+  });
+});
+
+describe("tabHrefs", () => {
+  it("lists a tab's own href and its sub-links'", () => {
+    expect(tabHrefs(SECTION.links[0])).toEqual(["/grouped/plain"]);
+    expect(tabHrefs(SECTION.links[1])).toEqual(["/grouped/board-page", "/grouped/board-page", "/grouped/shared-page"]);
   });
 });
