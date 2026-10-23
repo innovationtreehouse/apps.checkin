@@ -1,8 +1,8 @@
 /**
  * The program-leader home (/programs-i-lead), distinct from the attendee "My
  * Programs" tab under My Activities. Lead status rides in on the todo-counts
- * payload. Expense approvals and in-kind gifts also admit program treasurers,
- * whose signal is the expense library's approver count.
+ * payload. Expense approvals and in-kind gifts admit bucket owners and
+ * treasurers, whose signal is the expense library's approver count.
  */
 import { EXPENSE_TABS } from "@checkin/expense/nav";
 import { BUCKET_GIFTS_TAB } from "@checkin/bulk-donation/nav";
@@ -11,7 +11,7 @@ import { firstVisibleHref, signedIn } from "@/lib/nav/gates";
 import { leadsAnyProgram, libraryCount } from "@/components/navBadges";
 
 const leadsProgram: NavGate = (_u, c) => leadsAnyProgram(c);
-const expenseApprover: NavGate = (u, c) => (u?.programsLed?.length ?? 0) > 0 || libraryCount(c, "expense", "approver") > 0;
+const expenseApprover: NavGate = (_u, c) => libraryCount(c, "expense", "approver") > 0;
 
 export const PROGRAMS_I_LEAD: NavSection = {
   id: "programs-i-lead",

@@ -14,7 +14,7 @@ import { DEFAULT_EXPENSE_SETTINGS } from "../../services/settingsService";
 
 const limits = DEFAULT_EXPENSE_SETTINGS;
 const amounts: EverydayAmounts = { receiptTotalCents: 10_000, unitPricesCents: [10_000] };
-const plain: EverydayFacts = { withinLimits: true, singleSource: false, financeNotEveryday: false };
+const plain: EverydayFacts = { withinLimits: true };
 
 describe("Everyday", () => {
   it("defaults to under $500 in total and no item over $250", () => {
@@ -40,17 +40,9 @@ describe("Everyday", () => {
     expect(withinEverydayLimits(amounts, tighter)).toBe(false);
   });
 
-  it("within the limits and unmarked is Everyday; outside them is not", () => {
+  it("the amounts alone decide it: within the limits is Everyday, outside them is not", () => {
     expect(isEveryday(plain)).toBe(true);
     expect(isEveryday({ ...plain, withinLimits: false })).toBe(false);
-  });
-
-  it("a single-source purchase is never Everyday", () => {
-    expect(isEveryday({ ...plain, singleSource: true })).toBe(false);
-  });
-
-  it("FINANCE's not-Everyday mark overrides the limits", () => {
-    expect(isEveryday({ ...plain, financeNotEveryday: true })).toBe(false);
   });
 });
 
@@ -71,7 +63,7 @@ describe("Board authorization", () => {
   });
 });
 
-// 1 purchaser · 2 program leader · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
+// 1 purchaser · 2 bucket owner · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
 const card: SignoffFacts = {
   kind: "card_charge",
   submitterId: 1,
@@ -81,7 +73,7 @@ const card: SignoffFacts = {
   finance: [3, 4],
   board: [5, 6],
   conflicted: [1, 8],
-  leaderHousehold: [],
+  ownerHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
   needsBoardAuthorization: true,
@@ -100,14 +92,14 @@ describe("who records the Board authorization", () => {
     expect(boardAuthorizationRefusal([self], 4)).toBeNull();
   });
 
-  it("a FINANCE holder in any line's Program Leader household is refused", () => {
-    const led = { ...card, leaderHousehold: [2, 4] };
+  it("a FINANCE holder in any line's bucket owner household is refused", () => {
+    const led = { ...card, ownerHousehold: [2, 4] };
     expect(boardAuthorizationRefusal([card, led], 4)).toMatch(/conflicted Treasurer/);
     expect(boardAuthorizationRefusal([card, led], 3)).toBeNull();
   });
 
   it("with every FINANCE holder conflicted, a Board member without a conflict records it", () => {
-    const allConflicted = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const allConflicted = { ...card, conflicted: [1, 3, 8], ownerHousehold: [2, 4] };
     expect(boardAuthorizationRefusal([allConflicted], 5)).toBeNull();
     expect(boardAuthorizationRefusal([{ ...allConflicted, conflicted: [1, 3, 5, 8] }], 5)).toMatch(/conflicted Treasurer/);
     expect(boardAuthorizationRefusal([allConflicted], 2)).toMatch(/conflicted Treasurer/);
@@ -123,7 +115,7 @@ describe("the Treasurer seat on a card charge", () => {
   });
 
   it("with no FINANCE holder free, a Board member without a conflict signs", () => {
-    const none = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const none = { ...card, conflicted: [1, 3, 8], ownerHousehold: [2, 4] };
     expect(signoffRefusal(none, [], "TREASURER", 5)).toBeNull();
   });
 });

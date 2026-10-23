@@ -1,4 +1,5 @@
 // The org's money thresholds. FINANCE or the board edits them; every change is recorded.
+// The Everyday limits are the Board's alone.
 import { z } from "zod";
 import { db } from "../db";
 import type { Db } from "../db";
@@ -34,13 +35,14 @@ export const ExpenseSettingsPatchSchema = z.object({
  * Which change to each threshold loosens a control. "up": a higher value. "up-or-off": a higher
  * non-zero value, or switching it off (non-zero → 0); switching it on (0 → non-zero) tightens.
  * FINANCE may tighten freely, and loosen only up to the policy value; past that, or for a
- * threshold with no policy value, loosening is the Board's. Every field must be listed here.
+ * threshold with no policy value, loosening is the Board's. A `boardOnly` threshold is the
+ * Board's to change in either direction. Every field must be listed here.
  */
-export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number }> = {
+export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number; boardOnly?: true }> = {
   capitalEquipmentUnitCents: { loosens: "up", policyCents: 50_000 },
   boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
-  everydayTotalLimitCents: { loosens: "up", policyCents: 50_000 },
-  everydayItemLimitCents: { loosens: "up", policyCents: 25_000 },
+  everydayTotalLimitCents: { loosens: "up", policyCents: 50_000, boardOnly: true },
+  everydayItemLimitCents: { loosens: "up", policyCents: 25_000, boardOnly: true },
   capitalTotalThresholdCents: { loosens: "up-or-off" },
   capitalLineItemThresholdCents: { loosens: "up-or-off" },
 };
@@ -54,6 +56,7 @@ function loosens(field: keyof ExpenseSettings, from: number, to: number): boolea
 export function boardOnlyChanges(current: ExpenseSettings, changes: Partial<ExpenseSettings>): (keyof ExpenseSettings)[] {
   return (Object.keys(changes) as (keyof ExpenseSettings)[]).filter((field) => {
     const to = changes[field]!;
+    if (THRESHOLD_RULES[field].boardOnly) return to !== current[field];
     if (!loosens(field, current[field], to)) return false;
     const { policyCents } = THRESHOLD_RULES[field];
     return policyCents === undefined || to > policyCents;
@@ -95,7 +98,7 @@ export async function updateExpenseSettings(
     if (keys.length === 0) return current;
     const boardOnly = boardOnlyChanges(current, changes);
     if (boardOnly.length > 0 && !principal.isBoard) {
-      throw new ServiceError(403, `Only the Board can loosen ${boardOnly.join(", ")} past the policy value or switch it off`);
+      throw new ServiceError(403, `Only the Board can make this change to ${boardOnly.join(", ")}`);
     }
     const pick = (s: Partial<ExpenseSettings>) => Object.fromEntries(keys.map((k) => [k, s[k]]));
     const next = await tx.expenseOrgSettings.upsert({

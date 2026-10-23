@@ -694,7 +694,7 @@ describeDb("QB-2 posting — checks at post time", () => {
     await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
 
     await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: lines[0], seat: "TREASURER", signerUserId: 9002 } });
-    await db.expense.update({ where: { id }, data: { financeNotEveryday: true, boardAuthorization: null } });
+    await db.expense.update({ where: { id }, data: { everydayWithinLimits: false, boardAuthorization: null } });
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
 
     expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { detail: true, checkedOffAt: true } })).toEqual([

@@ -1,7 +1,7 @@
 /**
  * Expense's nav pill counts (#1272): Expense Ops (holds, open flags), the Programs I Lead
  * "Expense approvals" tab (lines awaiting the viewer's sign-off), and `approver` (1 when
- * the viewer approves any program bucket: its leader or a treasurer). Server only.
+ * the viewer approves any bucket: its owner or a treasurer). Server only.
  */
 import { expenseOpsCounts, getExpenseRuntime, signoffsAwaitingCount } from "@checkin/expense";
 import type { SessionUser } from "@/types/auth";

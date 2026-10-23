@@ -201,7 +201,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Lead mentor must be at least 23 years old", 400);
         }
-        // Leading a program makes its leader an expense approver.
+        // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
             return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
         }

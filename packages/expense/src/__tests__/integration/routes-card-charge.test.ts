@@ -6,7 +6,7 @@ import { bindPorts, directory, principal, seedExpense, seedLineItem } from "../h
 import { expenses } from "../../routes";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
-// purchaser 1 · leader 2 · finance 3 and 4 · board 5
+// purchaser 1 · owner 2 · finance 3 and 4 · board 5
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 
@@ -65,23 +65,5 @@ describeDb("card-charge sign-off routes", () => {
     const id = await cardCharge();
     await call(expenses.boardAuthorization, id, { authorization: "Board vote" });
     await expect(call(expenses.boardAuthorization, id, { authorization: "again" })).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("not-everyday is one-way: a repeat changes nothing and no reason unmarks it", async () => {
-    as(FINANCE);
-    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 100 });
-    await seedLineItem(id, { partNumber: null, manualQbAccount: "5000", unitPriceCents: 100 });
-    const res = (await call(expenses.notEveryday, id, { reason: "finance_override" })) as { ExpenseLineSignoffStatus: { missing: string[] }[] };
-    expect(res.ExpenseLineSignoffStatus[0].missing).toContain("BOARD_AUTHORIZATION");
-    await call(expenses.notEveryday, id, { reason: "finance_override" });
-    await expect(call(expenses.notEveryday, id, { reason: "everyday" })).rejects.toMatchObject({ status: 400 });
-    expect((await db.expense.findUnique({ where: { id } }))?.financeNotEveryday).toBe(true);
-    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "not_everyday_marked" } })).toBe(1);
-  });
-
-  it("not-everyday refuses a caller without FINANCE with 403", async () => {
-    as(BOARD);
-    const id = await cardCharge();
-    await expect(call(expenses.notEveryday, id, { reason: "single_source" })).rejects.toMatchObject({ status: 403 });
   });
 });

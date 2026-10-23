@@ -494,8 +494,14 @@ export const classifications = {
         id: 'internal',
         name: 'internal',
         programId: 'internal',
+        isOrgLevel: 'internal',
+        ownerId: 'public',
         archivedAt: 'internal',
         quickBooksClassId: 'internal',
+    },
+    BudgetOwnerTreasurer: {
+        budgetOwnerId: 'internal',
+        personId: 'public',
     },
 } as const;
 
@@ -516,6 +522,8 @@ export const relations = {
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
         programVolunteers: { model: 'ProgramVolunteer', isList: true },
+        budgetOwnersOwned: { model: 'BudgetOwner', isList: true },
+        budgetOwnerTreasurerships: { model: 'BudgetOwnerTreasurer', isList: true },
         programParticipants: { model: 'ProgramParticipant', isList: true },
         programsLed: { model: 'Program', isList: true },
         instancesLed: { model: 'ProgramInstance', isList: true },
@@ -685,6 +693,12 @@ export const relations = {
     },
     BudgetOwner: {
         program: { model: 'Program', isList: false },
+        owner: { model: 'Person', isList: false },
+        treasurers: { model: 'BudgetOwnerTreasurer', isList: true },
+    },
+    BudgetOwnerTreasurer: {
+        budgetOwner: { model: 'BudgetOwner', isList: false },
+        person: { model: 'Person', isList: false },
     },
 } as const;
 

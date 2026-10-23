@@ -11,14 +11,13 @@ import BudgetsPage from "../page";
 const programBucket = {
   id: 7,
   name: "Robotics",
-  programId: 3,
+  isOrgLevel: false,
   archivedAt: null,
   quickBooksClassId: null,
-  program: { id: 3, name: "Robotics Team" },
 };
 
 type Reply = () => Promise<Response>;
-type Reads = Partial<Record<"buckets" | "classes" | "treasurers", Reply>>;
+type Reads = Partial<Record<"buckets" | "classes" | "approvers", Reply>>;
 
 function jsonResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -33,11 +32,11 @@ function mockServer(write: Reply, reads: Reads = {}) {
   global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (init?.method) return write();
-    if (url.includes("/program-options")) return jsonResponse(200, []);
     if (url.includes("/quickbooks-classes")) return reads.classes ? reads.classes() : jsonResponse(200, []);
-    if (url.includes("/treasurers")) {
-      if (reads.treasurers) return reads.treasurers();
-      return jsonResponse(200, [{ programId: 3, personId: 9, isTreasurer: false, person: { id: 9, name: "Tess Treasurer" } }]);
+    if (url.includes("/approver-options")) return jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }]);
+    if (url.includes("/approvers")) {
+      if (reads.approvers) return reads.approvers();
+      return jsonResponse(200, [{ budgetOwnerId: 7, personId: 9, name: "Tess Treasurer", role: "TREASURER" }]);
     }
     if (reads.buckets) return reads.buckets();
     return jsonResponse(200, [programBucket]);
@@ -183,29 +182,30 @@ describe("budgets page write errors", () => {
     })));
   });
 
-  it("shows a treasurer change failure in a red chip", async () => {
+  it("shows an approver change failure in a red chip", async () => {
     mockServer(async () => jsonResponse(403, { error: "You can't set a role or flag on yourself or anyone in your own household." }));
     renderWithProviders(<BudgetsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Treasurers" }));
-    fireEvent.click(await screen.findByLabelText("Tess Treasurer"));
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      title: "Treasurer not updated",
+      title: "Approvers not changed",
       message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
       autoClose: false,
     })));
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 
-  it("says the treasurers couldn't be loaded instead of spinning", async () => {
-    mockServer(ok, { treasurers: async () => { throw new TypeError("Failed to fetch"); } });
+  it("says the approvers couldn't be loaded instead of spinning", async () => {
+    mockServer(ok, { approvers: async () => { throw new TypeError("Failed to fetch"); } });
     renderWithProviders(<BudgetsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Treasurers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
 
-    expect(await screen.findByText("Treasurers couldn't be loaded.")).toBeInTheDocument();
+    expect(await screen.findByText("Approvers couldn't be loaded.")).toBeInTheDocument();
     expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      title: "Treasurers not loaded",
+      title: "Approvers not loaded",
       message: "Couldn't reach the server. Check your connection and try again.",
       autoClose: false,
     }));
