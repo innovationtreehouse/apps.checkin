@@ -329,7 +329,8 @@ def route_selftest():
     tiny = fit_state(dict(big), 160)
     assert len(json.dumps(tiny).encode()) <= 160 and tiny["untrusted_review_output"].endswith(TRIM_NOTE)
     route_only = fit_state({"k": 1, "untrusted_diff": "d" * 300}, 100)
-    assert "untrusted_review_output" not in route_only and route_only["untrusted_diff"] == TRIM_NOTE
+    assert "untrusted_review_output" not in route_only and route_only["untrusted_diff"].endswith(TRIM_NOTE)
+    assert len(json.dumps(route_only).encode()) <= 100
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
