@@ -15,7 +15,7 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { signoff } from '@/lib/expense/configure';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import type { AuthResult } from '@/types/auth';
 import { allRoutes, getFileRoute, getRoute, isFileOnlyField } from '@/security/core';
 import { handler } from '@/security/handler';
@@ -65,15 +65,15 @@ async function callJson(endpoint: string) {
     return { status: res.status, impl, body: res.status === 200 ? await res.json() : undefined };
 }
 
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 let approvedBuckets: number[];
 
 beforeEach(() => {
     mockSession.mockReset();
     approvedBuckets = [];
-    jest.mocked(signoff.bucketsApprovedBy).mockReset();
-    jest.mocked(signoff.bucketsApprovedBy).mockImplementation(async () => approvedBuckets);
+    jest.mocked(bucketsApprovedBy).mockReset();
+    jest.mocked(bucketsApprovedBy).mockImplementation(async () => approvedBuckets);
 });
 
 describe('donation registry — shape', () => {

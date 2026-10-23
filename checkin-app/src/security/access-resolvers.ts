@@ -22,6 +22,7 @@ import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, ty
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 
 export interface CallerContext {
     selfId?: number;
@@ -353,14 +354,13 @@ export async function resolveAccess(
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
             case 'expense-approver': {
-                // FINANCE, BOARD, or an approver of some bucket, read from the
-                // same directory the expense library signs with (the session
-                // carries no approver flag). Still no sysadmin.
+                // FINANCE, BOARD, or an approver of some bucket, read by the same
+                // lookup the expense library signs with (the session carries no
+                // approver flag). Still no sysadmin.
                 if (auth.type !== 'session') return { allowed: false };
                 const u = auth.user;
                 if (u.isFinance === true || u.isBoardMember === true) return { allowed: true };
-                const { signoff } = await import('@/lib/expense/configure');
-                return { allowed: (await signoff.bucketsApprovedBy(u.id)).length > 0 };
+                return { allowed: (await bucketsApprovedBy(u.id)).length > 0 };
             }
             case 'expense-signer':
                 return {

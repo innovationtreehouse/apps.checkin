@@ -46,7 +46,7 @@ import '@/security/registry';
 // expense-approver's approver leg makes one directory read, independent of
 // CallerContext, so masked ≡ full still holds; this stub keeps the "no real DB"
 // invariant (jest.setup rejects the real client).
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn(async () => []) } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn(async () => []) }));
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────
 
