@@ -369,11 +369,12 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
-    // 7. Budget-owner buckets: one org-level, one for the first program.
+    // 7. Budget-owner buckets: one org-level, and one named for the first program
+    //    with no approvers until the Board names them.
     const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
     const buckets = [
-        { name: "Facility", programId: null },
-        ...(firstProgram ? [{ name: firstProgram.name, programId: firstProgram.id }] : []),
+        { name: "Facility", isOrgLevel: true },
+        ...(firstProgram ? [{ name: firstProgram.name, isOrgLevel: false }] : []),
     ];
     for (const bucket of buckets) {
         if (!(await prisma.budgetOwner.findFirst({ where: { name: bucket.name } }))) {

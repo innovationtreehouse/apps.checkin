@@ -59,12 +59,14 @@ POST /api/catalog/conversion-challenges/[id]/accept
 POST /api/catalog/conversion-challenges/[id]/reject
 GET /api/budget-owners
 POST /api/budget-owners
-GET /api/budget-owners/program-options
+GET /api/budget-owners/quickbooks-classes
 PATCH /api/budget-owners/[id]
 POST /api/budget-owners/[id]/archive
-GET /api/programs/[id]/treasurers
-PUT /api/programs/[id]/treasurers/[personId]
-DELETE /api/programs/[id]/treasurers/[personId]
+GET /api/budget-owners/[id]/approvers
+GET /api/budget-owners/approver-options
+PUT /api/budget-owners/[id]/owner
+PUT /api/budget-owners/[id]/treasurers/[personId]
+DELETE /api/budget-owners/[id]/treasurers/[personId]
 GET /api/donations/uploaded-files
 POST /api/donations/uploaded-files
 GET /api/donations/uploaded-files/[id]/blob
@@ -112,7 +114,6 @@ PUT /api/expense/expenses/[id]/reimbursee-vendor
 GET /api/expense/expenses/[id]/reimbursee-vendor/options
 POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs
 POST /api/expense/expenses/[id]/board-authorization
-POST /api/expense/expenses/[id]/not-everyday
 POST /api/expense/expenses/[id]/capital-review/submit
 GET /api/expense/expenses/[id]/signoffs
 GET /api/expense/expenses/[id]/line-item-approvals

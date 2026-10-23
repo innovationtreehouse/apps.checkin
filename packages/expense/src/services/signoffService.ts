@@ -150,28 +150,6 @@ async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
   return expense;
 }
 
-async function openCardCharge(tx: Prisma.TransactionClient, expenseId: string) {
-  const expense = await openExpense(tx, expenseId);
-  if (lineKind(expense) !== "card_charge") throw new ServiceError(400, "Expense is a reimbursement, not a card charge");
-  return expense;
-}
-
-/**
- * FINANCE marks a card charge not Everyday: single-source, or its own call. The mark is one-way;
- * nobody marks an expense back to Everyday.
- */
-export async function markNotEveryday(principal: ExpensePrincipal, expenseId: string, reason: "single_source" | "finance_override"): Promise<void> {
-  const actor = actorOf(principal);
-  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE marks an expense not Everyday");
-  const field = reason === "single_source" ? "singleSource" : "financeNotEveryday";
-  await db.$transaction(async (tx) => {
-    const expense = await openCardCharge(tx, expenseId);
-    if (expense[field]) return;
-    await tx.expense.update({ where: { id: expenseId }, data: { [field]: true } });
-    await writeAudit(tx, actor, { expenseId, action: "not_everyday_marked", fieldChanged: field, valueBefore: "false", valueAfter: "true" });
-  });
-}
-
 /**
  * Records what the Board authorized: its own decision, or the approved program-budget line that
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and

@@ -3,7 +3,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
-import { markNotEveryday, recordBoardAuthorization, signLine, signoffStatus } from "../../services/signoffService";
+import { recordBoardAuthorization, signLine, signoffStatus } from "../../services/signoffService";
 import { lockExpense, unsignedLines } from "../../lib/signoff-facts";
 import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
@@ -22,7 +22,7 @@ async function someoneBlocked(): Promise<void> {
 }
 
 describeDb("card charges", () => {
-  // purchaser 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household ·
+  // purchaser 1 · owner 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household ·
   // bucket 100 org-level, bucket 200 a program's
   async function signedCard(opts: { receiptTotalCents?: number; unitPriceCents?: number; bucket?: number } = {}) {
     bindPorts({ signoff: directory({ approvers: { 200: [2] }, orgLevel: [100], finance: [3, 4], board: [5], households: [[1, 8]] }) });
@@ -55,19 +55,19 @@ describeDb("card charges", () => {
     expect([row.boardAuthorization, row.boardAuthorizedByUserId]).toEqual(["Board minutes 2026-10-01, item 4", 3]);
   });
 
-  it("a not-Everyday mark racing the outbox commit holds the charge open for the Board seat", async () => {
+  it("a seat void racing the outbox commit holds the charge until the seat is signed again", async () => {
     const id = await signedCard();
     expect(await holds(id)).toEqual([]);
 
-    // The mark holds the expense lock uncommitted while the drain reads no hold.
+    // The void holds the expense lock uncommitted while the drain reads no hold.
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let marked!: () => void;
-    const held = new Promise<void>((r) => (marked = r));
-    const mark = db.$transaction(async (tx) => {
+    let voided!: () => void;
+    const held = new Promise<void>((r) => (voided = r));
+    const voiding = db.$transaction(async (tx) => {
       await lockExpense(tx, id);
-      await tx.expense.update({ where: { id }, data: { financeNotEveryday: true } });
-      marked();
+      await tx.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "TREASURER" } });
+      voided();
       await gate;
     }, { timeout: 20_000 });
     await held;
@@ -75,13 +75,15 @@ describeDb("card charges", () => {
     const drain = checkAndProcessExpense(ORG, id);
     await someoneBlocked();
     commit();
-    await mark;
+    await voiding;
     await drain;
 
     expect(await events(id)).toBe(0);
     expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");
-    expect(await holds(id)).toEqual(["BOARD"]);
-    await recordBoardAuthorization(FINANCE, id, "Board minutes 2026-10-01, item 5");
+    expect(await holds(id)).toEqual(["TREASURER"]);
+    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: id }, select: { id: true } });
+    await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line.id, seat: "TREASURER", signerUserId: 9002 } });
+    await checkAndProcessExpense(ORG, id);
     expect(await events(id)).toBe(1);
   });
 
@@ -115,23 +117,6 @@ describeDb("card charges", () => {
 
     const fresh = await signedCard({ receiptTotalCents: 60_000 });
     expect(await holds(fresh)).toEqual([]);
-
-    const marked = await signedCard({ receiptTotalCents: 60_000 });
-    await markNotEveryday(FINANCE, marked, "finance_override");
-    expect(await holds(marked)).toEqual(["BOARD"]);
-  });
-
-  it("FINANCE marks it single-source or not Everyday, one-way; nobody else can", async () => {
-    const id = await signedCard();
-    await expect(markNotEveryday(BOARD, id, "single_source")).rejects.toMatchObject({ status: 403 });
-    await markNotEveryday(FINANCE, id, "single_source");
-    expect(await holds(id)).toEqual(["BOARD"]);
-
-    const other = await signedCard();
-    await markNotEveryday(FINANCE, other, "finance_override");
-    expect(await holds(other)).toEqual(["BOARD"]);
-    const audit = await db.expenseAuditLog.findMany({ where: { expenseId: other, action: "not_everyday_marked" } });
-    expect(audit.map((a) => [a.userId, a.fieldChanged])).toEqual([[3, "financeNotEveryday"]]);
   });
 
   it("a FINANCE holder conflicted on the charge cannot record the authorization; another one does", async () => {

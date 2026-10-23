@@ -123,6 +123,7 @@ function emptyTallies() {
         trustedAdultDecisions: 0,
         archivedMerges: 0,
         roleGrants: 0,
+        bucketOwners: 0,
         roles: { migrated: 0, deduped: 0 },
         bgAttestationSubjects: { migrated: 0, left: 0 },
         programParticipants: { migrated: 0, left: 0 },
@@ -132,6 +133,7 @@ function emptyTallies() {
         bgAttestations: { migrated: 0, left: 0 },
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
+        bucketTreasurers: { migrated: 0, deduped: 0 },
     };
 }
 type Tallies = ReturnType<typeof emptyTallies>;
@@ -159,6 +161,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         await moveRoles(tx, keepId, mergeId, actor, moved);
         await moveAttestations(tx, keep, merge, moved);
         await moveCorporations(tx, keep, merge, moved);
+        await moveBucketTreasurers(tx, keepId, mergeId, moved);
 
         // 6. The household lead guard ran pre-tx. householdId stays pointing at
         // the old household: every participant must belong to one, and merged-away
@@ -374,6 +377,7 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     // §6 attributes a date inherited two merges back. No unique constraint on
     // toId, so a plain updateMany.
     moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
+    moved.bucketOwners = (await tx.budgetOwner.updateMany({ where: { ownerId: mergeId }, data: { ownerId: keepId } })).count;
 }
 
 /**
@@ -494,6 +498,24 @@ async function moveCorporations(tx: TxClient, keep: KeepSubject, merge: MergeSub
  * concurrent merges of the same id, so a create here cannot collide without
  * the CAS having failed first.
  */
+/** Bucket treasurers: a bare join, auto-dedupe. */
+async function moveBucketTreasurers(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
+    const keepBuckets = new Set(
+        (await tx.budgetOwnerTreasurer.findMany({ where: { personId: keepId }, select: { budgetOwnerId: true } })).map(t => t.budgetOwnerId),
+    );
+    const mergeRows = await tx.budgetOwnerTreasurer.findMany({ where: { personId: mergeId }, select: { budgetOwnerId: true } });
+    for (const { budgetOwnerId } of mergeRows) {
+        const where = { budgetOwnerId_personId: { budgetOwnerId, personId: mergeId } };
+        if (keepBuckets.has(budgetOwnerId)) {
+            await tx.budgetOwnerTreasurer.delete({ where });
+            moved.bucketTreasurers.deduped++;
+        } else {
+            await tx.budgetOwnerTreasurer.update({ where, data: { personId: keepId } });
+            moved.bucketTreasurers.migrated++;
+        }
+    }
+}
+
 async function archiveMerge(tx: TxClient, keepId: number, merge: MergeSubject): Promise<void> {
     await tx.personMerge.create({
         data: { fromId: merge.id, toId: keepId, snapshot: mergeSnapshot(merge) },

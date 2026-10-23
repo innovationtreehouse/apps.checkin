@@ -21,7 +21,7 @@ const BOARD = principal(5, { isBoard: true });
 
 describeDb("sign-off seats", () => {
   async function heldLine(opts: { reimbursement?: boolean } = {}) {
-    // submitter 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the submitter's household
+    // submitter 1 · owner 2 · finance 3 and 4 · board 5 · 8 in the submitter's household
     bindPorts({
       signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], households: [[1, 8]] }),
     });
@@ -58,7 +58,7 @@ describeDb("sign-off seats", () => {
   });
 
   it("one household holds one seat on an expense: a FINANCE holder's spouse is refused, a Board member substitutes", async () => {
-    // 3 holds FINANCE; 2, the program leader, is 3's spouse
+    // 3 holds FINANCE; 2, the bucket owner, is 3's spouse
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1], [2, 3]] }) });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
     const a = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
@@ -143,9 +143,9 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
   });
 
-  it("a FINANCE holder in the Program Leader's household does not sign as Treasurer; a Board member replaces them", async () => {
-    // leader 2 · 3 holds FINANCE and is 2's spouse · treasurer 7 approves · board 5
-    bindPorts({ signoff: directory({ approvers: { 100: [2, 7] }, leaders: { 100: 2 }, finance: [3], board: [5], households: [[2, 3]] }) });
+  it("a FINANCE holder in the bucket owner's household does not sign as Treasurer; a Board member replaces them", async () => {
+    // owner 2 · 3 holds FINANCE and is 2's spouse · treasurer 7 approves · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2, 7] }, owners: { 100: 2 }, finance: [3], board: [5], households: [[2, 3]] }) });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
@@ -159,7 +159,7 @@ describeDb("sign-off seats", () => {
   });
 
   it("the non-member rule follows the reimbursee, not the submitter, and skips card charges", async () => {
-    // submitter 11 is not a member; reimbursee 1 is; leader 2 · finance 3 · board 5
+    // submitter 11 is not a member; reimbursee 1 is; owner 2 · finance 3 · board 5
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [11, 12] }) });
     const line = async (opts: { needsReimbursement: boolean; reimburseePersonId?: number }) => {
       const id = await seedExpense({ state: "qb_pending", submitterId: 11, ...opts });
@@ -177,7 +177,7 @@ describeDb("sign-off seats", () => {
   });
 
   describe("the reimbursee (reimburseePersonId)", () => {
-    // submitter 1 · reimbursee 9 · 10 in the reimbursee's household · leader 2 · finance 3 · board 5, 6
+    // submitter 1 · reimbursee 9 · 10 in the reimbursee's household · owner 2 · finance 3 · board 5, 6
     async function reimburseeLine(seat: { approvers?: number[]; finance?: number[]; board?: number[] }, reimburseePersonId?: number) {
       bindPorts({
         signoff: directory({

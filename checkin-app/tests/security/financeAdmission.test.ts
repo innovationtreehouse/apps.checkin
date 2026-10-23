@@ -12,10 +12,10 @@
 import { allRoutes, type Authorize, type RegisteredRoute } from '@/security/core';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import { signoff } from '@/lib/expense/configure';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import '@/security/registry';
 
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 const isRoleFlagGate = (a: Authorize) =>
     a === 'catalog-viewer' || a === 'receipt-submitter' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
@@ -66,7 +66,7 @@ const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
     // The approver leg would admit by lookup; make it match so only the id guard can deny.
-    jest.mocked(signoff.bucketsApprovedBy).mockResolvedValue([1]);
+    jest.mocked(bucketsApprovedBy).mockResolvedValue([1]);
 });
 
 describe('id-less session on role-flag gates', () => {

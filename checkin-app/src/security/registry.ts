@@ -861,15 +861,22 @@ defineRoute({
 });
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
+// A surface's tiers are enforced only for a caller that goes through
+// outboundCall(), and an entry's comment says when that is so. Every other
+// entry is an inventory, not a guarantee: its tiers state what the code sends
+// today, and changing them changes nothing on the wire.
 
-// src/lib/shopify/ surfaces → <SHOPIFY_STORE_DOMAIN> Admin API. Each write builds
-// its request only from the stripped bag inside outboundCall().
+// src/lib/shopify/ surfaces → <SHOPIFY_STORE_DOMAIN> Admin API. Every caller of
+// these write surfaces goes through outboundCall(); each entry names its callers.
 
 defineOutbound({
     surface: 'shopify.product.create',
     // src/lib/shopify/products.ts: the public and reserved-seat product creates.
     // Program name, nonOrgMemberPriceCents and maxParticipants ('public'), plus a
     // handle built from the program's id and name.
+    // Enforced: createShopifySingleVariantProgram and createClaimantProduct
+    // (src/lib/shopify/products.ts) build the product request inside outboundCall(),
+    // so the Program fields are stripped to these tiers.
     tiers: ['public'],
 });
 
@@ -879,6 +886,10 @@ defineOutbound({
     // src/lib/shopify/stock.ts (variant price sync, product off sale). Program
     // shopifyProductId / claimantShopifyProductId, shopifyVariantId /
     // claimantShopifyVariantId and nonOrgMemberPriceCents ('public').
+    // Enforced: createClaimantProduct (src/lib/shopify/products.ts) and
+    // syncProgramPrice and setProgramProductOffSale (src/lib/shopify/stock.ts)
+    // build their requests inside outboundCall(), so the Program fields are
+    // stripped to these tiers.
     tiers: ['public'],
 });
 
@@ -886,6 +897,8 @@ defineOutbound({
     surface: 'shopify.inventory.activate',
     // src/lib/shopify/stock.ts inventoryActivate. Program id ('public') inside the
     // idempotency key, plus Shopify's own inventory item and location ids.
+    // Enforced: drainStock (src/lib/shopify/stock.ts) builds the activate request
+    // inside outboundCall(), so the Program id is stripped to these tiers.
     tiers: ['public'],
 });
 
@@ -896,6 +909,9 @@ defineOutbound({
     // from it the idempotency key (program id and stock reason), the delta (a seat
     // count taken from shopifyStockCarry) and Shopify's inventory item and location
     // ids; its reason, owedPart and sentAt are not sent.
+    // Enforced: sendStockWrite (src/lib/shopify/stock.ts) builds the adjust request
+    // inside outboundCall() from the stripped pending write, so it is stripped to
+    // these tiers.
     tiers: ['public', 'internal'],
 });
 
@@ -904,6 +920,9 @@ defineOutbound({
     // src/lib/shopify/discounts.ts discountCodeBasicCreate. Program id and checkout
     // variant id, Household id ('public') in the code's prefix, and the member
     // discount (the gap between the two 'public' prices).
+    // Enforced: mintMemberDiscountCode (src/lib/shopify/discounts.ts) builds the
+    // discount request inside outboundCall(), so the Program and Household fields
+    // are stripped to these tiers.
     tiers: ['public'],
 });
 
@@ -913,8 +932,11 @@ defineOutbound({
     tiers: ['public', 'pii'],
 });
 
-// packages/* surfaces. Packages call these directly, not through outboundCall();
-// check-route-coverage confines each to the files PACKAGE_EGRESS_FILES maps to it.
+// packages/* and *-function surfaces. These callers use fetch or an SDK
+// directly, not outboundCall(), except where an entry says otherwise.
+// check-route-coverage confines each surface to the files PACKAGE_EGRESS_FILES
+// (egressAllowlist.ts) maps to it, and only for a host it can see in a literal
+// or SDK import.
 
 defineOutbound({
     surface: 'quickbooks.query',
@@ -930,6 +952,11 @@ defineOutbound({
     // Purchase/Bill/Deposit only: amounts, dates, account/class/vendor ids, line
     // descriptions and memos ('internal'; memos may name a program participant,
     // accepted by the owner).
+    // Enforced for one caller: packages/expense's poster builds its Purchase/Bill
+    // inside outboundCall() (the expense `outbound` port, bound in
+    // lib/expense/configure.ts), so its rows are stripped to these tiers. The
+    // income and bulk-donation (Benevity) posters still call directly; for them
+    // this entry is inventory.
     tiers: ['public', 'internal'],
 });
 
@@ -972,7 +999,8 @@ defineOutbound({
 
 defineOutbound({
     surface: 'gmail.read',
-    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com, gmail.readonly scope.
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com. Read-only by intent:
+    // the token comes from a refresher outside this repo and its scope is not checked.
     // List/get requests only: a date-window query string and message/attachment ids;
     // no model data. Mail read back is tiered by the receipt models that store it.
     tiers: [],

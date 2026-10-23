@@ -10,7 +10,7 @@ export type LineKind = "reimbursement" | "card_charge";
 export interface SignoffFacts {
   kind: LineKind;
   submitterId: number;
-  /** The line's bucket approvers (program leader + treasurers); empty for an org-level bucket. */
+  /** The line's bucket approvers (owner + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
   /** False only for a reimbursement whose known reimbursee holds no org membership. */
@@ -19,8 +19,8 @@ export interface SignoffFacts {
   board: number[];
   /** The submitter, the reimbursee, and their households. */
   conflicted: number[];
-  /** The line's Program Leader and their household: conflicted for the Treasurer seat. */
-  leaderHousehold: number[];
+  /** The line's bucket owner and their household: conflicted for the Treasurer seat. */
+  ownerHousehold: number[];
   /** Who named the reimbursee; null when it came with the receipt. They never sign the Treasurer seat. */
   reimburseeSetter: number | null;
   /** Household members of the people already seated on this expense, other than those people. */
@@ -66,13 +66,11 @@ export function withinEverydayLimits(a: EverydayAmounts, limits: EverydayLimits)
 export interface EverydayFacts {
   /** The amount check, frozen on the expense with the limits in force when it was first made. */
   withinLimits: boolean;
-  singleSource: boolean;
-  financeNotEveryday: boolean;
 }
 
-/** An Everyday purchase: within the frozen limits, not single-source, and not marked by FINANCE. */
+/** An Everyday purchase: within the frozen limits. The amounts alone decide it. */
 export function isEveryday(e: EverydayFacts): boolean {
-  return e.withinLimits && !e.singleSource && !e.financeNotEveryday;
+  return e.withinLimits;
 }
 
 /**
@@ -94,9 +92,9 @@ export function needsBoardApproval(receiptTotalCents: number, boardReviewTotalCe
   return receiptTotalCents >= boardReviewTotalCents && !boardAuthorization?.trim();
 }
 
-/** People the Treasurer seat refuses whatever the seat's state: conflicted, the reimbursee's setter, the Program Leader's household. */
+/** People the Treasurer seat refuses whatever the seat's state: conflicted, the reimbursee's setter, the bucket owner's household. */
 function treasurerConflicted(facts: SignoffFacts): Set<number> {
-  const out = new Set([...facts.conflicted, ...facts.leaderHousehold]);
+  const out = new Set([...facts.conflicted, ...facts.ownerHousehold]);
   if (facts.reimburseeSetter !== null) out.add(facts.reimburseeSetter);
   return out;
 }
@@ -133,7 +131,7 @@ function eligible(facts: SignoffFacts, seat: Exclude<Seat, "SUBMITTER">): number
 /**
  * Eligible people who can still sign the seat: not conflicted, not in another seat on the line, and
  * not in the household of someone seated on the expense. The Treasurer seat also excludes the
- * reimbursee's setter and the Program Leader's household.
+ * reimbursee's setter and the bucket owner's household.
  */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
   const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...filled.filter((f) => f.seat !== seat).map((f) => f.signerUserId)]);
@@ -186,7 +184,7 @@ export function signoffRefusal(
   if (seat === "BOARD" && !facts.boardSeat) return "this line takes no Board seat";
   if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
   if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
-  if (seat === "TREASURER" && facts.leaderHousehold.includes(signerUserId)) return "the Program Leader or their household cannot fill the Treasurer seat";
+  if (seat === "TREASURER" && facts.ownerHousehold.includes(signerUserId)) return "the bucket owner or their household cannot fill the Treasurer seat";
   if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already holds a seat on this expense";
   if (seat === "BOARD") return facts.board.includes(signerUserId) ? null : "signer is not a Board member";
 

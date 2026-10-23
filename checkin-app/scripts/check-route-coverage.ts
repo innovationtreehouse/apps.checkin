@@ -8,10 +8,12 @@
  *      defineFileRoute for a file route served through fileHandler().
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
- *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify/ and src/lib/email.ts.
+ *   4. Calls to third-party hosts (THIRD_PARTY_HOST_RE) live only in APP_THIRD_PARTY_FETCH_FILES.
  *   4b. In packages/* and *-function source (tests, fixtures and generated code excluded), any
  *      non-loopback URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
- *      and every surface that map names is a defineOutbound entry in the registry.
+ *      and every surface that map names is a defineOutbound entry in the registry. The allowlists and
+ *      patterns live in src/security/egressAllowlist.ts, a boundary file. A host built from config
+ *      matches no pattern, so 4b inventories the known egress; it does not prove there is no other.
  *   5. src/security/generated/classifications.ts is up to date with prisma/schema.prisma.
  *   6. RATCHET (blocking even in advisory mode): every exported route method is
  *      either in src/security/registry.ts or in the frozen legacy baseline
@@ -31,6 +33,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
+import {
+    APP_THIRD_PARTY_FETCH_FILES,
+    NON_LOOPBACK_URL_RE,
+    PACKAGE_EGRESS_FILES,
+    THIRD_PARTY_HOST_RE,
+    THIRD_PARTY_SDK_RE,
+} from '../src/security/egressAllowlist';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const API_DIR = path.join(REPO_ROOT, 'src/app/api');
@@ -42,37 +51,12 @@ const ALLOWED_DIRECT_JSON_FILES = new Set<string>([
     path.join(REPO_ROOT, 'src/security/handler.ts'),
 ]);
 
-const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
-    path.join(REPO_ROOT, 'src/lib/shopify/client.ts'),
-    path.join(REPO_ROOT, 'src/lib/shopify/products.ts'),
-    path.join(REPO_ROOT, 'src/lib/shopify/stock.ts'),
-    path.join(REPO_ROOT, 'src/lib/shopify/discounts.ts'),
-    path.join(REPO_ROOT, 'src/lib/email.ts'),
-]);
+const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>(
+    APP_THIRD_PARTY_FETCH_FILES.map(rel => path.join(REPO_ROOT, rel)),
+);
 
-// Each package egress file names the outbound surfaces it serves; every surface
-// must be a defineOutbound entry in the registry, so adding a file here is a
-// boundary change.
-// Keys are relative to the monorepo root.
+// Package egress keys are relative to the monorepo root.
 const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
-export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new Map([
-    ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create', 'quickbooks.vendor']],
-    ['packages/quickbooks/src/oauth.ts', ['quickbooks.oauth']],
-    ['packages/receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
-    ['packages/receipt/src/lib/gmail.ts', ['gmail.read']],
-    // Builds the endpoint; s-read-function makes the call.
-    ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
-    ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
-]);
-
-export const THIRD_PARTY_HOST_RE =
-    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com|gmail\.googleapis\.com)/;
-/** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
- *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
-const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;
-/** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com, resend to
- *  api.resend.com). @aws-sdk/* is absent: it reaches only AWS, the platform the code runs on. */
-const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend|googleapis|@googleapis\/gmail)['"]/;
 const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
 const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
 const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;
@@ -505,7 +489,7 @@ function main() {
             report('error', 'package-third-party-egress', rel,
                 `third-party host, URL or SDK outside a package egress file — register an ` +
                 `outbound surface in src/security/registry.ts and map the file to it in ` +
-                `PACKAGE_EGRESS_FILES`,
+                `PACKAGE_EGRESS_FILES (src/security/egressAllowlist.ts)`,
                 line);
         }
     }

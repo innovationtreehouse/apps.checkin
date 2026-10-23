@@ -54,7 +54,7 @@ import { useConfirmNav } from '@/components/UnsavedChangesProvider';
 import { sectionBadges } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { NavSection } from '@/lib/nav/types';
-import { sectionShown, visibleLinks } from '@/lib/nav/gates';
+import { sectionShown, tabHrefs, visibleLinks } from '@/lib/nav/gates';
 import { ATTENDANCE, COMMUNICATION, INDEX, MY_HOUSEHOLD, PROGRAMS } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
@@ -165,7 +165,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
     const href = section.hrefFor?.(user, todoCounts) ?? section.href;
     // Longest href this item claims for the current path, so a path under two
     // sections (/receipts/review sits under /receipts) highlights only the closer one.
-    const match = Math.max(0, ...[href, section.href, ...tabs.map((t) => t.href)].filter((h) => isActive(pathname, h)).map((h) => h.length));
+    const match = Math.max(0, ...[href, section.href, ...tabs.flatMap(tabHrefs)].filter((h) => isActive(pathname, h)).map((h) => h.length));
     return { ...item, tabs, href, match };
   });
   const bestMatch = Math.max(0, ...visibleItems.map((i) => i.match));

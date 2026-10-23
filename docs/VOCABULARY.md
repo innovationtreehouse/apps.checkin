@@ -68,7 +68,7 @@ Program roles (all Treehouse Volunteers):
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](rules/programs.md), Assumptions) |
-| **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
+| **Program Treasurer** | keeps a program's money; a program may have several. The app records treasurers on a budget bucket, not on the program: with the bucket's owner, they approve its lines | `BudgetOwnerTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*); the Board names them on Budgets |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
 
@@ -115,6 +115,11 @@ Rules:
 - **Scholarship Review Team** — the board-designated recipients of scholarship / payment-plan
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.
+
+**Bucket vs account** (two separate QuickBooks dimensions). Every booked line has an account; a line has a bucket only when it belongs to one. General income and organization-level gifts book with no bucket, so with no Class:
+- **Bucket** — a budget that spending, income or a gift is booked to; posts under its **QuickBooks Class** (`quickBooksClassId`, empty until finance sets it, and lines in a bucket without one wait). Answers *whose budget*. `BudgetOwner`. Buckets are created and mapped to a Class on **Budgets**; a line is assigned to one on the expense's **Assign bucket** step or by **Part Buckets** (expenses), on **Item Categories** (income), and on the donation **Unassigned** and **In-kind Queue** screens (gifts). Retire "budget owner" in UI copy.
+- **QuickBooks account** — the chart-of-accounts entry. Answers *what the money was spent on* (supplies, equipment). For expenses: `ExpenseQbAccount`; screens: QuickBooks Accounts, and **Account mapping** (rules that pick the account for a line).
+- **Part buckets** — the bucket a part's spending goes to, by barcode (`PartOwnerMap`). It picks a bucket, not an account.
 
 ## Background check
 

@@ -52,7 +52,7 @@ const PERSONA_CLAIMS = {
     staffAccount: staff,
     staffDomainUnverified: { ...staff, emailVerified: false },
     staffHdOffDomainEmail: { ...staff, email: 'persona@example.test' },
-    // A bucket treasurer has no session claim; the server reads it from the approver directory.
+    // A bucket treasurer has no session claim; the server reads it from the bucket-approver lookup.
     treasurer: { ageBand: 'adult' },
     sysadmin: { isSysadmin: true },
     board: { isBoardMember: true },
@@ -73,7 +73,7 @@ export const GATE_PERSONAS: Array<[PersonaName, AuthenticatedUser]> = Object.ent
     ([name, claims], i) => [name as PersonaName, { ...base, ...claims, id: i + 1 }],
 );
 
-/** Persona ids the stubbed approver directory finds a bucket for: the treasurer and every program leader. */
+/** Persona ids the stubbed bucket-approver lookup finds a bucket for: the treasurer and every program leader. */
 export const APPROVER_IDS = new Set(
     GATE_PERSONAS.filter(([n, u]) => n === 'treasurer' || (u.programsLed?.length ?? 0) > 0).map(([, u]) => u.id),
 );
@@ -148,8 +148,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
-    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/payouts') },
-    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
+    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
+    { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
+    { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
     { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {

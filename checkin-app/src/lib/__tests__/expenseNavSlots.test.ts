@@ -25,7 +25,7 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
-const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QB Accounts", "Ownership Map", "Capital Seed", "Budgets", "Settings"];
+const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Budgets", "Settings"];
 
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
@@ -57,14 +57,18 @@ describe("Expense Ops tabs", () => {
 });
 
 describe("Programs I Lead library tabs", () => {
-  it("shows to a program lead and not to FINANCE or a plain member", () => {
-    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, released))).toEqual(["Expense approvals", "In-kind gifts"]);
+  const approver = counts([...LIBRARY_KEYS], { expense: { approver: 1 } });
+
+  it("shows to a bucket approver and not to a program lead who approves none, FINANCE or a plain member", () => {
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approver))).toEqual(["Expense approvals", "In-kind gifts"]);
+    expect(visibleLinks(PROGRAMS_I_LEAD, lead, released)).toEqual([]);
     expect(visibleLinks(PROGRAMS_I_LEAD, finance, released)).toEqual([]);
     expect(visibleLinks(PROGRAMS_I_LEAD, member, released)).toEqual([]);
   });
 
-  it("hides Expense approvals from a program lead until expense is released", () => {
-    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, unreleased))).toEqual(["In-kind gifts"]);
+  it("hides Expense approvals from a bucket approver until expense is released", () => {
+    const approverUnreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense"), { expense: { approver: 1 } });
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approverUnreleased))).toEqual(["In-kind gifts"]);
   });
 
   it("badges with lines awaiting the viewer's sign-off", () => {
@@ -80,7 +84,7 @@ describe("Programs I Lead library tabs", () => {
 describe("expense count provider", () => {
   const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "expense");
 
-  it("is registered for every signed-in person, so a treasurer gets the approver count", () => {
+  it("is registered for every signed-in person, so a bucket approver gets the approver count", () => {
     expect(provider).toBeDefined();
     expect([finance, board, lead, member].map((u) => provider?.visible(u))).toEqual([true, true, true, true]);
   });

@@ -15,8 +15,6 @@ type SignoffExpense = Pick<
   | "reimburseePersonId"
   | "needsReimbursement"
   | "receiptTotalCents"
-  | "singleSource"
-  | "financeNotEveryday"
   | "boardAuthorization"
   | "everydayWithinLimits"
 >;
@@ -75,16 +73,16 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const bucketsById = new Map<number, BucketApprovers>();
-  const leaderHouseholds = new Map<number, number[]>();
+  const ownerHouseholds = new Map<number, number[]>();
   for (const bucket of new Set(approvals.map((a) => a.ownerId))) {
     if (bucket === null) continue;
     const b = await dir.bucketApprovers(bucket);
     bucketsById.set(bucket, b);
-    if (b.leader !== null) leaderHouseholds.set(bucket, [...new Set([b.leader, ...(await dir.householdOf([b.leader]))])]);
+    if (b.owner !== null) ownerHouseholds.set(bucket, [...new Set([b.owner, ...(await dir.householdOf([b.owner]))])]);
   }
   const kind = lineKind(expense);
   const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents));
-  const everyday = isEveryday({ withinLimits, singleSource: expense.singleSource, financeNotEveryday: expense.financeNotEveryday });
+  const everyday = isEveryday({ withinLimits });
   return new Map(
     lines.map((l) => {
       const bucket = bucketOf.get(l.id) ?? null;
@@ -98,7 +96,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         finance,
         board,
         conflicted,
-        leaderHousehold: bucket === null ? [] : (leaderHouseholds.get(bucket) ?? []),
+        ownerHousehold: bucket === null ? [] : (ownerHouseholds.get(bucket) ?? []),
         reimburseeSetter: setterRow?.userId ?? null,
         seatedHouseholds: seated,
         boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),

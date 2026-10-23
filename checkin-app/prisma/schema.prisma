@@ -216,6 +216,8 @@ model Person {
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
   programVolunteers   ProgramVolunteer[]
+  budgetOwnersOwned   BudgetOwner[]        @relation("BudgetOwnerOwner")
+  budgetOwnerTreasurerships BudgetOwnerTreasurer[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
   instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
@@ -1162,8 +1164,7 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
-  /// A program treasurer; a program may have several. With the program
-  /// leader, treasurers approve within the program's BudgetOwner bucket.
+  /// Unread; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops it.
   /// @sensitivity:internal
   isTreasurer   Boolean @default(false)
 
@@ -1896,21 +1897,26 @@ model Org {
 }
 
 /// An accounting bucket that expense lines and bulk-donation gifts are owned by
-/// (#1280 §6). Not a Person. Approvers are derived, never stored: a program
-/// bucket's are that program's leader and treasurers (ProgramVolunteer
-/// .isTreasurer); an org-level bucket (no program — Facility is one of several)
-/// has none, because finance assigning an item to it is the approval.
+/// (#1280 §6). Not a Person. Its approvers are its owner and its treasurers, set
+/// by the Board. An org-level bucket (Facility is one of several) has none,
+/// because finance assigning an item to it is the approval.
 /// Buckets are archived, never deleted — libraries hold `id` as an opaque
 /// cross-database owner id, so a deleted row would orphan their references.
-/// Finance structure — all internal.
+/// Finance structure — internal, except the owner's person id.
 model BudgetOwner {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Null for an org-level bucket.
+  /// Unread; a later migration drops it.
   /// @sensitivity:internal
   programId            Int?
+  /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
+  /// @sensitivity:internal
+  isOrgLevel           Boolean   @default(false)
+  /// Owns the bucket's budget and approves its lines; null until the Board names one.
+  /// @sensitivity:public
+  ownerId              Int?
   /// @sensitivity:internal
   archivedAt           DateTime?
   /// The QuickBooks Online id of the Class this bucket is (external id, not a
@@ -1920,7 +1926,24 @@ model BudgetOwner {
 
   // Restrict: a program with a bucket is not deleted out from under it, and
   // SetNull would silently turn a program bucket into an org-level one.
-  program Program? @relation(fields: [programId], references: [id], onDelete: Restrict)
+  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict)
+  owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  treasurers BudgetOwnerTreasurer[]
 
   @@index([programId])
+  @@index([ownerId])
+}
+
+/// A treasurer of a bucket: approves its lines alongside the owner. Set by the Board.
+model BudgetOwnerTreasurer {
+  /// @sensitivity:internal
+  budgetOwnerId Int
+  /// @sensitivity:public
+  personId      Int
+
+  budgetOwner BudgetOwner @relation(fields: [budgetOwnerId], references: [id], onDelete: Restrict)
+  person      Person      @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@id([budgetOwnerId, personId])
+  @@index([personId])
 }
