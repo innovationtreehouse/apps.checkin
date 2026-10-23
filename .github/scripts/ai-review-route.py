@@ -155,15 +155,21 @@ def api(repo, path):
 
 
 def pr_state(pr, repo):
-    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
+    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions,baseRefOid,headRefOid"))
     files = [f["path"] for f in meta["files"]]
     # The decision model gets the whole diff; fit_rounds trims older rounds to the state cap.
     # On Jev the whole diff is cheap: over ~32 KB it only switches to a slower long-context mode.
     try:
         diff = gh("pr", "diff", pr, "-R", repo)
     except Exception as e:
-        print(f"::warning::could not read the diff ({e}); deciding on the file list", file=sys.stderr)
-        diff = ""
+        # GitHub refuses a diff over 300 files or 20,000 lines (HTTP 406). The checkout has full history.
+        try:
+            diff = subprocess.check_output(["git", "diff", "--no-color", "--no-ext-diff",
+                                            f"{meta['baseRefOid']}...{meta['headRefOid']}"], text=True)
+            print(f"::notice::GitHub refused the PR diff ({e}); used git diff base...head", file=sys.stderr)
+        except Exception as e2:
+            print(f"::warning::could not read the diff ({e}; then {e2}); deciding on the file list", file=sys.stderr)
+            diff = ""
     # PR text is untrusted; it only ever appears here as data, never as instructions.
     return files, {"untrusted_pr_title": meta["title"], "changed_files": files,
                    "changed_lines": meta["additions"] + meta["deletions"], "file_count": len(files),
