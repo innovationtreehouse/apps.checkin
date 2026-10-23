@@ -34,7 +34,7 @@ const budgetOwners: OwnerDirectory = {
 };
 
 async function eligibleSigner(): Promise<Prisma.PersonWhereInput> {
-  return (await import("@/lib/finance/bucketApprovers")).ELIGIBLE_SIGNER;
+  return (await import("@/lib/finance/bucketApprovers")).eligibleSigner();
 }
 
 async function roleHolders(role: PersonRoleKind): Promise<number[]> {
