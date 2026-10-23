@@ -243,8 +243,17 @@ TRIM_NOTE = "\n[cut here to fit the decision state cap]"
 
 
 def fit_state(state, limit=JEV_STATE_MAX):
-    """Last resort after fit_rounds: cut the current diff, then the posted review, until the state fits.
-    Every character is at least one JSON byte, so cutting `over` characters always removes `over` bytes."""
+    """Last resort after fit_rounds, oldest first: blank prior round bodies and comments, then cut the
+    current diff, then the posted review, until the state fits. Every character is at least one JSON
+    byte, so cutting `over` characters always removes `over` bytes."""
+    rounds = [dict(r) for r in state.get("untrusted_prior_review_rounds") or []]
+    if rounds:
+        state = dict(state, untrusted_prior_review_rounds=rounds)
+    for entry in rounds:
+        if len(json.dumps(state).encode()) <= limit:
+            break
+        if entry.get("review_body") or entry.get("inline_comments"):
+            entry["review_body"], entry["inline_comments"], entry["body_status"] = "", [], "omitted_size"
     for key in TRIM_KEYS:
         over = len(json.dumps(state).encode()) - limit
         if over <= 0:
@@ -331,6 +340,10 @@ def route_selftest():
     route_only = fit_state({"k": 1, "untrusted_diff": "d" * 300}, 100)
     assert "untrusted_review_output" not in route_only and route_only["untrusted_diff"].endswith(TRIM_NOTE)
     assert len(json.dumps(route_only).encode()) <= 100
+    rs = [{"round": i, "review_body": "b" * 200, "inline_comments": [{"body": "c"}], "diff": "", "diff_status": "ok"} for i in (1, 2, 3)]
+    st = fit_state({"k": 1, "untrusted_diff": "d" * 100, "untrusted_prior_review_rounds": rs}, 560)
+    assert len(json.dumps(st).encode()) <= 560 and st["untrusted_diff"] == "d" * 100
+    assert st["untrusted_prior_review_rounds"][0]["body_status"] == "omitted_size" and rs[0]["review_body"]
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
