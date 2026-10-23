@@ -71,6 +71,6 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     });
     if (unpaid !== participantIds.length) return NextResponse.json({ code: null });
 
-    const code = await mintMemberDiscountCode(programId, caller.householdId, variantId, amountOffCents);
+    const code = await mintMemberDiscountCode(program, caller.householdId, amountOffCents);
     return NextResponse.json({ code });
 });

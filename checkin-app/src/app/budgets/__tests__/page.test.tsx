@@ -1,7 +1,7 @@
 type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
 
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -18,7 +18,7 @@ const programBucket = {
 };
 
 type Reply = () => Promise<Response>;
-type Reads = Partial<Record<"buckets" | "treasurers", Reply>>;
+type Reads = Partial<Record<"buckets" | "classes" | "treasurers", Reply>>;
 
 function jsonResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -34,6 +34,7 @@ function mockServer(write: Reply, reads: Reads = {}) {
     const url = input.toString();
     if (init?.method) return write();
     if (url.includes("/program-options")) return jsonResponse(200, []);
+    if (url.includes("/quickbooks-classes")) return reads.classes ? reads.classes() : jsonResponse(200, []);
     if (url.includes("/treasurers")) {
       if (reads.treasurers) return reads.treasurers();
       return jsonResponse(200, [{ programId: 3, personId: 9, isTreasurer: false, person: { id: 9, name: "Tess Treasurer" } }]);
@@ -54,6 +55,7 @@ async function createBucket() {
 beforeEach(() => {
   resetRtl();
   (notifications.show as jest.Mock).mockClear();
+  (notifications.hide as jest.Mock).mockClear();
   setSession({ id: 1, isFinance: true, isBoardMember: true });
 });
 
@@ -151,6 +153,34 @@ describe("budgets page write errors", () => {
       autoClose: false,
     })));
     expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." }));
+  });
+
+  it("replaces the failure chip on a retry and clears it on success", async () => {
+    const replies = [jsonResponse(400, { error: "name is required" }), jsonResponse(400, { error: "name is required" }), jsonResponse(200, {})];
+    mockServer(async () => replies.shift() ?? jsonResponse(200, {}));
+    await createBucket();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." })));
+    const failures = (notifications.show as jest.Mock).mock.calls.filter(([n]) => n.title === "Bucket not created");
+    expect(failures).toHaveLength(2);
+    expect(failures.every(([n]) => n.id === "Bucket not created")).toBe(true);
+    expect((notifications.hide as jest.Mock).mock.calls.filter(([id]) => id === "Bucket not created").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("shows a red chip when the QuickBooks Class list fails", async () => {
+    mockServer(ok, { classes: async () => jsonResponse(502, { error: "QuickBooks is not connected" }) });
+    renderWithProviders(<BudgetsPage />);
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "QuickBooks Classes unavailable",
+      message: "QuickBooks is not connected (502)",
+      autoClose: false,
+    })));
   });
 
   it("shows a treasurer change failure in a red chip", async () => {

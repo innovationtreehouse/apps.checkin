@@ -60,6 +60,7 @@ POST /api/catalog/conversion-challenges/[id]/reject
 GET /api/budget-owners
 POST /api/budget-owners
 GET /api/budget-owners/program-options
+GET /api/budget-owners/quickbooks-classes
 PATCH /api/budget-owners/[id]
 POST /api/budget-owners/[id]/archive
 GET /api/programs/[id]/treasurers

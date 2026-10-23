@@ -102,11 +102,12 @@ const PLANS: RoutePlan[] = Array.from(allRoutes()).map(([endpoint, spec]) => {
     return { endpoint, method, routePath, ...planAuthorize(spec.authorize) };
 });
 
-// GETs whose admitted answer depends on the Shopify mirror, which this in-process
-// test has no database for: they answer 503 "not wired" after admission.
-const MIRROR_GATED_GETS = new Set([
+// GETs whose admitted answer depends on an outside service this in-process test
+// has none of — the Shopify mirror, or QuickBooks: they answer 503 after admission.
+const EXTERNAL_GATED_GETS = new Set([
     'GET /api/finance-ops/s-read/sync',
     'GET /api/finance-ops/s-read/match-audit',
+    'GET /api/budget-owners/quickbooks-classes',
 ]);
 
 function importPathFor(routePath: string): string {
@@ -376,7 +377,7 @@ describe('Registry route admission gates', () => {
                 // A write verb can't be driven with an empty body and no owned
                 // row, so admission is all that's assertable: a 400 from
                 // validation or a 404 from an ownership check both cleared authz.
-                if (MIRROR_GATED_GETS.has(plan.endpoint)) expect([200, 503]).toContain(res.status);
+                if (EXTERNAL_GATED_GETS.has(plan.endpoint)) expect([200, 503]).toContain(res.status);
                 else if (plan.method === 'GET') expect(res.status).toBeLessThan(400);
                 else expect([401, 403]).not.toContain(res.status);
             });

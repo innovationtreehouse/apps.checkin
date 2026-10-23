@@ -25,7 +25,7 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
-const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QB Accounts", "Ownership Map", "Capital Seed", "Budgets", "Settings"];
+const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Budgets", "Settings"];
 
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 

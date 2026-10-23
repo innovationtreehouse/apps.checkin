@@ -4,7 +4,12 @@ import crypto from "crypto";
 import { logIntegrationError } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { householdMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
+import { checkoutVariantId } from "@/lib/programs/variants";
 import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
+import { outboundCall } from "@/security/outbound";
+
+/** The Program fields a mint sends, as outboundCall hands them back after stripping. */
+type DiscountProgramFields = { id: number; shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null };
 
 /**
  * Mints a server-side, single-use fixed-amount discount code for one
@@ -29,19 +34,23 @@ import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify
  * program-enrollment volume. Upgrade to the segment design above if that
  * stops being true.
  *
+ * The code applies to the program's checkout variant ({@link checkoutVariantId}).
+ *
  * Never throws: a failure returns null so the caller falls back to an
  * undiscounted checkout link rather than blocking it (member pays full price
  * and can contact the board — better than a broken checkout).
  */
 export async function mintMemberDiscountCode(
-    programId: number,
+    program: DiscountProgramFields,
     householdId: number,
-    variantId: string,
     amountOffCents: number,
 ): Promise<string | null> {
-    if (amountOffCents <= 0) return null;
+    const programId = program.id;
+    const variantId = checkoutVariantId(program);
+    if (amountOffCents <= 0 || !variantId) return null;
 
-    const code = `${householdMemberCodePrefix(programId, householdId)}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const suffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const code = `${householdMemberCodePrefix(programId, householdId)}${suffix}`;
 
     // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
     if (config.shopifyMockActive()) {
@@ -68,32 +77,40 @@ export async function mintMemberDiscountCode(
                     userErrors { field message }
                 }
             }`;
-        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
-            },
-            body: JSON.stringify({
-                query: mutation,
-                variables: {
-                    discount: {
-                        title: code,
-                        code,
-                        startsAt: startsAt.toISOString(),
-                        endsAt: endsAt.toISOString(),
-                        usageLimit: 1,
-                        appliesOncePerCustomer: true,
-                        customerSelection: { all: true },
-                        customerGets: {
-                            // appliesOnEachItem: the 'each' semantics (see doc comment).
-                            value: { discountAmount: { amount: (amountOffCents / 100).toFixed(2), appliesOnEachItem: true } },
-                            items: { products: { productVariantsToAdd: [`gid://shopify/ProductVariant/${variantId}`] } },
+        const bag = {
+            Program: { id: programId, shopifyVariantId: program.shopifyVariantId, claimantShopifyVariantId: program.claimantShopifyVariantId },
+            Household: { id: householdId },
+        };
+        const res = await outboundCall('shopify.discount.create', bag, (stripped) => {
+            const sentProgram = stripped.Program as DiscountProgramFields;
+            const sentCode = `${householdMemberCodePrefix(sentProgram.id, (stripped.Household as { id: number }).id)}${suffix}`;
+            return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Shopify-Access-Token': accessToken,
+                },
+                body: JSON.stringify({
+                    query: mutation,
+                    variables: {
+                        discount: {
+                            title: sentCode,
+                            code: sentCode,
+                            startsAt: startsAt.toISOString(),
+                            endsAt: endsAt.toISOString(),
+                            usageLimit: 1,
+                            appliesOncePerCustomer: true,
+                            customerSelection: { all: true },
+                            customerGets: {
+                                // appliesOnEachItem: the 'each' semantics (see doc comment).
+                                value: { discountAmount: { amount: (amountOffCents / 100).toFixed(2), appliesOnEachItem: true } },
+                                items: { products: { productVariantsToAdd: [`gid://shopify/ProductVariant/${checkoutVariantId(sentProgram)}`] } },
+                            },
                         },
                     },
-                },
-            }),
-        }, "Shopify mint member discount");
+                }),
+            }, "Shopify mint member discount");
+        });
         if (!res.ok) {
             throw new Error(`Shopify discount create failed: ${res.status} ${await res.text()}`);
         }

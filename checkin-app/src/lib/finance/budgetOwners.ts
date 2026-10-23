@@ -4,6 +4,7 @@ import { personActor } from "@/lib/auditActor";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { logger } from "@/lib/logger";
 
 // Budget-owner buckets (#1280 §6) and program treasurers. FINANCE manages
 // buckets; the BOARD sets treasurers. Approvers are derived, never stored: a
@@ -27,6 +28,19 @@ export async function listBudgetOwners(includeArchived: boolean) {
         select: BUCKET_SELECT,
         orderBy: [{ archivedAt: { sort: "asc", nulls: "first" } }, { name: "asc" }],
     });
+}
+
+/** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
+export async function listQuickBooksClasses() {
+    const qb = await (await import("@/lib/quickbooks/client")).getQuickBooks();
+    if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
+    const classes = await qb.classes().catch((error: unknown) => {
+        logger.error("QuickBooks Class list failed:", error);
+        throw new ApiResponseError(503, "QuickBooks did not return its Classes. Try again shortly.");
+    });
+    return classes
+        .map((c) => ({ id: c.Id, name: c.FullyQualifiedName, active: c.Active !== false }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function listProgramOptions() {

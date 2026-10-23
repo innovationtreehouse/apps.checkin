@@ -10,6 +10,7 @@ import { config } from "@/lib/config";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { programVariantIds } from "@/lib/programs/variants";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION, SHOPIFY_INVENTORY_API_VERSION } from "@/lib/shopify/client";
+import { outboundCall } from "@/security/outbound";
 
 /** A stock lease outlives its push's cap by this much, so it can't expire under a writer still inside its cap. */
 const STOCK_LEASE_SLACK_MS = 30_000;
@@ -214,24 +215,32 @@ async function readStock(gql: Gql, variantId: string, deadline: number) {
  * definite: "applied", or a hard error (thrown), which means it did not apply.
  */
 async function sendStockWrite(gql: Gql, write: PendingStockWrite, deadline: number): Promise<"applied"> {
-    const variables = {
-        input: {
-            name: "available",
-            reason: "correction",
-            changes: [{
-                inventoryItemId: write.inventoryItemId,
-                locationId: write.locationId,
-                delta: write.delta,
-                // Deltas commute with store sales, so no compare: the key is the guard.
-                changeFromQuantity: null,
-            }],
-        },
-        idempotencyKey: write.key,
-    };
     const codesOf = (d: { inventoryAdjustQuantities?: UserErrors }) => d.inventoryAdjustQuantities?.userErrors.map((e) => e.code ?? "") ?? [];
-    const data = await untilSettled<{ inventoryAdjustQuantities?: UserErrors }>(
-        gql, ADJUST_STOCK, variables, deadline,
-        (d) => codesOf(d).includes("IDEMPOTENCY_CONCURRENT_REQUEST"),
+    // The write goes out as the Program.shopifyStockPendingWrite it is booked as.
+    const data = await outboundCall(
+        'shopify.inventory.adjust',
+        { Program: { shopifyStockPendingWrite: JSON.stringify(write) } },
+        (stripped) => {
+            const sent = JSON.parse((stripped.Program as { shopifyStockPendingWrite: string }).shopifyStockPendingWrite) as PendingStockWrite;
+            const variables = {
+                input: {
+                    name: "available",
+                    reason: "correction",
+                    changes: [{
+                        inventoryItemId: sent.inventoryItemId,
+                        locationId: sent.locationId,
+                        delta: sent.delta,
+                        // Deltas commute with store sales, so no compare: the key is the guard.
+                        changeFromQuantity: null,
+                    }],
+                },
+                idempotencyKey: sent.key,
+            };
+            return untilSettled<{ inventoryAdjustQuantities?: UserErrors }>(
+                gql, ADJUST_STOCK, variables, deadline,
+                (d) => codesOf(d).includes("IDEMPOTENCY_CONCURRENT_REQUEST"),
+            );
+        },
     );
     if (codesOf(data).length === 0) return "applied";
     throw new Error(`inventoryAdjustQuantities userErrors: ${JSON.stringify(data.inventoryAdjustQuantities?.userErrors)}`);
@@ -380,11 +389,12 @@ async function drainStock(
             const stock = await readStock(gql, variantId, deadline);
             let available = stock.available;
             if (available === null) {
-                await untilSettled(gql, ACTIVATE_STOCK, {
-                    inventoryItemId: stock.inventoryItemId,
-                    locationId: stock.locationId,
-                    idempotencyKey: `program-${programId}-activate-${crypto.randomUUID()}`,
-                }, deadline);
+                await outboundCall('shopify.inventory.activate', { Program: { id: programId } }, (stripped) =>
+                    untilSettled(gql, ACTIVATE_STOCK, {
+                        inventoryItemId: stock.inventoryItemId,
+                        locationId: stock.locationId,
+                        idempotencyKey: `program-${(stripped.Program as { id: number }).id}-activate-${crypto.randomUUID()}`,
+                    }, deadline));
                 available = 0;
             }
             if (target !== undefined) {
@@ -527,12 +537,12 @@ async function pushProgramStock(
             );
         }
         if (result.expiredKey) {
-            // The board settles it on Revenue Ops > Unconfirmed Shopify stock (settleUnconfirmedStock).
+            // The board settles it on Revenue Ops > Shopify > Unconfirmed Shopify stock (settleUnconfirmedStock).
             await reportShopifyFailure(
                 "adjustProgramInventory",
                 new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
                 { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, parked: row?.shopifyStockParked ?? null },
-                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Unconfirmed Shopify stock.`,
+                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Shopify &gt; Unconfirmed Shopify stock.`,
             );
         }
         return result.error === null && result.expiredKey === null;
@@ -891,16 +901,27 @@ export async function syncProgramPrice(
 
     try {
         // ponytail: REST product endpoints are legacy; switch to GraphQL productVariantsBulkUpdate with the capacity redesign's GraphQL move (≥2026-04).
-        for (const variantId of variantIds) {
-            const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
-                body: JSON.stringify({ variant: { id: Number(variantId), price } }),
-            }, "Shopify update variant price");
-            if (!res.ok) {
-                throw new Error(`Shopify price update failed for variant ${variantId}: ${res.status} ${await res.text()}`);
+        const bag = {
+            Program: {
+                shopifyVariantId: program.shopifyVariantId,
+                claimantShopifyVariantId: program.claimantShopifyVariantId,
+                nonOrgMemberPriceCents: basePriceCents,
+            },
+        };
+        await outboundCall('shopify.product.update', bag, async (stripped) => {
+            const sent = stripped.Program as { shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null; nonOrgMemberPriceCents: number };
+            const sentPrice = (sent.nonOrgMemberPriceCents / 100).toFixed(2);
+            for (const variantId of programVariantIds(sent)) {
+                const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                    body: JSON.stringify({ variant: { id: Number(variantId), price: sentPrice } }),
+                }, "Shopify update variant price");
+                if (!res.ok) {
+                    throw new Error(`Shopify price update failed for variant ${variantId}: ${res.status} ${await res.text()}`);
+                }
             }
-        }
+        });
         console.log(`[SHOPIFY] Set price ${price} on variants ${variantIds.join(", ")}`);
         return true;
     } catch (error) {
@@ -964,14 +985,17 @@ export async function setProgramProductOffSale(
     }
 
     try {
-        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products/${productId}.json`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
-            },
-            body: JSON.stringify({ product: { id: Number(productId), status: 'draft' } }),
-        }, "Shopify product off sale");
+        const res = await outboundCall('shopify.product.update', { Program: { shopifyProductId: productId } }, (stripped) => {
+            const sentId = (stripped.Program as { shopifyProductId: string }).shopifyProductId;
+            return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products/${sentId}.json`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Shopify-Access-Token': accessToken,
+                },
+                body: JSON.stringify({ product: { id: Number(sentId), status: 'draft' } }),
+            }, "Shopify product off sale");
+        });
         if (!res.ok) {
             throw new Error(`Shopify product off-sale failed for ${productId}: ${res.status} ${await res.text()}`);
         }

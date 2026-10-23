@@ -1,6 +1,6 @@
 /**
  * Nav descriptors for income. The library declares its screens; the host places them:
- * `INCOME_TAB` as a section tab, and `INCOME_NAV_LINKS` as the /income second tab row.
+ * `INCOME_TAB` as a section tab, and each of `INCOME_NAV_LINKS` as a sub-tab under the tab it chooses.
  */
 
 /** The nav counts income reports to the host, one per badged screen. */

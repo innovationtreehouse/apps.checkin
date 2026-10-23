@@ -17,6 +17,12 @@ interface Bucket {
   program: { id: number; name: string } | null;
 }
 
+interface ClassOption {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 interface ProgramOption {
   id: number;
   name: string;
@@ -76,8 +82,14 @@ async function failureMessage(res: Response): Promise<string> {
   return `The server returned an unexpected error (${res.status}).`;
 }
 
+// One chip per action, keyed by its title: a new failure replaces it and a success clears it.
 function showError(title: string, message: string) {
-  notifications.show({ color: "red", title, message, autoClose: false });
+  notifications.hide(title);
+  notifications.show({ id: title, color: "red", title, message, autoClose: false });
+}
+
+function clearError(title: string) {
+  notifications.hide(title);
 }
 
 export default function BudgetsPage() {
@@ -85,33 +97,40 @@ export default function BudgetsPage() {
   const isFinance = !!user?.isFinance;
   const isBoard = !!user?.isBoardMember;
 
-  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [allBuckets, setAllBuckets] = useState<Bucket[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [classes, setClasses] = useState<ClassOption[] | null>(null);
+  const [classesFailed, setClassesFailed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [newName, setNewName] = useState("");
   const [newProgramId, setNewProgramId] = useState<string | null>(null);
-  const [newClassId, setNewClassId] = useState("");
+  const [newClassId, setNewClassId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [editName, setEditName] = useState("");
-  const [editClassId, setEditClassId] = useState("");
+  const [editClassId, setEditClassId] = useState<string | null>(null);
 
   const [treasurerBucket, setTreasurerBucket] = useState<Bucket | null>(null);
 
+  // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
   const load = useCallback(() => Promise.all([
-    get<Bucket[]>(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
+    get<Bucket[]>("/api/budget-owners?includeArchived=1"),
     get<ProgramOption[]>("/api/budget-owners/program-options"),
-  ]).then(([b, p]) => {
-    if (b.ok) setBuckets(b.data); else showError("Buckets not loaded", b.error);
-    if (p.ok) setPrograms(p.data); else showError("Programs not loaded", p.error);
+    get<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
+  ]).then(([b, p, c]) => {
+    if (b.ok) { setAllBuckets(b.data); clearError("Buckets not loaded"); } else showError("Buckets not loaded", b.error);
+    if (p.ok) { setPrograms(p.data); clearError("Programs not loaded"); } else showError("Programs not loaded", p.error);
+    setClassesFailed(!c.ok);
+    if (c.ok) { setClasses(c.data); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", c.error);
     setLoading(false);
-  }), [showArchived]);
+  }), []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
   const run = async (url: string, method: string, body: unknown, done: string, failed: string) => {
+    clearError(failed);
     const error = await send(url, method, body);
     if (error) { showError(failed, error); return false; }
     notifications.show({ message: done });
@@ -124,16 +143,16 @@ export default function BudgetsPage() {
     const ok = await run("/api/budget-owners", "POST", {
       name: newName,
       programId: newProgramId ? Number(newProgramId) : null,
-      quickBooksClassId: newClassId || null,
+      quickBooksClassId: newClassId,
     }, "Bucket created.", "Bucket not created");
-    if (ok) { setNewName(""); setNewProgramId(null); setNewClassId(""); }
+    if (ok) { setNewName(""); setNewProgramId(null); setNewClassId(null); }
   };
 
   const saveEdit = async () => {
     if (!editing) return;
     const ok = await run(`/api/budget-owners/${editing.id}`, "PATCH", {
       name: editName,
-      quickBooksClassId: editClassId || null,
+      quickBooksClassId: editClassId,
     }, "Bucket saved.", "Bucket not saved");
     if (ok) setEditing(null);
   };
@@ -143,6 +162,22 @@ export default function BudgetsPage() {
     void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.", "Bucket not archived");
   };
 
+  const buckets = showArchived ? allBuckets : allBuckets.filter((b) => !b.archivedAt);
+  const classNames = new Map((classes ?? []).map((c) => [c.id, c.active ? c.name : `${c.name} (inactive)`]));
+  const takenBy = new Map(allBuckets.filter((b) => b.quickBooksClassId).map((b) => [b.quickBooksClassId, b.id]));
+  const className = (id: string) => classNames.get(id) ?? `QuickBooks id ${id}`;
+  // Active Classes no other bucket holds, plus `keep` (the bucket's saved Class and the current pick)
+  // even when inactive or missing from the list, so the picker never drops a Class it is showing.
+  const classChoices = (bucketId: number | null, keep: (string | null)[]) => {
+    const kept = new Set(keep.filter((id): id is string => id !== null));
+    const options = (classes ?? [])
+      .filter((c) => kept.has(c.id) || (c.active && (takenBy.get(c.id) ?? bucketId) === bucketId))
+      .map((c) => ({ value: c.id, label: classNames.get(c.id) ?? c.name }));
+    for (const id of kept) if (!options.some((o) => o.value === id)) options.push({ value: id, label: className(id) });
+    return options;
+  };
+  const classPlaceholder = (empty: string) => (classes ? empty : classesFailed ? "Classes unavailable" : "Loading…");
+
   if (authLoading) return <PageLoader />;
   if (!ready) return null;
 
@@ -151,8 +186,11 @@ export default function BudgetsPage() {
       <Stack>
         <Title order={2}>Budgets</Title>
         <Text c="dimmed">
-          Budget-owner buckets. A program bucket is approved by the program&apos;s leader and its
-          treasurers; an org-level bucket has no approvers.
+          A bucket is a budget that spending, income and gifts are booked to. Its lines post to QuickBooks under
+          the bucket&apos;s QuickBooks Class, so a bucket without one holds its lines until finance sets it here. A
+          bucket is not a QuickBooks account: the account says what the money was spent on, and Account mapping
+          picks it. A program bucket is approved by the program&apos;s leader and its treasurers; an org-level
+          bucket has no approvers.
         </Text>
 
         {isFinance && (
@@ -170,8 +208,18 @@ export default function BudgetsPage() {
                 onChange={setNewProgramId}
                 w={260}
               />
-              <TextInput label="QuickBooks Class id" description="Expenses in this bucket post to QuickBooks only once it is set" error={classIdError(newClassId)} value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
-              <Button onClick={create} disabled={!newName.trim() || classIdError(newClassId) !== null}>Create</Button>
+              <Select
+                label="QuickBooks Class"
+                description="Expenses in this bucket post to QuickBooks only once it is set"
+                placeholder={classPlaceholder("None yet")}
+                clearable
+                searchable
+                data={classChoices(null, [newClassId])}
+                value={newClassId}
+                onChange={setNewClassId}
+                w={280}
+              />
+              <Button onClick={create} disabled={!newName.trim()}>Create</Button>
             </Group>
           </Card>
         )}
@@ -179,7 +227,7 @@ export default function BudgetsPage() {
         <Checkbox
           label="Show archived"
           checked={showArchived}
-          onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
+          onChange={(e) => setShowArchived(e.currentTarget.checked)}
         />
 
         {loading ? (
@@ -200,7 +248,7 @@ export default function BudgetsPage() {
                 <Table.Tr key={b.id}>
                   <Table.Td>{b.name}</Table.Td>
                   <Table.Td>{b.program?.name ?? <Text c="dimmed" size="sm">Org-level</Text>}</Table.Td>
-                  <Table.Td>{b.quickBooksClassId ?? <Text c="dimmed" size="sm">Unmapped</Text>}</Table.Td>
+                  <Table.Td>{b.quickBooksClassId ? className(b.quickBooksClassId) : <Text c="dimmed" size="sm">Unmapped</Text>}</Table.Td>
                   <Table.Td>
                     {b.archivedAt ? <Badge color="gray">Archived</Badge> : <Badge color="green">Active</Badge>}
                   </Table.Td>
@@ -213,7 +261,7 @@ export default function BudgetsPage() {
                         <Button
                           size="xs"
                           variant="light"
-                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId ?? ""); }}
+                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); }}
                         >
                           Edit
                         </Button>
@@ -236,8 +284,16 @@ export default function BudgetsPage() {
       <Modal opened={editing !== null} onClose={() => setEditing(null)} title="Edit bucket">
         <Stack>
           <TextInput label="Name" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} />
-          <TextInput label="QuickBooks Class id" error={classIdError(editClassId)} value={editClassId} onChange={(e) => setEditClassId(e.currentTarget.value)} />
-          <Button onClick={saveEdit} disabled={!editName.trim() || classIdError(editClassId) !== null}>Save</Button>
+          <Select
+            label="QuickBooks Class"
+            placeholder={classPlaceholder("None")}
+            clearable
+            searchable
+            data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
+            value={editClassId}
+            onChange={setEditClassId}
+          />
+          <Button onClick={saveEdit} disabled={!editName.trim()}>Save</Button>
         </Stack>
       </Modal>
 
@@ -252,12 +308,6 @@ export default function BudgetsPage() {
       )}
     </>
   );
-}
-
-/** The server's Class id rule: empty, or a numeric QuickBooks id. */
-function classIdError(value: string): string | null {
-  const id = value.trim();
-  return id && !/^\d+$/.test(id) ? "Digits only: the Class's QuickBooks id" : null;
 }
 
 function TreasurersModal({ programId, programName, canEdit, onClose }: {
@@ -275,7 +325,7 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
     let live = true;
     void get<TreasurerRow[]>(`/api/programs/${programId}/treasurers`).then((result) => {
       if (!live) return;
-      if (result.ok) { setRows(result.data); setLoadFailed(false); return; }
+      if (result.ok) { setRows(result.data); setLoadFailed(false); clearError("Treasurers not loaded"); return; }
       showError("Treasurers not loaded", result.error);
       setLoadFailed(true);
     });
@@ -283,6 +333,7 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
   }, [programId, version]);
 
   const toggle = async (row: TreasurerRow, on: boolean) => {
+    clearError("Treasurer not updated");
     const failure = await send(`/api/programs/${row.programId}/treasurers/${row.personId}`, on ? "PUT" : "DELETE");
     if (failure) showError("Treasurer not updated", failure);
     setVersion((v) => v + 1);
