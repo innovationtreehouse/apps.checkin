@@ -41,7 +41,7 @@ export default function HoldsPage() {
         {[...byExpense].map(([expenseId, rows]) => (
           <Paper key={expenseId} withBorder p="sm">
             <Group justify="space-between" mb="xs">
-              <Anchor href={`/expense/expenses/${encodeURIComponent(expenseId)}`}>
+              <Anchor href={`/expense/expenses/${encodeURIComponent(expenseId)}?from=/expense/holds`}>
                 {rows[0].expense?.vendorName ?? expenseId} · {rows[0].expense?.receiptDate ?? ""}
               </Anchor>
               {isFinance && (

@@ -26,7 +26,7 @@ export default function FlagsPage() {
           {(flags.data ?? []).map((f) => (
             <Table.Tr key={f.id}>
               <Table.Td><Badge variant="light" color={f.audience === "BOARD" ? "grape" : "blue"}>{f.kind}</Badge></Table.Td>
-              <Table.Td><Anchor href={`/expense/expenses/${encodeURIComponent(f.expenseId)}`}>{f.expenseId}</Anchor></Table.Td>
+              <Table.Td><Anchor href={`/expense/expenses/${encodeURIComponent(f.expenseId)}?from=/expense/flags`}>{f.expenseId}</Anchor></Table.Td>
               <Table.Td>{f.detail ?? ""}</Table.Td>
               <Table.Td>{new Date(f.raisedAt).toLocaleDateString()}</Table.Td>
               <Table.Td>
