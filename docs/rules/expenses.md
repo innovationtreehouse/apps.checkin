@@ -14,7 +14,7 @@ A few terms used throughout:
 - An **expense** is the app's record of one receipt's spending, split into
   **lines**, one per item.
 - A **budget bucket** is the accounting category a line is charged to, such as a
-  program's budget or an org-wide one like Facility.
+  program's budget or an org-level one like Facility.
 
 ---
 
@@ -75,15 +75,6 @@ Things the app takes as true because they are handled outside it.
   treasurers see only the lines in their program's bucket.
   [Decision — *Principle: least privilege*]
 
-- Every review of a receipt or expense is made by someone outside the households
-  of its submitter and the person reimbursed. That covers approving or rejecting
-  it, finance's changes to its tax or date, naming the person reimbursed, and
-  checking off its flags. A Board member standing in for someone is also
-  reviewed by someone outside the households of everyone who signed. The
-  submitter's own part is to correct their receipt before it is finalized and to
-  sign their seat.
-  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
-
 ### Receipts
 
 - Nobody takes a step on a receipt they are conflicted on if they could use it
@@ -97,6 +88,12 @@ Things the app takes as true because they are handled outside it.
   resubmitting a held expense. Until a receipt is finalized, its submitter may
   correct its tax and date; a receipt whose tax or date its submitter corrected
   goes to finance review.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- A conflicted person also may not reject a receipt, change its tax or date as
+  finance, name the person reimbursed, or check off its flags. A Board member
+  standing in for someone is reviewed by someone outside the households of
+  everyone who signed.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A person conflicted on an expense may not choose which QuickBooks entry it is
@@ -160,8 +157,7 @@ Things the app takes as true because they are handled outside it.
 - The app flags an expense for review when it carries tax, crosses a dollar
   threshold, includes capital equipment, has no known person to reimburse, has a
   Board member standing in for someone, or fails to reach the books. Every
-  check-off records who made it. Thresholds only raise flags; sign-off is what
-  holds money back.
+  check-off records who made it. A flag never holds money back by itself.
   [Decision — *Principle: accountability*]
 
 ### Spending sign-off
@@ -232,7 +228,7 @@ the Treasurer.
   if there is none, a Board member without a conflict.
   [Decision — owner]
 
-- A line in an org-wide bucket takes a Board member without a conflict as
+- A line in an org-level bucket takes a Board member without a conflict as
   program approver.
   [Decision]
 
