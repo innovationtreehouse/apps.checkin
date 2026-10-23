@@ -69,6 +69,7 @@ import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
 import * as programSynthetic from './programSyntheticClassifications';
+import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
@@ -99,6 +100,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
     { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
     { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
+    { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations },
     { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations },
     { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations },
 ] as const;
@@ -246,9 +248,9 @@ export type Authorize =
     // FINANCE or BOARD: the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.
     | 'finance-or-board'
-    // A budget-bucket approver: FINANCE, BOARD, a program leader,
-    // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
-    // to the buckets the caller approves.
+    // A budget-bucket approver: FINANCE, BOARD, or anyone who approves
+    // some bucket. No sysadmin auto-admit. Rows stay handler-filtered to the
+    // buckets the caller approves.
     | 'expense-approver'
     // Expense sign-off admission: `receipt-submitter` (an adult member or
     // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
