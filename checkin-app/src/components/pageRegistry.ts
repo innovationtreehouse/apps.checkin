@@ -134,7 +134,7 @@ export const PAGES: PageEntry[] = [
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
   { href: '/receipts/upload', label: 'Upload Receipt', section: 'My Receipts', keywords: 'receipt photo pdf purchase donation', visible: linkGate(MY_RECEIPTS, '/receipts/upload') },
   { href: '/receipts/review', label: 'Receipts Review', section: 'Receipt Review', keywords: 'receipt finance tax duplicate', visible: RECEIPT_FINANCE },
-  { href: '/receipts/mail', label: 'Receipt Mail Queue', section: 'Receipt Review', keywords: 'receipt email gmail held assign discard', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
+  { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Receipt Review', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipt Review', keywords: 'tax exempt age limit', visible: linkGate(RECEIPT_REVIEW, '/receipts/settings') },
 
   // Facility Ops — board, plus operations on the two aggregate tools. The index

@@ -158,7 +158,7 @@ export default function ReceiptMailQueuePage() {
   const card = (item: MailItem) => <MailItemCard key={item.id} item={item} onDone={reload} />;
   return (
     <>
-      <Title order={3} mb="md">Mail queue</Title>
+      <Title order={3} mb="md">Incoming receipt queue</Title>
       {items.error && <Alert color="red" mb="md">{items.error}</Alert>}
       {ignored.error && <Alert color="red" mb="md">{ignored.error}</Alert>}
       {items.data?.length === 0 && <Text c="dimmed">No held mail.</Text>}

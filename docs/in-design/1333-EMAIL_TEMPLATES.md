@@ -219,7 +219,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 ### finance — 2
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the mail queue") |
+| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
 
 ### shopify — 1

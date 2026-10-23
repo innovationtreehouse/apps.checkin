@@ -22,4 +22,4 @@ export const RECEIPT_FINANCE_NAV: readonly ReceiptNavLink[] = [
   { name: "Receipt settings", href: "/receipts/settings", icon: "⚙️" },
 ];
 
-export const RECEIPT_MAIL_NAV: readonly ReceiptNavLink[] = [{ name: "Mail queue", href: "/receipts/mail", icon: "📬" }];
+export const RECEIPT_MAIL_NAV: readonly ReceiptNavLink[] = [{ name: "Incoming receipt queue", href: "/receipts/mail", icon: "📬" }];
