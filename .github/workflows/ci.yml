@@ -61,6 +61,11 @@ jobs:
   # below ALWAYS run (so the required contexts always report a result) but skip their
   # actual work when only client/** changed. A skipped *workflow* deadlocks a required
   # check; a job that runs and reports success does not.
+  #
+  # A job whose `needs` failed is skipped, and a skipped required check passes. So
+  # each required job runs even when `changes` fails (`if: ${{ !cancelled() }}`,
+  # or `always()` on coverage-gate) and its first step fails the job unless
+  # `changes` succeeded: a failed symlink or image-source check blocks the merge.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -177,6 +182,7 @@ jobs:
   unit-tests:
     name: Run Tests (unit)
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Bound the job: the 2026-07-16 lock-wait hang burned a runner for 40+ min
     # on the 6-hour default. Unit tier baseline is ~2-3 min end to end.
@@ -195,6 +201,12 @@ jobs:
     # only and never opens a DB connection. See integration-tests for the
     # steps that genuinely need a live Postgres.
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (client-only change)
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no Node CI to run; reporting success."
@@ -319,6 +331,7 @@ jobs:
   integration-tests:
     name: Run Tests (integration)
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # See unit-tests: same bound reasoning; DB tier gets more headroom.
     timeout-minutes: 25
@@ -333,6 +346,12 @@ jobs:
       PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
 
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (client-only change)
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no Node CI to run; reporting success."
@@ -450,6 +469,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (client-only change)
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no coverage to gate; reporting success."
@@ -614,6 +639,7 @@ jobs:
   package-tests:
     name: Package & function tests (Vitest)
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -627,6 +653,12 @@ jobs:
       # stops its own container and the runner VM is discarded anyway.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (no package/function change)
         if: needs.changes.outputs.packages != 'true'
         run: echo "No packages/** or *-function/** change — nothing to test; reporting success."
@@ -712,9 +744,16 @@ jobs:
   client-tests:
     name: Kiosk client tests (Python)
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (no client change)
         if: needs.changes.outputs.client != 'true'
         run: echo "No client/** change — nothing to test; reporting success."
@@ -769,6 +808,7 @@ jobs:
   deploy-build:
     name: Deploy build (no deploy)
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -779,6 +819,12 @@ jobs:
       # Same least-privilege OIDC role as flow-tests.yml (ecr-public auth only).
       PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
     steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
       - name: Skip notice (client-only change)
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no deploy build to run; reporting success."
