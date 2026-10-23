@@ -10,7 +10,14 @@ describe("returnPath", () => {
     expect(returnPath(["/expense/flags", "/expense/holds"], "/x")).toBe("/expense/flags");
   });
 
-  it.each([undefined, "", "expense/holds", "//evil.example", "/\\evil.example", "https://evil.example/x", "javascript:alert(1)"])(
+  it("normalizes dot segments that stay on the site", () => {
+    expect(returnPath("/expense/../expense/holds", "/x")).toBe("/expense/holds");
+  });
+
+  it.each([
+    undefined, "", "expense/holds", "//evil.example", "/\\evil.example", "https://evil.example/x", "javascript:alert(1)",
+    "/..//evil.example", "/.//evil.example", "/foo/..//evil.example", "/%2e%2e//evil.example", "/x/%2E%2E//evil.example",
+  ])(
     "falls back for %p",
     (from) => {
       expect(returnPath(from, "/expense/expenses")).toBe("/expense/expenses");
