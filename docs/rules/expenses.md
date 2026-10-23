@@ -17,7 +17,8 @@ Income and donation rules are in `revenue.md`.
   outside the app. The app does not model notes in lieu of receipts.
 
 - The Board makes each authorization in writing at a Board meeting, outside
-  the app. The app records what the Board decided and does not check it.
+  the app, either as a decision of its own or by approving a program budget.
+  The app records what the recorder enters and does not check it.
 
 ---
 
@@ -155,7 +156,10 @@ Income and donation rules are in `revenue.md`.
   member without a conflict.
   [Decision — owner]
 
-- A purchase of $2,000 or more is reviewed by the Board: a Board member without
-  a conflict signs it, on top of every other seat. The app does not ask for
-  this seat yet.
+- A purchase of $2,000 or more, reimbursement or card charge, reaches the books
+  only once the Board's approval of it is recorded, in words: a Board
+  authorization, or the line of a Board-approved program budget that covers
+  it. Being in a program bucket is not enough, because the app does not know
+  what the budget listed. No Board member's signature takes its place. The app
+  does not ask for this yet.
   [Short of policy — *Policy: Procurement Policy, Art. III*]
