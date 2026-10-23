@@ -224,7 +224,11 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${uncoveredProgramId}-H${settledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
-        expect(mintSpy).toHaveBeenCalledWith(uncoveredProgramId, settledHouseholdId, 'dev-mock-variant-discount-code-uncovered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: uncoveredProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-uncovered' }),
+            settledHouseholdId,
+            1000,
+        );
     });
 
     it('mints a code for a past-boundary program stated as the year the unsettled member is covered for', async () => {
@@ -233,7 +237,11 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${statedEarlierProgramId}-H${unsettledHouseholdId}-`));
-        expect(mintSpy).toHaveBeenCalledWith(statedEarlierProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-stated-earlier', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: statedEarlierProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-stated-earlier' }),
+            unsettledHouseholdId,
+            1000,
+        );
     });
 
     it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
