@@ -2,14 +2,16 @@
  * @jest-environment node
  */
 /**
- * Admission and view invariants for the budget-owner bucket and program-treasurer
+ * Admission and view invariants for the budget-owner bucket and bucket-approver
  * routes (#1280 §6). No DB: next-auth's getServerSession is the jest.setup.js mock.
+ * No program-treasurer route is registered any more; the path filter below keeps it so.
  *
  * 1. An id-less session holding every flag gets 401 from handler() on every route,
  *    and the route body never runs (boundary rule 6).
- * 2. Bucket reads and the treasurer list admit FINANCE or BOARD; bucket writes
- *    admit FINANCE alone; setting or clearing a treasurer admits BOARD alone.
- *    A sysadmin, a program leader or a plain member is admitted nowhere.
+ * 2. Bucket reads and the approver list admit FINANCE or BOARD; bucket writes
+ *    admit FINANCE alone; naming an owner or treasurer, and the people to name
+ *    them from, admit BOARD alone. A sysadmin, a program leader or a plain member
+ *    is admitted nowhere.
  * 3. No route lists isSysadmin, and no view grants pii or personal.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
@@ -60,9 +62,7 @@ const ctx = (auth: AuthResult): ResolverContext => ({
 
 const FINANCE_OR_BOARD = [
     'GET /api/budget-owners',
-    'GET /api/budget-owners/program-options',
     'GET /api/budget-owners/quickbooks-classes',
-    'GET /api/programs/[id]/treasurers',
     'GET /api/budget-owners/[id]/approvers',
 ];
 const FINANCE_ONLY = [
@@ -71,8 +71,6 @@ const FINANCE_ONLY = [
     'POST /api/budget-owners/[id]/archive',
 ];
 const BOARD_ONLY = [
-    'PUT /api/programs/[id]/treasurers/[personId]',
-    'DELETE /api/programs/[id]/treasurers/[personId]',
     'GET /api/budget-owners/approver-options',
     'PUT /api/budget-owners/[id]/owner',
     'PUT /api/budget-owners/[id]/treasurers/[personId]',

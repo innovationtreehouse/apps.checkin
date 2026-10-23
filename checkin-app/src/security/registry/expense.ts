@@ -3,7 +3,7 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 
 // FINANCE and BOARD read the whole surface: money (`internal`), every person id
 // and the reimbursee (`pii`), free text and stored payloads (`personal`).
-// A bucket approver (a program's leader or treasurer) passes the
+// A bucket approver (the bucket's owner or a treasurer) passes the
 // `expense-approver` gate, and the handler filters rows to the buckets the
 // caller approves (the narrow read is a route+query concern). On those rows
 // the approver sees `internal` only: amounts and state, not who submitted,
