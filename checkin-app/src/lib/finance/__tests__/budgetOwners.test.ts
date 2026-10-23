@@ -84,7 +84,7 @@ describe('QuickBooks Class id', () => {
 describe('listQuickBooksClasses', () => {
     test('lists every Class by full name, sorted, with inactive ones flagged', async () => {
         const classes = jest.fn().mockResolvedValue([
-            { Id: '9', Name: 'Robotics', FullyQualifiedName: 'Programs:Robotics' },
+            { Id: '9', Name: 'Robotics', FullyQualifiedName: 'Programs:Robotics' }, // no Active field: active
             { Id: '3', Name: 'Facility', FullyQualifiedName: 'Facility', Active: true },
             { Id: '4', Name: 'Old', FullyQualifiedName: 'Old', Active: false },
         ]);
@@ -99,5 +99,18 @@ describe('listQuickBooksClasses', () => {
     test('answers 503 while QuickBooks is off', async () => {
         jest.mocked(getQuickBooks).mockResolvedValue(null);
         await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503 });
+    });
+
+    test('answers 503, not 500, when QuickBooks fails the request', async () => {
+        const classes = jest.fn().mockRejectedValue(new Error('QuickBooks query failed: codes 3200'));
+        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks did not return its Classes. Try again shortly.' });
+    });
+
+    test('an empty company lists no Classes', async () => {
+        const classes = jest.fn().mockResolvedValue([]);
+        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
+        await expect(listQuickBooksClasses()).resolves.toEqual([]);
     });
 });
