@@ -22,6 +22,7 @@ import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, ty
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 
 export interface CallerContext {
     selfId?: number;
@@ -353,18 +354,13 @@ export async function resolveAccess(
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
             case 'expense-approver': {
-                // FINANCE, BOARD, or a derived bucket approver — a
-                // program leader (on the session) or a program treasurer (one DB
-                // read; the session carries no treasurer flag). Still no sysadmin.
+                // FINANCE, BOARD, or an approver of some bucket, read by the same
+                // lookup the expense library signs with (the session carries no
+                // approver flag). Still no sysadmin.
                 if (auth.type !== 'session') return { allowed: false };
                 const u = auth.user;
                 if (u.isFinance === true || u.isBoardMember === true) return { allowed: true };
-                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
-                const treasurer = await prisma.programVolunteer.findFirst({
-                    where: { personId: u.id, isTreasurer: true, person: LIVE_PERSON },
-                    select: { programId: true },
-                });
-                return { allowed: treasurer !== null };
+                return { allowed: (await bucketsApprovedBy(u.id)).length > 0 };
             }
             case 'expense-signer':
                 return {

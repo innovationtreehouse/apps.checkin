@@ -4,12 +4,14 @@
 /**
  * Every client gate in GATE_PAIRS admits exactly the personas its server token
  * admits, apart from the pair's listed differsFor (threat model D35). No DB: the
- * program treasurer lookup is stubbed to find the treasurer persona only.
+ * bucket-approver lookup is stubbed to find APPROVER_IDS only.
  */
-import prisma from '@/lib/prisma';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { resolveAccess, type CallerContext } from '@/security/access-resolvers';
-import { GATE_PAIRS, GATE_PERSONAS, TREASURER_IDS } from './gatePairs';
+import { APPROVER_IDS, GATE_PAIRS, GATE_PERSONAS } from './gatePairs';
+
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 const emptyContext = (): CallerContext => ({
     isKeyholder: false,
@@ -23,12 +25,8 @@ const emptyContext = (): CallerContext => ({
     ledHouseholdMemberIds: new Set(),
 });
 
-const treasurerLookup = jest.fn(async (args: { where: { personId: number } }) =>
-    TREASURER_IDS.has(args.where.personId) ? { programId: 1 } : null,
-);
-
 beforeEach(() => {
-    prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
+    jest.mocked(bucketsApprovedBy).mockImplementation(async (personId) => (APPROVER_IDS.has(personId) ? [1] : []));
 });
 
 describe('client gate ↔ server token equality', () => {

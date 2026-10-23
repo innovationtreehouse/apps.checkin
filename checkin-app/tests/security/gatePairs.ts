@@ -52,7 +52,7 @@ const PERSONA_CLAIMS = {
     staffAccount: staff,
     staffDomainUnverified: { ...staff, emailVerified: false },
     staffHdOffDomainEmail: { ...staff, email: 'persona@example.test' },
-    // A program treasurer has no session claim; the server reads it from the DB.
+    // A bucket treasurer has no session claim; the server reads it from the bucket-approver lookup.
     treasurer: { ageBand: 'adult' },
     sysadmin: { isSysadmin: true },
     board: { isBoardMember: true },
@@ -73,8 +73,10 @@ export const GATE_PERSONAS: Array<[PersonaName, AuthenticatedUser]> = Object.ent
     ([name, claims], i) => [name as PersonaName, { ...base, ...claims, id: i + 1 }],
 );
 
-/** Persona ids the server's treasurer lookup finds a treasurer row for. */
-export const TREASURER_IDS = new Set(GATE_PERSONAS.filter(([n]) => n === 'treasurer').map(([, u]) => u.id));
+/** Persona ids the stubbed bucket-approver lookup finds a bucket for: the treasurer and every program leader. */
+export const APPROVER_IDS = new Set(
+    GATE_PERSONAS.filter(([n, u]) => n === 'treasurer' || (u.programsLed?.length ?? 0) > 0).map(([, u]) => u.id),
+);
 
 /** The nav payload as todo-counts builds it for this viewer, every library released. */
 export function countsFor(user: AuthenticatedUser): TodoCounts {
@@ -85,8 +87,8 @@ export function countsFor(user: AuthenticatedUser): TodoCounts {
         buildingReachable: true,
         activePrograms: 0,
         releasedLibraries: [...LIBRARY_KEYS],
-        // The expense provider's approver signal, with the treasurer lookup stubbed like the server's.
-        libraries: { expense: { approver: user.programsLed?.length || TREASURER_IDS.has(user.id) ? 1 : 0 } },
+        // The expense provider's approver signal, from the same stubbed directory as the server's.
+        libraries: { expense: { approver: APPROVER_IDS.has(user.id) ? 1 : 0 } },
         lead: user.programsLed?.length
             ? { programs: user.programsLed.map((id) => ({ id, name: `p${id}`, totalEnrolled: 0, pending: [], upcoming: [] })) }
             : undefined,
@@ -135,6 +137,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSeeCatalog', client: canSeeCatalog, token: 'catalog-viewer' },
     { name: 'page /catalog', client: page('/catalog'), token: 'catalog-viewer' },
     { name: 'page /inventory/org-items', client: page('/inventory/org-items'), token: 'catalog-viewer' },
+    { name: 'tab /inventory/receive-queue', client: tab(INVENTORY, '/inventory/receive-queue'), token: routeToken('GET /api/inventory/receive-queue') },
+    { name: 'page /inventory/receive-queue', client: page('/inventory/receive-queue'), token: routeToken('GET /api/inventory/receive-queue') },
+    { name: 'tab /inventory/received-deltas', client: tab(INVENTORY, '/inventory/received-deltas'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
+    { name: 'page /inventory/received-deltas', client: page('/inventory/received-deltas'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },

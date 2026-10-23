@@ -3,16 +3,16 @@
  */
 /**
  * Admission and view invariants for the expense routes (#1272 §5/§6). No DB:
- * next-auth's getServerSession is the jest.setup.js mock, and the program
- * treasurer admission lookup is stubbed per test.
+ * next-auth's getServerSession is the jest.setup.js mock, and the bucket
+ * approver lookup is stubbed per test.
  *
  * 1. An id-less session holding every flag gets 401 from handler() on every
  *    expense route, and the route body never runs: authenticateRequest turns a
  *    session without an integer id into 'unauthenticated' (boundary rule 6).
  *    Every expense gate also denies it at resolveAccess on its own.
- * 2. `expense-approver` admits FINANCE, BOARD, a program leader or a program
- *    treasurer (one DB read), never a plain member or a sysadmin alone. It gates
- *    the nine approver routes.
+ * 2. `expense-approver` admits FINANCE, BOARD or an approver of some bucket
+ *    (one directory read), never a plain member, a sysadmin alone, or a program
+ *    leader who approves no bucket. It gates the nine approver routes.
  * 3. Sign-off is `expense-signer`: anyone `receipt-submitter` (the submitter seat)
  *    or `expense-approver` (every other seat) admits. The library picks the seat.
  * 4. No expense route lists isSysadmin in its orderedView, and pii/personal go to
@@ -24,8 +24,10 @@ import { allRoutes, type Authorize } from '@/security/core';
 import { handler } from '@/security/handler';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import prisma from '@/lib/prisma';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import '@/security/registry';
+
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -88,13 +90,13 @@ const APPROVER_ROUTES = [
     'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception',
 ];
 
-let treasurerRow: { programId: number } | null;
-const treasurerLookup = jest.fn(async () => treasurerRow);
+let approvedBuckets: number[];
+const approverLookup = jest.mocked(bucketsApprovedBy);
 
 beforeEach(() => {
-    treasurerRow = null;
-    treasurerLookup.mockClear();
-    prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
+    approvedBuckets = [];
+    approverLookup.mockReset();
+    approverLookup.mockImplementation(async () => approvedBuckets);
 });
 
 const admitted = async (route: { authorize: Authorize }, user: Partial<AuthenticatedUser>) =>
@@ -129,7 +131,7 @@ describe('expense admission', () => {
     });
 
     test.each(expense)('%s denies an id-less session holding every flag at resolveAccess', async (_e, route) => {
-        treasurerRow = { programId: 1 };
+        approvedBuckets = [1];
         expect((await resolveAccess(route.authorize, ctx(idless))).allowed).toBe(false);
     });
 
@@ -153,17 +155,13 @@ describe('expense admission', () => {
         expect(await admitted(route, { isSysadmin: true })).toBe(endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a program leader with an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
-        expect(await admitted(route, { programsLed: [1], isActiveOrgMember: true })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
-    });
-
-    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
-        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
-    });
-
-    test.each(expense)('%s: a treasurer who leads no program is admitted on approver routes and sign-off', async (endpoint, route) => {
-        treasurerRow = { programId: 1 };
+    test.each(expense)('%s: a bucket approver is admitted on approver routes and sign-off', async (endpoint, route) => {
+        approvedBuckets = [1];
         expect(await admitted(route, {})).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
+    });
+
+    test.each(expense)('%s: a program leader who approves no bucket is admitted nowhere', async (_e, route) => {
+        expect(await admitted(route, { programsLed: [1] })).toBe(false);
     });
 
     test.each(expense)('%s: a plain member is admitted nowhere', async (_e, route) => {
@@ -188,31 +186,28 @@ describe('expense admission', () => {
         }
     });
 
-    // Whatever receipt-submitter requires (an adult member), a program leader
-    // or treasurer still reaches sign-off through the approver leg.
-    test.each<[string, Partial<AuthenticatedUser>, { programId: number } | null]>([
-        ['program leader', { programsLed: [1] }, null],
-        ['treasurer leading no program', {}, { programId: 1 }],
-    ])('sign-off admits a %s on the approver leg', async (_who, user, treasurer) => {
-        treasurerRow = treasurer;
-        expect(await admitted({ authorize: 'expense-approver' }, user)).toBe(true);
-        expect(await admitted(expenseRoute(SIGN_OFF), user)).toBe(true);
+    // Whatever receipt-submitter requires (an adult member), a bucket approver
+    // still reaches sign-off through the approver leg.
+    test('sign-off admits a bucket approver on the approver leg', async () => {
+        approvedBuckets = [1];
+        expect(await admitted({ authorize: 'expense-approver' }, {})).toBe(true);
+        expect(await admitted(expenseRoute(SIGN_OFF), {})).toBe(true);
     });
 
     test('sign-off admits exactly the union of receipt-submitter and expense-approver', async () => {
-        const callers: Array<[string, Partial<AuthenticatedUser>, { programId: number } | null]> = [
-            ['plain member', {}, null],
-            ['treasurer leading no program', {}, { programId: 1 }],
-            ['program leader', { programsLed: [1] }, null],
-            ['FINANCE', { isFinance: true }, null],
-            ['BOARD', { isBoardMember: true }, null],
-            ['keyholder', { isKeyholder: true }, null],
-            ['adult with no role', { ageBand: 'adult' }, null],
-            ['adult member with no role', { ageBand: 'adult', isActiveOrgMember: true }, null],
-            ['youth Volunteer Family member', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, null],
+        const callers: Array<[string, Partial<AuthenticatedUser>, number[]]> = [
+            ['plain member', {}, []],
+            ['bucket approver', {}, [1]],
+            ['program leader approving no bucket', { programsLed: [1] }, []],
+            ['FINANCE', { isFinance: true }, []],
+            ['BOARD', { isBoardMember: true }, []],
+            ['keyholder', { isKeyholder: true }, []],
+            ['adult with no role', { ageBand: 'adult' }, []],
+            ['adult member with no role', { ageBand: 'adult', isActiveOrgMember: true }, []],
+            ['youth Volunteer Family member', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, []],
         ];
-        for (const [who, user, treasurer] of callers) {
-            treasurerRow = treasurer;
+        for (const [who, user, buckets] of callers) {
+            approvedBuckets = buckets;
             const union = (await admitted({ authorize: 'receipt-submitter' }, user)) || (await admitted({ authorize: 'expense-approver' }, user));
             expect([who, await admitted(expenseRoute(SIGN_OFF), user)]).toEqual([who, union]);
         }
@@ -225,16 +220,16 @@ describe('expense admission', () => {
         },
     );
 
-    test('the treasurer leg reads the DB once, for the caller, only when no flag or lead admits', async () => {
-        treasurerRow = { programId: 1 };
+    test('the approver leg runs the lookup once, for the caller, only when no flag admits', async () => {
+        approvedBuckets = [1];
         expect(await admitted({ authorize: 'expense-approver' }, {})).toBe(true);
-        expect(treasurerLookup).toHaveBeenCalledTimes(1);
-        expect(treasurerLookup).toHaveBeenCalledWith({ where: { personId: 5, isTreasurer: true, person: { mergedIntoId: null } }, select: { programId: true } });
+        expect(approverLookup).toHaveBeenCalledTimes(1);
+        expect(approverLookup).toHaveBeenCalledWith(5);
 
-        treasurerLookup.mockClear();
-        expect(await admitted({ authorize: 'expense-approver' }, { programsLed: [1] })).toBe(true);
+        approverLookup.mockClear();
         expect(await admitted({ authorize: 'expense-approver' }, { isFinance: true })).toBe(true);
-        expect(treasurerLookup).not.toHaveBeenCalled();
+        expect(await admitted({ authorize: 'expense-approver' }, { isBoardMember: true })).toBe(true);
+        expect(approverLookup).not.toHaveBeenCalled();
     });
 });
 

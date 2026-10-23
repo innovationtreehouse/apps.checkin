@@ -5,7 +5,7 @@
  * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
  * except the in-kind decision, which admits FINANCE or BOARD. Ops (OPERATIONS,
  * INVENTORY_MANAGER) reaches only the no-receipt in-kind entry routes, and never
- * sees a donor. A bucket approver (program leader or treasurer) reaches only the
+ * sees a donor. A bucket approver (its owner or a treasurer) reaches only the
  * by-bucket read, and never sees a donor. Sysadmin, a plain session, an id-less
  * session and no session are refused on every route. UploadedFile.fileBlob
  * leaves only through the file route.
@@ -15,7 +15,7 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import prisma from '@/lib/prisma';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import type { AuthResult } from '@/types/auth';
 import { allRoutes, getFileRoute, getRoute, isFileOnlyField } from '@/security/core';
 import { handler } from '@/security/handler';
@@ -65,14 +65,15 @@ async function callJson(endpoint: string) {
     return { status: res.status, impl, body: res.status === 200 ? await res.json() : undefined };
 }
 
-let treasurerRow: { programId: number } | null;
-const treasurerLookup = jest.fn(async () => treasurerRow);
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
+
+let approvedBuckets: number[];
 
 beforeEach(() => {
     mockSession.mockReset();
-    treasurerRow = null;
-    treasurerLookup.mockClear();
-    prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
+    approvedBuckets = [];
+    jest.mocked(bucketsApprovedBy).mockReset();
+    jest.mocked(bucketsApprovedBy).mockImplementation(async () => approvedBuckets);
 });
 
 describe('donation registry — shape', () => {
@@ -291,8 +292,9 @@ describe('in-kind by-bucket route — bucket approvers', () => {
         return { status: res.status, impl, row: res.status === 200 ? (await res.json())[0] as Record<string, unknown> : undefined };
     }
 
-    it('admits a program leader and shows the gift without the donor', async () => {
-        const { status, row } = await listAs({ programsLed: [4] });
+    it('admits a bucket approver and shows the gift without the donor', async () => {
+        approvedBuckets = [4];
+        const { status, row } = await listAs({});
         expect(status).toBe(200);
         expect(row).toEqual({
             id: 1,
@@ -304,9 +306,8 @@ describe('in-kind by-bucket route — bucket approvers', () => {
         });
     });
 
-    it('admits a program treasurer', async () => {
-        treasurerRow = { programId: 4 };
-        expect((await listAs({})).status).toBe(200);
+    it('refuses a program leader who approves no bucket', async () => {
+        expect((await listAs({ programsLed: [4] })).status).toBe(403);
     });
 
     it.each([{ isFinance: true }, { isBoardMember: true }])('shows %p the gift without the donor', async flags => {
@@ -317,8 +318,9 @@ describe('in-kind by-bucket route — bucket approvers', () => {
         expect(row).not.toHaveProperty('donorCompanyName');
     });
 
-    it.each(endpoints.filter(e => e !== BY_BUCKET))('%s refuses a program leader (403)', async endpoint => {
-        signIn(7, { programsLed: [4] });
+    it.each(endpoints.filter(e => e !== BY_BUCKET))('%s refuses a bucket approver (403)', async endpoint => {
+        approvedBuckets = [4];
+        signIn(7, {});
         const { status, impl } = await callJson(endpoint);
         expect(status).toBe(403);
         expect(impl).not.toHaveBeenCalled();

@@ -28,6 +28,7 @@ const ORACLE_DIR = path.join(__dirname, '..', '..', 'src', 'security', '__tests_
 // Each entry is a model or route whose visibility nothing else asserts.
 const ORACLES = [
     'active-visitors-tombstone.test.ts',
+    'budget-owner-strip.test.ts',
     'caller-context-no-id.integration.test.ts',
     'classification-sources.test.ts',
     'cron-secret-authorize.test.ts',

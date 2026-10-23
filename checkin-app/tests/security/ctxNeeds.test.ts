@@ -39,17 +39,14 @@ import {
 import { stripValue } from '@/security/stripper';
 import { SCOPE_BINDINGS } from '@/security/scopeBindings';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import prisma from '@/lib/prisma';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface.
 import '@/security/registry';
 
-// expense-approver's treasurer leg makes one inline DB read, independent of
+// expense-approver's approver leg makes one directory read, independent of
 // CallerContext, so masked ≡ full still holds; this stub keeps the "no real DB"
 // invariant (jest.setup rejects the real client).
-beforeAll(() => {
-    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
-});
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn(async () => []) }));
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────
 

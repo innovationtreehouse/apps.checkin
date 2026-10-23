@@ -97,6 +97,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         // themselves or their own household. Compared by value because the edit form
         // resubmits the unchanged date with every save.
         let bgStaleWarning: string | undefined;
+        let bgAssertedReason: string | undefined;
         if (lastBackgroundCheck !== undefined) {
             const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
             if (changed && await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
@@ -104,6 +105,20 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                 attempted: { lastBackgroundCheck },
             })) {
                 return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+            }
+
+            // A later date extends the check's validity, which clears the person with no
+            // reviewer, so only the Board may assert it and must say why.
+            const extendsValidity = lastBackgroundCheck !== null
+                && (!prior.lastBackgroundCheck || lastBackgroundCheck.getTime() > prior.lastBackgroundCheck.getTime());
+            if (extendsValidity) {
+                if (!auth.user.isBoardMember) {
+                    return apiError("Only a Board member can set a later background check date", 403);
+                }
+                bgAssertedReason = typeof body.bgCheckReason === "string" ? body.bgCheckReason.trim() : "";
+                if (!bgAssertedReason) {
+                    return apiError("Setting a later background check date needs a reason stating the check happened", 400);
+                }
             }
 
             // A lead's check going from covering the coming year to not covering it can
@@ -132,7 +147,23 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         // ends every existing link; the next sign-in must come from the new address.
         const emailChanged = body.email !== undefined
             && normalizeEmail(body.email ?? "") !== normalizeEmail(prior.email ?? "");
+        let emailChangeReason: string | undefined;
         if (emailChanged) {
+            // The email decides who signs in as this person, so only a board member
+            // outside their household changes it, and says why.
+            if (!auth.user.isBoardMember) {
+                return apiError("Only a board member can change a person's email.", 403);
+            }
+            emailChangeReason = typeof body.emailChangeReason === "string" ? body.emailChangeReason.trim() : "";
+            if (!emailChangeReason) {
+                return apiError("Give a reason for changing this person's email.", 400);
+            }
+            if (await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
+                table: "Person",
+                attempted: { email: body.email ?? null },
+            })) {
+                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+            }
             updateData.emailVerified = null;
             updateData.googleId = null;
         }
@@ -153,7 +184,12 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                     tableName: "Person",
                     affectedEntityId: id,
                     oldData: prior,
-                    newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
+                    newData: {
+                        ...updateData,
+                        ...(bgStaleWarning && { bgStaleWarning }),
+                        ...(bgAssertedReason && { bgAssertedReason }),
+                        ...(emailChangeReason && { emailChangeReason }),
+                    },
                 },
             });
             if (unlinked > 0) {

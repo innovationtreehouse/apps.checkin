@@ -6,7 +6,6 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { PageLoader } from "@/components/ui/PageLoader";
-import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 
 interface Bucket {
@@ -148,7 +147,7 @@ export default function BudgetsPage() {
   if (!ready) return null;
 
   return (
-    <PageContainer>
+    <>
       <Stack>
         <Title order={2}>Budgets</Title>
         <Text c="dimmed">
@@ -251,7 +250,7 @@ export default function BudgetsPage() {
           onClose={() => setTreasurerBucket(null)}
         />
       )}
-    </PageContainer>
+    </>
   );
 }
 

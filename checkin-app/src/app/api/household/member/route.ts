@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError } from "@/lib/household/leads";
+import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError } from "@/lib/household/leads";
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
@@ -15,6 +15,8 @@ import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInEmail";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 export const PATCH = withAuth(
     {},
@@ -77,6 +79,18 @@ export const PATCH = withAuth(
                 return apiError("That household member was not found", 404);
             }
 
+            // A sysadmin manages their own household without leading it, so making
+            // someone its lead that way is a grant to their own household.
+            if (isLead === true && participantId !== userId && !targetHouseholdMember.isHouseholdLead) {
+                const actor = await prisma.person.findUnique({ where: { id: userId }, select: { isHouseholdLead: true } });
+                if (!actor?.isHouseholdLead && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId }, {
+                    table: "Person",
+                    attempted: { isHouseholdLead: true },
+                })) {
+                    return apiError("Only a lead of this household can make someone else its lead.", 403);
+                }
+            }
+
             // A linked sign-in's email is its sign-in address; only the board changes it.
             if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
                 const { replyTo } = await getEmailSenderIdentity();
@@ -103,7 +117,7 @@ export const PATCH = withAuth(
                 return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
-            const { updatedHouseholdMember, leadRejection, warning } = await prisma.$transaction(async (tx) => {
+            const { updatedHouseholdMember, leadRejection, deniedLead, warning } = await prisma.$transaction(async (tx) => {
                 const updatedHouseholdMember = await tx.person.update({
                     where: { id: participantId },
                     data: {
@@ -126,6 +140,7 @@ export const PATCH = withAuth(
                 // rather than 400 the whole edit, so the form can say the member's
                 // details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;
+                let deniedLead: HouseholdLeadDeniedError | null = null;
 
                 if (isLead !== undefined && participantId !== userId) {
                     const currentTarget = await tx.person.findUnique({
@@ -149,6 +164,9 @@ export const PATCH = withAuth(
                         } catch (e) {
                             if (e instanceof HouseholdLeadLimitError) {
                                 leadRejection = e.message;
+                            } else if (e instanceof HouseholdLeadDeniedError) {
+                                leadRejection = e.message;
+                                deniedLead = e;
                             } else {
                                 throw e;
                             }
@@ -186,9 +204,12 @@ export const PATCH = withAuth(
                 // emergency contact (direction B): re-evaluate and warn if so.
                 const warning = await reconcileAndWarn(tx, householdId);
 
-                return { updatedHouseholdMember, leadRejection, warning };
+                return { updatedHouseholdMember, leadRejection, deniedLead, warning };
             });
             invalidateAttendanceCache();
+            if (deniedLead) {
+                await raiseDeniedHouseholdActivity({ householdId: deniedLead.householdId, personId: deniedLead.personId, what: "household lead promotion refused" });
+            }
 
             return NextResponse.json({
                 householdMember: updatedHouseholdMember,

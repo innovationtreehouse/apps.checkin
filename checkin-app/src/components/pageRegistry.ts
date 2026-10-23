@@ -33,12 +33,14 @@ const SHOP = SHOP_OPS.visible;
 const CATALOG = linkGate(INVENTORY, '/catalog/items');
 const ORG_INVENTORY = linkGate(INVENTORY, '/inventory/org-items');
 const INVENTORY_MANAGER = linkGate(INVENTORY, '/inventory/merge-conflicts');
+const INVENTORY_RECEIVING = linkGate(INVENTORY, '/inventory/receive-queue');
 const RECEIVING = linkGate(INVENTORY, '/inventory/receiving');
 const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
-const EXPENSES = linkGate(EXPENSE_OPS, '/expense');
+const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
+const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
 const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
@@ -103,12 +105,13 @@ export const PAGES: PageEntry[] = [
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
-  // Org inventory (#1287) — same viewer gate; the work-queue screens are
+  // Org inventory (#1287) — same viewer gate; the receiving screens are
+  // INVENTORY_MANAGER, FINANCE or BOARD (#2384) and the work-queue screens
   // INVENTORY_MANAGER-only, like their routes.
   { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: ORG_INVENTORY },
   { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: ORG_INVENTORY },
-  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: ORG_INVENTORY },
-  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: ORG_INVENTORY },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: INVENTORY_RECEIVING },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: INVENTORY_RECEIVING },
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
@@ -131,7 +134,7 @@ export const PAGES: PageEntry[] = [
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
   { href: '/receipts/upload', label: 'Upload Receipt', section: 'My Receipts', keywords: 'receipt photo pdf purchase donation', visible: linkGate(MY_RECEIPTS, '/receipts/upload') },
   { href: '/receipts/review', label: 'Receipts Review', section: 'Receipt Review', keywords: 'receipt finance tax duplicate', visible: RECEIPT_FINANCE },
-  { href: '/receipts/mail', label: 'Receipt Mail Queue', section: 'Receipt Review', keywords: 'receipt email gmail held assign discard', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
+  { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Receipt Review', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipt Review', keywords: 'tax exempt age limit', visible: linkGate(RECEIPT_REVIEW, '/receipts/settings') },
 
   // Facility Ops — board, plus operations on the two aggregate tools. The index
@@ -183,7 +186,7 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE_TOOLS },
 
   // Expense Ops — FINANCE or BOARD
-  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: EXPENSE_OPS.visible },
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: BUDGETS },
   { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
   { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: EXPENSES },
   { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: EXPENSES },

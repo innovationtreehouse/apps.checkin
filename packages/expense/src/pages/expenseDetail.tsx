@@ -153,6 +153,7 @@ function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee
 
 /**
  * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
+ * `listHref` is the page it was opened from, which the back link returns to.
  * `testDataToggle` is the host's word that this is dev or local; the route 404s anywhere else.
  */
 export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", testDataToggle = false }: { id: string; listHref?: string; testDataToggle?: boolean }) {
@@ -208,7 +209,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   return (
     <Stack>
-      <Anchor href={listHref} size="sm">← Expenses</Anchor>
+      <Anchor href={listHref} size="sm">← Back</Anchor>
       <Group>
         <Title order={3}>{e.vendorName ?? e.id}</Title>
         <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>

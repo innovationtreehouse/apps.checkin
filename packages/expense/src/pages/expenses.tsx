@@ -1,11 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Anchor, Badge, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface ExpenseRow {
   id: string;
@@ -31,16 +30,21 @@ const VIEWS = [
 
 /** /expense/expenses — FINANCE and Board's expense queue. */
 export default function ExpensesPage() {
-  return <ExpenseList detailBase="/expense/expenses" defaultView="all" subNav />;
+  return <ExpenseList detailBase="/expense/expenses" defaultView="all" />;
 }
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
  * same list serves Expense Ops and the approver's Programs I Lead tab.
  */
-export function ExpenseList({ detailBase, defaultView, subNav = false }: { detailBase: string; defaultView: string; subNav?: boolean }) {
-  const [view, setView] = useState(defaultView);
-  const [page, setPage] = useState(1);
+export function ExpenseList({ detailBase, defaultView }: { detailBase: string; defaultView: string }) {
+  // The view and page ride in the URL, so an expense opened from here returns to the same slice.
+  const router = useRouter();
+  const params = useSearchParams();
+  const view = VIEWS.some((v) => v.value === params.get("view")) ? (params.get("view") as string) : defaultView;
+  const page = Math.max(1, Number(params.get("page")) || 1);
+  const listHref = (v: string, p: number) => `${detailBase}?view=${v}&page=${p}`;
+  const show = (v: string, p: number) => router.replace(listHref(v, p), { scroll: false });
   const counts = useLoad<Record<string, number>>("/counts");
   const rows = useLoad<ExpenseRow[]>(`/expenses?view=${view}&page=${page}&limit=${PAGE_SIZE}`);
   const total = useLoad<{ total: number }>(`/expenses/count?view=${view}`);
@@ -52,12 +56,11 @@ export function ExpenseList({ detailBase, defaultView, subNav = false }: { detai
 
   return (
     <>
-      {subNav && <ExpenseSubNav current="/expense/expenses" />}
       <Title order={3} mb="md">Expenses</Title>
       <SegmentedControl
         mb="md"
         value={view}
-        onChange={(v) => { setView(v); setPage(1); }}
+        onChange={(v) => show(v, 1)}
         data={VIEWS.map((v) => ({ value: v.value, label: label(v) }))}
       />
       {rows.error && <LoadError what="expenses" message={rows.error} onRetry={rows.reload} />}
@@ -74,7 +77,7 @@ export function ExpenseList({ detailBase, defaultView, subNav = false }: { detai
           {(rows.data ?? []).map((e) => (
             <Table.Tr key={e.id}>
               <Table.Td>
-                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}`}>{e.vendorName ?? e.id}</Anchor>
+                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}?from=${encodeURIComponent(listHref(view, page))}`}>{e.vendorName ?? e.id}</Anchor>
                 {e.needsReimbursement && <Badge ml="xs" size="xs" variant="light">Reimbursement</Badge>}
               </Table.Td>
               <Table.Td>{e.receiptDate ?? "—"}</Table.Td>
@@ -88,7 +91,7 @@ export function ExpenseList({ detailBase, defaultView, subNav = false }: { detai
       </Table>
       {rows.data?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
       <Group justify="center" mt="md">
-        <Pagination value={page} onChange={setPage} total={Math.max(1, Math.ceil((total.data?.total ?? 0) / PAGE_SIZE))} />
+        <Pagination value={page} onChange={(p) => show(view, p)} total={Math.max(1, Math.ceil((total.data?.total ?? 0) / PAGE_SIZE))} />
       </Group>
     </>
   );

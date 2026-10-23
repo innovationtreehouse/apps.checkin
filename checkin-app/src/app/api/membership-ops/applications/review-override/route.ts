@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  *             must name the adults it covers (subjectPersonIds) — the board asserts
  *             them, since a blocked process has no second approval to count.
  */
-export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
+export const POST = withAuth({ roles: ["isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     let body: { processId?: number; action?: "reset" | "approve"; subjectPersonIds?: number[] };
     try {

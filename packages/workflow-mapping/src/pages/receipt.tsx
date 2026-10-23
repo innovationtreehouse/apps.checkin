@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, formatCents, useCanManage, useLoad } from "../components/api";
+import { STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 
 interface Receipt {
   id: number;
@@ -70,8 +70,11 @@ function lateEdits(rows: AuditRow[] | null): Map<Leg, Set<number>> {
   return byLeg;
 }
 
-/** /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls. */
-export default function ReceiptPage() {
+/**
+ * /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls.
+ * `backHref` is the page it was opened from, which the back link returns to.
+ */
+export default function ReceiptPage({ backHref = "/inventory/receiving" }: { backHref?: string }) {
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
@@ -96,6 +99,7 @@ export default function ReceiptPage() {
       setBusy(false);
       detail.reload();
       audit.reload();
+      notifyNavCounts();
     }
   }
 
@@ -115,7 +119,7 @@ export default function ReceiptPage() {
 
   return (
     <>
-      <Anchor component={Link} href="/inventory/receiving" size="sm">← Receiving</Anchor>
+      <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
       <Group justify="space-between" my="md">
         <Stack gap={0}>
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
