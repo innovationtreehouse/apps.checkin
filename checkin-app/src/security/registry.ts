@@ -861,6 +861,10 @@ defineRoute({
 });
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
+// A surface's tiers are enforced only for a caller that goes through
+// outboundCall(), and an entry's comment says when that is so. Every other
+// entry is an inventory, not a guarantee: its tiers state what the code sends
+// today, and changing them changes nothing on the wire.
 
 // src/lib/shopify/ surfaces → <SHOPIFY_STORE_DOMAIN> Admin API. Each write builds
 // its request only from the stripped bag inside outboundCall().
@@ -913,8 +917,11 @@ defineOutbound({
     tiers: ['public', 'pii'],
 });
 
-// packages/* surfaces. Packages call these directly, not through outboundCall();
-// check-route-coverage confines each to the files PACKAGE_EGRESS_FILES maps to it.
+// packages/* and *-function surfaces. These callers use fetch or an SDK
+// directly, not outboundCall(), except where an entry says otherwise.
+// check-route-coverage confines each surface to the files PACKAGE_EGRESS_FILES
+// (egressAllowlist.ts) maps to it, and only for a host it can see in a literal
+// or SDK import.
 
 defineOutbound({
     surface: 'quickbooks.query',
@@ -972,7 +979,8 @@ defineOutbound({
 
 defineOutbound({
     surface: 'gmail.read',
-    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com, gmail.readonly scope.
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com. Read-only by intent:
+    // the token comes from a refresher outside this repo and its scope is not checked.
     // List/get requests only: a date-window query string and message/attachment ids;
     // no model data. Mail read back is tiered by the receipt models that store it.
     tiers: [],
