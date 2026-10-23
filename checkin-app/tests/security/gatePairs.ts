@@ -52,7 +52,7 @@ const PERSONA_CLAIMS = {
     staffAccount: staff,
     staffDomainUnverified: { ...staff, emailVerified: false },
     staffHdOffDomainEmail: { ...staff, email: 'persona@example.test' },
-    // A bucket treasurer has no session claim; the server reads it from the approver directory.
+    // A bucket treasurer has no session claim; the server reads it from the bucket-approver lookup.
     treasurer: { ageBand: 'adult' },
     sysadmin: { isSysadmin: true },
     board: { isBoardMember: true },
@@ -73,7 +73,7 @@ export const GATE_PERSONAS: Array<[PersonaName, AuthenticatedUser]> = Object.ent
     ([name, claims], i) => [name as PersonaName, { ...base, ...claims, id: i + 1 }],
 );
 
-/** Persona ids the stubbed approver directory finds a bucket for: the treasurer and every program leader. */
+/** Persona ids the stubbed bucket-approver lookup finds a bucket for: the treasurer and every program leader. */
 export const APPROVER_IDS = new Set(
     GATE_PERSONAS.filter(([n, u]) => n === 'treasurer' || (u.programsLed?.length ?? 0) > 0).map(([, u]) => u.id),
 );

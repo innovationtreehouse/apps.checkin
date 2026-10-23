@@ -4,14 +4,14 @@
 /**
  * Every client gate in GATE_PAIRS admits exactly the personas its server token
  * admits, apart from the pair's listed differsFor (threat model D35). No DB: the
- * bucket approver directory is stubbed to find APPROVER_IDS only.
+ * bucket-approver lookup is stubbed to find APPROVER_IDS only.
  */
-import { signoff } from '@/lib/expense/configure';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import { APPROVER_IDS, GATE_PAIRS, GATE_PERSONAS } from './gatePairs';
 
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 const emptyContext = (): CallerContext => ({
     isKeyholder: false,
@@ -26,7 +26,7 @@ const emptyContext = (): CallerContext => ({
 });
 
 beforeEach(() => {
-    jest.mocked(signoff.bucketsApprovedBy).mockImplementation(async (personId) => (APPROVER_IDS.has(personId) ? [1] : []));
+    jest.mocked(bucketsApprovedBy).mockImplementation(async (personId) => (APPROVER_IDS.has(personId) ? [1] : []));
 });
 
 describe('client gate ↔ server token equality', () => {
