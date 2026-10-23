@@ -30,6 +30,8 @@ interface TreasurerRow {
   person: { id: number; name: string };
 }
 
+const UNREACHABLE = "Couldn't reach the server. Check your connection and try again.";
+
 /** Sends a write; returns null on success, else a message saying why it failed. */
 async function send(url: string, method: string, body?: unknown): Promise<string | null> {
   let res: Response;
@@ -40,9 +42,30 @@ async function send(url: string, method: string, body?: unknown): Promise<string
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    return "Couldn't reach the server. Check your connection and try again.";
+    return UNREACHABLE;
   }
-  if (res.ok) return null;
+  return res.ok ? null : failureMessage(res);
+}
+
+type Loaded<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** Reads a list; never throws, so a failed read can always be shown. */
+async function get<T>(url: string): Promise<Loaded<T>> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    return { ok: false, error: UNREACHABLE };
+  }
+  if (!res.ok) return { ok: false, error: await failureMessage(res) };
+  try {
+    return { ok: true, data: (await res.json()) as T };
+  } catch {
+    return { ok: false, error: `The server sent an unreadable reply (${res.status}).` };
+  }
+}
+
+async function failureMessage(res: Response): Promise<string> {
   const data: unknown = await res.json().catch(() => null);
   if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
     return `${data.error} (${res.status})`;
@@ -79,17 +102,13 @@ export default function BudgetsPage() {
   const [treasurerBucket, setTreasurerBucket] = useState<Bucket | null>(null);
 
   const load = useCallback(() => Promise.all([
-    fetch(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
-    fetch("/api/budget-owners/program-options"),
-  ])
-    .then(async ([b, p]) => {
-      if (b.ok) setBuckets(await b.json());
-      if (p.ok) setPrograms(await p.json());
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [showArchived]);
+    get<Bucket[]>(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
+    get<ProgramOption[]>("/api/budget-owners/program-options"),
+  ]).then(([b, p]) => {
+    if (b.ok) setBuckets(b.data); else showError("Buckets not loaded", b.error);
+    if (p.ok) setPrograms(p.data); else showError("Programs not loaded", p.error);
+    setLoading(false);
+  }), [showArchived]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -249,14 +268,18 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<TreasurerRow[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let live = true;
-    fetch(`/api/programs/${programId}/treasurers`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: TreasurerRow[]) => { if (live) setRows(data); });
+    void get<TreasurerRow[]>(`/api/programs/${programId}/treasurers`).then((result) => {
+      if (!live) return;
+      if (result.ok) { setRows(result.data); setLoadFailed(false); return; }
+      showError("Treasurers not loaded", result.error);
+      setLoadFailed(true);
+    });
     return () => { live = false; };
   }, [programId, version]);
 
@@ -273,7 +296,9 @@ function TreasurersModal({ programId, programName, canEdit, onClose }: {
           Treasurers come from the Board-approved program budget; only the Board sets them. Nobody may
           set themself or anyone in their own household.
         </Text>
-        {rows === null ? (
+        {rows === null && loadFailed ? (
+          <Text c="dimmed">Treasurers couldn&apos;t be loaded.</Text>
+        ) : rows === null ? (
           <Center><Loader size="sm" /></Center>
         ) : rows.length === 0 ? (
           <Text c="dimmed">This program has no volunteers.</Text>

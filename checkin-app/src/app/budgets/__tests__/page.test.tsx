@@ -17,7 +17,8 @@ const programBucket = {
   program: { id: 3, name: "Robotics Team" },
 };
 
-type Write = () => Promise<Response>;
+type Reply = () => Promise<Response>;
+type Reads = Partial<Record<"buckets" | "treasurers", Reply>>;
 
 function jsonResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -27,18 +28,22 @@ function htmlResponse(status: number): Response {
   return { ok: false, status, json: async () => { throw new SyntaxError("Unexpected token <"); } } as unknown as Response;
 }
 
-// GETs serve the page's lists; every other method answers with `write`.
-function mockServer(write: Write) {
+// GETs serve the page's lists, unless `reads` overrides one; every other method answers with `write`.
+function mockServer(write: Reply, reads: Reads = {}) {
   global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (init?.method) return write();
     if (url.includes("/program-options")) return jsonResponse(200, []);
     if (url.includes("/treasurers")) {
+      if (reads.treasurers) return reads.treasurers();
       return jsonResponse(200, [{ programId: 3, personId: 9, isTreasurer: false, person: { id: 9, name: "Tess Treasurer" } }]);
     }
+    if (reads.buckets) return reads.buckets();
     return jsonResponse(200, [programBucket]);
   }) as unknown as typeof fetch;
 }
+
+const ok: Reply = async () => jsonResponse(200, {});
 
 async function createBucket() {
   renderWithProviders(<BudgetsPage />);
@@ -104,6 +109,50 @@ describe("budgets page write errors", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Shop");
   });
 
+  it("shows a save failure in a red chip", async () => {
+    mockServer(async () => jsonResponse(400, { error: "name is required" }));
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not saved",
+      message: "name is required (400)",
+      autoClose: false,
+    })));
+  });
+
+  it("shows an archive failure in a red chip", async () => {
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    mockServer(async () => htmlResponse(503));
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not archived",
+      message: "The server is unavailable (503). Try again in a minute.",
+      autoClose: false,
+    })));
+  });
+
+  it("shows a red chip when the reload after a write fails", async () => {
+    let reloads = 0;
+    mockServer(ok, {
+      buckets: async () => (reloads++ === 0 ? jsonResponse(200, [programBucket]) : htmlResponse(502)),
+    });
+    await createBucket();
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Buckets not loaded",
+      message: "The server is unavailable (502). Try again in a minute.",
+      autoClose: false,
+    })));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." }));
+  });
+
   it("shows a treasurer change failure in a red chip", async () => {
     mockServer(async () => jsonResponse(403, { error: "You can't set a role or flag on yourself or anyone in your own household." }));
     renderWithProviders(<BudgetsPage />);
@@ -116,5 +165,19 @@ describe("budgets page write errors", () => {
       message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
       autoClose: false,
     })));
+  });
+
+  it("says the treasurers couldn't be loaded instead of spinning", async () => {
+    mockServer(ok, { treasurers: async () => { throw new TypeError("Failed to fetch"); } });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Treasurers" }));
+
+    expect(await screen.findByText("Treasurers couldn't be loaded.")).toBeInTheDocument();
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Treasurers not loaded",
+      message: "Couldn't reach the server. Check your connection and try again.",
+      autoClose: false,
+    }));
   });
 });
