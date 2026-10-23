@@ -5,7 +5,7 @@ import {
 } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
-import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
+import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 
@@ -47,8 +47,6 @@ interface Expense {
   backfill: boolean;
   isTestData?: boolean;
   qbMatchState?: string;
-  singleSource?: boolean;
-  financeNotEveryday?: boolean;
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
@@ -81,10 +79,6 @@ const ACTION_LABEL: Record<Action, string> = {
   "resolve-unknown": "Resolve bucket",
 };
 const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer" };
-const NOT_EVERYDAY_REASONS = [
-  { reason: "single_source", label: "Single-source purchase" },
-  { reason: "finance_override", label: "Finance's call" },
-] as const;
 
 /** Which approval actions the caller may take on a row; the routes check again. */
 function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
@@ -203,7 +197,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
   // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
   const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD_AUTHORIZATION"));
-  const openCardCharge = !e.needsReimbursement && !e.backfill && !CLOSED_STATES.has(e.state);
   const held = e.reimburseePersonId !== undefined
     && reimburseeUnknown({ needsReimbursement: e.needsReimbursement, backfill: e.backfill, reimburseePersonId: e.reimburseePersonId });
 
@@ -323,23 +316,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               }
             }}
           >Record Board authorization</Button>
-        </Paper>
-      )}
-
-      {isFinance && openCardCharge && !e.singleSource && !e.financeNotEveryday && (
-        <Paper withBorder p="sm">
-          <Text fw={600} mb="xs">Not Everyday</Text>
-          <Group>
-            {NOT_EVERYDAY_REASONS.map(({ reason, label }) => (
-              <Button
-                key={reason}
-                variant="outline"
-                color="orange"
-                onClick={async () => { if (await send(`${base}/not-everyday`, "POST", { reason }, "Marked not Everyday")) reloadAll(); }}
-              >{label}</Button>
-            ))}
-          </Group>
-          <Text size="xs" c="dimmed" mt={4}>The mark cannot be undone; the charge then needs a Board authorization.</Text>
         </Paper>
       )}
 

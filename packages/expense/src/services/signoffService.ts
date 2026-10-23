@@ -150,22 +150,6 @@ async function openCardCharge(tx: Prisma.TransactionClient, expenseId: string) {
 }
 
 /**
- * FINANCE marks a card charge not Everyday: single-source, or its own call. The mark is one-way;
- * nobody marks an expense back to Everyday.
- */
-export async function markNotEveryday(principal: ExpensePrincipal, expenseId: string, reason: "single_source" | "finance_override"): Promise<void> {
-  const actor = actorOf(principal);
-  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE marks an expense not Everyday");
-  const field = reason === "single_source" ? "singleSource" : "financeNotEveryday";
-  await db.$transaction(async (tx) => {
-    const expense = await openCardCharge(tx, expenseId);
-    if (expense[field]) return;
-    await tx.expense.update({ where: { id: expenseId }, data: { [field]: true } });
-    await writeAudit(tx, actor, { expenseId, action: "not_everyday_marked", fieldChanged: field, valueBefore: "false", valueAfter: "true" });
-  });
-}
-
-/**
  * The Treasurer seat records what the Board authorized for a non-Everyday card charge. The text
  * is required, a conflicted Treasurer is refused (another FINANCE holder, else a Board member,
  * records it), and once recorded it is not changed.

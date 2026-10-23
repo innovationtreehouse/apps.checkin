@@ -66,13 +66,11 @@ export function withinEverydayLimits(a: EverydayAmounts, limits: EverydayLimits)
 export interface EverydayFacts {
   /** The amount check, frozen on the expense with the limits in force when it was first made. */
   withinLimits: boolean;
-  singleSource: boolean;
-  financeNotEveryday: boolean;
 }
 
-/** An Everyday purchase: within the frozen limits, not single-source, and not marked by FINANCE. */
+/** An Everyday purchase: within the frozen limits. The amounts alone decide it. */
 export function isEveryday(e: EverydayFacts): boolean {
-  return e.withinLimits && !e.singleSource && !e.financeNotEveryday;
+  return e.withinLimits;
 }
 
 /** A non-Everyday card charge needs a recorded Board authorization; a blank one counts as none. */
