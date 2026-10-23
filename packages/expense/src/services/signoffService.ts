@@ -12,7 +12,6 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missi
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
-import { readExpenseSettings } from "./settingsService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -62,7 +61,9 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
   const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
   const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
   const blocked = blockedSeats(nowFacts, nowFilled);
-  if (blocked.some((s) => s !== "BOARD")) await raiseFlag(expense.id, "COI", "a card charge needs a second Board substitution; held");
+  if (blocked.some((s) => s !== "BOARD")) {
+    await raiseFlag(expense.id, "COI", `${facts.kind === "card_charge" ? "a card charge needs a second" : "a reimbursement needs a third"} Board substitution; held`);
+  }
   if (blocked.includes("BOARD")) await raiseFlag(expense.id, "COI", "no Board member without a conflict can take the Board seat; held");
   if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
   if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
@@ -174,10 +175,9 @@ export async function markNotEveryday(principal: ExpensePrincipal, expenseId: st
 /**
  * Records what the Board authorized: its own decision, or the approved program-budget line that
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
- * clears the hold on a purchase at or over the Board-review total; a reimbursement under that
- * takes none. It is
- * not an approval. The text is required, a conflicted caller is refused (a FINANCE holder records
- * it, else a Board member), and once recorded it is not changed.
+ * clears the hold on a purchase at or over the Board-review total; an expense needing neither
+ * takes none. It is not an approval. The text is required, a conflicted caller is refused (a
+ * FINANCE holder records it, else a Board member), and once recorded it is not changed.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);
@@ -185,13 +185,12 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
   const { state, byFinance } = await db.$transaction(async (tx) => {
     const expense = await openExpense(tx, expenseId);
-    const { boardReviewTotalCents } = await readExpenseSettings(tx, expense.orgId);
-    if (lineKind(expense) !== "card_charge" && expense.receiptTotalCents < boardReviewTotalCents) {
-      throw new ServiceError(400, "A reimbursement under the Board-review total takes no Board authorization");
-    }
-    if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before the Board authorization is recorded");
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
     const facts = [...(await signoffFactsByLine(tx, expense)).values()];
+    if (!facts.some((f) => f.boardSeat) && !(await boardApprovalNeeded(tx, expense))) {
+      throw new ServiceError(400, "This expense takes no Board authorization: no line takes the Board seat and it is under the Board-review total");
+    }
+    if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before the Board authorization is recorded");
     const refusal = boardAuthorizationRefusal(facts, actor.userId);
     if (refusal) throw new ServiceError(403, refusal);
     await tx.expense.update({

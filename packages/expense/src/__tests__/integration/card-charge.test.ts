@@ -158,6 +158,11 @@ describeDb("card charges", () => {
     expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "COI" } })).toBe(0);
   });
 
+  it("an Everyday card charge, or one whose lines are all in program buckets, under $2,000 takes no Board authorization", async () => {
+    await expect(recordBoardAuthorization(FINANCE, await signedCard(), "x")).rejects.toMatchObject({ status: 400 });
+    await expect(recordBoardAuthorization(FINANCE, await signedCard({ receiptTotalCents: 60_000, bucket: 200 }), "x")).rejects.toMatchObject({ status: 400 });
+  });
+
   it("a reimbursement under $2,000 takes no Board authorization", async () => {
     bindPorts({ signoff: directory({ finance: [3] }) });
     const id = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
