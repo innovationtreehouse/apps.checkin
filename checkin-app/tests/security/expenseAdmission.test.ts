@@ -24,10 +24,10 @@ import { allRoutes, type Authorize } from '@/security/core';
 import { handler } from '@/security/handler';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import { signoff } from '@/lib/expense/configure';
+import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
 import '@/security/registry';
 
-jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -91,7 +91,7 @@ const APPROVER_ROUTES = [
 ];
 
 let approvedBuckets: number[];
-const approverLookup = jest.mocked(signoff.bucketsApprovedBy);
+const approverLookup = jest.mocked(bucketsApprovedBy);
 
 beforeEach(() => {
     approvedBuckets = [];
@@ -220,7 +220,7 @@ describe('expense admission', () => {
         },
     );
 
-    test('the approver leg reads the directory once, for the caller, only when no flag admits', async () => {
+    test('the approver leg runs the lookup once, for the caller, only when no flag admits', async () => {
         approvedBuckets = [1];
         expect(await admitted({ authorize: 'expense-approver' }, {})).toBe(true);
         expect(approverLookup).toHaveBeenCalledTimes(1);
