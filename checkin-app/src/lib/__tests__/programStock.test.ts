@@ -2,7 +2,11 @@ import { resetTokenCache, SHOPIFY_INVENTORY_API_VERSION } from '../shopify/clien
 import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
+import crypto from 'crypto';
+import { LEAK, outboundLeak } from '@/test-helpers/outboundLeak';
 
+jest.mock('@/security/outbound', () =>
+    jest.requireActual<typeof import('@/test-helpers/outboundLeak')>('@/test-helpers/outboundLeak').leakingOutboundModule());
 jest.mock('../email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
 jest.mock('../logger', () => ({ logIntegrationError: jest.fn().mockResolvedValue(undefined) }));
 // One in-memory Program row with Prisma's increment / where semantics, so tests
@@ -87,12 +91,12 @@ const timedOut = () => new Error('Shopify program stock timed out after 20000ms'
 
 /** Route fetch: token exchange, then GraphQL replies queued per operation name. */
 function shopify(replies: Partial<Record<Op, Reply[]>>) {
-    const calls: { op: Op; url: string; variables: Vars }[] = [];
+    const calls: { op: Op; url: string; variables: Vars; body: string }[] = [];
     global.fetch = jest.fn(async (url: string, init: RequestInit) => {
         if (url.includes('/oauth/access_token')) return { ok: true, status: 200, json: async () => ({ access_token: 't' }) };
         const { query, variables } = JSON.parse(init.body as string) as { query: string; variables: Vars };
         const op = (['ProgramStockRead', 'ProgramStockAdjust', 'ProgramStockActivate'] as const).find((o) => query.includes(o))!;
-        calls.push({ op, url, variables });
+        calls.push({ op, url, variables, body: init.body as string });
         const reply = replies[op]?.shift();
         if (!reply) throw new Error(`unexpected ${op}`);
         if (reply instanceof Error) throw reply;
@@ -146,6 +150,8 @@ beforeEach(() => {
     setRow();
     resetTokenCache();
     Object.assign(programStockTiming, { capMs: 10_000, requestCapMs: 10_000, maxBackoffMs: 1 });
+    outboundLeak.inject = false;
+    outboundLeak.sent = [];
     spies = [jest.spyOn(console, 'log'), jest.spyOn(console, 'warn'), jest.spyOn(console, 'error')].map((s) => s.mockImplementation(() => {}));
 });
 
@@ -631,5 +637,70 @@ describe('parked (unconfirmed) stock writes', () => {
 
         expect(await settleUnconfirmedStock(42, -1, null, 'landed', 9)).toEqual({ carry: 0 });
         expect(after()).toMatchObject({ unconfirmed: 0, parked: [['program-42-new', -1]] });
+    });
+});
+
+describe('stock write request bodies', () => {
+    const UUID = '00000000-0000-4000-8000-000000000000';
+    /** The body with its query text masked (it is a constant). */
+    const masked = (body: string) => body.replace(/^\{"query":"(?:[^"\\]|\\.)*"/, '{"query":"…"');
+
+    beforeEach(() => {
+        spies.push(jest.spyOn(crypto, 'randomUUID').mockReturnValue(UUID));
+    });
+
+    it('pins the activate and adjust bodies, each sent through its outbound surface', async () => {
+        const s = shopify({
+            ProgramStockRead: [readReply(null)],
+            ProgramStockActivate: [{ data: { inventoryActivate: { inventoryLevel: { id: 'l' }, userErrors: [] } } }],
+            ProgramStockAdjust: [adjustOk],
+        });
+
+        expect(await adjustProgramInventory(program, 10, 'initial-stock')).toBe(true);
+
+        expect(masked(s.calls[1].body)).toBe(
+            `{"query":"…","variables":{"inventoryItemId":"${ITEM}","locationId":"${LOC}","idempotencyKey":"program-42-activate-${UUID}"}}`,
+        );
+        expect(masked(s.calls[2].body)).toBe(
+            `{"query":"…","variables":{"input":{"name":"available","reason":"correction","changes":[{"inventoryItemId":"${ITEM}","locationId":"${LOC}","delta":10,"changeFromQuantity":null}]},"idempotencyKey":"program-42-initial-stock-${UUID}"}}`,
+        );
+        expect(outboundLeak.sent.map((c) => c.surface)).toEqual(['shopify.inventory.activate', 'shopify.inventory.adjust']);
+    });
+
+    it('a pending write resent after a failed push goes out byte for byte as booked', async () => {
+        setRow({ shopifyStockPendingWrite: pendingWrite() });
+        const s = shopify({ ProgramStockAdjust: [adjustOk] });
+
+        await healProgramStock();
+
+        expect(masked(s.adjusts()[0].body)).toBe(
+            `{"query":"…","variables":{"input":{"name":"available","reason":"correction","changes":[{"inventoryItemId":"${ITEM}","locationId":"${LOC}","delta":-1,"changeFromQuantity":null}]},"idempotencyKey":"program-42-comp-old"}}`,
+        );
+    });
+
+    it('pii and personal fields added to the bag never reach a stock write; internal ones only on adjust', async () => {
+        const run = async () => {
+            setRow();
+            const s = shopify({
+                ProgramStockRead: [readReply(null)],
+                ProgramStockActivate: [{ data: { inventoryActivate: { inventoryLevel: { id: 'l' }, userErrors: [] } } }],
+                ProgramStockAdjust: [adjustOk],
+            });
+            await adjustProgramInventory(program, 10, 'initial-stock');
+            return s.calls.map((c) => c.body);
+        };
+        const clean = await run();
+        outboundLeak.sent = [];
+        outboundLeak.inject = true;
+
+        expect(await run()).toEqual(clean);
+
+        const [activate, adjust] = outboundLeak.sent;
+        for (const { stripped } of outboundLeak.sent) {
+            expect(JSON.stringify(stripped)).not.toContain(LEAK.pii);
+            expect(JSON.stringify(stripped)).not.toContain(LEAK.personal);
+        }
+        expect(JSON.stringify(activate.stripped)).not.toContain(LEAK.internal);
+        expect(adjust.surface).toBe('shopify.inventory.adjust');
     });
 });
