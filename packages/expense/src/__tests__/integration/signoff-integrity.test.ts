@@ -165,4 +165,12 @@ describeDb("threshold changes", () => {
     const changes = await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } });
     expect(changes).toBe(5);
   });
+
+  it("only the Board changes the Everyday limits, lowering included", async () => {
+    await expect(updateExpenseSettings(ORG, { everydayTotalLimitCents: 40_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await expect(updateExpenseSettings(ORG, { everydayItemLimitCents: 30_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 50_000, boardReviewTotalCents: 100_000 }, FINANCE);
+    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 }, BOARD);
+    expect(await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } })).toBe(2);
+  });
 });

@@ -30,4 +30,12 @@ describe("boardOnlyChanges", () => {
     expect(boardOnlyChanges(current, { capitalTotalThresholdCents: 400_000 })).toEqual([]);
     expect(boardOnlyChanges(current, { capitalTotalThresholdCents: 600_000 })).toEqual(["capitalTotalThresholdCents"]);
   });
+
+  it("any change to an Everyday limit is the Board's, lowering included; resending the saved value is not a change", () => {
+    expect(boardOnlyChanges(current, { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 })).toEqual([
+      "everydayTotalLimitCents",
+      "everydayItemLimitCents",
+    ]);
+    expect(boardOnlyChanges(current, { everydayTotalLimitCents: 50_000, everydayItemLimitCents: 25_000 })).toEqual([]);
+  });
 });
