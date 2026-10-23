@@ -69,10 +69,8 @@ describe("flags", () => {
     expect(detectIntakeFlags({ taxCents: 1, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual(["TAX_ATTACHED"]);
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 199_999, lineItems: [line(49_999)] }, LIMITS)).toEqual([]);
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 200_000, lineItems: [line(100)] }, LIMITS)).toEqual(["THRESHOLD_CROSSED"]);
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual([
-      "THRESHOLD_CROSSED",
-      "CAPITAL_EQUIPMENT",
-    ]);
+    // A line's total does not cross the Board-review total; only the receipt's does.
+    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
     expect(FLAG_AUDIENCE.COI).toBe("BOARD");
     expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
   });

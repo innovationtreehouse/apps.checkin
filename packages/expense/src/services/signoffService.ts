@@ -7,11 +7,12 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
-import { BOARD_APPROVAL_CENTS, CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
+import { readExpenseSettings } from "./settingsService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -173,7 +174,8 @@ export async function markNotEveryday(principal: ExpensePrincipal, expenseId: st
 /**
  * Records what the Board authorized: its own decision, or the approved program-budget line that
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
- * clears the hold on a purchase of $2,000 or more; a reimbursement under that takes none. It is
+ * clears the hold on a purchase at or over the Board-review total; a reimbursement under that
+ * takes none. It is
  * not an approval. The text is required, a conflicted caller is refused (a FINANCE holder records
  * it, else a Board member), and once recorded it is not changed.
  */
@@ -183,8 +185,9 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
   const { state, byFinance } = await db.$transaction(async (tx) => {
     const expense = await openExpense(tx, expenseId);
-    if (lineKind(expense) !== "card_charge" && expense.receiptTotalCents < BOARD_APPROVAL_CENTS) {
-      throw new ServiceError(400, "A reimbursement under $2,000 takes no Board authorization");
+    const { boardReviewTotalCents } = await readExpenseSettings(tx, expense.orgId);
+    if (lineKind(expense) !== "card_charge" && expense.receiptTotalCents < boardReviewTotalCents) {
+      throw new ServiceError(400, "A reimbursement under the Board-review total takes no Board authorization");
     }
     if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before the Board authorization is recorded");
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
@@ -206,9 +209,9 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
 export async function signoffStatus(expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expenseId)]);
+  const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expenseId), boardApprovalNeeded(db, expense)]);
   return [...facts].map(([lineItemId, f]) => {
     const seats = filled.get(lineItemId) ?? [];
-    return { lineItemId, filled: seats, missing: lineHolds(expense, f, seats), blocked: blockedSeats(f, seats) };
+    return { lineItemId, filled: seats, missing: lineHolds(approval, f, seats), blocked: blockedSeats(f, seats) };
   });
 }

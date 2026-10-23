@@ -28,7 +28,8 @@ model ExpenseOrgSettings {
   // Unit price at or over which a line raises CAPITAL_EQUIPMENT for finance.
   /// @sensitivity:internal
   capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents")
-  // Line or receipt total at or over which THRESHOLD_CROSSED goes to the board.
+  // Receipt total at or over which THRESHOLD_CROSSED goes to the board and the expense is held
+  // until the Board's approval is recorded. A single line's total never counts.
   /// @sensitivity:internal
   boardReviewTotalCents        Int    @default(200000) @map("board_review_total_cents")
   // A note in lieu of a receipt at or over this takes a Board member in the program-approver seat.

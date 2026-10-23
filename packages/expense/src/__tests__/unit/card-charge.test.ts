@@ -173,12 +173,17 @@ describe("the Board seat on a card charge", () => {
 
 describe("a purchase of $2,000 or more", () => {
   it("is held until the Board's approval is recorded, whatever its kind or bucket", () => {
-    expect(needsBoardApproval(199_999, null)).toBe(false);
-    expect(needsBoardApproval(200_000, null)).toBe(true);
-    expect(needsBoardApproval(200_000, "FY27 robotics budget, line 12: competition kit")).toBe(false);
+    expect(needsBoardApproval(199_999, 200_000, null)).toBe(false);
+    expect(needsBoardApproval(200_000, 200_000, null)).toBe(true);
+    expect(needsBoardApproval(200_000, 200_000, "FY27 robotics budget, line 12: competition kit")).toBe(false);
+  });
+
+  it("follows the Board-review total setting, not a fixed $2,000", () => {
+    expect(needsBoardApproval(150_000, 100_000, null)).toBe(true);
+    expect(needsBoardApproval(200_000, 250_000, null)).toBe(false);
   });
 
   it("a blank record counts as none", () => {
-    expect(needsBoardApproval(200_000, "  ")).toBe(true);
+    expect(needsBoardApproval(200_000, 200_000, "  ")).toBe(true);
   });
 });

@@ -198,6 +198,13 @@ describeDb("card charges", () => {
     expect(await events(id)).toBe(1);
   });
 
+  it("the hold follows the Board-review total setting", async () => {
+    const id = await signedCard({ bucket: 200, receiptTotalCents: 120_000, unitPriceCents: 20_000 });
+    expect(await holds(id)).toEqual([]);
+    await updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, FINANCE);
+    expect(await holds(id)).toEqual(["BOARD_APPROVAL"]);
+  });
+
   it("a $2,000 reimbursement with no reimbursee yet cannot record the approval", async () => {
     bindPorts({ signoff: directory({ finance: [3] }) });
     const id = await seedExpense({ needsReimbursement: true, receiptTotalCents: 200_000 });

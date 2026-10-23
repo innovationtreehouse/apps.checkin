@@ -117,10 +117,15 @@ export async function filledSeatsByLine(db: Db, expenseId: string): Promise<Map<
 
 export type LineHold = Seat | "BOARD_APPROVAL";
 
-/** What still holds a line: its unfilled seats, then, on a purchase of $2,000 or more, an unrecorded Board approval. */
-export function lineHolds(expense: Pick<SignoffExpense, "receiptTotalCents" | "boardAuthorization">, facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
-  const approval = needsBoardApproval(expense.receiptTotalCents, expense.boardAuthorization) ? (["BOARD_APPROVAL"] as const) : [];
-  return [...missingSeats(facts, filled), ...approval];
+/** Whether the expense is held for the Board's approval, against the org's current Board-review total. */
+export async function boardApprovalNeeded(db: Db, expense: Pick<SignoffExpense, "orgId" | "receiptTotalCents" | "boardAuthorization">): Promise<boolean> {
+  const { boardReviewTotalCents } = await readExpenseSettings(db, expense.orgId);
+  return needsBoardApproval(expense.receiptTotalCents, boardReviewTotalCents, expense.boardAuthorization);
+}
+
+/** What still holds a line: its unfilled seats, then the Board's approval when the expense needs it. */
+export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
+  return [...missingSeats(facts, filled), ...(approvalNeeded ? (["BOARD_APPROVAL"] as const) : [])];
 }
 
 /**
@@ -128,10 +133,10 @@ export function lineHolds(expense: Pick<SignoffExpense, "receiptTotalCents" | "b
  * the QB outbox.
  */
 export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, LineHold[]>> {
-  const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
+  const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id), boardApprovalNeeded(db, expense)]);
   const out = new Map<number, LineHold[]>();
   for (const [lineId, f] of facts) {
-    const missing = lineHolds(expense, f, filled.get(lineId) ?? []);
+    const missing = lineHolds(approval, f, filled.get(lineId) ?? []);
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;
