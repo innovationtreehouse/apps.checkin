@@ -79,8 +79,6 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
-// Marks a card charge not Everyday (single-source or FINANCE's call); one-way.
-defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/not-everyday', authorize: 'finance', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor', 'ExpenseReimburseeView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
 // QuickBooks Vendors matching ?q=, offered for the link.
