@@ -25,7 +25,7 @@ const IN_KIND_READ_VIEW: readonly OrderedViewEntry[] = [
     ['isOperations', NO_PII_TOKENS],
     ['isInventoryManager', NO_PII_TOKENS],
 ];
-// A bucket approver (program leader or treasurer) passes `expense-approver` and
+// A bucket approver (the bucket's owner or a treasurer) passes `expense-approver` and
 // gets `internal` only; the route filters rows to the buckets the caller approves.
 const BUCKET_APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', NO_PII_TOKENS],

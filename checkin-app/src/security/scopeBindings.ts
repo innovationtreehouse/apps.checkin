@@ -195,7 +195,7 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
     // Budget-owner buckets. Not pending: its routes exist
-    // (registry/budgetOwner.ts). `programId` makes it scopable, but every view is
+    // (registry/budgetOwner.ts). `ownerId` makes it scopable, but every view is
     // finance-or-board with everyones grants and no owner-scoped view; per-line
     // approval by a bucket's approvers is a handler query filter, not a scope.
     'BudgetOwner',
