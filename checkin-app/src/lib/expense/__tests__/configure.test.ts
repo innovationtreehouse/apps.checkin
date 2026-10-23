@@ -76,14 +76,15 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     await expect((await signoff()).bucketApprovers(100)).resolves.toEqual({ orgLevel: true, approvers: [], owner: null });
   });
 
-  it("the live, non-org-level buckets a person owns or treasures", async () => {
+  it("the non-org-level buckets a person owns or treasures, archived ones included", async () => {
     budgetOwnerFindMany.mockResolvedValue([]);
     const dir = await signoff();
 
     await dir.bucketsApprovedBy(7);
 
     const { where } = budgetOwnerFindMany.mock.calls[0][0];
-    expect(where).toMatchObject({ isOrgLevel: false, archivedAt: null });
+    expect(where).toMatchObject({ isOrgLevel: false });
+    expect(where).not.toHaveProperty("archivedAt");
     const [owner, treasurer] = where.OR;
     expect(owner).toEqual({ ownerId: 7, owner: { mergedIntoId: null, ...NOT_DENIED } });
     expect(treasurer.treasurers.some).toEqual({ personId: 7, person: { mergedIntoId: null, ...NOT_DENIED } });
