@@ -17,7 +17,7 @@ const programBucket = {
 };
 
 type Reply = () => Promise<Response>;
-type Reads = Partial<Record<"buckets" | "classes" | "approvers", Reply>>;
+type Reads = Partial<Record<"buckets" | "classes" | "approvers" | "approverOptions", Reply>>;
 
 function jsonResponse(status: number, body: unknown): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -33,7 +33,9 @@ function mockServer(write: Reply, reads: Reads = {}) {
     const url = input.toString();
     if (init?.method) return write();
     if (url.includes("/quickbooks-classes")) return reads.classes ? reads.classes() : jsonResponse(200, []);
-    if (url.includes("/approver-options")) return jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }]);
+    if (url.includes("/approver-options")) {
+      return reads.approverOptions ? reads.approverOptions() : jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }]);
+    }
     if (url.includes("/approvers")) {
       if (reads.approvers) return reads.approvers();
       return jsonResponse(200, [{ budgetOwnerId: 7, personId: 9, name: "Tess Treasurer", role: "TREASURER" }]);
@@ -209,5 +211,19 @@ describe("budgets page write errors", () => {
       message: "Couldn't reach the server. Check your connection and try again.",
       autoClose: false,
     }));
+  });
+
+  it("shows a red chip when the people for the approver pickers fail to load", async () => {
+    mockServer(ok, { approverOptions: async () => htmlResponse(504) });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "People not loaded",
+      message: "The server is unavailable (504). Try again in a minute.",
+      autoClose: false,
+    })));
+    expect(await screen.findByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 });
