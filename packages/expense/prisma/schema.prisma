@@ -162,12 +162,11 @@ model Expense {
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")
-  // Set by FINANCE only, never cleared: a single-source purchase, or FINANCE's call that the
-  // expense is not Everyday. Either makes a card charge need Board authorization.
+  // The client never reads or writes these; the amounts alone decide whether a charge is Everyday.
   /// @sensitivity:internal
-  singleSource       Boolean   @default(false) @map("single_source")
+  singleSource       Boolean   @default(false) @map("single_source") @ignore
   /// @sensitivity:internal
-  financeNotEveryday Boolean   @default(false) @map("finance_not_everyday")
+  financeNotEveryday Boolean   @default(false) @map("finance_not_everyday") @ignore
   // What the Board authorized for a non-Everyday card charge, as recorded by the Treasurer seat.
   // Null holds the card charge out of the QB outbox.
   /// @sensitivity:internal

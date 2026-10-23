@@ -15,8 +15,6 @@ type SignoffExpense = Pick<
   | "reimburseePersonId"
   | "needsReimbursement"
   | "receiptTotalCents"
-  | "singleSource"
-  | "financeNotEveryday"
   | "boardAuthorization"
   | "everydayWithinLimits"
 >;
@@ -84,7 +82,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
   }
   const kind = lineKind(expense);
   const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents));
-  const everyday = isEveryday({ withinLimits, singleSource: expense.singleSource, financeNotEveryday: expense.financeNotEveryday });
+  const everyday = isEveryday({ withinLimits });
   const authorizationNeeded = needsBoardAuthorization(kind, everyday, expense.boardAuthorization);
   return new Map(
     lines.map((l) => {

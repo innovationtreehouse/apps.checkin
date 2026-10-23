@@ -114,7 +114,6 @@ PUT /api/expense/expenses/[id]/reimbursee-vendor
 GET /api/expense/expenses/[id]/reimbursee-vendor/options
 POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs
 POST /api/expense/expenses/[id]/board-authorization
-POST /api/expense/expenses/[id]/not-everyday
 POST /api/expense/expenses/[id]/capital-review/submit
 GET /api/expense/expenses/[id]/signoffs
 GET /api/expense/expenses/[id]/line-item-approvals

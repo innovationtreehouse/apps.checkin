@@ -14,7 +14,7 @@ import { DEFAULT_EXPENSE_SETTINGS } from "../../services/settingsService";
 
 const limits = DEFAULT_EXPENSE_SETTINGS;
 const amounts: EverydayAmounts = { receiptTotalCents: 10_000, unitPricesCents: [10_000] };
-const plain: EverydayFacts = { withinLimits: true, singleSource: false, financeNotEveryday: false };
+const plain: EverydayFacts = { withinLimits: true };
 
 describe("Everyday", () => {
   it("defaults to under $500 in total and no item over $250", () => {
@@ -40,17 +40,9 @@ describe("Everyday", () => {
     expect(withinEverydayLimits(amounts, tighter)).toBe(false);
   });
 
-  it("within the limits and unmarked is Everyday; outside them is not", () => {
+  it("the amounts alone decide it: within the limits is Everyday, outside them is not", () => {
     expect(isEveryday(plain)).toBe(true);
     expect(isEveryday({ ...plain, withinLimits: false })).toBe(false);
-  });
-
-  it("a single-source purchase is never Everyday", () => {
-    expect(isEveryday({ ...plain, singleSource: true })).toBe(false);
-  });
-
-  it("FINANCE's not-Everyday mark overrides the limits", () => {
-    expect(isEveryday({ ...plain, financeNotEveryday: true })).toBe(false);
   });
 });
 
