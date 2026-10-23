@@ -249,6 +249,8 @@ def fit_state(state, limit=JEV_STATE_MAX):
         over = len(json.dumps(state).encode()) - limit
         if over <= 0:
             break
+        if key not in state:
+            continue
         text = state.get(key) or ""
         keep = max(0, len(text) - over - len(TRIM_NOTE) - 8)
         state = dict(state, **{key: text[:keep] + TRIM_NOTE})
@@ -317,15 +319,17 @@ def route_selftest():
     saved, prior_rounds = prior_rounds, lambda *a: 1 / 0
     try:
         assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
-    big = {"k": 1, "untrusted_diff": "d" * 300, "untrusted_review_output": "r" * 300}
-    assert fit_state(dict(big), 10 ** 6) == big
-    cut = fit_state(dict(big), 400)
-    assert len(json.dumps(cut).encode()) <= 400 and cut["untrusted_diff"].endswith(TRIM_NOTE)
-    assert cut["untrusted_review_output"] == big["untrusted_review_output"]
-    tiny = fit_state(dict(big), 120)
-    assert len(json.dumps(tiny).encode()) <= 120 and tiny["untrusted_review_output"].endswith(TRIM_NOTE)
     finally:
         prior_rounds = saved
+    big = {"k": 1, "untrusted_diff": "d" * 300, "untrusted_review_output": "r" * 300}
+    assert fit_state(dict(big), 10 ** 6) == big
+    cut = fit_state(dict(big), 500)
+    assert len(json.dumps(cut).encode()) <= 500 and cut["untrusted_diff"].endswith(TRIM_NOTE)
+    assert cut["untrusted_review_output"] == big["untrusted_review_output"]
+    tiny = fit_state(dict(big), 160)
+    assert len(json.dumps(tiny).encode()) <= 160 and tiny["untrusted_review_output"].endswith(TRIM_NOTE)
+    route_only = fit_state({"k": 1, "untrusted_diff": "d" * 300}, 100)
+    assert "untrusted_review_output" not in route_only and route_only["untrusted_diff"] == TRIM_NOTE
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
