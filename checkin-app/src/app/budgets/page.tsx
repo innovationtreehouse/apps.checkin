@@ -18,6 +18,12 @@ interface Bucket {
   program: { id: number; name: string } | null;
 }
 
+interface ClassOption {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 interface ProgramOption {
   id: number;
   name: string;
@@ -46,34 +52,46 @@ export default function BudgetsPage() {
   const isFinance = !!user?.isFinance;
   const isBoard = !!user?.isBoardMember;
 
-  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [allBuckets, setAllBuckets] = useState<Bucket[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [classes, setClasses] = useState<ClassOption[] | null>(null);
+  const [classesFailed, setClassesFailed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   const [newName, setNewName] = useState("");
   const [newProgramId, setNewProgramId] = useState<string | null>(null);
-  const [newClassId, setNewClassId] = useState("");
+  const [newClassId, setNewClassId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [editName, setEditName] = useState("");
-  const [editClassId, setEditClassId] = useState("");
+  const [editClassId, setEditClassId] = useState<string | null>(null);
 
   const [treasurerBucket, setTreasurerBucket] = useState<Bucket | null>(null);
 
+  // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
   const load = useCallback(() => Promise.all([
-    fetch(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
+    fetch("/api/budget-owners?includeArchived=1"),
     fetch("/api/budget-owners/program-options"),
+    fetch("/api/budget-owners/quickbooks-classes"),
   ])
-    .then(async ([b, p]) => {
-      if (b.ok) setBuckets(await b.json());
+    .then(async ([b, p, c]) => {
+      if (b.ok) setAllBuckets(await b.json());
       if (p.ok) setPrograms(await p.json());
+      setClassesFailed(!c.ok);
+      if (c.ok) {
+        setClasses(await c.json());
+      } else {
+        const data = await c.json().catch(() => ({}));
+        const reason = typeof data.error === "string" ? data.error : "QuickBooks Classes could not be loaded.";
+        notifications.show({ color: "red", autoClose: false, message: `QuickBooks Classes are unavailable: ${reason}` });
+      }
     })
     .finally(() => {
       setLoading(false);
     }),
-  [showArchived]);
+  []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -91,16 +109,16 @@ export default function BudgetsPage() {
     const ok = await run("/api/budget-owners", "POST", {
       name: newName,
       programId: newProgramId ? Number(newProgramId) : null,
-      quickBooksClassId: newClassId || null,
+      quickBooksClassId: newClassId,
     }, "Bucket created.");
-    if (ok) { setNewName(""); setNewProgramId(null); setNewClassId(""); }
+    if (ok) { setNewName(""); setNewProgramId(null); setNewClassId(null); }
   };
 
   const saveEdit = async () => {
     if (!editing) return;
     const ok = await run(`/api/budget-owners/${editing.id}`, "PATCH", {
       name: editName,
-      quickBooksClassId: editClassId || null,
+      quickBooksClassId: editClassId,
     }, "Bucket saved.");
     if (ok) setEditing(null);
   };
@@ -109,6 +127,22 @@ export default function BudgetsPage() {
     if (!window.confirm(`Archive "${bucket.name}"? It stays on record but leaves the active list.`)) return;
     void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.");
   };
+
+  const buckets = showArchived ? allBuckets : allBuckets.filter((b) => !b.archivedAt);
+  const classNames = new Map((classes ?? []).map((c) => [c.id, c.active ? c.name : `${c.name} (inactive)`]));
+  const takenBy = new Map(allBuckets.filter((b) => b.quickBooksClassId).map((b) => [b.quickBooksClassId, b.id]));
+  const className = (id: string) => classNames.get(id) ?? `QuickBooks id ${id}`;
+  // Active Classes no other bucket holds, plus `keep` (the bucket's saved Class and the current pick)
+  // even when inactive or missing from the list, so the picker never drops a Class it is showing.
+  const classChoices = (bucketId: number | null, keep: (string | null)[]) => {
+    const kept = new Set(keep.filter((id): id is string => id !== null));
+    const options = (classes ?? [])
+      .filter((c) => kept.has(c.id) || (c.active && (takenBy.get(c.id) ?? bucketId) === bucketId))
+      .map((c) => ({ value: c.id, label: classNames.get(c.id) ?? c.name }));
+    for (const id of kept) if (!options.some((o) => o.value === id)) options.push({ value: id, label: className(id) });
+    return options;
+  };
+  const classPlaceholder = (empty: string) => (classes ? empty : classesFailed ? "Classes unavailable" : "Loading…");
 
   if (authLoading) return <PageLoader />;
   if (!ready) return null;
@@ -141,8 +175,18 @@ export default function BudgetsPage() {
                 onChange={setNewProgramId}
                 w={260}
               />
-              <TextInput label="QuickBooks Class id" description="Expenses in this bucket post to QuickBooks only once it is set" error={classIdError(newClassId)} value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
-              <Button onClick={create} disabled={!newName.trim() || classIdError(newClassId) !== null}>Create</Button>
+              <Select
+                label="QuickBooks Class"
+                description="Expenses in this bucket post to QuickBooks only once it is set"
+                placeholder={classPlaceholder("None yet")}
+                clearable
+                searchable
+                data={classChoices(null, [newClassId])}
+                value={newClassId}
+                onChange={setNewClassId}
+                w={280}
+              />
+              <Button onClick={create} disabled={!newName.trim()}>Create</Button>
             </Group>
           </Card>
         )}
@@ -150,7 +194,7 @@ export default function BudgetsPage() {
         <Checkbox
           label="Show archived"
           checked={showArchived}
-          onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
+          onChange={(e) => setShowArchived(e.currentTarget.checked)}
         />
 
         {loading ? (
@@ -171,7 +215,7 @@ export default function BudgetsPage() {
                 <Table.Tr key={b.id}>
                   <Table.Td>{b.name}</Table.Td>
                   <Table.Td>{b.program?.name ?? <Text c="dimmed" size="sm">Org-level</Text>}</Table.Td>
-                  <Table.Td>{b.quickBooksClassId ?? <Text c="dimmed" size="sm">Unmapped</Text>}</Table.Td>
+                  <Table.Td>{b.quickBooksClassId ? className(b.quickBooksClassId) : <Text c="dimmed" size="sm">Unmapped</Text>}</Table.Td>
                   <Table.Td>
                     {b.archivedAt ? <Badge color="gray">Archived</Badge> : <Badge color="green">Active</Badge>}
                   </Table.Td>
@@ -184,7 +228,7 @@ export default function BudgetsPage() {
                         <Button
                           size="xs"
                           variant="light"
-                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId ?? ""); }}
+                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); }}
                         >
                           Edit
                         </Button>
@@ -207,8 +251,16 @@ export default function BudgetsPage() {
       <Modal opened={editing !== null} onClose={() => setEditing(null)} title="Edit bucket">
         <Stack>
           <TextInput label="Name" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} />
-          <TextInput label="QuickBooks Class id" error={classIdError(editClassId)} value={editClassId} onChange={(e) => setEditClassId(e.currentTarget.value)} />
-          <Button onClick={saveEdit} disabled={!editName.trim() || classIdError(editClassId) !== null}>Save</Button>
+          <Select
+            label="QuickBooks Class"
+            placeholder={classPlaceholder("None")}
+            clearable
+            searchable
+            data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
+            value={editClassId}
+            onChange={setEditClassId}
+          />
+          <Button onClick={saveEdit} disabled={!editName.trim()}>Save</Button>
         </Stack>
       </Modal>
 
@@ -223,12 +275,6 @@ export default function BudgetsPage() {
       )}
     </>
   );
-}
-
-/** The server's Class id rule: empty, or a numeric QuickBooks id. */
-function classIdError(value: string): string | null {
-  const id = value.trim();
-  return id && !/^\d+$/.test(id) ? "Digits only: the Class's QuickBooks id" : null;
 }
 
 function TreasurersModal({ programId, programName, canEdit, onClose }: {
