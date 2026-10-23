@@ -55,6 +55,8 @@ export default function AdminParticipantsIndex() {
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
   const csvImportEnabled = useCsvImportEnabled();
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
+  // The email decides who signs in as a person, so only the board changes it (with a reason).
+  const canEditEmail = !!me?.isBoardMember;
 
   const toggleSort = (col: "id" | "name" | "email" | "household") => {
     if (sortBy === col) {
@@ -113,7 +115,7 @@ export default function AdminParticipantsIndex() {
   // Edit Participant State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<PersonRow | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "", bgCheckReason: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "", bgCheckReason: "", emailChangeReason: "" });
   const [savingDetails, setSavingDetails] = useState(false);
   const priorBgDate = editingParticipant?.lastBackgroundCheck?.slice(0, 10) ?? "";
   const bgDateExtended = editForm.lastBackgroundCheck !== "" && editForm.lastBackgroundCheck > priorBgDate;
@@ -176,6 +178,9 @@ export default function AdminParticipantsIndex() {
       setAssigning(false);
     }
   };
+
+  const emailChanged = !!editingParticipant
+    && editForm.email.trim().toLowerCase() !== (editingParticipant.email ?? "").trim().toLowerCase();
 
   const handleEditParticipant = (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,7 +354,7 @@ export default function AdminParticipantsIndex() {
                             )}
                             <Button size="xs" fz={15} variant="default" onClick={() => {
                               setEditingParticipant(p);
-                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "", bgCheckReason: "" });
+                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "", bgCheckReason: "", emailChangeReason: "" });
                               setEditModalOpen(true);
                             }}>
                               Details
@@ -464,7 +469,18 @@ export default function AdminParticipantsIndex() {
                 call time. Reading it lazily inside the updater intermittently crashed with
                 "Cannot read properties of null (reading 'value')". */}
             <TextInput label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." required value={editForm.name} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, name: value })); }} />
-            <TextInput type="email" label="Email Address" value={editForm.email} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, email: value })); }} />
+            <TextInput type="email" label="Email Address" disabled={!canEditEmail} description={canEditEmail ? undefined : "Only a board member can change a person's email."} value={editForm.email} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, email: value })); }} />
+            {emailChanged && (
+              <Textarea
+                label="Reason for the email change"
+                description="Recorded in the audit log. Changing the email signs this person out of Google; only the new address can sign in as them."
+                required
+                autosize
+                minRows={2}
+                value={editForm.emailChangeReason}
+                onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, emailChangeReason: value })); }}
+              />
+            )}
             <TextInput type="tel" label="Phone Number" value={editForm.phone} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, phone: value })); }} placeholder="(555) 123-4567" />
             {editingParticipant?.dateOfBirth ? (
               <Text size="sm" c="dimmed">Age is derived from date of birth on file; the adult declaration doesn&apos;t apply.</Text>

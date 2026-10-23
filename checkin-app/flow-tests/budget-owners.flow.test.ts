@@ -111,13 +111,21 @@ describe("program treasurers", () => {
     expect(self.status).toBe(403);
     expect(JSON.stringify(self.json)).toMatch(/own household/);
 
-    const added = await send(board, "POST", "/api/membership-ops/participants", {
+    const memberEmail = `board.household.${Date.now()}@example.com`;
+    const adminAdd = await send(board, "POST", "/api/membership-ops/participants", {
       name: "Board Household Member",
-      email: `board.household.${Date.now()}@example.com`,
+      email: memberEmail,
       parentEmail: BOARD,
     });
+    expect(adminAdd.status).toBe(403);
+
+    const added = await send(board, "PATCH", "/api/household", {
+      memberName: "Board Household Member",
+      memberEmail,
+      memberOver25: true,
+    });
     expect(added.status).toBe(200);
-    const memberId = (added.json as { participant: { id: number } }).participant.id;
+    const memberId = (added.json as { member: { id: number } }).member.id;
     await refusedVolunteer(memberId);
 
     const peer = await send(board, "PUT", `/api/programs/${programId}/treasurers/${memberId}`);

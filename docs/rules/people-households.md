@@ -124,6 +124,9 @@ Things the app takes as true because they are handled outside it.
 - Nobody is moved into or out of a denied household, by the board's household
   move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
+- The board and sysadmin path adds nobody to a denied household, and nobody,
+  a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
 - Only the board or a sysadmin moves an existing person out to a new household of
   their own. The person becomes its lead, so a youth cannot be moved into one, and the new
   household starts with no org membership: a membership stays with the household
@@ -162,6 +165,11 @@ Things the app takes as true because they are handled outside it.
   they lead or volunteer on, or a background check on file. The board changes it,
   and the refusal says how to ask. A member with neither stays editable, and
   resending the unchanged address is not a change.  [Decision]
+
+- On the board and sysadmin person edit, only a board member changes a person's
+  email, and only with a written reason, which the edit's record keeps. Nobody
+  changes the email of anyone in their own household this way. The email decides
+  who signs in as the person, so changing it hands over everything they hold.  [Decision — *Principle: identity is not authorisation*]
 
 - An account with the sign-in service must have a verified email before it is
   first linked to a person record; an account already linked keeps signing in unchanged.  [Decision]
@@ -202,7 +210,10 @@ Things the app takes as true because they are handled outside it.
   program's treasurer, or any other — for themself or for anyone in their own
   household. A sysadmin may grant roles in general; this binds them like anyone
   else. The board and sysadmin household-move paths refuse to move anyone out of
-  or into the actor's own household, which would get around it.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+  or into the actor's own household, which would get around it, and the board and
+  sysadmin paths that add a person to an existing household or make someone a lead
+  refuse the actor's own household for the same reason. A lead promoting within
+  their own household is unaffected.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A merge moves the merged-away record's roles under the same checks as a hand
   grant. It is refused when either record is in the actor's household, or when

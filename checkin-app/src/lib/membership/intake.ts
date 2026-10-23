@@ -8,7 +8,7 @@ import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/m
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
-import { addHouseholdLead, HouseholdLeadLimitError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
+import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
@@ -18,6 +18,7 @@ import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -54,7 +55,7 @@ export class IntakeError extends Error {
  */
 export type IntakeRejection = {
     section: "secondaryParent";
-    code: "lead_limit" | "name_required";
+    code: "lead_limit" | "name_required" | "household_denied" | "not_lead";
     message: string;
 };
 
@@ -275,6 +276,20 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     // what happened, instead of failing the whole save with a single error.
     const rejections: IntakeRejection[] = [];
     const addLeadOrRecord = async (participantId: number) => {
+        // A sysadmin manages their household's intake without leading it, so making
+        // someone its lead that way is a grant to their own household.
+        const alreadyLead = (user.household?.householdMembers ?? []).some((p) => p.id === participantId && p.isHouseholdLead);
+        if (!user.isHouseholdLead && !alreadyLead && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId }, {
+            table: "Person",
+            attempted: { isHouseholdLead: true },
+        })) {
+            rejections.push({
+                section: "secondaryParent",
+                code: "not_lead",
+                message: "We saved this person's details, but only a lead of this household can add them as a parent/guardian.",
+            });
+            return;
+        }
         try {
             await addHouseholdLead(prisma, householdId, participantId);
         } catch (e) {
@@ -284,6 +299,11 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     code: "lead_limit",
                     message: `We saved this person's details, but your household already lists the maximum of ${MAX_HOUSEHOLD_LEADS} parents/guardians, so they weren't added as a second guardian. Update or remove an existing parent/guardian to change that.`,
                 });
+                return;
+            }
+            if (e instanceof HouseholdLeadDeniedError) {
+                await raiseDeniedHouseholdActivity({ householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" });
+                rejections.push({ section: "secondaryParent", code: "household_denied", message: `We saved this person's details, but ${e.message.charAt(0).toLowerCase()}${e.message.slice(1)}` });
                 return;
             }
             throw e;

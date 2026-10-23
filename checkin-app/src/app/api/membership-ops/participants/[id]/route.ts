@@ -147,7 +147,23 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         // ends every existing link; the next sign-in must come from the new address.
         const emailChanged = body.email !== undefined
             && normalizeEmail(body.email ?? "") !== normalizeEmail(prior.email ?? "");
+        let emailChangeReason: string | undefined;
         if (emailChanged) {
+            // The email decides who signs in as this person, so only a board member
+            // outside their household changes it, and says why.
+            if (!auth.user.isBoardMember) {
+                return apiError("Only a board member can change a person's email.", 403);
+            }
+            emailChangeReason = typeof body.emailChangeReason === "string" ? body.emailChangeReason.trim() : "";
+            if (!emailChangeReason) {
+                return apiError("Give a reason for changing this person's email.", 400);
+            }
+            if (await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
+                table: "Person",
+                attempted: { email: body.email ?? null },
+            })) {
+                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+            }
             updateData.emailVerified = null;
             updateData.googleId = null;
         }
@@ -168,7 +184,12 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                     tableName: "Person",
                     affectedEntityId: id,
                     oldData: prior,
-                    newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }), ...(bgAssertedReason && { bgAssertedReason }) },
+                    newData: {
+                        ...updateData,
+                        ...(bgStaleWarning && { bgStaleWarning }),
+                        ...(bgAssertedReason && { bgAssertedReason }),
+                        ...(emailChangeReason && { emailChangeReason }),
+                    },
                 },
             });
             if (unlinked > 0) {
