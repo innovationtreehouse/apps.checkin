@@ -80,7 +80,7 @@ const ACTION_LABEL: Record<Action, string> = {
   "assign-owner": "Assign bucket",
   "resolve-unknown": "Resolve bucket",
 };
-const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer" };
+const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer", BOARD: "Board" };
 const NOT_EVERYDAY_REASONS = [
   { reason: "single_source", label: "Single-source purchase" },
   { reason: "finance_override", label: "Finance's call" },
@@ -202,7 +202,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
   // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
-  const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD_AUTHORIZATION"));
+  const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD"));
   const openCardCharge = !e.needsReimbursement && !e.backfill && !CLOSED_STATES.has(e.state);
   const held = e.reimburseePersonId !== undefined
     && reimburseeUnknown({ needsReimbursement: e.needsReimbursement, backfill: e.backfill, reimburseePersonId: e.reimburseePersonId });
@@ -275,14 +275,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   {s ? (
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
-                      {s.missing.filter((seat) => seat !== "BOARD_AUTHORIZATION").map((seat) => (
+                      {s.missing.map((seat) => (
                         <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>
                       ))}
                       {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
                       {noBucket && s.missing.includes("PROGRAM_APPROVER") && <Text size="xs" c="dimmed">Waiting for Finance to assign a budget bucket</Text>}
-                      {s.missing.includes("BOARD_AUTHORIZATION") && <Text size="xs" c="dimmed">Held until the Treasurer records the Board authorization</Text>}
                       {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
                     </Stack>
                   ) : "—"}
@@ -308,7 +307,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           <Text fw={600} mb="xs">Board authorization</Text>
           <Textarea
             label="What the Board authorized"
-            description="Recorded once; it cannot be changed. A Board member records it only when no finance holder without a conflict can."
+            description="What the Board decided in writing. It stands in for the Board seat on org-level lines and is not an approval. Recorded once; it cannot be changed. A Board member records it only when no finance holder without a conflict can."
             required
             value={authorization}
             onChange={(ev) => setAuthorization(ev.currentTarget.value)}

@@ -27,8 +27,6 @@ beforeAll(() => {
       }) as unknown as MediaQueryList);
 });
 
-const HINT = "Held until the Treasurer records the Board authorization";
-
 function load(missing: string[]) {
   mockLoads = {
     "/expenses/e1": {
@@ -43,16 +41,16 @@ function load(missing: string[]) {
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
 
-describe("a card charge held for Board authorization", () => {
-  it("shows the hold as a note, never as a seat to sign", () => {
-    load(["TREASURER", "BOARD_AUTHORIZATION"]);
-    expect(screen.getByText(HINT)).toBeInTheDocument();
+describe("the Board seat on a card-charge line", () => {
+  it("is a seat to sign, like the others", () => {
+    load(["TREASURER", "BOARD"]);
     expect(screen.getByRole("button", { name: "Sign as Treasurer" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /BOARD_AUTHORIZATION/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign as Board" })).toBeEnabled();
+    expect(screen.queryByText(/Held until the Treasurer records/)).not.toBeInTheDocument();
   });
 
-  it("shows no note once the authorization is recorded", () => {
+  it("is not offered on a line that does not take it", () => {
     load(["TREASURER"]);
-    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign as Board" })).not.toBeInTheDocument();
   });
 });

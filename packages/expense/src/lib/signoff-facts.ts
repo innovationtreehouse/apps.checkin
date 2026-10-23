@@ -2,7 +2,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
-import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardAuthorization, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
@@ -85,7 +85,6 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
   const kind = lineKind(expense);
   const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents));
   const everyday = isEveryday({ withinLimits, singleSource: expense.singleSource, financeNotEveryday: expense.financeNotEveryday });
-  const authorizationNeeded = needsBoardAuthorization(kind, everyday, expense.boardAuthorization);
   return new Map(
     lines.map((l) => {
       const bucket = bucketOf.get(l.id) ?? null;
@@ -102,7 +101,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         leaderHousehold: bucket === null ? [] : (leaderHouseholds.get(bucket) ?? []),
         reimburseeSetter: setterRow?.userId ?? null,
         seatedHouseholds: seated,
-        needsBoardAuthorization: authorizationNeeded,
+        boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),
       };
       return [l.id, facts];
     }),
@@ -116,22 +115,12 @@ export async function filledSeatsByLine(db: Db, expenseId: string): Promise<Map<
   return out;
 }
 
-export type LineHold = Seat | "BOARD_AUTHORIZATION";
-
-/** What still holds a line: its unfilled seats, then a missing Board authorization. */
-export function lineHolds(facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
-  return [...missingSeats(facts, filled), ...(facts.needsBoardAuthorization ? (["BOARD_AUTHORIZATION"] as const) : [])];
-}
-
-/**
- * Lines still missing a seat or the Board authorization. A held line keeps the whole expense out
- * of the QB outbox.
- */
-export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, LineHold[]>> {
+/** Lines still missing a seat. A held line keeps the whole expense out of the QB outbox. */
+export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, Seat[]>> {
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
-  const out = new Map<number, LineHold[]>();
+  const out = new Map<number, Seat[]>();
   for (const [lineId, f] of facts) {
-    const missing = lineHolds(f, filled.get(lineId) ?? []);
+    const missing = missingSeats(f, filled.get(lineId) ?? []);
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;

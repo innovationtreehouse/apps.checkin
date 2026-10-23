@@ -36,7 +36,7 @@ describeDb("card-charge sign-off routes", () => {
       ExpenseLineSignoffStatus: { missing: string[] }[];
     };
     expect(res.ExpenseLineSignoffStatus).toHaveLength(1);
-    expect(res.ExpenseLineSignoffStatus[0].missing).not.toContain("BOARD_AUTHORIZATION");
+    expect(res.ExpenseLineSignoffStatus[0].missing).not.toContain("BOARD");
     expect((await db.expense.findUnique({ where: { id } }))?.boardAuthorization).toBe("Board vote, 2026-10-01");
   });
 
@@ -72,7 +72,7 @@ describeDb("card-charge sign-off routes", () => {
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 100 });
     await seedLineItem(id, { partNumber: null, manualQbAccount: "5000", unitPriceCents: 100 });
     const res = (await call(expenses.notEveryday, id, { reason: "finance_override" })) as { ExpenseLineSignoffStatus: { missing: string[] }[] };
-    expect(res.ExpenseLineSignoffStatus[0].missing).toContain("BOARD_AUTHORIZATION");
+    expect(res.ExpenseLineSignoffStatus[0].missing).toContain("BOARD");
     await call(expenses.notEveryday, id, { reason: "finance_override" });
     await expect(call(expenses.notEveryday, id, { reason: "everyday" })).rejects.toMatchObject({ status: 400 });
     expect((await db.expense.findUnique({ where: { id } }))?.financeNotEveryday).toBe(true);

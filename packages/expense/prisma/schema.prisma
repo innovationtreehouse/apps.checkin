@@ -168,8 +168,8 @@ model Expense {
   singleSource       Boolean   @default(false) @map("single_source")
   /// @sensitivity:internal
   financeNotEveryday Boolean   @default(false) @map("finance_not_everyday")
-  // What the Board authorized for a non-Everyday card charge, as recorded by the Treasurer seat.
-  // Null holds the card charge out of the QB outbox.
+  // What the Board authorized for a card charge, as recorded by FINANCE (or a Board member). It
+  // stands in for the Board seat on the charge's org-level lines; null or blank does not.
   /// @sensitivity:internal
   boardAuthorization            String?   @map("board_authorization")
   /// @sensitivity:pii
@@ -600,8 +600,10 @@ model ExpenseReimburseeVendor {
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
-// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER; a Board member may fill the last two when nobody
-// eligible can. The two uniques make a seat fillable once and a person able to fill one seat per line.
+// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER | BOARD; a Board member may fill the middle two
+// when nobody eligible can. BOARD is the extra Board signer on a non-Everyday card-charge line
+// without written Board authorization. The two uniques make a seat fillable once and a person
+// able to fill one seat per line.
 model ExpenseLineSignoff {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
