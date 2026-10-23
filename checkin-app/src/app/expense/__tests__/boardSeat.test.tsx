@@ -49,6 +49,12 @@ describe("the Board seat on a card-charge line", () => {
     expect(screen.queryByText(/Held until the Treasurer records/)).not.toBeInTheDocument();
   });
 
+  it("a $2,000 purchase's Board approval is a note, never a seat to sign", () => {
+    load(["TREASURER", "BOARD_APPROVAL"]);
+    expect(screen.getByText("Held until the Board approval of this purchase is recorded")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /BOARD_APPROVAL/ })).not.toBeInTheDocument();
+  });
+
   it("is not offered on a line that does not take it", () => {
     load(["TREASURER"]);
     expect(screen.queryByRole("button", { name: "Sign as Board" })).not.toBeInTheDocument();

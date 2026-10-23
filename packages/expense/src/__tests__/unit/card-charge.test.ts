@@ -5,6 +5,7 @@ import {
   boardAuthorizationRefusal,
   isEveryday,
   missingSeats,
+  needsBoardApproval,
   needsBoardSeat,
   signoffRefusal,
   withinEverydayLimits,
@@ -167,5 +168,17 @@ describe("the Board seat on a card charge", () => {
 
   it("is blocked when no Board member without a conflict is free", () => {
     expect(blockedSeats({ ...card, conflicted: [1, 5, 6, 8] }, [])).toEqual(["BOARD"]);
+  });
+});
+
+describe("a purchase of $2,000 or more", () => {
+  it("is held until the Board's approval is recorded, whatever its kind or bucket", () => {
+    expect(needsBoardApproval(199_999, null)).toBe(false);
+    expect(needsBoardApproval(200_000, null)).toBe(true);
+    expect(needsBoardApproval(200_000, "FY27 robotics budget, line 12: competition kit")).toBe(false);
+  });
+
+  it("a blank record counts as none", () => {
+    expect(needsBoardApproval(200_000, "  ")).toBe(true);
   });
 });

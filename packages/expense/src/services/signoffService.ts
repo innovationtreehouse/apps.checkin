@@ -7,8 +7,8 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { BOARD_APPROVAL_CENTS, CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
@@ -139,12 +139,17 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
 };
 
 /** The expense, locked and open to change, or the refusal. */
-async function openCardCharge(tx: Prisma.TransactionClient, expenseId: string) {
+async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
   await lockExpense(tx, expenseId);
   const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked");
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  return expense;
+}
+
+async function openCardCharge(tx: Prisma.TransactionClient, expenseId: string) {
+  const expense = await openExpense(tx, expenseId);
   if (lineKind(expense) !== "card_charge") throw new ServiceError(400, "Expense is a reimbursement, not a card charge");
   return expense;
 }
@@ -166,16 +171,22 @@ export async function markNotEveryday(principal: ExpensePrincipal, expenseId: st
 }
 
 /**
- * Records what the Board authorized for a card charge, which stands in for the Board seat on its
- * org-level lines. It is not an approval. The text is required, a conflicted caller is refused
- * (a FINANCE holder records it, else a Board member), and once recorded it is not changed.
+ * Records what the Board authorized: its own decision, or the approved program-budget line that
+ * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
+ * clears the hold on a purchase of $2,000 or more; a reimbursement under that takes none. It is
+ * not an approval. The text is required, a conflicted caller is refused (a FINANCE holder records
+ * it, else a Board member), and once recorded it is not changed.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);
   const text = authorization.trim();
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
   const { state, byFinance } = await db.$transaction(async (tx) => {
-    const expense = await openCardCharge(tx, expenseId);
+    const expense = await openExpense(tx, expenseId);
+    if (lineKind(expense) !== "card_charge" && expense.receiptTotalCents < BOARD_APPROVAL_CENTS) {
+      throw new ServiceError(400, "A reimbursement under $2,000 takes no Board authorization");
+    }
+    if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before the Board authorization is recorded");
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
     const facts = [...(await signoffFactsByLine(tx, expense)).values()];
     const refusal = boardAuthorizationRefusal(facts, actor.userId);
@@ -191,13 +202,13 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
   if (state === "qb_pending") await drainExpense(await getOrgId(), expenseId);
 }
 
-/** Per line: the seats filled, the seats still missing, and the seats blocked (held until finance or the board acts). */
+/** Per line: the seats filled, what is still missing (seats, then the Board's approval), and the seats blocked (held until finance or the board acts). */
 export async function signoffStatus(expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expenseId)]);
   return [...facts].map(([lineItemId, f]) => {
     const seats = filled.get(lineItemId) ?? [];
-    return { lineItemId, filled: seats, missing: missingSeats(f, seats), blocked: blockedSeats(f, seats) };
+    return { lineItemId, filled: seats, missing: lineHolds(expense, f, seats), blocked: blockedSeats(f, seats) };
   });
 }

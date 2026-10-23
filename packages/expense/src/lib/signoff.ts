@@ -84,6 +84,18 @@ export function needsBoardSeat(kind: LineKind, everyday: boolean, programBucket:
   return kind === "card_charge" && !everyday && !programBucket && !boardAuthorization?.trim();
 }
 
+/** A purchase at or over this, either kind, needs the Board's approval recorded (Procurement Policy Art. III). */
+export const BOARD_APPROVAL_CENTS = 200_000;
+
+/**
+ * A purchase of $2,000 or more is held until the Board's approval of it is recorded in words: a
+ * Board authorization, or the approved program-budget line that covers it. Being in a program
+ * bucket is not enough, and no signature takes its place; a blank record counts as none.
+ */
+export function needsBoardApproval(receiptTotalCents: number, boardAuthorization: string | null): boolean {
+  return receiptTotalCents >= BOARD_APPROVAL_CENTS && !boardAuthorization?.trim();
+}
+
 /** People the Treasurer seat refuses whatever the seat's state: conflicted, the reimbursee's setter, the Program Leader's household. */
 function treasurerConflicted(facts: SignoffFacts): Set<number> {
   const out = new Set([...facts.conflicted, ...facts.leaderHousehold]);

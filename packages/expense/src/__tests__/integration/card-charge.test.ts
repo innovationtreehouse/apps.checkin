@@ -158,9 +158,50 @@ describeDb("card charges", () => {
     expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "COI" } })).toBe(0);
   });
 
-  it("a reimbursement takes no Board authorization", async () => {
+  it("a reimbursement under $2,000 takes no Board authorization", async () => {
     bindPorts({ signoff: directory({ finance: [3] }) });
     const id = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
     await expect(recordBoardAuthorization(FINANCE, id, "x")).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("a $2,000 card charge in a program bucket takes no Board seat but is held until the Board's approval is recorded", async () => {
+    const id = await signedCard({ receiptTotalCents: 200_000, unitPriceCents: 200_000, bucket: 200 });
+    await checkAndProcessExpense(ORG, id);
+    expect(await holds(id)).toEqual(["BOARD_APPROVAL"]);
+    expect(await events(id)).toBe(0);
+    await recordBoardAuthorization(FINANCE, id, "FY27 program budget, line 12");
+    expect(await holds(id)).toEqual([]);
+    expect(await events(id)).toBe(1);
+  });
+
+  it("a $2,000 org-level card charge: one recorded approval clears both the Board seat and the hold", async () => {
+    const id = await signedCard({ receiptTotalCents: 200_000, unitPriceCents: 200_000 });
+    expect(await holds(id)).toEqual(["BOARD", "BOARD_APPROVAL"]);
+    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: id } });
+    await signLine(BOARD, line.id, "BOARD");
+    expect(await holds(id)).toEqual(["BOARD_APPROVAL"]);
+    await recordBoardAuthorization(FINANCE, id, "Board minutes 2026-10-01, item 6");
+    expect(await holds(id)).toEqual([]);
+  });
+
+  it("a $2,000 reimbursement is held until the Board's approval is recorded", async () => {
+    bindPorts({ signoff: directory({ approvers: { 200: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1, receiptTotalCents: 200_000 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000", unitPriceCents: 200_000 });
+    await seedApproval(id, li, { ownerId: 200, status: "approved" });
+    await signAllLines(id);
+    await db.expense.update({ where: { id }, data: { boardAuthorization: null } });
+    expect(await holds(id)).toEqual(["BOARD_APPROVAL"]);
+    await expect(recordBoardAuthorization(principal(1, { isFinance: true }), id, "x")).rejects.toMatchObject({ status: 403 });
+    await recordBoardAuthorization(FINANCE, id, "FY27 program budget, line 4");
+    expect(await holds(id)).toEqual([]);
+    expect(await events(id)).toBe(1);
+  });
+
+  it("a $2,000 reimbursement with no reimbursee yet cannot record the approval", async () => {
+    bindPorts({ signoff: directory({ finance: [3] }) });
+    const id = await seedExpense({ needsReimbursement: true, receiptTotalCents: 200_000 });
+    await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await expect(recordBoardAuthorization(FINANCE, id, "x")).rejects.toMatchObject({ status: 409 });
   });
 });
