@@ -25,8 +25,12 @@ export default function OwnershipMapPage() {
 
   return (
     <>
-      <Title order={3} mb="md">Ownership map</Title>
-      {map.error && <LoadError what="the ownership map" message={map.error} onRetry={map.reload} />}
+      <Title order={3} mb="xs">Part buckets</Title>
+      <Text c="dimmed" mb="md">
+        The bucket that pays for a part, by its barcode. A line for a mapped part goes to that bucket without
+        Finance assigning one.
+      </Text>
+      {map.error && <LoadError what="the part buckets" message={map.error} onRetry={map.reload} />}
       <Table maw={640}>
         <Table.Thead><Table.Tr><Table.Th>GTIN</Table.Th><Table.Th>Bucket</Table.Th></Table.Tr></Table.Thead>
         <Table.Tbody>
