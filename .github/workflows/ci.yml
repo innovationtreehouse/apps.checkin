@@ -59,9 +59,9 @@ jobs:
   # check; a job that runs and reports success does not.
   #
   # A job whose `needs` failed is skipped, and a skipped required check passes. So
-  # each required job runs `if: ${{ !cancelled() }}` and its first step fails the
-  # job unless `changes` succeeded: a failed symlink or image-source check blocks
-  # the merge.
+  # each required job runs even when `changes` fails (`if: ${{ !cancelled() }}`,
+  # or `always()` on coverage-gate) and its first step fails the job unless
+  # `changes` succeeded: a failed symlink or image-source check blocks the merge.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
