@@ -125,7 +125,7 @@ const alerts: ReceiptAlerts = {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
     await notifyFinanceAlert(
       "Receipts: mail intake stopped holding mail",
-      `<p>${unresolved} mailed item(s) are held or deferred in the mail queue, the most the receipt mailbox holds. Today's mail run did not store ${refused} more file(s) from unknown or unverified senders, or from members over their daily upload limit; they stay in the mailbox only. Receipts from members within their limit are still read. Resolve or release queued items to resume holding. <a href="${config.baseUrl()}/receipts/mail">Open the mail queue</a></p>`,
+      `<p>${unresolved} mailed item(s) are held or deferred in the incoming receipt queue, the most the receipt mailbox holds. Today's mail run did not store ${refused} more file(s) from unknown or unverified senders, or from members over their daily upload limit; they stay in the mailbox only. Receipts from members within their limit are still read. Resolve or release queued items to resume holding. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
       "Receipt mail ceiling alert failed:",
     );
   },
