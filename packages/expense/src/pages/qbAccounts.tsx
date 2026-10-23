@@ -23,8 +23,8 @@ export default function QbAccountsPage() {
       <Title order={3} mb="xs">QuickBooks accounts</Title>
       <Text c="dimmed" mb="md">
         An account says what the money was spent on, such as supplies or equipment. Account mapping picks one for
-        each expense line. Whose budget pays is a separate choice: the line&apos;s bucket, which is a QuickBooks
-        Class set on Budgets.
+        each expense line. Whose budget pays is a separate choice: the line&apos;s bucket, whose QuickBooks Class
+        finance sets on Budgets.
       </Text>
       {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
       <Table maw={640}>

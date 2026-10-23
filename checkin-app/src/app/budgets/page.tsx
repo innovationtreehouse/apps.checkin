@@ -118,10 +118,11 @@ export default function BudgetsPage() {
       <Stack>
         <Title order={2}>Budgets</Title>
         <Text c="dimmed">
-          A bucket is a budget that spending comes out of, and it maps to one QuickBooks Class. It is not a
-          QuickBooks account: the account says what the money was spent on, and Account mapping picks it. A
-          program bucket is approved by the program&apos;s leader and its treasurers; an org-level bucket has no
-          approvers.
+          A bucket is a budget that spending, income and gifts are booked to. Its lines post to QuickBooks under
+          the bucket&apos;s QuickBooks Class, so a bucket without one holds its lines until finance sets it here. A
+          bucket is not a QuickBooks account: the account says what the money was spent on, and Account mapping
+          picks it. A program bucket is approved by the program&apos;s leader and its treasurers; an org-level
+          bucket has no approvers.
         </Text>
         <AlertBanner message={message} tone="error" />
 
