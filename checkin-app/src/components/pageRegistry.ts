@@ -187,7 +187,7 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: REVENUE('/finance-ops/payments') },
 
   // Expense Ops — FINANCE or BOARD
-  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: BUDGETS },
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer approver quickbooks class', visible: BUDGETS },
   { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
   { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: EXPENSES },
   { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: EXPENSES },

@@ -125,8 +125,7 @@ Things the app takes as true because they are handled outside it.
 - Nothing checks that a program leader is a member who has passed a background
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
-- Nobody sets themself or anyone in their own household as a program's leader,
-  because the leader approves the program's expenses.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+- Nobody sets themself or anyone in their own household as a program's leader.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Nobody adds themselves or their own household as a program volunteer, or makes
   them core; someone outside the household must. Only a program that has not
@@ -402,10 +401,6 @@ Things the app takes as true because they are handled outside it.
 
 - The people running a program reach a family through its household leads and
   emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
-
-- A program leader cannot remove the program's treasurer from its volunteers.
-  The treasurer comes from the budget agreed between the board and the program
-  leader, so only the board or a sysadmin removes them.  [Decision]
 
 - The search a program leader uses to add volunteers and participants returns
   names only, and matches a name or an id, never an email. Contact details and

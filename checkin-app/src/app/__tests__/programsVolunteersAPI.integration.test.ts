@@ -104,7 +104,7 @@ describe('Program Volunteers API Integration Tests', () => {
                     create: [
                         { personId: existingVolunteerId, isCore: false },
                         { personId: youthVolunteerId, isCore: false },
-                        { personId: treasurerId, isCore: false, isTreasurer: true },
+                        { personId: treasurerId, isCore: false },
                         { personId: leadSpouseId, isCore: false },
                     ]
                 }
@@ -400,31 +400,6 @@ describe('Program Volunteers API Integration Tests', () => {
              });
              const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(403);
-        });
-
-        const del = (participantId: number) => DELETE(
-            new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
-                method: 'DELETE',
-                body: JSON.stringify({ participantId })
-            }) as unknown as import("next/server").NextRequest,
-            createParams(targetProgramId) as unknown as never
-        );
-
-        it('refuses the lead mentor removing the program treasurer', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
-             const res = await del(treasurerId);
-             expect(res.status).toBe(403);
-             expect((await res.json()).error).toMatch(/treasurer/);
-             const row = await prisma.programVolunteer.findUnique({
-                 where: { programId_personId: { programId: targetProgramId, personId: treasurerId } }
-             });
-             expect(row?.isTreasurer).toBe(true);
-        });
-
-        it('lets the board remove the program treasurer', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
-             const res = await del(treasurerId);
-             expect(res.status).toBe(200);
         });
 
         it('should allow the assigned lead mentor to remove a volunteer', async () => {

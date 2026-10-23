@@ -191,8 +191,9 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Lead mentor must be at least 23 years old");
         }
-        // Leading a program makes its leader an expense approver. The edit form
-        // resends the current lead on every save, so only a change is refused.
+        // Nobody names themself or their household as a program's leader (Ethics
+        // Policy III.5). The edit form resends the current lead on every save, so
+        // only a change is refused.
         if (leadMentorId !== currentProgram.leadMentorId && (
             leadMentorId === actor.id || await hasHouseholdConflict(prisma, actor.id, mentor.householdId)
         )) {

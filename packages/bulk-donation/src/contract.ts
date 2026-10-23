@@ -98,7 +98,7 @@ export interface InKindDirectory {
   householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
   /** For each check, whether anyone in the person's household, the person included, has that surname; one batch. */
   householdsSharingSurname(checks: { personId: number; lastName: string }[]): Promise<boolean[]>;
-  /** The buckets whose approvers (program leader and treasurers) include this person. */
+  /** The buckets whose approvers (owner and treasurers) include this person. */
   bucketsApprovedBy(personId: number): Promise<number[]>;
   /** The expense library's large-spend amount; a gift valued at or over it warns its decider. */
   largeValueCents(): Promise<number>;

@@ -73,14 +73,16 @@ Income and donation rules are in `revenue.md`.
   system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
-- A program bucket's approvers are the program's leader and its treasurers,
-  derived and never stored. An org-level bucket has none.
-  [Decision]
+- A bucket's approvers are its owner and its treasurers, stored on the bucket
+  and not derived from any program: a budget and a program need not match one
+  to one. An org-level bucket has none, and whether a bucket is org-level is set
+  when it is created and never changes.
+  [Decision — owner]
 
-- A program treasurer is set by the board alone, because the role comes from the
-  board-approved program budget. Nobody sets it on themself or anyone in their
-  own household. Treasurers are adult-only by corporate policy, and the app does
-  not check that.
+- A bucket's owner and treasurers are set by the board alone, because they come
+  from the board-approved budget. Nobody sets, replaces or removes themself or
+  anyone in their own household. Treasurers are adult-only by corporate policy,
+  and the app does not check that.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 ### Expenses
@@ -102,7 +104,7 @@ Income and donation rules are in `revenue.md`.
 
 - A Treasurer with a conflict does not sign. For the Treasurer seat, a conflict
   is being — or sharing a household with — the submitter, the person reimbursed,
-  or the line's Program Leader, or having approved the line as its program
+  or the line's bucket owner, or having approved the line as its program
   approver. Another finance holder without a conflict signs instead; if there is
   none, a Board member without a conflict takes the seat. This differs from the
   policy on purpose: the policy has the conflicted Treasurer sign and adds one
@@ -110,9 +112,9 @@ Income and donation rules are in `revenue.md`.
   nobody decides on a receipt they are conflicted on.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
 
-- When every Program Leader and Program Treasurer of a line's program is
-  conflicted or unavailable, a Board member without a conflict signs the
-  program-approver seat. The policy names no one for this case; the app fills
+- When every owner and treasurer of a line's bucket is conflicted or
+  unavailable, a Board member without a conflict signs the program-approver
+  seat. The policy names no one for this case; the app fills
   the gap rather than leave the line held for good.
   [Decision — owner]
 

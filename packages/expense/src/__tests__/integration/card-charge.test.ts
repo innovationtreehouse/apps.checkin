@@ -22,7 +22,7 @@ async function someoneBlocked(): Promise<void> {
 }
 
 describeDb("card charges", () => {
-  // purchaser 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household
+  // purchaser 1 · owner 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household
   async function signedCard(opts: { receiptTotalCents?: number; unitPriceCents?: number } = {}) {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], households: [[1, 8]] }) });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: opts.receiptTotalCents ?? 100 });
