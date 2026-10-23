@@ -33,10 +33,8 @@ const budgetOwners: OwnerDirectory = {
   },
 };
 
-/** A live person whose household is not DENIED: a denied household's roles grant nothing (assignParticipantClaims). */
 async function eligibleSigner(): Promise<Prisma.PersonWhereInput> {
-  const { LIVE_PERSON } = await import("@/lib/person/filters");
-  return { ...LIVE_PERSON, NOT: { household: { orgMembership: { status: "DENIED" } } } };
+  return (await import("@/lib/finance/bucketApprovers")).eligibleSigner();
 }
 
 async function roleHolders(role: PersonRoleKind): Promise<number[]> {
@@ -69,19 +67,7 @@ export const signoff: SignoffDirectory = {
   },
 
   async bucketsApprovedBy(personId) {
-    const signer = await eligibleSigner();
-    const rows = await (await db()).budgetOwner.findMany({
-      where: {
-        program: {
-          OR: [
-            { leadMentorId: personId, leadMentor: signer },
-            { volunteers: { some: { personId, isTreasurer: true, person: signer } } },
-          ],
-        },
-      },
-      select: { id: true },
-    });
-    return rows.map((r) => r.id);
+    return (await import("@/lib/finance/bucketApprovers")).bucketsApprovedBy(personId);
   },
 
   financeHolders: () => roleHolders("FINANCE"),
