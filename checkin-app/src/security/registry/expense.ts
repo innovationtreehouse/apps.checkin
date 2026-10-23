@@ -66,9 +66,11 @@ defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-
 defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/flags', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
-// Records what the Board authorized for a non-Everyday card charge. The library
-// refuses a conflicted caller, and a Board member while a FINANCE holder without
-// a conflict exists.
+// Records what the Board authorized. The record clears the BOARD seat on a
+// non-Everyday card charge's org-level lines, and the hold on any purchase (card
+// charge or reimbursement) at or over the Board-review total. It is not an
+// approval. The library refuses a conflicted caller, and a Board member while a
+// FINANCE holder without a conflict exists.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/board-authorization', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: FINANCE_OR_BOARD_VIEW });
 
 // FINANCE only.
