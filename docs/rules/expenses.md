@@ -156,10 +156,11 @@ Income and donation rules are in `revenue.md`.
   member without a conflict.
   [Decision — owner]
 
-- A purchase of $2,000 or more, reimbursement or card charge, reaches the books
-  only once the Board's approval of it is recorded, in words: a Board
-  authorization, or the line of a Board-approved program budget that covers
-  it. Being in a program bucket is not enough, because the app does not know
-  what the budget listed. No Board member's signature takes its place. The app
-  does not ask for this yet.
-  [Short of policy — *Policy: Procurement Policy, Art. III*]
+- A purchase whose total is $2,000 or more, reimbursement or card charge,
+  reaches the books only once the Board's approval of it is recorded, in words:
+  a Board authorization, or the line of a Board-approved program budget that
+  covers it. Being in a program bucket is not enough, because the app does not
+  know what the budget listed. No Board member's signature takes its place. The
+  amount is a setting: finance may lower it, and only the Board raises it above
+  $2,000.
+  [Decision — *Policy: Procurement Policy, Art. III*; *Principle: fail closed*]
