@@ -126,6 +126,7 @@ describe('Registry route admission gates', () => {
     let plainUser: AuthenticatedUser;
     let programId: number;
     let eventId: number;
+    let bucketId: number;
     let otherPersonId: number;
     const householdIds: number[] = [];
     const participantIds: number[] = [];
@@ -187,6 +188,11 @@ describe('Registry route admission gates', () => {
             data: { programId, name: `Authz Event ${TAG}`, startAt: new Date(), endAt: new Date() },
         });
         eventId = event.id;
+
+        // For bucket routes ('GET /api/budget-owners/[id]/approvers' etc.) whose
+        // [id] is a BUCKET id.
+        const bucket = await prisma.budgetOwner.create({ data: { name: `Authz Bucket ${TAG}` } });
+        bucketId = bucket.id;
     });
 
     beforeEach(() => {
@@ -201,6 +207,9 @@ describe('Registry route admission gates', () => {
             else process.env[k] = v;
         }
         await prisma.event.deleteMany({ where: { id: eventId } });
+        // A driven PUT may have named the other person a treasurer or owner; RESTRICT FKs go first.
+        await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwnerId: bucketId } });
+        await prisma.budgetOwner.deleteMany({ where: { id: bucketId } });
         await prisma.program.deleteMany({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { id: { in: participantIds } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
@@ -212,9 +221,13 @@ describe('Registry route admission gates', () => {
         if (typeof verb !== 'function') {
             throw new Error(`${plan.endpoint}: no ${plan.method} export — registry/route out of sync`);
         }
-        // Event routes carry an EVENT id in [id]; [personId] is the other
-        // person; everything else uses the program id.
-        const idValue = String(plan.routePath.startsWith('/api/events/') ? eventId : programId);
+        // Event routes carry an EVENT id in [id] and bucket routes a BUCKET id;
+        // [personId] is the other person; everything else uses the program id.
+        const idValue = String(
+            plan.routePath.startsWith('/api/events/') ? eventId
+                : plan.routePath.startsWith('/api/budget-owners/') ? bucketId
+                    : programId,
+        );
         const valueFor = (name: string) => (name === 'personId' ? String(otherPersonId) : idValue);
         const url = `http://localhost${plan.routePath.replace(/\[(\w+)\]/g, (_, name: string) => valueFor(name))}`;
         const hasParams = /\[(\w+)\]/.test(plan.routePath);
