@@ -260,8 +260,8 @@ function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
 // The sign-off holds are re-read under the expense lock before anything is written,
-// catalog snapshots included, so a seat void or a not-Everyday mark either lands
-// first and holds the expense, or finds it closed.
+// catalog snapshots included, so a seat void either lands first and holds the
+// expense, or finds it closed.
 
 async function commitQbProcessing(
   orgId: string,

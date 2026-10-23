@@ -4,12 +4,22 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { recordBoardAuthorization, signoffStatus } from "../../services/signoffService";
-import { unsignedLines } from "../../lib/signoff-facts";
+import { lockExpense, unsignedLines } from "../../lib/signoff-facts";
 import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
+
+/** Resolves once some backend in this database is waiting on a row lock. */
+async function someoneBlocked(): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if (n > 0n) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error("no backend blocked on a lock");
+}
 
 describeDb("card charges", () => {
   // purchaser 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household
@@ -42,6 +52,38 @@ describeDb("card charges", () => {
     expect(await events(id)).toBe(1);
     const row = (await db.expense.findUnique({ where: { id } }))!;
     expect([row.boardAuthorization, row.boardAuthorizedByUserId]).toEqual(["Board minutes 2026-10-01, item 4", 3]);
+  });
+
+  it("a seat void racing the outbox commit holds the charge until the seat is signed again", async () => {
+    const id = await signedCard();
+    expect(await holds(id)).toEqual([]);
+
+    // The void holds the expense lock uncommitted while the drain reads no hold.
+    let commit!: () => void;
+    const gate = new Promise<void>((r) => (commit = r));
+    let voided!: () => void;
+    const held = new Promise<void>((r) => (voided = r));
+    const voiding = db.$transaction(async (tx) => {
+      await lockExpense(tx, id);
+      await tx.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "TREASURER" } });
+      voided();
+      await gate;
+    }, { timeout: 20_000 });
+    await held;
+
+    const drain = checkAndProcessExpense(ORG, id);
+    await someoneBlocked();
+    commit();
+    await voiding;
+    await drain;
+
+    expect(await events(id)).toBe(0);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");
+    expect(await holds(id)).toEqual(["TREASURER"]);
+    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: id }, select: { id: true } });
+    await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line.id, seat: "TREASURER", signerUserId: 9002 } });
+    await checkAndProcessExpense(ORG, id);
+    expect(await events(id)).toBe(1);
   });
 
   it("an item over the item limit holds it", async () => {
