@@ -225,6 +225,19 @@ export interface PeopleDirectory {
 
 export const inertPeopleDirectory: PeopleDirectory = { nameOf: async () => null };
 
+/** Rows keyed by model name, as they go into or come out of the outbound gateway. */
+export type OutboundBag = Record<string, unknown>;
+
+/**
+ * The host's outbound gateway: strips `bag` to the surface's declared tiers, and `send` sees only
+ * the stripped rows. Every QuickBooks write is built inside `send`.
+ */
+export type Outbound = <T>(surface: string, bag: OutboundBag, send: (stripped: OutboundBag) => Promise<T>) => Promise<T>;
+
+export const inertOutbound: Outbound = async (surface) => {
+  throw new Error(`no outbound gateway is bound: nothing is sent to ${surface}`);
+};
+
 /**
  * QB-2 posting: the host's QuickBooks client (the create-only writer lives in
  * `@checkin/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.

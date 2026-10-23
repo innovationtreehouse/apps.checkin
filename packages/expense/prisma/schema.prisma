@@ -255,6 +255,9 @@ model ExpenseLineItem {
   // The QBO account this line was posted to on an entry the app created.
   /// @sensitivity:internal
   qbAccountId       String?  @map("qb_account_id")
+  // The QBO account resolved for this line when the expense entered the outbox; the poster books this one.
+  /// @sensitivity:internal
+  resolvedQbAccount String?  @map("resolved_qb_account")
 
   expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   approvals         LineItemOwnerApproval[]
@@ -345,7 +348,7 @@ model ExpenseEvent {
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
   /// @sensitivity:personal
-  payload   String
+  payload   String?
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 

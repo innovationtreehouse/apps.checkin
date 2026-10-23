@@ -5,7 +5,8 @@
  * No actor may grant their own household a volunteer discount or a
  * background-check date, under any role: the household volunteer flag, the
  * volunteer-designation allowlist, and the participant lastBackgroundCheck edit.
- * A board edit that makes a lead's check stale needs an explicit confirmation.
+ * A board edit that makes a lead's check stale needs an explicit confirmation,
+ * and one that moves a check date later needs a Board member and a reason.
  */
 
 import { PATCH as HOUSEHOLD_PATCH } from '@/app/api/membership-ops/households/[id]/route';
@@ -152,9 +153,9 @@ describe('own-household grant guards', () => {
         });
 
         it('sets the date for someone outside the household and audits old and new values', async () => {
-            const first = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-01-15' }) as never, params(outsiderId));
+            const first = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-01-15', bgCheckReason: 'Vendor report seen' }) as never, params(outsiderId));
             expect(first.status).toBe(200);
-            const second = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-03-01' }) as never, params(outsiderId));
+            const second = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-03-01', bgCheckReason: 'Re-check on file' }) as never, params(outsiderId));
             expect(second.status).toBe(200);
 
             const log = await prisma.auditLog.findFirst({
@@ -162,7 +163,31 @@ describe('own-household grant guards', () => {
                 orderBy: { id: 'desc' },
             });
             expect((log?.oldData as { lastBackgroundCheck: string }).lastBackgroundCheck).toBe('2026-01-15T00:00:00.000Z');
-            expect((log?.newData as { lastBackgroundCheck: string }).lastBackgroundCheck).toBe('2026-03-01T00:00:00.000Z');
+            expect(log?.newData).toEqual(expect.objectContaining({ lastBackgroundCheck: '2026-03-01T00:00:00.000Z', bgAssertedReason: 'Re-check on file' }));
+        });
+
+        it('refuses a later date without a reason and leaves the date alone', async () => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-04-01', bgCheckReason: '  ' }) as never, params(outsiderId));
+            expect(res.status).toBe(400);
+            expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-03-01T00:00:00.000Z');
+        });
+
+        describe('as a sysadmin who is not on the Board', () => {
+            beforeEach(() => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: actorId, isSysadmin: true } });
+            });
+
+            it('refuses a later date even with a reason', async () => {
+                const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-04-01', bgCheckReason: 'Trust me' }) as never, params(outsiderId));
+                expect(res.status).toBe(403);
+                expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-03-01T00:00:00.000Z');
+            });
+
+            it('moves the date earlier without a reason', async () => {
+                const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-02-20' }) as never, params(outsiderId));
+                expect(res.status).toBe(200);
+                expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-02-20T00:00:00.000Z');
+            });
         });
     });
 

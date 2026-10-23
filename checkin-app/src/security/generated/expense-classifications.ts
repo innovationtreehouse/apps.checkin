@@ -98,6 +98,7 @@ export const classifications = {
         qbTxnId: 'internal',
         qbTxnEntity: 'internal',
         qbAccountId: 'internal',
+        resolvedQbAccount: 'internal',
     },
     LineItemOwnerApproval: {
         id: 'internal',

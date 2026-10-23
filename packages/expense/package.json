@@ -18,6 +18,10 @@
     "./nav": {
       "types": "./src/nav.ts",
       "import": "./src/nav.ts"
+    },
+    "./qb-write": {
+      "types": "./src/qb-write.ts",
+      "import": "./src/qb-write.ts"
     }
   },
   "scripts": {

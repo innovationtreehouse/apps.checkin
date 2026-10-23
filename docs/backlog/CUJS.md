@@ -155,7 +155,7 @@ _**But payment-reconciliation is NOT a gap** — V5 found checkin already ships 
 3. ❌ QB account mapping (rules → one account/line, no category splits by design)
 4. ❌ **Expense holds + resubmit; MULTIPLE_MATCHES hold** (exception screen)
 5. ❌ Capital review + depreciation-cycle designation (ordering unvalidated, UNFINISHED #6)
-6. ❌ Post via QB event contract (`QbLineItemSchema`, schemaVersion) → **QB sync-failure/ambiguity queue**
+6. ❌ Post to QuickBooks from the expense and line rows → **QB sync-failure/ambiguity queue**
 
 ### A14. Donations intake  (bulkdonation-app)  [`GC-DONOR`]
 1. ❌ Benevity CSV import + parse → Transaction rows (blob retained)

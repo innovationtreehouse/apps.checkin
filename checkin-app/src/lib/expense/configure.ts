@@ -4,7 +4,8 @@
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
- * The posting writer stays unbound (inert); it is a later crossing.
+ * The posting writer stays unbound (inert); it is a later crossing. Whatever the library sends
+ * out goes through checkin's outbound gateway, which strips it to the surface's declared tiers.
  */
 import { configureExpense, reimburseeVendorId } from "@checkin/expense";
 import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
@@ -13,6 +14,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { outboundCall } from "@/security/outbound";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -31,10 +33,8 @@ const budgetOwners: OwnerDirectory = {
   },
 };
 
-/** A live person whose household is not DENIED: a denied household's roles grant nothing (assignParticipantClaims). */
 async function eligibleSigner(): Promise<Prisma.PersonWhereInput> {
-  const { LIVE_PERSON } = await import("@/lib/person/filters");
-  return { ...LIVE_PERSON, NOT: { household: { orgMembership: { status: "DENIED" } } } };
+  return (await import("@/lib/finance/bucketApprovers")).eligibleSigner();
 }
 
 async function roleHolders(role: PersonRoleKind): Promise<number[]> {
@@ -67,19 +67,7 @@ export const signoff: SignoffDirectory = {
   },
 
   async bucketsApprovedBy(personId) {
-    const signer = await eligibleSigner();
-    const rows = await (await db()).budgetOwner.findMany({
-      where: {
-        program: {
-          OR: [
-            { leadMentorId: personId, leadMentor: signer },
-            { volunteers: { some: { personId, isTreasurer: true, person: signer } } },
-          ],
-        },
-      },
-      select: { id: true },
-    });
-    return rows.map((r) => r.id);
+    return (await import("@/lib/finance/bucketApprovers")).bucketsApprovedBy(personId);
   },
 
   financeHolders: () => roleHolders("FINANCE"),
@@ -205,5 +193,6 @@ export function configureRuntime(): void {
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
+    outbound: outboundCall,
   });
 }

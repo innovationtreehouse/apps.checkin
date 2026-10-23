@@ -12,8 +12,10 @@
 import { allRoutes, type Authorize, type RegisteredRoute } from '@/security/core';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import prisma from '@/lib/prisma';
+import { signoff } from '@/lib/expense/configure';
 import '@/security/registry';
+
+jest.mock('@/lib/expense/configure', () => ({ signoff: { bucketsApprovedBy: jest.fn() } }));
 
 const isRoleFlagGate = (a: Authorize) =>
     a === 'catalog-viewer' || a === 'receipt-submitter' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
@@ -63,8 +65,8 @@ const gated = [...allRoutes()].filter(([, r]) => isRoleFlagGate(r.authorize));
 const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
-    // The treasurer leg would admit by lookup; make it match so only the id guard can deny.
-    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue({ programId: 1 });
+    // The approver leg would admit by lookup; make it match so only the id guard can deny.
+    jest.mocked(signoff.bucketsApprovedBy).mockResolvedValue([1]);
 });
 
 describe('id-less session on role-flag gates', () => {

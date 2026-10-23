@@ -199,6 +199,12 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // finance-or-board with everyones grants and no owner-scoped view; per-line
     // approval by a bucket's approvers is a handler query filter, not a scope.
     'BudgetOwner',
+    // A bucket's approvers. `personId` makes it scopable, but its views are
+    // finance-or-board and Board with everyones grants; nobody reads their own row.
+    'BudgetOwnerApprover',
+    // A bucket's treasurer rows. `personId` makes it scopable; read only through
+    // BudgetOwnerApprover by finance or board.
+    'BudgetOwnerTreasurer',
     // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never
     // earns a `their_own` binding; the internal attribution fields stay with the

@@ -9,12 +9,9 @@ on:
     # so this must exist on both main (every future rel/* cut inherits it)
     # and rel/1.0 (so current release-line PRs get checks).
     branches: [main, 'rel/**']
-    # Safe only while this is not a required check: a skipped required check
-    # never reports and would block the merge.
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'client/**'
+  # Required checks must also report on the merge queue's ref, or the entry
+  # waits forever.
+  merge_group:
   workflow_dispatch: {}
 
 permissions:
@@ -34,17 +31,72 @@ env:
   PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
 
 jobs:
+  # The flow job is a required check, so the workflow runs on every PR. A PR
+  # whose every changed file is under the top-level docs/ or client/, or is a
+  # *.md file anywhere, cannot change a journey: the flow job still runs and
+  # reports success, but skips the server and the tests. A workflow that never
+  # triggers never reports, and a required check that never reports blocks the
+  # merge.
+  changes:
+    name: Detect flow changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      flow: ${{ steps.detect.outputs.flow }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # merge_group and workflow_dispatch always run the journeys.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Non-PR event ($EVENT_NAME) — running flow tests."
+            echo "flow=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
+          echo "Changed files:"; printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -qvE '(^docs/|^client/|\.md$)'; then
+            echo "flow=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs- or client-only change — skipping flow tests (the required check still passes)."
+            echo "flow=false" >> "$GITHUB_OUTPUT"
+          fi
+
   flow:
     name: User-journey flow tests (docker dev server)
+    needs: changes
+    # A job whose `needs` failed is skipped, and a skipped required check
+    # passes. Run anyway and fail below, so a broken detector blocks the merge.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect flow changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No journey-affecting changes
+        if: needs.changes.outputs.flow != 'true'
+        run: echo "Docs- or client-only change — nothing for the flow tests to verify."
+
+      - if: needs.changes.outputs.flow == 'true'
+        uses: actions/checkout@v5
 
       # Authenticate the image pulls. Anonymous ECR Public is rate-limited per
       # shared-runner IP; authenticated is per-account. OIDC means GitHub + AWS
       # issue short-lived tokens each run — nothing to rotate manually.
       - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.flow == 'true'
         uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
@@ -53,15 +105,17 @@ jobs:
       # Pull is now authenticated; --wait then only blocks on the healthchecks
       # (start_period in the compose file covers npm ci + seed).
       - name: Start dockerized dev server + DB
+        if: needs.changes.outputs.flow == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml up -d --wait --wait-timeout 600
 
       - name: Run flow tests (inside the app container)
+        if: needs.changes.outputs.flow == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml exec -T app sh -lc "cd checkin-app && npm run test:flow"
 
       - name: App logs on failure
-        if: failure()
+        if: failure() && needs.changes.outputs.flow == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml logs --no-color --tail 300 app
 
       - name: Tear down
-        if: always()
+        if: always() && needs.changes.outputs.flow == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml down -v

@@ -7,7 +7,7 @@ import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
 import { raiseFlag } from "../services/flagService";
-import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
+import { lineCents } from "../qb-write";
 import { logError } from "./logger";
 
 /** QuickBooks reads per run: one windowed read per checked expense. */
@@ -124,14 +124,13 @@ export async function matchBaseline(entity: string, qbTxnId: string, receiptDate
 
 export type DriftCounts = { checked: number; drifted: number; failed: number };
 
-/** What the drain posted for a CREATED expense, read from its outbox event. */
+/** What the drain posted for a CREATED expense: its lines' amounts and the account each was posted to. */
 async function postedEntry(id: string, vendorId: string | null): Promise<PostedEntry> {
-  const event = await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } });
-  const items = QbExpenseEventSchema.parse(JSON.parse(event.payload)).items;
+  const lines = await db.expenseLineItem.findMany({ where: { expenseId: id } });
   return {
     key: qbKey("expense", id),
-    amountCents: sumCents(...items.map((i) => i.totalPriceCents + i.allocatedTaxCents + i.allocatedShippingCents - i.allocatedDiscountCents)),
-    accounts: items.map((i) => i.account),
+    amountCents: sumCents(...lines.map(lineCents)),
+    accounts: lines.map((l) => l.qbAccountId ?? ""),
     vendorId,
   };
 }

@@ -66,6 +66,7 @@ const ORDER_FIELDS = `
       sku
       title
       quantity
+      currentQuantity
       variant { id legacyResourceId }
       originalUnitPriceSet ${MONEY_BAG}
       totalDiscountSet ${MONEY_BAG}
@@ -286,6 +287,7 @@ export function buildOrdersBulkQuery(updatedAtFloorIso: string): string {
                   sku
                   title
                   quantity
+                  currentQuantity
                   variant { id legacyResourceId }
                   originalUnitPriceSet ${MONEY_BAG}
                   totalDiscountSet ${MONEY_BAG}

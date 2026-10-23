@@ -124,7 +124,7 @@ describeDb("seats follow the payee", () => {
     await signLine(BOARD, li, "TREASURER");
   });
 
-  it("the outbox event names the reimbursee the seats were signed for", async () => {
+  it("the outbox commits with the reimbursee the seats were signed for", async () => {
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 9 });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
@@ -132,8 +132,8 @@ describeDb("seats follow the payee", () => {
 
     await checkAndProcessExpense(ORG, id);
 
-    const [event] = await db.expenseEvent.findMany({ where: { expenseId: id } });
-    expect(JSON.parse(event.payload)).toMatchObject({ needsReimbursement: true, reimburseePersonId: 9 });
+    expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(1);
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ needsReimbursement: true, reimburseePersonId: 9 });
   });
 });
 

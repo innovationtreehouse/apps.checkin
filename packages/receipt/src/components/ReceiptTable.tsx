@@ -3,8 +3,16 @@ import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
 import { dollars, STATE_LABELS, type ReceiptListRow } from "./api";
 
-/** One row per receipt, linking to its detail page. `paid` adds the reimbursement column. */
-export default function ReceiptTable({ rows, paid = false }: { rows: ReceiptListRow[]; paid?: boolean }) {
+/** One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement column. */
+export default function ReceiptTable({
+  rows,
+  paid = false,
+  detailHref = (id) => `/receipts/${id}`,
+}: {
+  rows: ReceiptListRow[];
+  paid?: boolean;
+  detailHref?: (id: string) => string;
+}) {
   if (rows.length === 0) return <Text c="dimmed">No receipts.</Text>;
   return (
     <Table.ScrollContainer minWidth={560}>
@@ -22,7 +30,7 @@ export default function ReceiptTable({ rows, paid = false }: { rows: ReceiptList
           {rows.map((r) => (
             <Table.Tr key={r.id}>
               <Table.Td>
-                <Anchor component={Link} href={`/receipts/${r.id}`}>{new Date(r.uploadedAt).toLocaleDateString()}</Anchor>
+                <Anchor component={Link} href={detailHref(r.id)}>{new Date(r.uploadedAt).toLocaleDateString()}</Anchor>
               </Table.Td>
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
