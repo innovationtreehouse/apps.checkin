@@ -1,5 +1,6 @@
-import { navBadgeFor, tabBadgeFor, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
+import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
 import type { TodoCounts } from '@/lib/nav/todoCounts';
+import { FINANCE_NAV_LINKS, SHOPIFY_NAV_LINKS } from '@/lib/nav/sections/revenueOps';
 
 const base: TodoCounts = {
   member: { household: [], programs: [], programsAwaitingFinance: 0 },
@@ -295,6 +296,43 @@ describe('finance-ops nav ↔ tab agreement', () => {
 
   it('no section badge when both queues are empty', () => {
     expect(navBadgeFor('/finance-ops', admin())).toEqual([]);
+  });
+});
+
+describe('sectionTabBadge — grouped tabs', () => {
+  it('the Shopify tab carries its Payment problems sub-tab pill', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, counts)).toEqual(tabBadgeFor('/finance-ops/payments', counts));
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/payments', counts)?.count).toBe(4);
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/shopify-holds', counts)).toBeNull();
+  });
+
+  it('a grouped tab prefers a red sub-tab pill over a green one, and folds same-color pills', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const red = (n: number) => ({ count: n, color: 'red', label: `${n} red` });
+    const group = (reds: number[]) => [{
+      name: 'Group',
+      href: '/finance-ops/payments',
+      subLinks: [
+        { name: 'Payments', href: '/finance-ops/payments' },
+        ...reds.map((n, i) => ({ name: `Red ${i}`, href: `/red/${i}`, badge: () => red(n) })),
+      ],
+    }];
+    expect(sectionTabBadge(group([2]), '/finance-ops/payments', counts)).toEqual(red(2));
+    expect(sectionTabBadge(group([2, 3]), '/finance-ops/payments', counts)?.count).toBe(5);
+    expect(sectionTabBadge(group([]), '/finance-ops/payments', counts)?.color).toBe('treehouseGreen');
+  });
+
+  it("folds a grouped tab's own badge with its sub-tabs' pills", () => {
+    const gray = { count: 2, color: 'gray', label: '2 own' };
+    const tabs = [{ name: 'Group', href: '/g', badge: () => gray, subLinks: [{ name: 'Quiet', href: '/g/quiet' }] }];
+    expect(sectionTabBadge(tabs, '/g', admin())).toEqual(gray);
+  });
+
+  it('no Shopify tab pill when its sub-tabs have none', () => {
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, admin())).toBeNull();
   });
 });
 

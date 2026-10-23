@@ -18,6 +18,7 @@ import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 import { SETTINGS } from "@/lib/nav/sections/settings";
 import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
+import { tabBadgeFor } from "@/components/navBadges";
 
 const SECTIONS: NavSection[] = [
   SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
@@ -105,3 +106,27 @@ describe("Membership Ops", () => {
     expect(MEMBERSHIP_OPS.links.find((l) => l.href === "/membership-ops/review")?.name).toBe("Background-check Review");
   });
 });
+
+// The sidebar reads a tab's badge function and the tab row reads tabBadgeFor first,
+// so a tab with both would show different pills in the two places.
+describe("tab badge sources", () => {
+  const counts: TodoCounts = {
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    admin: {
+      membership: 1, applicationsTotal: 1, paymentPlanPending: 1, membershipPaymentPlanPending: 1, trustedAdults: 1, householdsMissingContact: 1,
+      unclaimedHouseholds: 1, brokenHouseholds: 1, brokenEmails: 1, settingsMisconfig: 1, programsMisconfig: 1, openPaymentExceptions: 1,
+    },
+  };
+
+  it("no tab or sub-tab has both a tabBadgeFor case and its own badge function", () => {
+    const both = SECTIONS.flatMap((s) => s.links.flatMap((l) => [l, ...(l.subLinks ?? [])]))
+      .filter((l) => l.badge && tabBadgeFor(l.href, counts))
+      .map((l) => l.href);
+    expect(both).toEqual([]);
+  });
+});
+

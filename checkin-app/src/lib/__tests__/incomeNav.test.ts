@@ -1,6 +1,6 @@
 import { visibleLinks } from "@/lib/nav/gates";
-import { FINANCE_NAV_LINKS, REVENUE_OPS, incomeBadge } from "@/lib/nav/sections/revenueOps";
-import { INCOME_NAV_LINKS } from "@checkin/income/nav";
+import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
+import { sectionBadges, sectionTabBadge } from "@/components/navBadges";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
@@ -25,12 +25,13 @@ const sysadmin: SessionUser = { id: 3, isSysadmin: true };
 const lead: SessionUser = { id: 4, programsLed: [9] };
 const member: SessionUser = { id: 5 };
 
-const hrefs = (tabs: { href: string }[]) => tabs.map((t) => t.href);
+const hrefs = (tabs: readonly { href: string }[]) => tabs.map((t) => t.href);
+const names = (tabs: readonly { name: string }[]) => tabs.map((t) => t.name);
 
-describe("Revenue Ops Income tab", () => {
-  it("shows to FINANCE and Board", () => {
+describe("Revenue Ops Income and Shopify tabs", () => {
+  it("shows both to FINANCE and Board", () => {
     for (const u of [finance, board]) {
-      expect(hrefs(visibleLinks(REVENUE_OPS, u, released))).toContain("/income");
+      expect(names(visibleLinks(REVENUE_OPS, u, released))).toEqual(expect.arrayContaining(["Shopify", "Income"]));
     }
   });
 
@@ -40,29 +41,38 @@ describe("Revenue Ops Income tab", () => {
     }
   });
 
-  it("sits after the Board-only legacy tabs; FINANCE lands on it", () => {
-    expect(hrefs(visibleLinks(REVENUE_OPS, board, released))).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income", "/donations"]);
-    expect(hrefs(visibleLinks(REVENUE_OPS, finance, released))[0]).toBe("/income");
+  it("puts Payouts and Reconciliation under Shopify, the rest under Income", () => {
+    const tabs = visibleLinks(REVENUE_OPS, board, released);
+    expect(hrefs(tabs.find((t) => t.name === "Shopify")?.subLinks ?? [])).toEqual([
+      "/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock", "/income/payouts", "/income/reconciliation",
+    ]);
+    expect(hrefs(tabs.find((t) => t.name === "Income")?.subLinks ?? [])).toEqual(["/income/items", "/income/exclusions"]);
+    expect(hrefs(tabs)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items", "/donations"]);
   });
 
-  it("hides from FINANCE until income is released", () => {
+  it("gives FINANCE only the income screens under Shopify, and lands it on Payouts", () => {
+    const tabs = visibleLinks(REVENUE_OPS, finance, released);
+    expect(hrefs(tabs.find((t) => t.name === "Shopify")?.subLinks ?? [])).toEqual(["/income/payouts", "/income/reconciliation"]);
+    expect(hrefs(tabs)[0]).toBe("/income/payouts");
+  });
+
+  it("hides both from FINANCE until income is released", () => {
     const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "income"));
-    expect(hrefs(visibleLinks(REVENUE_OPS, finance, unreleased))).not.toContain("/income");
+    expect(names(visibleLinks(REVENUE_OPS, finance, unreleased))).not.toEqual(expect.arrayContaining(["Shopify"]));
+    expect(names(visibleLinks(REVENUE_OPS, finance, unreleased))).not.toEqual(expect.arrayContaining(["Income"]));
   });
 
-  it("badges open reconciliation items", () => {
-    const income = REVENUE_OPS.links.find((t) => t.href === "/income");
+  it("badges open reconciliation items on Reconciliation and Shopify, not Income, and once in the sidebar", () => {
     const c = counts([...LIBRARY_KEYS], { income: { openReconciliation: 3 } });
-    expect(income?.badge?.(c)).toEqual({ count: 3, color: "red", label: "3 open income reconciliation items" });
-    expect(income?.badge?.(released)).toBeNull();
-  });
-
-  it("sums its screen tabs' pills, and the Reconciliation screen tab shows its own", () => {
-    const c = counts([...LIBRARY_KEYS], { income: { openReconciliation: 3 } });
-    const screenTotal = INCOME_NAV_LINKS.reduce((sum, l) => sum + (l.badge ? incomeBadge(c, [l.badge])?.count ?? 0 : 0), 0);
-    expect(REVENUE_OPS.links.find((t) => t.href === "/income")?.badge?.(c)?.count).toBe(screenTotal);
-    const recon = INCOME_NAV_LINKS.find((l) => l.href === "/income/reconciliation");
-    expect(recon?.badge && incomeBadge(c, [recon.badge])?.count).toBe(3);
+    const pill = { count: 3, color: "red", label: "3 open income reconciliation items" };
+    const tabs = visibleLinks(REVENUE_OPS, finance, c);
+    const shopify = tabs.find((t) => t.name === "Shopify");
+    const income = tabs.find((t) => t.name === "Income");
+    expect(sectionTabBadge(shopify?.subLinks ?? [], "/income/reconciliation", c)).toEqual(pill);
+    expect(sectionTabBadge(tabs, shopify?.href ?? "", c)).toEqual(pill);
+    expect(sectionTabBadge(tabs, income?.href ?? "", c)).toBeNull();
+    expect(sectionBadges(REVENUE_OPS.href, tabs, c)).toEqual([{ ...pill, label: "3 open income reconciliation items" }]);
+    expect(sectionTabBadge(tabs, shopify?.href ?? "", released)).toBeNull();
   });
 });
 

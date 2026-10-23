@@ -3,7 +3,7 @@
 // and leadsAnyProgram for the "Programs I Lead" visibility gate.
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { LibraryKey } from '@/lib/libraryRelease';
-import type { SectionLink } from '@/lib/nav/types';
+import type { SectionLink, SubLink } from '@/lib/nav/types';
 
 export type NavBadge = { count: number; color: string; label: string };
 
@@ -25,18 +25,31 @@ export function foldBadges(badges: NavBadge[]): NavBadge[] {
   return [...byColor.values()];
 }
 
-/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' pills, folded. */
+/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' and sub-tabs' pills, folded. */
 export function sectionBadges(href: string, tabs: readonly SectionLink[], counts: TodoCounts | null): NavBadge[] {
-  const tabBadges = tabs.flatMap((t) => {
+  const tabBadges = tabs.flatMap((t) => [t, ...(t.subLinks ?? [])]).flatMap((t) => {
     const b = t.badge?.(counts);
     return b ? [b] : [];
   });
   return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
 }
 
-/** A section tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+/** A single page tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+function pageTabBadge(tab: SubLink, counts: TodoCounts | null): NavBadge | null {
+  return tabBadgeFor(tab.href, counts) ?? tab.badge?.(counts) ?? null;
+}
+
+/**
+ * A section tab's pill. A grouped tab folds its own badge with its sub-tabs'
+ * pills and shows one, red first, since a tab holds a single pill.
+ */
 export function sectionTabBadge(tabs: readonly SectionLink[], href: string, counts: TodoCounts | null): NavBadge | null {
-  return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
+  const tab = tabs.find((t) => t.href === href);
+  if (!tab) return tabBadgeFor(href, counts);
+  if (!tab.subLinks) return pageTabBadge(tab, counts);
+  const folded = foldBadges([tab.badge?.(counts) ?? null, ...tab.subLinks.map((s) => pageTabBadge(s, counts))]
+    .filter((b): b is NavBadge => b !== null));
+  return folded.find((b) => b.color === 'red') ?? folded[0] ?? null;
 }
 
 /** True when the caller leads ≥1 program — gates the "Programs I Lead" nav item. */
