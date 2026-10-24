@@ -1,5 +1,6 @@
-// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI). The signer is always the
-// principal; a line with an unfilled seat holds its expense out of the QB outbox.
+// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI), signed in order around the
+// line's approval. The signer is always the principal; a line with an unfilled seat holds its
+// expense out of the QB outbox.
 import type { Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
@@ -7,11 +8,12 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { lineActions, mayRecordBoardAuthorization } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
-import { raiseFlag } from "./flagService";
+import { closeAnsweredFlag, raiseFlag } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -31,10 +33,6 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
       if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
       if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
       if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
-      if (seat === "PROGRAM_APPROVER") {
-        const approval = await tx.lineItemOwnerApproval.findFirst({ where: { lineItemId }, select: { ownerId: true } });
-        if (approval?.ownerId == null) throw new ServiceError(409, "The line has no budget bucket yet; FINANCE assigns one before the program approver signs");
-      }
 
       const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
       const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
@@ -129,11 +127,8 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
       valueAfter: String(personId),
     });
     // Any seat signed while the payee was unknown is signed again for the payee.
-    await voidSignoffs(tx, actor, expenseId, null, "the reimbursee was set");
-    await tx.expenseFlag.updateMany({
-      where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
-      data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },
-    });
+    await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
+    await closeAnsweredFlag(tx, expenseId, "REIMBURSEE_UNKNOWN", actor, "reimbursee set");
     return current.state;
   });
 
@@ -155,7 +150,8 @@ async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
  * clears the hold on a purchase at or over the Board-review total; an expense needing neither
  * takes none. It is not an approval. The text is required, a conflicted caller is refused (a
- * FINANCE holder records it, else a Board member), and once recorded it is not changed.
+ * FINANCE holder records it, else a Board member), and once recorded it is not changed. It closes
+ * THRESHOLD_CROSSED, which asks the same question.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);
@@ -176,6 +172,7 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
       data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
     });
     await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
+    await closeAnsweredFlag(tx, expenseId, "THRESHOLD_CROSSED", actor, "Board authorization recorded");
     return { state: expense.state, byFinance: facts[0].finance.includes(actor.userId) };
   });
   if (!byFinance) await raiseFlag(expenseId, "COI", "no FINANCE holder could record it; a Board member recorded the Board authorization");
@@ -190,5 +187,35 @@ export async function signoffStatus(expenseId: string) {
   return [...facts].map(([lineItemId, f]) => {
     const seats = filled.get(lineItemId) ?? [];
     return { lineItemId, filled: seats, missing: lineHolds(approval, f, seats), blocked: blockedSeats(f, seats) };
+  });
+}
+
+/**
+ * Sign-off status as the caller sees it: each line also carries the acts the caller may take there,
+ * what it waits on otherwise, and whether the caller may record the expense's Board authorization.
+ */
+export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  const [facts, filled, approvalNeeded, approvals] = await Promise.all([
+    signoffFactsByLine(db, expense),
+    filledSeatsByLine(db, expenseId),
+    boardApprovalNeeded(db, expense),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, status: true, ownerId: true } }),
+  ]);
+  const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
+  const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
+  const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
+  const mayRecord = mayRecordBoardAuthorization({
+    callerId: caller.id,
+    expense: { ...held, boardAuthorization: expense.boardAuthorization },
+    factsByLine: [...facts.values()],
+    boardApprovalNeeded: approvalNeeded,
+  });
+  return [...facts].map(([lineItemId, f]) => {
+    const seats = filled.get(lineItemId) ?? [];
+    const holds = lineHolds(approvalNeeded, f, seats);
+    const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
+    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord };
   });
 }

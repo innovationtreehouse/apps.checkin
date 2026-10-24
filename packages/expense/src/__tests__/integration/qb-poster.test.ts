@@ -469,7 +469,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(fetches);
   });
 
-  it("finance fixes the account and retries: the account is re-resolved and the expense posts", async () => {
+  it("finance fixes the account and retries: the account is re-resolved, the expense posts and its flag closes", async () => {
     const { id, line } = await outboxedManual("not-an-account");
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
@@ -479,6 +479,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await resubmitHeldExpense(finance, id);
 
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
+    expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_FAILED" } })).toMatchObject({ checkedOffByUserId: 500, notes: "retry posted" });
     expect(qbo.posts).toHaveLength(1);
     expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
   });
@@ -498,6 +499,15 @@ describeDb("QB-2 posting — bounded retry", () => {
     const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
     expect(flags.map((f) => f.kind)).toEqual(["QB_POST_FAILED"]);
     expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a retry that fails again leaves the flag open", async () => {
+    const { id } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    await resubmitHeldExpense(principal(500, { isFinance: true }), id);
+
+    expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
+    expect((await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_FAILED" } }))?.checkedOffAt).toBeNull();
   });
 
   it("a refused retry answers 409 and records no retry", async () => {
@@ -712,10 +722,10 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
-  it.each(["rejected", "exception_raised", "pending"])("a line approval that turns %s after the outbox holds the post", async (status) => {
+  it.each(["rejected", "exception_raised", "pending", "finance_assigned"])("a line approval that turns %s after the outbox holds the post", async (status) => {
     const { id, lines } = await outboxed("2026-09-10", { buckets: [null, null] });
     await seedApproval(id, lines[0], { ownerId: 7, status: "approved" });
-    const late = await seedApproval(id, lines[1], { ownerId: 100, status: "finance_assigned" });
+    const late = await seedApproval(id, lines[1], { ownerId: 100, status: "approved" });
     await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status } });
 
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
@@ -723,7 +733,7 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(qbo.posts).toHaveLength(0);
     expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).kind).toBe("QB_POST_HELD");
 
-    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status: "finance_assigned" } });
+    await db.lineItemOwnerApproval.update({ where: { id: late }, data: { status: "approved" } });
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
   });
 

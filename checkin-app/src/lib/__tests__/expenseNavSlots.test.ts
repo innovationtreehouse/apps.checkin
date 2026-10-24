@@ -46,12 +46,13 @@ describe("Expense Ops tabs", () => {
     expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(TABS);
   });
 
-  it("badges Holds and Flags with their own counts, and nothing else", () => {
-    const c = counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } });
+  it("badges Expenses green with what the viewer can act on, Holds and Flags red, and nothing else", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1, actionable: 5 } });
     const badges = Object.fromEntries(EXPENSE_OPS.links.map((t) => [t.name, t.badge?.(c) ?? null]));
+    expect(badges.Expenses).toEqual({ count: 5, color: "treehouseGreen", label: "5 expense items you can act on" });
     expect(badges.Holds).toEqual({ count: 2, color: "red", label: "2 expense holds" });
     expect(badges.Flags).toEqual({ count: 1, color: "red", label: "1 open expense flags" });
-    expect(Object.values(badges).filter(Boolean)).toHaveLength(2);
+    expect(Object.values(badges).filter(Boolean)).toHaveLength(3);
     expect(EXPENSE_OPS.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
 });

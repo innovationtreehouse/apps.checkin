@@ -102,6 +102,38 @@ Income and donation rules are in `revenue.md`.
   different people from three different households.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3*]
 
+- A line's program approver signs it by approving it: the approval records who
+  approved and when, and no separate signature is taken. Whoever may not hold a
+  seat on the expense may not approve the line, and whoever approved a line
+  does not sign its Treasurer seat.
+  [Decision — owner]
+
+- Only a bucket approver, or a Board member without a conflict in their place,
+  approves a line.
+  [Decision — owner]
+
+- A line's signatures are given in order: the submitter's confirmation on a
+  reimbursement, then the line's approval, then the Treasurer, then any Board
+  signature the line takes. A signature is refused until the ones before it
+  exist; a Board signature waits for the Treasurer's.
+  [Decision — owner]
+
+- Nobody signs off a reimbursement line, its approval included, until the
+  person reimbursed is known.
+  [Decision — owner]
+
+- When an earlier step on a line is cleared or has to be given again, every
+  later signature on that line is cleared, and they are given again in order.
+  Each clearing is recorded.
+  [Decision — owner]
+
+- When an expense goes back to an earlier step, every later step's result is
+  cleared too and done again in order: the capital review, the depreciation
+  cycle and its assets, and the QuickBooks step, as for later signatures. None
+  is skipped, even when nothing it depends on changed. Each clearing is
+  recorded.
+  [Decision — owner]
+
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
   [Decision — owner]
@@ -116,15 +148,15 @@ Income and donation rules are in `revenue.md`.
   nobody decides on a receipt they are conflicted on.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
 
-- When every owner and treasurer of a line's bucket is conflicted or
-  unavailable, a Board member without a conflict signs the program-approver
-  seat. The policy names no one for this case; the app fills
-  the gap rather than leave the line held for good.
+- A Board member without a conflict may approve any line in place of its
+  bucket approvers, giving the reason.
   [Decision — owner]
 
-- Reimbursing someone who is not a Treehouse Member takes a Board member in the
-  program-approver seat. What counts is the person reimbursed, not whoever
-  submitted the receipt, and a card charge is not a reimbursement.
+- Reimbursing someone who is not a Treehouse Member takes the program approver
+  chosen as for any line, and then a Board member's approval. A Board member
+  without a conflict signs a Board seat on each line once the line is approved.
+  What counts is the person reimbursed, not whoever submitted the receipt, and a
+  card charge is not a reimbursement.
   [Decision — *Policy: Financial Policy, Art. IX §IX.2*]
 
 - Whoever named the person reimbursed does not sign as Treasurer on that
