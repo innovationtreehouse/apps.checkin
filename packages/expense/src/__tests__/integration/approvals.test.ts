@@ -7,7 +7,7 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG, seedSubmitterSeat } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { approveLine, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
@@ -247,7 +247,7 @@ describeDb("racing decisions", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
     const { id, li, approvalId } = await lineInApproval(100);
     await db.expense.update({ where: { id }, data: { state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 1 } });
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
 
     const [same, moved] = await race(
       `SELECT id FROM expenses WHERE id = '${id}' FOR UPDATE`,

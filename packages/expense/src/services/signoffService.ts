@@ -24,6 +24,8 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
     select: { expenseId: true },
   });
   if (!line) throw new ServiceError(404, "Line item not found");
+  // The person reimbursed signs the submitter seat only by confirming the receipt.
+  if (seat === "SUBMITTER") throw new ServiceError(403, "Confirm the receipt to sign this seat");
 
   // Facts are read under the expense row lock, so a reimbursee or bucket change cannot commit
   // between the eligibility check and the insert.

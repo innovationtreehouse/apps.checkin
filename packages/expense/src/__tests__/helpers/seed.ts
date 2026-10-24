@@ -159,6 +159,12 @@ export async function seedPartOwner(opts: {
  * records a Board authorization, so the expense is postable whatever its size once its lines
  * are approved.
  */
+/** The submitter seat, as the person reimbursed signs it by confirming the receipt. */
+export async function seedSubmitterSeat(lineItemId: number, signerUserId: number): Promise<void> {
+  const { expenseId } = await db.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { expenseId: true } });
+  await db.expenseLineSignoff.create({ data: { expenseId, lineItemId, seat: "SUBMITTER", signerUserId } });
+}
+
 export async function signAllLines(expenseId: string): Promise<void> {
   await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });

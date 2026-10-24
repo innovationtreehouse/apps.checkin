@@ -6,7 +6,7 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG, seedSubmitterSeat } from "../helpers/seed";
 import { setReimbursee, signLine } from "../../services/signoffService";
 import { approveLine, assignOwner, financeAssign, raiseException, resolveUnknown } from "../../services/approvalService";
 import { checkOffFlag, raiseFlag } from "../../services/flagService";
@@ -36,7 +36,7 @@ describeDb("seats follow the line's approval", () => {
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100 });
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
 
     await raiseException(principal(2), id, approvalId, "not ours");
     await financeAssign(FINANCE, id, approvalId, 101);
@@ -75,7 +75,7 @@ describeDb("seats follow the payee", () => {
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 7 });
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
-    await signLine(principal(7), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 7);
     await signLine(FINANCE, li, "TREASURER");
 
     await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ status: 409 });
@@ -105,7 +105,7 @@ describeDb("seats follow the payee", () => {
 
     await setReimbursee(ORG, id, 1, FINANCE);
     expect((await db.expense.findFirst({ where: { id } }))!.reimbursementFor).toBe("Pat");
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
 
     await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(4, { isFinance: true }), li, "TREASURER");

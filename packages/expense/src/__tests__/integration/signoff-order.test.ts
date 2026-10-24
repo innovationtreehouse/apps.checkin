@@ -6,7 +6,7 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { approveLine } from "../../services/approvalService";
 import { clearFrom, type ClearedStep } from "../../lib/signoff-facts";
@@ -52,7 +52,7 @@ describeDb("signatures in order", () => {
     const approvalId = await seedApproval(id, li, { ownerId: 100 });
 
     await expect(approveLine(principal(2), id, approvalId)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/not confirmed yet/) });
-    await signLine(principal(9), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 9);
     await approveLine(principal(2), id, approvalId);
   });
 });

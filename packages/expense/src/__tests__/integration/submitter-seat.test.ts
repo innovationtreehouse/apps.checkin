@@ -8,7 +8,7 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { db } from "../../db";
 import { receiveCompletedReceipt } from "../../services/intakeService";
-import { signoffStatus } from "../../services/signoffService";
+import { signLine, signoffStatus } from "../../services/signoffService";
 import { approveLine } from "../../services/approvalService";
 import { auditConfirmationVoided, submitterConfirmations } from "../../services/submitterSeatService";
 
@@ -74,6 +74,19 @@ describeDb("the submitter seat at intake", () => {
     const backfill = reimbursement({ backfill: true });
     await receiveCompletedReceipt(backfill);
     expect(await submitterSeats(backfill.receiptId)).toEqual([]);
+  });
+});
+
+describeDb("the sign-off route", () => {
+  it("refuses the submitter seat to everyone: it is signed only by confirming the receipt", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
+    const li = await seedLineItem(id);
+    await seedApproval(id, li, { ownerId: 100 });
+    for (const who of [principal(1), principal(2), principal(3, { isFinance: true }), principal(5, { isBoard: true })]) {
+      await expect(signLine(who, li, "SUBMITTER")).rejects.toMatchObject({ status: 403, message: "Confirm the receipt to sign this seat" });
+    }
+    expect(await submitterSeats(id)).toEqual([]);
   });
 });
 
