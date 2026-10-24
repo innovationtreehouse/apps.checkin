@@ -47,7 +47,7 @@ export const receiptService = {
     });
   },
 
-  /** Badge counts for the mapping queue and the apply-failed queue. */
+  /** Counts for the Receiving tabs; `applying` is in progress and needs no one. */
   async counts(): Promise<Record<"pending_review" | "apply_failed" | "applying", number>> {
     await requireActor();
     const rows = await db.receivedReceipt.groupBy({
@@ -168,7 +168,7 @@ export const receiptService = {
     // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
     const { count } = await db.receivedReceipt.updateMany({
       where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
-      data: { state: nextState },
+      data: { state: nextState, applySweepAttempts: 0 },
     });
     if (count !== 1) throw httpError(409, "Receipt was already retried");
 

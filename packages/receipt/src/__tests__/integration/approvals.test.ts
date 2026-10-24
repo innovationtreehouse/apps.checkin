@@ -24,15 +24,13 @@ describeDb("financial review", () => {
     expect((await receiptService.get(r.id, "finance")).financialReviewReasons).toEqual(["tax"]);
   });
 
-  it("approving a tax exception requires a note, stored on the audit row", async () => {
+  it("approves a tax exception without a note", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
-    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 400 });
-    await expect(receiptService.approveFinancial(r.id, "   ")).rejects.toMatchObject({ status: 400 });
-    await receiptService.approveFinancial(r.id, "Vendor would not honor the exemption certificate");
+    await receiptService.approveFinancial(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "financial_approved" } });
-    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: "Vendor would not honor the exemption certificate" });
+    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
   });
 
   it("a non-tax exception (future date) approves without a note", async () => {
@@ -46,7 +44,7 @@ describeDb("financial review", () => {
   it("refuses a finance user deciding their own receipt", async () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
-    await expect(receiptService.approveFinancial(r.id, "mine")).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.rejectFinancial(r.id, "mine")).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(r.id)).toBe("financial_review");
   });
@@ -54,8 +52,19 @@ describeDb("financial review", () => {
   it("reject records the reason", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
-    await receiptService.rejectFinancial(r.id, "personal purchase");
+    await receiptService.rejectFinancial(r.id, "  personal purchase ");
     expect(await stateOf(r.id)).toBe("rejected");
+    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
+    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: "personal purchase" });
+  });
+
+  it("rejects without a reason", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(r.id, "   ");
+    expect(await stateOf(r.id)).toBe("rejected");
+    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
+    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
   });
 
   it("the tax check does not apply to an in-kind receipt", async () => {
