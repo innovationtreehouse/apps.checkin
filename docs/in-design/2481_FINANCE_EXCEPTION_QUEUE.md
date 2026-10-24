@@ -158,8 +158,8 @@ under them.
    shows a chip per reason above the list, each with its count ("Bucket to
    assign 3", "Capital review 1"), and the list sorts by reason, oldest first.
    A chip filters the list; the selected chip rides in the URL, so returning
-   from a record keeps it. This matters most for the Expenses tab if open
-   question 2 folds the expense list's finance views into it.
+   from a record keeps it. This matters most for the Expenses tab, which
+   also holds the expense list's finance views.
 
 A Board member without the finance role sees all three groups, because the
 Board reads receipt and expense data, but the counts are green only on the
@@ -208,8 +208,37 @@ belongs to, with both reasons when they share a tab.
 
 The expense list's finance views (`assign_ownership`, `resolve_ownership`,
 `owner_exception`, `capital_review`, `set_depreciation_cycle`) fold into the
-Expenses tab. The list itself stays at `/expense/expenses` for browsing, with
-its views; the owner-approval view stays where budget owners use it.
+Expenses tab (decided). The list itself stays at `/expense/expenses` for
+browsing, with its views; the owner-approval view stays where budget owners
+use it.
+
+#### Where it sits in the sidebar
+
+Today's Expense Ops and Receipt Review sidebar sections merge into one
+Finance section, shown to FINANCE and Board (decided):
+
+```
+Finance
+├─ Finance review     🟢 the one pill (all finance work)
+├─ Expenses           (browse list, /expense/expenses)
+├─ Flow status        (/receipt-flow, from #2502)
+├─ Account Mapping · QuickBooks Accounts · Part Buckets · Capital Seed
+├─ Budgets
+├─ Incoming receipt queue   (FINANCE only)
+└─ Settings › Expense · Receipt
+```
+
+- The sections in `checkin-app/src/lib/nav/sections/expenseOps.ts` and
+  `receiptReview.ts` become one Finance section, and their `AppFrame` entries
+  become one. The old section names are renamed outright, with no redirects,
+  as with the deleted paths.
+- #2502 puts Flow status under Receipt Review, and under Inventory for
+  inventory managers. Inventory keeps its link; the Receipt Review one moves
+  into Finance.
+- #2500 adds a green "actionable" pill on Expense Ops › Expenses. That pill
+  goes, because Finance review counts the same work, so no two pills ever
+  count the same items. Finance review's pill is the only green one in the
+  section.
 
 ### 4. The decision on the record
 
@@ -410,7 +439,9 @@ Each PR is based on `main`. None is stacked on another's branch.
    `QB_NO_CLASS`, exhausted `QB_POST_FAILED` and `QB_OVER_CAP`; the stand-in
    and duplicate paths raise `COI_STAND_IN` and `QB_DUPLICATE_TO_VOID`; and the
    §9 data migration runs. Finance is never without a list: the flags stop in
-   the release that brings the tabs.
+   the release that brings the tabs. The sidebar's Expense Ops and Receipt
+   Review sections become the one Finance section (§3), and #2500's pill on
+   Expenses goes.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
    of the rest and can go any time.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
@@ -492,7 +523,6 @@ Numbers are fixed; decided questions are dropped from this table.
 
 | # | Question | Design's default |
 | --- | --- | --- |
-| 2 | Fold the expense list's finance views (assign and resolve ownership, exceptions, capital review, depreciation) into the Expenses tab too? | Yes |
 | 4 | Recording the Board's approval: green in the Board tab for FINANCE only, or for Board members too? | FINANCE only |
 | 5 | Expense held because every Board member is conflicted: leave it with no action, or let finance close it with a note? | No action |
 | 6 | Require a note on the four kept reviews? | Yes |
