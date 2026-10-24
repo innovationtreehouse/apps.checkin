@@ -7,7 +7,8 @@
  * stripper drops any bag key that isn't a known model. Who is reimbursed is `pii`
  * wherever it appears: a candidate's `vendorRef` (on a Bill the vendor is the
  * reimbursee), a QuickBooks Vendor's name, and the reimbursee's id and name.
- * Everything else is `internal`. No shape names a signer.
+ * Everything else is `internal`. No shape names a signer, and what a caller may
+ * do on a line describes that caller only.
  *
  * Hand-authored, not generated: it describes API responses, not tables. This is a
  * security-boundary artifact — changes ship in a boundary PR.
@@ -34,12 +35,18 @@ export const classifications = {
     name: "internal",
     archivedAt: "internal",
   },
-  // Per line: seats filled, missing and blocked (seat names only, no signer).
+  // Per line: seats filled, missing and blocked (seat names only, no signer),
+  // the acts the caller may take there and the open steps waiting on others.
+  // `actions`, `awaiting` and `mayRecordBoardAuthorization` describe the caller
+  // only and name no one else.
   ExpenseLineSignoffStatus: {
     lineItemId: "internal",
     filled: "internal",
     missing: "internal",
     blocked: "internal",
+    actions: "internal",
+    awaiting: "internal",
+    mayRecordBoardAuthorization: "internal",
   },
   // POST /api/capital-assets/seed outcome.
   ExpenseCapitalSeedResult: {
