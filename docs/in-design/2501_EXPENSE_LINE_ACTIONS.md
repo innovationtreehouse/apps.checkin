@@ -71,14 +71,15 @@ adds are marked as proposed.
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says approval and the seat are one act |
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under B, "approved as program approver" and "signed that seat" are the same act, so the clause and the code mean the same thing. Whether a FINANCE override counts is open question 3 |
 | When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes in effect**: the Board member's act also approves the line. Reworded below |
-| Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | Unchanged under the recommended B2. **Option B1 would change it; escalate before choosing B1** |
+| Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes**: under the recommended B2 it gains a sentence saying the bucket's approvers still approve the line, by an approval that fills no seat. That states what the app does today. **Option B1 would drop that approval instead; escalate before choosing B1** |
 | The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | Affirmed by the recommended S2 and reworded below; S1 rewords it differently |
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
 | Proposed in #2224: a line in an org-wide bucket takes a Board member as program approver; at most two Board substitutions on a reimbursement line, one on a card charge | Procedure, `[Decision]` | Consistent |
 
 No Policy-tier line changes. Three Procedure lines that cite a policy are
-touched. The Treasurer-conflict line keeps its text. The non-member line changes
-only under B1, which is why B1 is flagged. The submitter line depends on how
+touched. The Treasurer-conflict line keeps its text. The non-member line gains a
+sentence under B2 that keeps today's check; B1 would remove that check instead,
+which is why B1 is flagged. The submitter line depends on how
 open question 2 is answered: whether an attestation at submission is a signature
 in the sense of Financial Policy Art. IX §IX.3 is for you to check against the
 policy itself.
@@ -200,8 +201,14 @@ is the same decision.
 
 **B.6 Timing.** The seat can be signed as soon as the line has a bucket, even
 while other lines wait for one. B keeps that. If the approval is still pending,
-the act records it in either state, and the existing check when the last bucket
-is assigned moves the expense on.
+the act records it whether the expense is waiting for owner approval or still
+waiting for buckets, and the existing check when the last bucket is assigned
+moves the expense on. Two service changes follow. The approve service accepts
+an expense that is still waiting for buckets, where today it refuses any state
+but owner approval. And the bucket assignment that finance makes during that
+wait accepts a line approved early. Moving that line to another bucket reopens
+its approval as pending and voids its seats, where today the assignment refuses
+it as "already has an owner assigned".
 
 **B.7 The FINANCE override** settles the approval only and never fills the seat.
 See §7 of the design.
@@ -349,10 +356,18 @@ view for browsing. The list prefilters in the database as the badge does
 (the caller's buckets, seat open, not their own receipt) and then applies the
 function, so the list and the pill always agree.
 
-#2492 adds an owner-approval count to the expense queues. Under B that count and
-this pill are the same number, and #2492 should take it from the same function.
-Treasurer and Board seats aren't on this pill; where FINANCE and the Board find
-lines to sign is open question 4.
+Open PR #2500 (for #2492) adds per-queue counts, and they are a different
+measure. Its owner-approval count counts expenses, not lines, and leaves out
+only expenses the viewer is conflicted on as submitter or reimbursee, or a
+member of either household. So under B it differs from this pill. That count
+is the one that changes: step 5 moves it onto the same function, refusing
+everything the seat refuses, and keeps it per expense because it labels an
+expense-list view. The pill stays per line. Both then come from one rule and
+only the unit differs. #2500's QB-pending count already counts expenses with an
+open Treasurer, Board or Board-substituted program-approver seat the viewer can
+fill, so FINANCE and the Board already have a count for seats. Open question 4
+asks only whether those signatures also get their own place to work in #2482's
+queue. Treasurer and Board seats stay off this pill.
 
 ### 9. Back to the queue (3.12)
 
@@ -381,8 +396,14 @@ depreciation submits are finance's, and #2482 covers them.
 
 To land in `docs/rules/expenses.md`, Spending sign-off, if you accept B2 and S2:
 
-- A bucket approver approves a line by signing its program-approver seat; one
-  act records both. Whoever may not sign that seat may not approve the line.
+- On a line whose program-approver seat a bucket approver fills, the bucket
+  approver approves the line by signing that seat; one act records both, and
+  whoever may not sign that seat may not approve the line. There are two
+  exceptions, where the approval and the seat belong to different people.
+  When the line's reimbursee is not a member, the bucket's approvers approve
+  and a Board member signs the seat, as the non-member rule below says. And
+  finance may override the approval without signing the seat, under the
+  override rule in §7.
   `[Decision — owner]`
 - When every owner and treasurer of a line's bucket is conflicted or
   unavailable, a Board member without a conflict signs the program-approver
@@ -425,11 +446,14 @@ Each PR is based on `main`, not stacked.
    required marks. No server behaviour or rule changes, so it ships under
    option A or B and doesn't wait on the central decision.
 3. **One-act PR** (central question, 3.29): the approve service fills the seat
-   and admits the Board stand-in; B2's approval-only act; the rule edits in the
-   same PR. Waits on your answer to open question 1.
+   and admits the Board stand-in; B2's approval-only act. The approve service
+   also accepts an expense still waiting for buckets, and finance's bucket
+   assignment accepts a line approved early, reopening its approval (B.6). The
+   rule edits ship in the same PR. Waits on your answer to open question 1.
 4. **Approve All PR** (3.13): the batch route and button. After steps 1 and 3.
 5. **Pill and landing PR** (3.25): the badge from the function and the "Waiting
-   on you" view. Coordinate with #2492.
+   on you" view, and #2500's owner-approval count moved onto the same function
+   (§8). After #2500 merges.
 6. **Back to the queue PR** (3.12): after #2482's expense detail PR, so the two
    share one helper.
 7. **Submitter seat PR** (#2432): after open question 2. The attestation, the
@@ -473,9 +497,10 @@ Each PR is based on `main`, not stacked.
    who overrides the approval be barred from the Treasurer seat on that line
    too? The code doesn't bar them today.
 4. **Where Treasurer and Board seats are counted.** This design counts the
-   program-approver act on the approver pill. Should signatures waiting on
-   FINANCE and the Board get a "To sign" tab in #2482's finance queue, with
-   Approve All's equivalent for the Treasurer?
+   program-approver act on the approver pill. #2500's QB-pending count already
+   counts expenses with a Treasurer, Board or Board-substituted seat the viewer
+   can fill. Should those signatures also get a "To sign" tab in #2482's finance
+   queue, with Approve All's equivalent for the Treasurer?
 5. **A silent approver.** The rules let the Board stand in when approvers are
    "conflicted or unavailable". The app reads "unavailable" as an owner who is
    merged away or whose membership blocks sign-in. An approver who is eligible
