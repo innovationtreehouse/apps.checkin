@@ -5,7 +5,7 @@ import {
   type CompletedReceiptLineItem,
 } from "@checkin/receipt-types";
 import { db } from "../db";
-import type { ReceivedReceipt } from "../db/schema";
+import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
 import { getOrg, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
@@ -19,21 +19,31 @@ export type ApplyResult =
 /** How long a push's claim holds before another caller may take it over (a crashed push). */
 export const APPLY_CLAIM_TTL_MS = 5 * 60_000;
 
-interface ResolvedGtin13 {
-  gtin13: string;
-  isProvisional?: boolean;
+export type LineResolution = { gtin13: string; isProvisional?: boolean } | { nonInventory: true };
+
+type LineStatusFields = Pick<ReceivedReceiptLineStatusRow, "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13">;
+
+/** What receiving decided for a line, as the money side carries it; undefined while unresolved. */
+export function lineResolution(ls: LineStatusFields | undefined): LineResolution | undefined {
+  if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
+    return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
+  }
+  if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) return { gtin13: ls.assignedGtin13 };
+  if (ls?.recognitionStatus === "non_inventory") return { nonInventory: true };
+  return undefined;
 }
 
-/** Stitch each resolved line's GTIN onto the receipt sent as its money side (S2 / X9). */
+/** Stitch each resolved line's GTIN, or its non-inventory mark, onto the receipt sent as its money side (S2 / X9). */
 export function buildExpenseReceipt(
   receipt: CompletedReceipt,
-  resolve: (lineItem: CompletedReceiptLineItem) => ResolvedGtin13 | undefined,
+  resolve: (lineItem: CompletedReceiptLineItem) => LineResolution | undefined,
 ): CompletedReceipt {
   return {
     ...receipt,
     lineItems: receipt.lineItems.map((li) => {
       const resolved = resolve(li);
       if (!resolved) return li;
+      if ("nonInventory" in resolved) return { ...li, nonInventory: true };
       return resolved.isProvisional
         ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: li.description }
         : { ...li, gtin13: resolved.gtin13 };
@@ -162,16 +172,7 @@ async function pushAndSettle(
       };
     });
 
-  const moneyReceipt = buildExpenseReceipt(receipt, (li) => {
-    const ls = statusMap.get(li.receiptLineItemId);
-    if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
-      return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
-    }
-    if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) {
-      return { gtin13: ls.assignedGtin13 };
-    }
-    return undefined;
-  });
+  const moneyReceipt = buildExpenseReceipt(receipt, (li) => lineResolution(statusMap.get(li.receiptLineItemId)));
 
   const { expenseSink, donationSink, inventorySink } = ports();
   // A leg that already applied on an earlier attempt is not pushed again.

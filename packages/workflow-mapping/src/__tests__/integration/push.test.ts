@@ -40,6 +40,15 @@ describeDb("S2 producer", () => {
     expect(sinks.calls.expense).toHaveLength(1);
     expect(sinks.calls.inventory).toHaveLength(0);
   });
+
+  it("marks a non-inventory line nonInventory, with no GTIN", async () => {
+    const r = await makeReceipt({ state: "applying" });
+    await makeLineStatus(r.id, { recognitionStatus: "non_inventory" });
+    await executePushAndSettle(r.id, r, 1);
+    const line = CompletedReceiptSchema.parse(sinks.calls.expense[0]).lineItems[0];
+    expect(line.nonInventory).toBe(true);
+    expect(line.gtin13 ?? null).toBeNull();
+  });
 });
 
 describeDb("X9 in-kind money side", () => {

@@ -149,6 +149,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           totalPriceCents: li.totalPriceCents,
           gtin13: li.gtin13,
           isDelayed: li.isDelayed,
+          nonInventory: li.nonInventory ?? false,
         },
       });
     }

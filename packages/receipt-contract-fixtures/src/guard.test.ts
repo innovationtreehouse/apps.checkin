@@ -43,7 +43,7 @@ describe("contract fixture corpus", () => {
         "reimbursement-flagged",
         "non-inventory-present",
       ],
-      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional"],
+      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional", "has-non-inventory"],
       "S3-inventory-delta": ["recognized-only", "with-provisional"],
       "S4-catalog-submissions": ["item-reference-proposal", "reference-conflict", "items-lookup"],
       "S5-org-events": [

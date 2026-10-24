@@ -222,6 +222,9 @@ model ExpenseLineItem {
   gtin13            String?
   /// @sensitivity:internal
   isDelayed         Boolean  @default(false) @map("is_delayed")
+  // Receiving marked the line non-inventory: finance picks its owner and account by hand each time.
+  /// @sensitivity:internal
+  nonInventory      Boolean  @default(false) @map("non_inventory")
   /// @sensitivity:internal
   isCapital         Boolean  @default(false) @map("is_capital")
   /// @sensitivity:pii

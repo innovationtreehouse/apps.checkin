@@ -25,6 +25,9 @@ export const CompletedReceiptLineItemSchema = z.object({
   // and remap to the real GTIN once global-catalog resolves it.
   isProvisional: z.boolean().optional(),
   provisionalName: z.string().optional(),
+  // Receiving marked the line non-inventory (e.g. a pizza order): it has no catalog item, so
+  // finance picks its owner and QuickBooks account by hand on every expense.
+  nonInventory: z.boolean().optional(),
 });
 
 export const CompletedReceiptSchema = z.object({
