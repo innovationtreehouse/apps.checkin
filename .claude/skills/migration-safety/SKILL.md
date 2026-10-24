@@ -78,9 +78,7 @@ Every new migration wraps, even a single statement: CI fails a newly added
 file that does not open with `BEGIN;` and close with `COMMIT;`
 (`migration-safety.yml` → "New migrations wrap in a transaction"). For SQL that cannot run in a
 transaction (`CREATE INDEX CONCURRENTLY`), add `-- no-transaction: <reason>`
-and make each statement retry-safe instead; see the deploy doc's rule 5. A coalesce baseline and the
-pre-rule files in `.github/migration-lint-grandfather.txt` are the only other
-exemptions.
+and make each statement retry-safe instead; see the deploy doc's rule 5.
 
 ### 5. New foreign key or flag you'll query by?
 Postgres does not auto-index FK columns. Add `@@index` for any relation

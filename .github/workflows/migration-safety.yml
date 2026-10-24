@@ -520,10 +520,12 @@ jobs:
           [ "$FAILED" -eq 0 ]
           echo "Released history intact."
 
-  # Deploy rule 5: every migration.sql this PR adds opens with BEGIN; and closes
-  # with COMMIT; (blank, `--` and `/* */` lines ignored). Escapes: a `-- no-transaction:
-  # <reason>` line, a coalesce baseline (dir holds reconcile.sql), and the files in
-  # .github/migration-lint-grandfather.txt (on main before the rule; rel syncs re-add them).
+  # Deploy rule 5: every migration.sql this PR adds opens with BEGIN; and
+  # closes with COMMIT; (blank lines, `--` lines and `/* */` blocks ignored). Applied history is
+  # immutable (rule 6), so only added files are checked. Escapes: a
+  # `-- no-transaction: <reason>` line for SQL Postgres refuses inside a
+  # transaction (CREATE INDEX CONCURRENTLY), and a coalesce baseline (its dir
+  # holds reconcile.sql), which only ever runs on an empty database.
   transaction-lint:
     name: New migrations wrap in a transaction
     needs: changes
@@ -563,7 +565,6 @@ jobs:
           FAILED=0
           while read -r f; do
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
-            grep -qxF "$f" .github/migration-lint-grandfather.txt && continue
             grep -qE '^[[:space:]]*--[[:space:]]*no-transaction:[[:space:]]*[^[:space:]]' "$f" && continue
             SQL=$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$f" | grep -vE '^[[:space:]]*(--.*)?$' || true)
             if ! head -n1 <<<"$SQL" | grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' ||
