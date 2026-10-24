@@ -26,3 +26,6 @@ export const RECEIPT_FINANCE_NAV: readonly ReceiptNavLink[] = [
 ];
 
 export const RECEIPT_MAIL_NAV: readonly ReceiptNavLink[] = [{ name: "Incoming receipt queue", href: "/receipts/mail", icon: "📬" }];
+
+/** States only FINANCE can move a receipt out of: it approves, clears a duplicate, or restarts the flow. */
+export const FINANCE_ACTION_STATES: readonly string[] = ["financial_review", "duplicate_flagged", "flow_error"];

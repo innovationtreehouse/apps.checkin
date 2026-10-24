@@ -109,6 +109,16 @@ describe("the Receipts split", () => {
       expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);
     }
   });
+
+  it("Receipts review carries a green pill for the receipts that wait on FINANCE", () => {
+    const review = RECEIPT_REVIEW.links.find((l) => l.href === "/receipts/review");
+    expect(review?.badge?.({ ...counts, libraries: { receipt: { awaitingFinance: 1 } } })).toEqual({
+      count: 1,
+      color: "treehouseGreen",
+      label: "1 receipt needs review",
+    });
+    expect(review?.badge?.(counts)).toBeNull();
+  });
 });
 
 describe("Membership Ops", () => {

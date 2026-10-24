@@ -47,20 +47,30 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
   {
-    library: "receipt",
-    visible: (u) => typeof u.id === "number" && canSubmitReceipts(u),
-    count: async (u): Promise<Record<string, number>> =>
-      process.env.RECEIPT_DATABASE_URL && typeof u.id === "number"
-        ? { awaitingMe: await (await import("@checkin/receipt")).receiptService.countAwaitingSubmitter(u.id) }
-        : {},
-  },
-  {
     library: "income",
     visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
     count: async (): Promise<Record<string, number>> =>
       process.env.INCOME_DATABASE_URL
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }
         : {},
+  },
+  {
+    library: "receipt",
+    // An uploader counts their own receipts; FINANCE counts its queues. BOARD reads the queues
+    // but cannot act on them, so it gets no queue count.
+    visible: (u) => canSubmitReceipts(u) || u.isFinance === true,
+    count: async (u): Promise<Record<string, number>> => {
+      if (!process.env.RECEIPT_DATABASE_URL) return {};
+      const { receiptService } = await import("@checkin/receipt");
+      const [awaitingMe, awaitingFinance] = await Promise.all([
+        canSubmitReceipts(u) && typeof u.id === "number" ? receiptService.countAwaitingSubmitter(u.id) : null,
+        u.isFinance === true ? receiptService.countAwaitingFinance() : null,
+      ]);
+      return {
+        ...(awaitingMe === null ? {} : { awaitingMe }),
+        ...(awaitingFinance === null ? {} : { awaitingFinance }),
+      };
+    },
   },
 ];
 

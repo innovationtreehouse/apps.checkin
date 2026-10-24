@@ -16,6 +16,10 @@ Income and donation rules are in `revenue.md`.
 - The Treasurer enforces the limits on a signed note in place of a receipt
   outside the app. The app does not model notes in lieu of receipts.
 
+- The Board makes each authorization in writing at a Board meeting, outside
+  the app, either as a decision of its own or by approving a program budget.
+  The app records what the recorder enters and does not check it.
+
 ---
 
 ## Procedure
@@ -129,24 +133,34 @@ Income and donation rules are in `revenue.md`.
 
 - A card charge is Everyday when its total is under $500 and no single item
   costs more than $250. An item is one unit, so three $100 items are three items
-  under the limit. Both amounts are settings: finance may lower them, and only
-  the Board raises them above $500 and $250.
+  under the limit. Both amounts are settings, and only the Board changes them.
   [Decision — *Policy: Procurement Policy, Art. IV §IV.1; Financial Policy, Art. XII §XII.4*; owner]
 
-- A purchase from a single-source vendor is never Everyday.
-  [Decision — owner]
+- Buying from a single-source vendor never changes whether a charge is
+  Everyday or who signs it.
+  [Decision — *Policy: Procurement Policy, Art. IV §IV.3*; owner]
 
-- Finance may mark any card charge as not Everyday. The mark is permanent: it
-  only ever adds the need for Board authorization.
-  [Decision — owner]
+- On a card charge that is not Everyday, each line without written Board
+  authorization takes one more signer: a Board member without a conflict with
+  the purchaser, alongside the Treasurer.
+  [Decision — *Policy: Financial Policy, Art. XII §XII.4*]
 
-- A card charge that is not Everyday reaches the books only once the Treasurer
-  records what the Board authorized, in words. A blank record does not count,
-  and until it is made the charge is treated as not authorized. Once recorded,
-  it is not changed.
+- A line in a program bucket has written Board authorization, because the
+  Board approved the program's budget. A line in an org-level bucket has it
+  only once a Board authorization is recorded for the charge, in words. A
+  blank record does not count. Once recorded, it is not changed.
   [Decision — *Policy: Financial Policy, Art. XII §XII.4*; *Principle: fail closed*]
 
-- Recording the Board's authorization is the Treasurer's act, under the
-  Treasurer conflict rule: a finance holder without a conflict records it, and
-  if there is none, a Board member without a conflict.
+- Recording a Board authorization is not an approval. A finance holder without
+  a conflict records what the Board decided, and if there is none, a Board
+  member without a conflict.
   [Decision — owner]
+
+- A purchase whose total is $2,000 or more, reimbursement or card charge,
+  reaches the books only once the Board's approval of it is recorded, in words:
+  a Board authorization, or the line of a Board-approved program budget that
+  covers it. Being in a program bucket is not enough, because the app does not
+  know what the budget listed. No Board member's signature takes its place. The
+  amount is a setting: finance may lower it, and only the Board raises it above
+  $2,000.
+  [Decision — *Policy: Procurement Policy, Art. III*; *Principle: fail closed*]
