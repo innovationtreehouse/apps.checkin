@@ -1,11 +1,5 @@
 // Enum arrays for runtime validation (values must match DB strings exactly)
-export const usageBehaviorEnum = [
-  "Single Use",
-  "Short Life Consumable",
-  "Long Life Consumable",
-  "Durable",
-] as const;
-export type UsageBehavior = (typeof usageBehaviorEnum)[number];
+export { USAGE_BEHAVIORS as usageBehaviorEnum, type UsageBehavior } from "@checkin/receipt-types";
 
 export const conflictResolutionEnum = ["keep_existing", "use_proposed"] as const;
 export type ConflictResolution = (typeof conflictResolutionEnum)[number];

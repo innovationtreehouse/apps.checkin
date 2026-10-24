@@ -1,10 +1,13 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Alert, Anchor, Badge, Button, Group, NumberInput, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
+import { STATE_LABEL, api, catalogApi, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
+import { type LineFormKind, lineFormBody } from "../lib/line-form";
 import { APPLIED_LINES_LOCKED, lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -43,6 +46,45 @@ interface Detail {
   ReceivedReceipt: Receipt;
   WorkflowReceiptView: ParsedReceipt;
   ReceivedReceiptLineStatus: LineStatus[];
+}
+
+/** GET /api/catalog/categories and /subcategories rows; both lists omit archived entries. */
+interface CategoryOption {
+  id: number;
+  name: string;
+  letter: string;
+}
+interface SubcategoryOption {
+  id: number;
+  name: string;
+  number: number;
+  categoryId: number;
+}
+/** GET /api/catalog/items rows, with their category and subcategory included. */
+interface CatalogItem {
+  gtin13: string;
+  name: string;
+  category: { name: string };
+  subcategory: { name: string };
+}
+
+const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${item.gtin13}`;
+
+/** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
+function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null } {
+  const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
+  const term = catalogSearchTerm(q);
+  useEffect(() => {
+    if (term === null) return;
+    let live = true;
+    const t = setTimeout(() => {
+      catalogApi<CatalogItem[]>(`/items?q=${encodeURIComponent(term)}&limit=20`)
+        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
+        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [term]);
+  return result && result.term === term ? { items: result.items, error: result.error } : { items: [], error: null };
 }
 
 type Form = "associate" | "propose" | null;
@@ -184,29 +226,74 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
 }
 
 function LineForm({ form, busy, onSubmit, onCancel }: {
-  form: "associate" | "propose";
+  form: LineFormKind;
   busy: boolean;
-  onSubmit: (body: Record<string, string | number>) => void;
+  onSubmit: (body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
 }) {
-  const [gtin13, setGtin13] = useState("");
+  const [chosen, setChosen] = useState<CatalogItem | null>(null);
+  const [search, setSearch] = useState("");
+  // Choosing an option fills the search box with its label; that is not a new search.
+  const found = useCatalogSearch(chosen && search === itemLabel(chosen) ? "" : search);
+  const itemOptions = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)]
+    .map((item) => ({ value: item.gtin13, label: itemLabel(item) }));
+  const gtin13 = chosen?.gtin13 ?? null;
   const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<number | string>("");
-  const [subcategoryId, setSubcategoryId] = useState<number | string>("");
-  const [usage, setUsage] = useState("Consumable");
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
+  const [usage, setUsage] = useState<string | null>(null);
   const [factor, setFactor] = useState<number | string>(1);
   const conversionFactor = Number(factor) || 1;
+  const categories = useLoad<CategoryOption[]>("/categories", catalogApi);
+  const subcategories = useLoad<SubcategoryOption[]>("/subcategories", catalogApi);
+  const categoryOptions = (categories.data ?? []).map((c) => ({ value: String(c.id), label: `${c.letter} — ${c.name}` }));
+  const subcategoryOptions = (subcategories.data ?? [])
+    .filter((s) => String(s.categoryId) === categoryId)
+    .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
+  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
 
   return (
     <Stack gap={4}>
       {form === "associate" ? (
-        <TextInput size="xs" placeholder="GTIN-13" value={gtin13} onChange={(e) => setGtin13(e.currentTarget.value)} />
+        <Select
+          size="xs"
+          placeholder="Search the catalog by name, GTIN or category"
+          data={itemOptions}
+          value={gtin13}
+          onChange={(v) => setChosen([chosen, ...found.items].find((item) => item?.gtin13 === v) ?? null)}
+          searchable
+          searchValue={search}
+          onSearchChange={setSearch}
+          filter={({ options }) => options}
+          error={found.error && `Couldn't search the catalog: ${found.error}`}
+          nothingFoundMessage={catalogSearchTerm(search) === null ? `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters` : "No matching catalog items"}
+          miw={320}
+        />
       ) : (
         <>
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
-          <NumberInput size="xs" placeholder="Category id" min={1} value={categoryId} onChange={setCategoryId} />
-          <NumberInput size="xs" placeholder="Subcategory id" min={1} value={subcategoryId} onChange={setSubcategoryId} />
-          <TextInput size="xs" placeholder="Usage behavior" value={usage} onChange={(e) => setUsage(e.currentTarget.value)} />
+          <Select
+            size="xs"
+            placeholder="Category"
+            data={categoryOptions}
+            value={categoryId}
+            onChange={(v) => { setCategoryId(v); setSubcategoryId(null); }}
+            searchable
+            error={categories.error && `Couldn't load categories: ${categories.error}`}
+            nothingFoundMessage="No categories — add them in Categories"
+          />
+          <Select
+            size="xs"
+            placeholder={categoryId ? "Subcategory" : "Choose a category first"}
+            data={subcategoryOptions}
+            value={subcategoryId}
+            onChange={setSubcategoryId}
+            disabled={!categoryId}
+            searchable
+            error={subcategories.error && `Couldn't load subcategories: ${subcategories.error}`}
+            nothingFoundMessage="No subcategories for this category"
+          />
+          <Select size="xs" placeholder="Usage behavior" data={[...USAGE_BEHAVIORS]} value={usage} onChange={setUsage} />
         </>
       )}
       <NumberInput size="xs" label="Units per receipt unit" min={1} value={factor} onChange={setFactor} />
@@ -214,19 +301,8 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
         <Button
           size="xs"
           loading={busy}
-          onClick={() =>
-            onSubmit(
-              form === "associate"
-                ? { gtin13: gtin13.trim(), conversionFactor }
-                : {
-                    proposedName: name.trim(),
-                    proposedCategoryId: Number(categoryId),
-                    proposedSubcategoryId: Number(subcategoryId),
-                    proposedUsageBehavior: usage.trim(),
-                    conversionFactor,
-                  },
-            )
-          }
+          disabled={!body}
+          onClick={() => { if (body) onSubmit(body); }}
         >
           Save
         </Button>
