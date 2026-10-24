@@ -39,7 +39,7 @@ export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
  * A success or a manual push (one with an acting user) ends the run, and so does any
  * delivery in the org since: the receiver accepting a push means it may accept these too.
  */
-async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
+export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
   const lastDelivery = await db.receiptAuditLog.findFirst({
     where: { action: "pushed", receipt: { orgId } },
     select: { id: true },
@@ -58,6 +58,36 @@ async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
     else ended.add(receiptId);
   }
   return new Set([...run].filter(([, n]) => n >= MAX_CONSECUTIVE_PUSH_FAILURES).map(([id]) => id));
+}
+
+/** Where a finalized, not-yet-delivered receipt stands with catch-up, for the review screen. */
+export interface PushRecord {
+  pushGivenUp: boolean;
+  lastPushFailedAt: Date | null;
+  lastPushFailure: string | null;
+}
+
+/** The push record of each of `ids`, all of which should be finalized and not yet delivered. */
+export async function pushRecords(orgId: string, ids: string[]): Promise<Map<string, PushRecord>> {
+  if (ids.length === 0) return new Map();
+  const [skip, failures] = await Promise.all([
+    givenUp(orgId, ids),
+    db.receiptAuditLog.findMany({
+      where: { receiptId: { in: ids }, action: "push_failed" },
+      select: { receiptId: true, changedAt: true, valueAfter: true },
+      orderBy: [{ receiptId: "asc" }, { id: "desc" }],
+      distinct: ["receiptId"],
+    }),
+  ]);
+  // Rows come newest first within each receipt; the first one seen is the latest.
+  const latest = new Map<string | null, (typeof failures)[number]>();
+  for (const f of failures) if (!latest.has(f.receiptId)) latest.set(f.receiptId, f);
+  return new Map(
+    ids.map((id) => {
+      const failure = latest.get(id);
+      return [id, { pushGivenUp: skip.has(id), lastPushFailedAt: failure?.changedAt ?? null, lastPushFailure: failure?.valueAfter ?? null }];
+    }),
+  );
 }
 
 /** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
