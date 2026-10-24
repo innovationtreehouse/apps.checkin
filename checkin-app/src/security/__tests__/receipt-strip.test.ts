@@ -63,7 +63,6 @@ const receiptView = () => ({
     validationNotes: 'rejected: wrong store',
     lineItems: [{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }],
     reimbursement: { paidOn: null },
-    submitterReconfirm: { changedFields: ['reimbursee'] },
     pushGivenUp: true,
     lastPushFailedAt: '2026-10-20T00:00:00.000Z',
     lastPushFailure: 'receiver timed out',
@@ -112,7 +111,6 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.isInKind).toBe(true);
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
-        expect(out.submitterReconfirm).toEqual({ changedFields: ['reimbursee'] });
         expect(out.pushGivenUp).toBe(true);
         expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
@@ -150,7 +148,7 @@ describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob');
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'submitterReconfirm', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 

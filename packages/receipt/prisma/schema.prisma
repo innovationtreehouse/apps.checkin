@@ -130,6 +130,9 @@ model ReceiptDetail {
   approvedAt                 DateTime? @map("approved_at")
   /// @sensitivity:internal
   reviewedAt                 DateTime? @map("reviewed_at")
+  /// Who confirmed the receipt as read: the person reimbursed, or a Board member on their behalf.
+  /// @sensitivity:internal
+  reviewedByUserId           Int?      @map("reviewed_by_user_id")
 
   // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
   /// @sensitivity:internal

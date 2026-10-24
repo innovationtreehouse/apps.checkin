@@ -92,7 +92,7 @@ describe('receipt routes are registered', () => {
     it('never admits public, kiosk or plain authenticated callers', () => {
         for (const e of [...jsonRoutes, ...fileRoutes]) {
             const spec = getRoute(e) ?? getFileRoute(e);
-            expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
+            expect(['receipt-submitter', 'expense-signer', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
     });
 });
@@ -308,6 +308,49 @@ describe('the reimbursee options', () => {
         );
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual([{ id: 42, name: 'Sam Lee' }]);
+    });
+});
+
+describe('the confirmation that signs a reimbursement', () => {
+    const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
+    const views = (e: string) => new Map(getRoute(e)!.orderedView);
+    const line = { id: 1, reimburseePersonId: 9, lineNumber: 1, description: 'Arduino', quantity: 1, unitPriceCents: 6989, totalPriceCents: 6989, isDelayed: false };
+    const row = {
+        id: 'r-1', reimburseePersonId: 9, state: 'submitter_review', retailer: 'Acme', receiptDate: '2026-10-01', currency: 'USD',
+        shippingCents: 0, taxCents: 0, discountCents: 0, receiptTotalCents: 6989, onBehalf: false, changedFields: [],
+        uploadedByUserId: 7, reimbursementFor: 'Sam Lee', validationNotes: 'note', lineItems: [line],
+    };
+
+    it('admits the expense signer, and shows the Board everyone\'s and anyone else their own', () => {
+        for (const e of CONFIRMATION_ROUTES) {
+            expect(getRoute(e)?.authorize).toBe('expense-signer');
+            expect(getRoute(e)?.orderedView).toEqual([['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]]);
+        }
+    });
+
+    it('returns the person reimbursed the receipt and lines, and no uploader, name or note', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        const out = stripValue('ReceiptConfirmationView', row, own, { selfId: 9 } as CallerContext) as Record<string, unknown>;
+        const { uploadedByUserId: _u, reimbursementFor: _r, validationNotes: _v, ...expected } = row;
+        expect(out).toEqual(expected);
+    });
+
+    it('returns nothing to anyone else, the uploader included', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [{}] });
+    });
+
+    it('returns a Board member the receipt they confirm on the reimbursee\'s behalf', () => {
+        const board = views(CONFIRMATION_ROUTES[1]).get('isBoardMember')!;
+        const out = stripValue('ReceiptConfirmationView', { ...row, onBehalf: true }, board, { selfId: 5 } as CallerContext) as Record<string, unknown>;
+        expect(out.onBehalf).toBe(true);
+        expect(out.lineItems).toEqual([line]);
+        expect(out).not.toHaveProperty('reimbursementFor');
+    });
+
+    it('drops a line missing its reimbursee stamp (fails closed)', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationLineView', { id: 1, description: 'Arduino' }, own, { selfId: 9 } as CallerContext)).toEqual({});
     });
 });
 

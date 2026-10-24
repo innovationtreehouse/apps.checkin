@@ -49,6 +49,7 @@ export const classifications = {
         validationNotes: 'personal',
         approvedAt: 'internal',
         reviewedAt: 'internal',
+        reviewedByUserId: 'internal',
         qbTxnId: 'internal',
         qbEntity: 'internal',
         importSourceId: 'internal',
