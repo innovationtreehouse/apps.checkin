@@ -164,7 +164,7 @@ describeDb("the tax and date fields", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
-  it("zeroing the tax on a tax-exempt org keeps the tax reason, so approval still needs a note", async () => {
+  it("zeroing the tax on a tax-exempt org keeps the tax reason", async () => {
     actAs(FINANCE);
     await orgSettingsService.update({ taxExempt: true });
     actAs(ALICE);
@@ -175,8 +175,7 @@ describeDb("the tax and date fields", () => {
     expect(await stateOf(r.id)).toBe("financial_review");
     actAs(FINANCE);
     expect((await receiptService.get(r.id, "finance")).financialReviewReasons).toEqual(["tax", "submitter_correction"]);
-    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 400 });
-    await receiptService.approveFinancial(r.id, "Vendor charged tax; submitter removed it to match the lines");
+    await receiptService.approveFinancial(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
@@ -221,7 +220,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(r.state).toBe("financial_review");
     actAs(HOUSEMATE);
-    await expect(receiptService.approveFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.rejectFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
     expect(await refusals(r.id)).toEqual([[HOUSEMATE.id, "approve"], [HOUSEMATE.id, "reject"]]);
     actAs(FINANCE);

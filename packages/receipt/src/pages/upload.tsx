@@ -18,15 +18,19 @@ import {
   Title,
 } from "@mantine/core";
 import { errorMessage, upload } from "../components/api";
+import { CURRENCY_CODE } from "../lib/schemas";
 
 interface Line {
   description: string;
   quantity: number | "";
   unitPrice: number | "";
+  partNumber: string;
+  manufacturer: string;
+  isDelayed: boolean;
 }
 
 const ACCEPT = "image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain";
-const blankLine = (): Line => ({ description: "", quantity: 1, unitPrice: "" });
+const blankLine = (): Line => ({ description: "", quantity: 1, unitPrice: "", partNumber: "", manufacturer: "", isDelayed: false });
 
 /**
  * /receipts/upload — a photo, PDF or text file, with the details typed or read automatically.
@@ -41,9 +45,11 @@ export default function UploadPage() {
   const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [retailer, setRetailer] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
+  const [currency, setCurrency] = useState("USD");
   const [total, setTotal] = useState<number | "">("");
   const [tax, setTax] = useState<number | "">("");
   const [shipping, setShipping] = useState<number | "">("");
+  const [discount, setDiscount] = useState<number | "">("");
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [needsReimbursement, setNeedsReimbursement] = useState(false);
   const [isInKind, setIsInKind] = useState(false);
@@ -51,10 +57,13 @@ export default function UploadPage() {
   const [donor, setDonor] = useState({ firstName: "", lastName: "", companyName: "" });
   const [busy, setBusy] = useState(false);
 
+  const currencyCode = currency.trim().toUpperCase() || "USD";
+  const currencyError = mode === "manual" && !CURRENCY_CODE.test(currencyCode) ? "Use a 3-letter currency code, like USD" : null;
+
   const setLine = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   async function submit() {
-    if (!file) return;
+    if (!file || currencyError) return;
     const data = {
       needsReimbursement: !isInKind && needsReimbursement,
       isInKind,
@@ -64,10 +73,19 @@ export default function UploadPage() {
             details: {
               retailer,
               receiptDate,
+              currency: currencyCode,
               receiptTotal: String(total || 0),
               tax: String(tax || 0),
               shipping: String(shipping || 0),
-              lineItems: lines.map((l) => ({ description: l.description, quantity: l.quantity || 1, unitPrice: l.unitPrice || 0 })),
+              discount: String(discount || 0),
+              lineItems: lines.map((l) => ({
+                description: l.description,
+                partNumber: l.partNumber.trim() || null,
+                manufacturer: l.manufacturer.trim() || null,
+                quantity: l.quantity || 1,
+                unitPrice: l.unitPrice || 0,
+                isDelayed: l.isDelayed,
+              })),
             },
           }
         : {}),
@@ -80,7 +98,7 @@ export default function UploadPage() {
       const receipt = await upload<{ id: string }>(form);
       router.push(`/receipts/${receipt.id}`);
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ title: "Upload failed", message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
@@ -100,20 +118,31 @@ export default function UploadPage() {
           {mode === "manual" && (
             <>
               <TextInput label="Retailer" value={retailer} onChange={(e) => setRetailer(e.currentTarget.value)} required />
-              <TextInput label="Date" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.currentTarget.value)} required />
+              <Group grow>
+                <TextInput label="Date" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.currentTarget.value)} required />
+                <TextInput label="Currency" description="3-letter code" maxLength={3} error={currencyError} value={currency} onChange={(e) => setCurrency(e.currentTarget.value)} />
+              </Group>
               <Group grow>
                 <NumberInput label="Total" prefix="$" decimalScale={2} min={0} value={total} onChange={(v) => setTotal(typeof v === "number" ? v : "")} required />
                 <NumberInput label="Tax" prefix="$" decimalScale={2} min={0} value={tax} onChange={(v) => setTax(typeof v === "number" ? v : "")} />
                 <NumberInput label="Shipping" prefix="$" decimalScale={2} min={0} value={shipping} onChange={(v) => setShipping(typeof v === "number" ? v : "")} />
+                <NumberInput label="Discount" prefix="$" decimalScale={2} min={0} value={discount} onChange={(v) => setDiscount(typeof v === "number" ? v : "")} />
               </Group>
               <Text fw={500} size="sm">Items</Text>
               {lines.map((l, i) => (
-                <Group key={i} align="end" wrap="nowrap">
-                  <TextInput label={i === 0 ? "Description" : undefined} style={{ flex: 1 }} value={l.description} onChange={(e) => setLine(i, { description: e.currentTarget.value })} />
-                  <NumberInput label={i === 0 ? "Qty" : undefined} w={80} min={0} value={l.quantity} onChange={(v) => setLine(i, { quantity: typeof v === "number" ? v : "" })} />
-                  <NumberInput label={i === 0 ? "Unit price" : undefined} w={120} prefix="$" decimalScale={2} min={0} value={l.unitPrice} onChange={(v) => setLine(i, { unitPrice: typeof v === "number" ? v : "" })} />
-                  <ActionIcon variant="subtle" color="red" aria-label="Remove item" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</ActionIcon>
-                </Group>
+                <Stack key={i} gap={6}>
+                  <Group align="end" wrap="nowrap">
+                    <TextInput label={i === 0 ? "Description" : undefined} aria-label={`Item ${i + 1} description`} style={{ flex: 1 }} value={l.description} onChange={(e) => setLine(i, { description: e.currentTarget.value })} />
+                    <NumberInput label={i === 0 ? "Qty" : undefined} aria-label={`Item ${i + 1} quantity`} w={80} min={0} value={l.quantity} onChange={(v) => setLine(i, { quantity: typeof v === "number" ? v : "" })} />
+                    <NumberInput label={i === 0 ? "Unit price" : undefined} aria-label={`Item ${i + 1} unit price`} w={120} prefix="$" decimalScale={2} min={0} value={l.unitPrice} onChange={(v) => setLine(i, { unitPrice: typeof v === "number" ? v : "" })} />
+                    <ActionIcon variant="subtle" color="red" aria-label={`Remove item ${i + 1}`} disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</ActionIcon>
+                  </Group>
+                  <Group align="center" wrap="nowrap">
+                    <TextInput size="xs" placeholder="Part # (optional)" aria-label={`Item ${i + 1} part number`} maxLength={100} style={{ flex: 1 }} value={l.partNumber} onChange={(e) => setLine(i, { partNumber: e.currentTarget.value })} />
+                    <TextInput size="xs" placeholder="Manufacturer (optional)" aria-label={`Item ${i + 1} manufacturer`} maxLength={100} style={{ flex: 1 }} value={l.manufacturer} onChange={(e) => setLine(i, { manufacturer: e.currentTarget.value })} />
+                    <Checkbox size="xs" label="Backordered" aria-label={`Item ${i + 1} backordered`} checked={l.isDelayed} onChange={(e) => setLine(i, { isDelayed: e.currentTarget.checked })} />
+                  </Group>
+                </Stack>
               ))}
               <Button variant="light" size="xs" w="fit-content" onClick={() => setLines([...lines, blankLine()])}>Add item</Button>
             </>
@@ -138,7 +167,7 @@ export default function UploadPage() {
           {isAdult && !isInKind && (
             <Checkbox label="I paid for this myself" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
           )}
-          <Button onClick={() => void submit()} loading={busy} disabled={!file}>Upload</Button>
+          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError}>Upload</Button>
         </Stack>
       </Paper>
     </>
