@@ -14,7 +14,8 @@ import { IN_KIND_TAB } from "@checkin/bulk-donation/nav";
 import type { RoleFlag } from "@/lib/roles";
 import type { NavGate, NavSection, SubLink } from "@/lib/nav/types";
 import { anyRole, firstVisibleHref, signedIn } from "@/lib/nav/gates";
-import { libraryCount } from "@/components/navBadges";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
+import { libraryCount, type NavBadge } from "@/components/navBadges";
 import { RECEIPT_FLOW_LINK } from "@/lib/nav/sections/receiptReview";
 import { canSeeCatalog } from "@/lib/volunteer";
 
@@ -26,12 +27,19 @@ export const RECEIVING_ROLES: readonly RoleFlag[] = ["isInventoryManager", "isFi
 /** The no-receipt in-kind list route admits FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER. */
 export const IN_KIND_ROLES: readonly RoleFlag[] = ["isFinance", "isBoardMember", "isOperations", "isInventoryManager"];
 
+/** Green pill: open backorders waiting to be received. Its count reaches an INVENTORY_MANAGER alone. */
+function openBackorders(c: TodoCounts | null): NavBadge | null {
+  const n = libraryCount(c, "local-inventory", "openBackorders");
+  return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} ${n === 1 ? "backorder waits" : "backorders wait"} to be received` } : null;
+}
+
 /** An org-inventory screen as a section link, gated by its manager-only or receiving flag. */
 function inventoryLink({ managerOnly, receiving, ...l }: Omit<InventoryNavLink, "subLinks">): SubLink {
   return {
     ...l,
     library: "local-inventory",
     visible: managerOnly ? inventoryManager : receiving ? anyRole(RECEIVING_ROLES) : catalogViewer,
+    ...(l.href === "/inventory/receive-queue" ? { badge: openBackorders } : {}),
   };
 }
 
