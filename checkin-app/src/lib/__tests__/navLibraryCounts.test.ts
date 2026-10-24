@@ -1,7 +1,15 @@
 import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
 
+const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
+  total: viewerId,
+  byState: { financial_review: viewerId - 1, duplicate_flagged: 1, flow_error: 0 },
+}));
+
 jest.mock("@checkin/receipt", () => ({
-  receiptService: { countAwaitingFinance: async () => 5, countAwaitingSubmitter: async (id: number) => id * 10 },
+  receiptService: {
+    countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
+    countAwaitingSubmitter: async (id: number) => id * 10,
+  },
 }));
 
 describe("the receipt provider", () => {
@@ -10,14 +18,22 @@ describe("the receipt provider", () => {
   beforeEach(() => { process.env.RECEIPT_DATABASE_URL = "postgres://receipt"; });
   afterEach(() => { delete process.env.RECEIPT_DATABASE_URL; });
 
-  it("reports the review count to FINANCE and not to BOARD, which cannot act on the queues", async () => {
+  it("reports the review counts to FINANCE and not to BOARD, which cannot act on the queues", async () => {
     // FINANCE and BOARD may submit receipts too, so each also gets its own count.
-    expect(await collectLibraryCounts({ id: 1, isFinance: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingMe: 10, awaitingFinance: 5 },
+    expect(await collectLibraryCounts({ id: 5, isFinance: true }, ["receipt"], receipt)).toEqual({
+      receipt: {
+        awaitingMe: 50,
+        awaitingFinance: 5,
+        "awaitingFinance:financial_review": 4,
+        "awaitingFinance:duplicate_flagged": 1,
+        "awaitingFinance:flow_error": 0,
+      },
     });
+    expect(mockCountAwaitingFinance).toHaveBeenCalledWith(5);
     expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
       receipt: { awaitingMe: 10 },
     });
+    expect(mockCountAwaitingFinance).toHaveBeenCalledTimes(1);
   });
 
   it("reports an uploader only their own count", async () => {
