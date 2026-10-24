@@ -1,12 +1,14 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, dollars, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { returnQueue, reviewHref } from "../components/reviewQueue";
+import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -24,6 +26,7 @@ interface Line {
   id: number;
   lineNumber: number;
   description: string;
+  partNumber?: string | null;
   quantity: number;
   unitPriceCents: number;
   totalPriceCents: number;
@@ -36,6 +39,13 @@ interface Receipt extends ReceiptListRow {
   shippingCents: number | null;
   discountCents: number | null;
   reimbursementFor?: string | null;
+  fileHash?: string;
+  receiptNumber?: string | null;
+  orderNumber?: string | null;
+  currency?: string;
+  /** Finance and board views only. */
+  duplicateSuspectReceiptId?: string | null;
+  duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: Line[];
 }
@@ -64,6 +74,12 @@ export default function ReceiptDetailPage() {
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
+  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
+  const comparing = (isFinance || isBoard) && suspectId !== null && receipt.data?.state === "duplicate_flagged";
+  const original = useLoad<Receipt>(comparing ? `/${suspectId}` : null);
+  useEffect(() => {
+    if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
+  }, [original.error]);
   const [note, setNote] = useState("");
   const [edit, setEdit] = useState<{ retailer?: string; receiptDate?: string; tax?: string; receiptTotal?: string }>({});
 
@@ -81,8 +97,8 @@ export default function ReceiptDetailPage() {
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
-  const act = async (path: string, method: string, body: unknown, success: string, decides = false) => {
-    if (await send(`/${id}${path}`, method, body, success)) {
+  const act = async (path: string, method: string, body: unknown, success: string, decides = false, failed?: string) => {
+    if (await send(`/${id}${path}`, method, body, success, failed)) {
       if (decides && fromReview) {
         router.push(back.href);
         return;
@@ -93,6 +109,14 @@ export default function ReceiptDetailPage() {
       audit.reload();
     }
   };
+  const discardOriginal = async () => {
+    if (await send(`/${suspectId}/discard`, "POST", {}, "The original is discarded", "Couldn't discard the original")) {
+      receipt.reload();
+      original.reload();
+      audit.reload();
+    }
+  };
+  const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const saveEdit = () =>
     act(
       "",
@@ -118,6 +142,24 @@ export default function ReceiptDetailPage() {
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+      )}
+      {comparing && (
+        <DuplicateCompare
+          receipt={r}
+          original={original.data}
+          originalHref={originalHref}
+          isFinance={isFinance}
+          own={own}
+          onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", true, "Couldn't clear the duplicate flag")}
+          onDiscardReceipt={() => void act("/discard", "POST", {}, "Discarded", true, "Couldn't discard this receipt")}
+          onDiscardOriginal={() => void discardOriginal()}
+        />
+      )}
+      {!comparing && suspectId && (
+        <Text size="sm">
+          This receipt was flagged as a possible duplicate of <Anchor component={Link} href={originalHref}>another receipt</Anchor>
+          {r.duplicateFlagClearedAt ? " and cleared as not a duplicate." : "."}
+        </Text>
       )}
 
       <Group align="flex-start" grow wrap="wrap">
@@ -181,7 +223,7 @@ export default function ReceiptDetailPage() {
             {(own || isFinance) && r.state === "validation_failed" && (
               <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted", true)}>Resubmit</Button>
             )}
-            {(own || isFinance) && !TERMINAL.has(r.state) && (
+            {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
             )}
           </Group>
@@ -200,8 +242,8 @@ export default function ReceiptDetailPage() {
                   </>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
-                {r.state === "duplicate_flagged" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared", true)}>Not a duplicate</Button>
+                {r.state === "duplicate_flagged" && !comparing && !own && (
+                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", true, "Couldn't clear the duplicate flag")}>Not a duplicate</Button>
                 )}
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", true)}>Restart</Button>
