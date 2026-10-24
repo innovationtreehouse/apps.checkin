@@ -18,6 +18,7 @@ import {
   Title,
 } from "@mantine/core";
 import { errorMessage, upload } from "../components/api";
+import { CURRENCY_CODE } from "../lib/schemas";
 
 interface Line {
   description: string;
@@ -56,10 +57,13 @@ export default function UploadPage() {
   const [donor, setDonor] = useState({ firstName: "", lastName: "", companyName: "" });
   const [busy, setBusy] = useState(false);
 
+  const currencyCode = currency.trim().toUpperCase() || "USD";
+  const currencyError = mode === "manual" && !CURRENCY_CODE.test(currencyCode) ? "Use a 3-letter currency code, like USD" : null;
+
   const setLine = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   async function submit() {
-    if (!file) return;
+    if (!file || currencyError) return;
     const data = {
       needsReimbursement: !isInKind && needsReimbursement,
       isInKind,
@@ -69,7 +73,7 @@ export default function UploadPage() {
             details: {
               retailer,
               receiptDate,
-              currency: currency.trim().toUpperCase() || "USD",
+              currency: currencyCode,
               receiptTotal: String(total || 0),
               tax: String(tax || 0),
               shipping: String(shipping || 0),
@@ -116,7 +120,7 @@ export default function UploadPage() {
               <TextInput label="Retailer" value={retailer} onChange={(e) => setRetailer(e.currentTarget.value)} required />
               <Group grow>
                 <TextInput label="Date" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.currentTarget.value)} required />
-                <TextInput label="Currency" description="3-letter code" maxLength={10} value={currency} onChange={(e) => setCurrency(e.currentTarget.value)} />
+                <TextInput label="Currency" description="3-letter code" maxLength={3} error={currencyError} value={currency} onChange={(e) => setCurrency(e.currentTarget.value)} />
               </Group>
               <Group grow>
                 <NumberInput label="Total" prefix="$" decimalScale={2} min={0} value={total} onChange={(v) => setTotal(typeof v === "number" ? v : "")} required />
@@ -163,7 +167,7 @@ export default function UploadPage() {
           {isAdult && !isInKind && (
             <Checkbox label="I paid for this myself" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
           )}
-          <Button onClick={() => void submit()} loading={busy} disabled={!file}>Upload</Button>
+          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError}>Upload</Button>
         </Stack>
       </Paper>
     </>

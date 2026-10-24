@@ -85,6 +85,16 @@ describe("Manual receipt upload", () => {
     expect(data.details).toMatchObject({ currency: "USD", discount: "0" });
   });
 
+  it("refuses a currency that is not a 3-letter code before posting", () => {
+    renderManual();
+    type("Currency", "$");
+    expect(screen.getByText("Use a 3-letter currency code, like USD")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    type("Currency", "eur");
+    expect(screen.queryByText("Use a 3-letter currency code, like USD")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeEnabled();
+  });
+
   it("shows a refused upload as a red notice that stays until dismissed", async () => {
     uploadMock.mockRejectedValue(new Error("At least one line item is required"));
     renderManual();
