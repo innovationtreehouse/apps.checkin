@@ -99,6 +99,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         approvers: b?.approvers ?? [],
         orgLevel: b?.orgLevel ?? false,
         reimburseeIsMember: isMember,
+        reimburseeUnknown: kind === "reimbursement" && expense.reimburseePersonId === null,
         finance,
         board,
         conflicted,

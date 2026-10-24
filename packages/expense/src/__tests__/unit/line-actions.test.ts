@@ -11,6 +11,7 @@ const base: SignoffFacts = {
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
@@ -41,7 +42,7 @@ const APPROVED = { state: "qb_pending", approval: { status: "approved", ownerId:
 function run(c: Case) {
   const approval = c.approval === undefined ? { status: "pending", ownerId: 7 } : c.approval;
   const approved = approval?.status === "approved";
-  const facts = { ...base, approved, approver: approved ? (c.approver ?? 2) : null, ...c.facts };
+  const facts = { ...base, approved, approver: approved ? (c.approver ?? 2) : null, reimburseeUnknown: c.reimburseeUnknown ?? false, ...c.facts };
   const filled = c.filled ?? [];
   const input: LineActionsInput = {
     caller: { id: c.caller, isFinance: c.isFinance ?? facts.finance.includes(c.caller) },
@@ -182,6 +183,13 @@ describe("holds", () => {
     const r = run({ caller: 3, reimburseeUnknown: true, ...APPROVED });
     expect(r.actions).toEqual([]);
     expect(r.awaiting).toContain("Held until finance names the reimbursee");
+  });
+
+  it("nothing is approved while the reimbursee is unknown, not even by a Board member", () => {
+    for (const caller of [1, 2, 5]) expect(acts({ caller, reimburseeUnknown: true })).not.toContainEqual(expect.stringMatching(/approve|sign/));
+    const r = run({ caller: 3, reimburseeUnknown: true });
+    expect(r.awaiting).toContain("Held until finance names the reimbursee");
+    expect(r.awaiting).not.toContain("Awaiting approval");
   });
 
   it("nothing is approved before the line has a bucket", () => {

@@ -137,11 +137,11 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   if (expense.backfill) return ["Booked before the app; no sign-off"];
   if (CLOSED_STATES.has(expense.state)) return [];
   const out: string[] = [];
-  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !acts.some((a) => a.act === "approve")) {
+  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
     const approver = facts.approvers.some((id) => id !== input.caller.id && approvesAsApprover(input, id));
     out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
   }
-  if (expense.reimburseeUnknown && input.holds.length > 0) out.push("Held until finance names the reimbursee");
+  if (expense.reimburseeUnknown) out.push("Held until finance names the reimbursee");
   const blocked = blockedSeats(facts, filled);
   for (const seat of SEATS) {
     if (!input.holds.includes(seat) || acts.some((a) => a.seat === seat)) continue;
