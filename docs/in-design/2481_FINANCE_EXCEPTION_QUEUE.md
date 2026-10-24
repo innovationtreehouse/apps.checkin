@@ -376,37 +376,14 @@ session correcting #2224 should know.
 
 ## Open questions
 
-1. **The URL and name.** Decided: the queue moves to `/finance/review`, and
-   the old paths are renamed outright with no redirects (§3).
-2. **Expense finance views in the queue.** The design folds assign ownership,
-   resolve ownership, exceptions, capital review and depreciation into the
-   Expenses tab, because otherwise finance still works from two places. Your
-   decision named only the flags. Do you want these folded too?
-3. **Capital thresholds (3.7).** Decided: `CAPITAL_EQUIPMENT` and
-   `capitalEquipmentUnitCents` go; capital review is the only capital check
-   (§2, rollout step 8).
-4. **Who records the Board's approval, and whose tab counts it.** The rules have
-   a FINANCE holder without a conflict record it, and a Board member only when
-   there is none. The design shows it in the Board tab to both, counted green
-   for FINANCE and gray for the Board unless no FINANCE holder can record it.
-   Is that right, or should Board members see it green as a prompt to take it to
-   a meeting?
-5. **A held expense no one can sign.** When every Board member is conflicted, the
-   expense is held with no in-app way forward. The design shows it in the Board
-   tab and offers no action. Is that what the Board wants, or should finance be
-   able to close it with a note, as with a closed expense that never posted?
-6. **Required notes on reviews.** Today a check-off note is optional on the
-   server. The design makes it required for the four kept kinds, since the note
-   is the record of the judgment. Agreed?
-7. **Expense events and Provisional items (3.27).** The design restores failed
-   intake only. Expense events shows the QuickBooks outbox, which the QuickBooks
-   tab now covers. Provisional items belongs with the line (theme 3). Do you want
-   either screen back as it was?
-8. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
-   over-cap expense alone. Should finance still see each one in the QuickBooks
-   tab, for awareness, until someone marks it seen?
-9. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
-   waits in `AMBIGUOUS` for a manual match (`qb-candidates`, `qb-match`), and no
-   screen calls those routes. That sits outside the twelve kinds, but it is
-   finance's work. Should the QuickBooks tab list it, with a match picker on the
-   expense page, in this work or in a follow-up?
+Numbers are fixed; decided questions are dropped from this table.
+
+| # | Question | Design's default |
+| --- | --- | --- |
+| 2 | Fold the expense list's finance views (assign and resolve ownership, exceptions, capital review, depreciation) into the Expenses tab too? | Yes |
+| 4 | Recording the Board's approval: green in the Board tab for FINANCE only, or for Board members too? | FINANCE only |
+| 5 | Expense held because every Board member is conflicted: leave it with no action, or let finance close it with a note? | No action |
+| 6 | Require a note on the four kept reviews? | Yes |
+| 7 | Bring back the Expense events or Provisional items screens (3.27)? | No |
+| 8 | Show over-cap posts (`QB_OVER_CAP`) in the QuickBooks tab until marked seen? | No; audit note only |
+| 9 | List `AMBIGUOUS` posts in the QuickBooks tab with a match picker, now or in a follow-up? | Follow-up |
