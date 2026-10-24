@@ -21,9 +21,16 @@ export interface ReceiptFlowStatus {
   expense?: { states: StateCount[] } | null;
 }
 
+/** The views GET /api/receipt-flow/status admits. */
+export type ReceiptFlowRole = "isFinance" | "isBoardMember" | "isInventoryManager";
+
+export function isReceiptFlowRole(role: Role): role is ReceiptFlowRole {
+  return role === "isFinance" || role === "isBoardMember" || role === "isInventoryManager";
+}
+
 const configured = (envVar: string) => Boolean(process.env[envVar]);
 
-export async function receiptFlowStatus(role: Role): Promise<ReceiptFlowStatus> {
+export async function receiptFlowStatus(role: ReceiptFlowRole): Promise<ReceiptFlowStatus> {
   const everySection = role === "isFinance" || role === "isBoardMember";
   const [receipt, receiving, expense] = await Promise.all([
     everySection && configured("RECEIPT_DATABASE_URL") ? receiptStateCounts() : null,

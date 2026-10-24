@@ -4,7 +4,7 @@
 import { expenseStateCounts } from "@checkin/expense";
 import { receiptStateCounts } from "@checkin/receipt";
 import { receivingStateCounts } from "@checkin/workflow-mapping";
-import { receiptFlowStatus } from "@/lib/receiptFlow/status";
+import { isReceiptFlowRole, receiptFlowStatus } from "@/lib/receiptFlow/status";
 
 jest.mock("@checkin/receipt", () => ({ receiptStateCounts: jest.fn() }));
 jest.mock("@checkin/workflow-mapping", () => ({ receivingStateCounts: jest.fn() }));
@@ -29,6 +29,15 @@ beforeEach(() => {
 
 afterAll(() => {
   for (const v of URLS) delete process.env[v];
+});
+
+describe("isReceiptFlowRole", () => {
+  it("admits only the finance, board and inventory-manager views", () => {
+    for (const role of ["isFinance", "isBoardMember", "isInventoryManager"] as const) expect(isReceiptFlowRole(role)).toBe(true);
+    for (const role of ["isSysadmin", "isKeyholder", "isOperations", "authenticated", "unauthenticated"] as const) {
+      expect(isReceiptFlowRole(role)).toBe(false);
+    }
+  });
 });
 
 describe("receiptFlowStatus", () => {

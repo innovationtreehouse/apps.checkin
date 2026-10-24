@@ -121,6 +121,14 @@ describe("the Receipts split", () => {
     });
     expect(review?.badge?.(counts)).toBeNull();
   });
+
+  it("Inventory shows Flow status to an inventory manager, not to a catalog viewer or FINANCE", () => {
+    const hrefs = (user: NavUser) => visibleLinks(INVENTORY, user, counts).map((l) => l.href);
+    expect(hrefs(PERSONAS.inventoryManager).at(-1)).toBe("/receipt-flow");
+    expect(hrefs(PERSONAS.keyholder)).toContain("/catalog/items");
+    expect(hrefs(PERSONAS.keyholder)).not.toContain("/receipt-flow");
+    expect(hrefs(PERSONAS.finance)).not.toContain("/receipt-flow");
+  });
 });
 
 describe("Membership Ops", () => {
