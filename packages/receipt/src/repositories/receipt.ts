@@ -43,6 +43,8 @@ export const receiptRepo = {
     return rows.map(flatten);
   },
 
+  count: (where: Prisma.ReceiptWhereInput) => db.receipt.count({ where }),
+
   /** Writes both tables in one transaction; with `expectedState` it is a compare-and-set. */
   async update(id: string, set: ReceiptUpdate, expectedState?: string): Promise<void> {
     await db.$transaction(async (tx) => {
