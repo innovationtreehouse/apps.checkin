@@ -222,6 +222,7 @@ describe('receipt submitter admission', () => {
         'POST /api/receipts/[id]/submitter-discard',
         'PUT /api/receipts/[id]/reimbursement',
         'PUT /api/receipts/[id]/in-kind',
+        'GET /api/receipts/reimbursee-options',
         'GET /api/receipts/needs-attention',
         'GET /api/receipts/[id]',
         'PATCH /api/receipts/[id]',
@@ -291,6 +292,22 @@ describe('receipt submitter admission', () => {
         for (const endpoint of SUBMITTER_ROUTES) {
             expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 403 });
         }
+    });
+});
+
+describe('the reimbursee options', () => {
+    const view = getRoute('GET /api/receipts/reimbursee-options')!;
+
+    it('returns a submitter each option\'s id and name, and nothing else', async () => {
+        expect(view.orderedView).toEqual([['authenticated', ['public']]]);
+        signIn(9, { ageBand: 'adult', isActiveOrgMember: true });
+        const option = { id: 42, name: 'Sam Lee', email: 'sam@example.com', householdId: 3 };
+        const res = await handler('GET /api/receipts/reimbursee-options', async () => ({ ReceiptReimburseeOption: [option] }))(
+            request('GET /api/receipts/reimbursee-options'),
+            params,
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual([{ id: 42, name: 'Sam Lee' }]);
     });
 });
 

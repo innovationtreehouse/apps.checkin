@@ -171,10 +171,10 @@ describe("receipts — finance review", () => {
     const queue = (await api<Receipt[]>(finance, "/api/receipts?state=financial_review")).json;
     expect(queue.map((r) => r.id)).toEqual(expect.arrayContaining([theirs.json.id, own.json.id]));
 
-    expect((await post(finance, `/api/receipts/${own.json.id}/approve`, { note: "mine" })).status).toBe(403);
+    expect((await post(finance, `/api/receipts/${own.json.id}/approve`, {})).status).toBe(403);
     expect((await post(board, `/api/receipts/${theirs.json.id}/approve`, {})).status).toBe(403);
     expect((await post(submitter, `/api/receipts/${theirs.json.id}/approve`, {})).status).toBe(403);
-    const approved = await post(finance, `/api/receipts/${theirs.json.id}/approve`, { note: "Backlog receipt" });
+    const approved = await post(finance, `/api/receipts/${theirs.json.id}/approve`, {});
     expect(approved.status).toBe(200);
     expect(approved.json.state).toBe("receipt_finalized");
 

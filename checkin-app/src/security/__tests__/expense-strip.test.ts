@@ -72,6 +72,7 @@ describe('expense tiering', () => {
             'ExpenseOrgSettingsChange.actorUsername',
             'ExpenseQbMatchExclusion.excludedByUserId',
             'ExpenseQbMatchExclusion.excludedByUsername',
+            'ExpenseReceiptReview.approvedByUserId',
             'ExpenseReimburseeVendor.reimburseePersonId',
             'LineItemOwnerApproval.decidedByUserId',
         ]);
