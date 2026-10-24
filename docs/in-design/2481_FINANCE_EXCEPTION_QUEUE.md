@@ -105,7 +105,7 @@ every screen, and are decided on the expense page with a note.
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
 | `QB_POST_FAILED`, duplicate to void | The app posted an entry another record already claims | Stays as a stored review, under its own kind `QB_DUPLICATE_TO_VOID` (§9) | QuickBooks: "Duplicate entry in QuickBooks needs voiding" | Expense page, Reviews panel | "I voided it", with a required note saying what finance did (which entry, when); the server refuses a blank one |
-| `QB_OVER_CAP` | Over the per-expense or per-run posting cap ($25,000) | Becomes a read-only note: an audit row and a line in the QuickBooks panel. Nothing waits on finance; the drain posts it alone, and a purchase that size already needed the Board's approval | none | none | none |
+| `QB_OVER_CAP` | Over the per-expense or per-run posting cap ($25,000) | **Decided: removed, and the dollar cap is dropped.** The cap was an engineering constant (#2103, #2150) with no policy behind it, and a purchase that size already needs the Board's approval. The count limits stay | none | none | none |
 | `QB_DRIFT` | The daily check finds a posted entry changed in QuickBooks | Stays as a stored review; it is the one control that catches spending changed outside the app | QuickBooks: "Changed in QuickBooks after posting: amount, account" | Expense page, Reviews panel, with the stored and current values side by side | Accept the change, with a required note saying what finance did; the server refuses a blank one. A later change reopens it, as today |
 | `QB_NO_CLASS` | A line's bucket has no QuickBooks Class | Goes away as a row; derived while the expense is postable and stopped for a missing Class | QuickBooks: "Budget bucket Facility has no QuickBooks class" | Expense page links to the bucket's Class setting | Set the Class; the next drain posts and the reason clears |
 | `QB_POST_HELD` | A closed expense still held from posting | Stays as a stored review: a closed expense takes no further sign-off, so only a judgment can settle it | QuickBooks: "Closed but not posted: a line is missing a sign-off" | Expense page, Reviews panel | Mark handled, with a required note saying what finance did (for example, "entered by hand in QuickBooks"); the server refuses a blank one |
@@ -442,10 +442,16 @@ Each PR is based on `main`. None is stacked on another's branch.
    Flags and Holds pages are deleted and their links repointed. In the same
    PR, intake stops raising `TAX_ATTACHED`, `THRESHOLD_CROSSED`,
    `CAPITAL_EQUIPMENT` and `REIMBURSEE_UNKNOWN`; the drain stops raising
-   `QB_NO_CLASS`, exhausted `QB_POST_FAILED` and `QB_OVER_CAP`; the sign-off
+   `QB_NO_CLASS` and exhausted `QB_POST_FAILED`; the sign-off
    paths stop raising `COI`, leaving the stand-in in the audit log only; the
    duplicate path raises `QB_DUPLICATE_TO_VOID`; and the
-   §9 data migration runs. Finance is never without a list: the flags stop in
+   §9 data migration runs. The drain's dollar cap goes in the same PR:
+   `MAX_CREATE_CENTS_PER_RUN`, the per-expense check in `claimForPost`, the
+   per-run cents total and run-alone slot in the drain (`allowOverCap`), and
+   `QB_OVER_CAP` from `FLAG_KINDS` and `FLAG_AUDIENCE`
+   (`packages/expense/src/lib/expense-qb-poster.ts`, `lib/flags.ts`). The count
+   limits stay: `MAX_CREATES_PER_RUN` (25), `MAX_CREATES_PER_DAY` (50) and
+   `MAX_POST_ATTEMPTS` (5). Finance is never without a list: the flags stop in
    the release that brings the tabs. The sidebar's Expense Ops and Receipt
    Review sections become the one Finance section (§3), and #2500's pill on
    Expenses goes.
@@ -529,5 +535,4 @@ Numbers are fixed; decided questions are dropped from this table.
 
 | # | Question | Design's default |
 | --- | --- | --- |
-| 8 | Show over-cap posts (`QB_OVER_CAP`) in the QuickBooks tab until marked seen? | No; audit note only |
 | 9 | List `AMBIGUOUS` posts in the QuickBooks tab with a match picker, now or in a follow-up? | Follow-up |
