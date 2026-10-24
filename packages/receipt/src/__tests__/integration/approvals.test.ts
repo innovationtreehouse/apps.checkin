@@ -3,7 +3,7 @@ import { db } from "../../db";
 import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 const taxed = () => manualDetails({ tax: "1.00", receiptTotal: "21.00" });
 
@@ -99,6 +99,7 @@ describeDb("financial review", () => {
   });
 
   it("a submitter's tax correction drops the earlier finance decision", async () => {
+    configure({ ocr: okOcr() });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     await db.receiptFinanceReview.create({
