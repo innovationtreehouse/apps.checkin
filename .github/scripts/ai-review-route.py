@@ -305,6 +305,7 @@ def rerun_gate(probs, higher, p):
 
 
 def route_selftest():
+    assert elevates("high", "mid") and not elevates("mid", "mid") and not elevates("free", "high")
     assert label_tier(["ai-review", "ai-review:high"]) == "high" and label_tier(["ai-review:max", "ai-review"]) is None
     assert pick({"free": 0.02, "mid": 0.6, "high": 0.38}, ORDER) == "free"
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
@@ -535,6 +536,10 @@ def label_tier(names):
     return next((n[10:] for n in names if n[:10] == "ai-review:" and n[10:] in RUNG), None)
 
 
+def elevates(asked, tier):
+    return ORDER.index(asked) > ORDER.index(tier)
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
@@ -560,14 +565,7 @@ def route():
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
     # A high-ladder PR (risky profile, several profiles, very large) keeps normal routing: later
     # rounds only verify, so the first round is its only full sweep.
-    try:
-        asked = label_tier(json.loads(gh("pr", "view", pr, "-R", repo, "--json", "labels", "--jq", "[.labels[].name]")))
-    except Exception as e:
-        print(f"::warning::could not read PR labels ({e}); no tier label", file=sys.stderr)
-        asked = None
-    if asked:
-        tier, t_by, tier_probs = asked, f"label ai-review:{asked}", None
-    elif (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
+    if (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
             and suggested != "high" and first_round(pr, repo)):
         tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
     else:
@@ -583,6 +581,26 @@ def route():
             print(f"::warning::Decision-model tier call failed ({e}); using the fixed ladder", file=sys.stderr)
             tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
+    asked = None
+    try:
+        asked = label_tier(json.loads(gh("pr", "view", pr, "-R", repo, "--json", "labels", "--jq", "[.labels[].name]")))
+    except Exception as e:
+        print(f"::warning::could not read PR labels ({e}); no tier request", file=sys.stderr)
+    if asked and not elevates(asked, tier):
+        t_by += f"; request ai-review:{asked} ignored (not an elevation)"
+    elif asked:
+        try:
+            p = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested, requested_reviewer=f"{asked}: {RUNG[asked][4]}"), {
+                "grant": {"type": "noul",
+                          "instructions": f"A maintainer asked for the '{asked}' reviewer. Default to granting the request. Answer false only when the request is absurd for this change, for example a one-word, comment-only or whitespace change asking for the high or top tier.",
+                          "criteria": {"true": "Grant the requested reviewer.", "false": "The request is absurd for this change."}}})["grant"]["noul"]
+        except Exception as e:
+            print(f"::warning::Decision-model request call failed ({e}); granting", file=sys.stderr)
+            p = 1.0
+        if p >= 0.5:
+            tier, t_by = asked, f"request ai-review:{asked} granted (p={p:.2f})"
+        else:
+            t_by = f"request ai-review:{asked} rejected (p={p:.2f}); using {tier}"
     credit_override = None
     if tier != ORDER[0] and low_credit():
         credit_override, tier, t_by = tier, ORDER[0], f"credit below ${MIN_CREDIT_USD:.0f}; was {tier} ({t_by})"
@@ -602,7 +620,7 @@ def route():
                f"prompt: {len(instructions.encode())} bytes including review history")
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
-                 tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
+                 tier_probs=tier_probs, tier=tier, tier_by=t_by, model=model, changed_lines=state["changed_lines"],
                  files=state["file_count"], credit_override=credit_override)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
