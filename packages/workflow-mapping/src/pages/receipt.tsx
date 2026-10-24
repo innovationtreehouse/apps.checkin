@@ -6,6 +6,7 @@ import { Alert, Anchor, Badge, Button, Group, NumberInput, Select, Stack, Table,
 import { notifications } from "@mantine/notifications";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { STATE_LABEL, api, catalogApi, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
 import { APPLIED_LINES_LOCKED, lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -68,22 +69,21 @@ interface CatalogItem {
 
 const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${item.gtin13}`;
 
-/** Catalog items matching the typed text, from the catalog's own search route. */
+/** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
 function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null } {
-  const [items, setItems] = useState<CatalogItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
+  const term = catalogSearchTerm(q);
   useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
+    if (term === null) return;
     let live = true;
     const t = setTimeout(() => {
       catalogApi<CatalogItem[]>(`/items?q=${encodeURIComponent(term)}&limit=20`)
-        .then((rows) => { if (live) { setItems(rows); setError(null); } })
-        .catch((e: unknown) => { if (live) { setItems([]); setError(errorMessage(e)); } });
+        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
+        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [q]);
-  return { items, error };
+  }, [term]);
+  return result && result.term === term ? { items: result.items, error: result.error } : { items: [], error: null };
 }
 
 type Form = "associate" | "propose" | null;
@@ -265,7 +265,7 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
           onSearchChange={setSearch}
           filter={({ options }) => options}
           error={found.error && `Couldn't search the catalog: ${found.error}`}
-          nothingFoundMessage={search.trim().length < 2 ? "Type at least 2 characters" : "No matching catalog items"}
+          nothingFoundMessage={catalogSearchTerm(search) === null ? `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters` : "No matching catalog items"}
           miw={320}
         />
       ) : (
