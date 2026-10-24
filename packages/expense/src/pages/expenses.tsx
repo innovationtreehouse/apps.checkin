@@ -37,7 +37,7 @@ export default function ExpensesPage() {
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Expense Ops and the approver's Programs I Lead tab. `viewBadge` is the host's
+ * same list serves Finance and the approver's Programs I Lead tab. `viewBadge` is the host's
  * pill beside a view's label: what the viewer can act on there.
  */
 export function ExpenseList({

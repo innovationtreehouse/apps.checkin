@@ -128,19 +128,19 @@ describeDb("card charges", () => {
     await expect(recordBoardAuthorization(principal(4, { isFinance: true }), id, "again")).rejects.toMatchObject({ status: 409 });
   });
 
-  it("a Board member records it only when every FINANCE holder is conflicted, and that raises a COI flag", async () => {
+  it("a Board member records it only when every FINANCE holder is conflicted, raising no flag", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1, 3]] }) });
     const id = await seedExpense({ receiptTotalCents: 60_000 });
     await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await recordBoardAuthorization(principal(5, { isBoard: true }), id, "Board vote");
-    const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
-    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["COI", "BOARD"]]);
+    expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "board_authorization_recorded", userId: 5 } })).toBe(1);
   });
 
   it("a FINANCE holder recording it raises no flag", async () => {
     const id = await signedCard({ receiptTotalCents: 60_000 });
     await recordBoardAuthorization(FINANCE, id, "Board vote");
-    expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "COI" } })).toBe(0);
+    expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
   it("an Everyday card charge, or one whose lines are all in program buckets, under $2,000 takes no Board authorization", async () => {

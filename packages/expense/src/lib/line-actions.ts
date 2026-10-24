@@ -160,6 +160,20 @@ export function lineActions(input: LineActionsInput): LineActions {
   return { actions, awaiting: awaiting(input, actions) };
 }
 
+/** Which Finance review tab a signature lands in. */
+export type SignatureTab = "toSign" | "board";
+
+/**
+ * The tab an act's signature belongs to: a FINANCE holder's Treasurer seat is To sign; the Board
+ * seat, and a Treasurer seat a Board member takes when no FINANCE holder can, are the Board tab's.
+ * Any other act is neither.
+ */
+export function signatureTab(facts: SignoffFacts, action: LineAction, callerId: number): SignatureTab | null {
+  if (action.act !== "sign") return null;
+  if (action.seat === "TREASURER") return facts.finance.includes(callerId) ? "toSign" : "board";
+  return action.seat === "BOARD" ? "board" : null;
+}
+
 export interface BoardAuthorizationInput {
   callerId: number;
   expense: LineActionsExpense & { boardAuthorization: string | null };

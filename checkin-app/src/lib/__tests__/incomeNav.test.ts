@@ -1,7 +1,7 @@
 import { visibleLinks } from "@/lib/nav/gates";
 import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import { sectionBadges, sectionTabBadge } from "@/components/navBadges";
-import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
+import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
@@ -79,10 +79,10 @@ describe("Revenue Ops Income and Shopify tabs", () => {
 describe("income count provider", () => {
   const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "income");
 
-  it("runs only for the tab's audience", () => {
+  it("runs only for FINANCE, the one role that resolves reconciliation", () => {
     expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([
       true,
-      true,
+      false,
       false,
       false,
       false,
@@ -111,5 +111,24 @@ describe("Revenue Ops Donations tab", () => {
 
   it("hides it from a non-finance user", () => {
     expect(visibleLinks(REVENUE_OPS, { isKeyholder: true }, c)).toEqual([]);
+  });
+
+  it("shows Board the tab, but runs the count provider only for FINANCE, the one role that manages donations", () => {
+    expect(names(visibleLinks(REVENUE_OPS, board, c))).toContain("Donations");
+    const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "bulk-donation");
+    expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false, false]);
+  });
+});
+
+describe("Revenue Ops counts in the nav payload", () => {
+  const providers = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "income" || p.library === "bulk-donation");
+
+  it("carries income and donation counts for FINANCE", async () => {
+    expect(Object.keys((await collectLibraryCounts(finance, [...LIBRARY_KEYS], providers)) ?? {}).sort()).toEqual(["bulk-donation", "income"]);
+  });
+
+  it("carries none for Board, which still sees the Income, Shopify and Donations tabs", async () => {
+    expect(await collectLibraryCounts(board, [...LIBRARY_KEYS], providers)).toBeUndefined();
+    expect(names(visibleLinks(REVENUE_OPS, board, released))).toEqual(expect.arrayContaining(["Income", "Shopify", "Donations"]));
   });
 });
