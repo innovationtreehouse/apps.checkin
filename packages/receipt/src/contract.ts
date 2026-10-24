@@ -125,6 +125,20 @@ export interface ReceiptPeople {
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
 }
 
+/** A person the uploader may name as reimbursee. `id` is the Person.id. */
+export interface ReimburseeOption {
+  id: number;
+  name: string;
+}
+
+/** The host's people an uploader may name as reimbursee. */
+export interface ReceiptReimbursees {
+  /** Live people whose name contains `query`, at most `limit` of them. */
+  search(query: string, limit: number): Promise<ReimburseeOption[]>;
+  /** The live person with this id, else null. */
+  byId(personId: number): Promise<ReimburseeOption | null>;
+}
+
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
   z.object({
     mimeType: z.string(),
@@ -179,6 +193,7 @@ export interface ReceiptConfig {
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;

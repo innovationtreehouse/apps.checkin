@@ -11,6 +11,7 @@ import {
   type PaidStatus,
   type ReceiptPrincipal,
   type ReimbursementAsk,
+  type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
@@ -301,6 +302,19 @@ export async function discardBodyCopy(id: string, siblingIds: string[]): Promise
   });
 }
 
+/** The person the uploader names as reimbursee: themselves unless they picked a live person. */
+async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undefined): Promise<ReimburseeOption> {
+  if (personId === undefined || personId === actor.id) {
+    return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
+  }
+  const person = await ports().reimbursees.byId(personId);
+  if (!person) throw new ServiceError(400, "The person to reimburse was not found");
+  return person;
+}
+
+/** At most this many people answer one reimbursee search. */
+const REIMBURSEE_SEARCH_LIMIT = 20;
+
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);
@@ -319,8 +333,9 @@ export const receiptService = {
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
 
-    const reimbursement = input.needsReimbursement
-      ? { needsReimbursement: true, reimbursementFor: actor.name ?? `${actor.firstName} ${actor.lastName}`, reimburseePersonId: actor.id }
+    const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input.reimburseePersonId) : null;
+    const reimbursement = reimbursee
+      ? { needsReimbursement: true, reimbursementFor: reimbursee.name, reimburseePersonId: reimbursee.id }
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
@@ -347,6 +362,10 @@ export const receiptService = {
       lines: d ? d.lineItems.map(toLine) : [],
       auditAction: "uploaded",
       limits: limits(),
+      afterInsert: reimbursee
+        ? (tx, receiptId) =>
+            audit(tx, receiptId, actor, { action: "reimbursee_named", fieldChanged: "reimburseePersonId", valueAfter: String(reimbursee.id) })
+        : undefined,
     });
 
     if (input.isInKind) await sendDonorSync(id, actor);
@@ -530,6 +549,14 @@ export const receiptService = {
     return load(id, "finance", actor);
   },
 
+  /** People matching the typed name, for naming the reimbursee on upload. Under two characters matches nobody. */
+  async reimburseeOptions(rawQuery: string | null): Promise<ReimburseeOption[]> {
+    await requireActor();
+    const query = (rawQuery ?? "").trim().slice(0, 100);
+    if (query.length < 2) return [];
+    return ports().reimbursees.search(query, REIMBURSEE_SEARCH_LIMIT);
+  },
+
   async resubmit(id: string, access: Access) {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
@@ -557,7 +584,7 @@ export const receiptService = {
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
-  /** "I paid for this myself". The reimbursee is always the uploader, never a body field. */
+  /** "I paid for this myself": ticking it names the uploader as reimbursee. */
   async setReimbursement(id: string, rawInput: unknown) {
     const actor = await requireActor();
     const { needsReimbursement } = parse(z.object({ needsReimbursement: z.boolean() }).strict(), rawInput);

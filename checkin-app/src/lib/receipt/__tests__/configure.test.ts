@@ -103,3 +103,23 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(html).toContain('/receipts/mail');
     });
 });
+
+describe('receipt runtime: reimbursee bindings', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it('searches live people by name, returning only id and name', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 8, name: 'Sam Lee' }]);
+        expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }]);
+        expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
+            where: { mergedIntoId: null, name: { contains: 'sam', mode: 'insensitive' } },
+            select: { id: true, name: true },
+            take: 20,
+        });
+    });
+
+    it('names a reimbursee by id only while their record is live', async () => {
+        prisma.person.findFirst = jest.fn().mockResolvedValue(null);
+        expect(await boundConfig().reimbursees?.byId(8)).toBeNull();
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null }, select: { id: true, name: true } });
+    });
+});
