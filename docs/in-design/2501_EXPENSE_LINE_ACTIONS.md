@@ -193,16 +193,8 @@ and stays in the audit trail, but it stops counting as a finished approval.
 You decided this (open question 7): finance's assignment never counts as the
 approval.
 
-The new bucket's approver may raise "not mine" again on a moved line, and
-finance settles it as before. You also decided that finance may mark a bucket
-assignment **final**. After that, no further exception can be raised on the
-line, and the bucket's approver, or a Board stand-in, approves it. In your
-words: "At some point finance has to be able to say 'I don't care what the
-program owner thinks'." A final assignment is the last word on the bucket, not
-an approval: the line still waits for its approver, and the decision that
-finance never approves a line (§7) stands. Marking an assignment final is
-audited with the assignment, and Raise exception leaves the line's actions once
-it is final.
+What happens when the new bucket's approver disagrees too is §11, which is
+not yet decided (open questions 13 and 14).
 
 **C′.6 Non-member reimbursement.** You decided that the Board's approval is
 added, not substituted, and comes after. The bucket approver approves the line
@@ -584,6 +576,122 @@ depreciation submits are finance's, and #2482 covers them.
 | Conflict refusals | Computed into `actions`, so a conflicted act is never drawn |
 | Board stand-in limits | Computed the same way. A line past the limit shows "Held: no one without a conflict can sign" |
 
+### 11. The exception and reassignment loop (not decided)
+
+A bucket approver who thinks a line isn't theirs raises an exception ("not
+mine"). Finance then moves the line to another bucket or rejects it. Nothing
+today stops the new bucket's approver from disagreeing too, and the design has
+to say how the loop ends. You have said three things about it:
+
+- On whether the new bucket's approver can raise an exception: "yes as long as
+  finance can still override it and force it at some point in that process."
+- "At some point finance has to be able to say 'I don't care what the program
+  owner thinks'."
+- On a finance override of approval: "board yes finance no".
+
+The first two give finance a final say; the third says finance never
+approves. They agree if finance's final say is over the **bucket**, and they
+conflict if it is over the **approval**. Open question 13 asks which you meant.
+Everything below is proposed.
+
+#### The loop, step by step
+
+Under C′ and the signature order (C′.9), with a reimbursement's confirmation
+already given:
+
+| Step | What happens | Who acts | Line's approval |
+| --- | --- | --- | --- |
+| 1 | The line lands in bucket A | Intake, or finance assigning a bucket | Pending |
+| 2 | A's approver raises "not mine", with a required note | A's owner or a treasurer | Exception raised |
+| 3 | Finance moves the line to bucket B, or rejects it (which rejects the expense) | Finance | Finance-assigned; waits for B's approver (C′.5) |
+| 4 | B's approver approves, which ends the loop, or raises "not mine" | B's owner or a treasurer | Approved, or exception raised |
+| 5 | Finance moves the line again (to A, or to C), and the loop repeats from step 4 | Finance | Finance-assigned |
+| Any step | A Board member without a conflict approves in place of the bucket's approvers, giving a reason (C′.3) | Board | Approved |
+
+Today step 4's exception isn't possible: raising one needs the approval to be
+pending, and a finance-assigned line isn't. So letting B's approver raise
+"not mine" is itself a change: a finance-assigned line takes an exception as a
+pending one does.
+
+**What a move clears.** A move happens before the line is approved, so under
+the signature order no Treasurer or Board signature exists yet, and capital
+review and depreciation haven't started; the clearing rule has nothing later
+to clear. The reimbursement's confirmation stays, because a line's bucket isn't
+a change to what was claimed or paid (open question 9). Every move and every
+exception is audited, as today.
+
+The Board stand-in already ends any loop: a Board member may approve the line
+at any step. What's open is whether finance, too, can end it, and how.
+
+#### Options for finance's final say
+
+**(a) Final bucket.** When finance moves a line, it may mark the assignment
+final. No further exception can be raised on that line; its bucket's approver
+approves it, or a Board member stands in.
+
+- *What people see:* the Assign bucket dialog gains "Make this final", with a
+  required note. The approver sees "Finance made this bucket final: <note>",
+  and their only act is Approve; Raise exception is gone from the line.
+- *Audit:* the assignment row records that it was final, by whom, and the note.
+- *Order and clearing:* unchanged. The approval still comes from the bucket's
+  approver or a Board stand-in, before the Treasurer.
+- *Rule text it needs:* "Finance may mark a line's bucket assignment final,
+  giving the reason; after that, no exception is raised on it. A final
+  assignment is not an approval." `[Decision — owner]`
+- *Policy fit:* the reimbursement signer stays the Program Leader or Program
+  Treasurer that Financial Policy Art. IX §IX.3 names, or a Board stand-in as
+  you decided (open question 10). It keeps "board yes finance no".
+- *What it leaves:* an approver who won't approve a bucket made final for them
+  isn't forced to. The line then waits for them or for a Board stand-in.
+
+**(b) Finance approves.** Finance's final act approves the line itself, in
+place of the bucket's approver.
+
+- *What people see:* finance gets "Approve in place of the approver", with a
+  required note, on a line whose approver has raised an exception.
+- *Audit:* the approval records the finance holder and the note, marked as in
+  place of the approver.
+- *Order and clearing:* the finance holder becomes the line's program
+  approver, so under C′.2 they can't also sign its Treasurer seat. Another
+  finance holder, or a Board stand-in for the Treasurer, signs instead.
+- *Rule text it needs:* reverses the decided "Only a bucket approver, or a Board
+  member without a conflict in their place, approves a line" and §7.
+- *Policy fit:* §IX.3 names the Program Leader or Program Treasurer as that
+  signer, and a finance holder is neither. Its third signer is the Treasurer,
+  so finance would hold two of the three roles on a line, even though two
+  different people fill them. It reverses "board yes finance no".
+
+**(c) Finance's final say after a set number of rounds.** The loop runs freely
+until the same line has had a set number of exceptions, say two. Finance's
+next assignment is then final, as in (a), or counts as the approval, as in (b).
+
+- *What people see:* the line shows "Exception 2 of 2: finance's next
+  assignment is final". Otherwise it behaves as (a) or (b).
+- *Audit, order, clearing and policy fit:* as for (a) or (b), whichever it
+  ends in. The number is a setting.
+- *Rule text it needs:* (a)'s or (b)'s, plus "after <n> exceptions on a line".
+
+**(d) Escalate to the Board.** After a set number of exceptions, the line goes
+to Finance review's Board tab as "Bucket disputed". A Board member decides the
+bucket, or approves the line as a stand-in.
+
+- *What people see:* finance's Assign bucket is replaced on that line by a
+  status pointing at the Board tab.
+- *Audit:* the escalation and the Board member's decision, with a required
+  reason.
+- *Order and clearing:* unchanged.
+- *Rule text it needs:* "A line whose bucket is disputed <n> times goes to the
+  Board, which decides the bucket or approves the line." `[Decision — owner]`
+- *Policy fit:* fits §IX.3 and "board yes finance no". But finance never gets
+  the final say you described; the Board has it.
+
+Finance's existing hard stop stays in every option: rejecting the exception
+rejects the whole expense.
+
+**Required note.** Finance's final act, in (a), (b) or (c), overrides an owner's
+objection, so this design proposes a required note, stored and audited as the
+Board stand-in's reason is (§6). Open question 14 asks you to confirm.
+
 ## Proposed rule text
 
 To land in `docs/rules/expenses.md`, Spending sign-off. Every line follows from
@@ -640,11 +748,6 @@ a decision you made:
   by the person reimbursed". *(same tag)*
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line. *(new line)* `[Decision — owner]`
-- A bucket's approver may raise an exception on a line finance moved into
-  their bucket. Finance may mark a line's bucket assignment final; after that,
-  no exception can be raised on it, and the line still waits for its bucket's
-  approver or a Board member in their place. A final assignment is not an
-  approval. *(new line)* `[Decision — owner]`
 - A line's signatures are given in order: the confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
@@ -730,8 +833,8 @@ Each PR is based on `main`, not stacked.
 
 ## Open questions
 
-All twelve are decided or closed. The list keeps its numbers so review threads
-still match.
+Questions 1 to 12 are decided or closed; 13 and 14 are open. The list keeps its
+numbers so review threads still match.
 
 1. **One act or two?** *Decided:* the line's approval is the program-approver
    sign-off (C′), and a non-member reimbursement takes the program approver as
@@ -776,6 +879,14 @@ still match.
 12. **Re-confirmation and the order.** *Decided:* going back to any earlier
     step clears every later signature on the line, and they are given again in
     order (C′.9).
+13. **Finance's final say in the exception loop (§11).** Does "I don't care
+    what the program owner thinks" mean a final **bucket** or a final
+    **approval**? Which option do you want: (a) final bucket, (b) finance
+    approves, (c) either after a set number of rounds, or (d) escalation to the
+    Board? And may a new bucket's approver raise "not mine" on a line finance
+    moved to them, with no limit before finance's final say?
+14. **A note on finance's final act.** Should finance's final act in the loop
+    require a note, stored and audited like a Board stand-in's reason?
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
