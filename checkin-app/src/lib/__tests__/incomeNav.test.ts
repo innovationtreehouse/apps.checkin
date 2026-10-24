@@ -79,10 +79,10 @@ describe("Revenue Ops Income and Shopify tabs", () => {
 describe("income count provider", () => {
   const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "income");
 
-  it("runs only for the tab's audience", () => {
+  it("runs only for FINANCE, the one role that resolves reconciliation", () => {
     expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([
       true,
-      true,
+      false,
       false,
       false,
       false,
@@ -111,5 +111,11 @@ describe("Revenue Ops Donations tab", () => {
 
   it("hides it from a non-finance user", () => {
     expect(visibleLinks(REVENUE_OPS, { isKeyholder: true }, c)).toEqual([]);
+  });
+
+  it("shows Board the tab, but runs the count provider only for FINANCE, the one role that manages donations", () => {
+    expect(names(visibleLinks(REVENUE_OPS, board, c))).toContain("Donations");
+    const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "bulk-donation");
+    expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false, false]);
   });
 });

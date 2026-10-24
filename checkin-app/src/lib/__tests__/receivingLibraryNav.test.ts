@@ -53,9 +53,9 @@ describe("Inventory Receiving tab", () => {
     expect(tab?.badge?.(released)).toBeNull();
   });
 
-  it("runs the workflow-mapping count provider only for the tab's audience", () => {
+  it("runs the workflow-mapping count provider only for an inventory manager, the one role that maps or applies", () => {
     const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "workflow-mapping");
-    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, true, true, false]);
+    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
   });
 });
 

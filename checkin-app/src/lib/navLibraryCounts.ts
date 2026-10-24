@@ -6,8 +6,6 @@
  */
 import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
-import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
-import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import { canSubmitReceipts } from "@/lib/volunteer";
 import { financeQueueCountKey } from "@checkin/receipt/nav";
 
@@ -15,7 +13,7 @@ export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
 export type LibraryCountProvider = {
   library: LibraryKey;
-  /** Whether this viewer may see the counts — mirror the library's read gate. */
+  /** Whether this viewer gets the counts: only a role that can act on what they count. */
   visible: (user: SessionUser) => boolean;
   /** Named counts for this viewer, e.g. { holds: 2, openFlags: 1 }. */
   count: (user: SessionUser) => Promise<Record<string, number>>;
@@ -33,7 +31,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "bulk-donation",
-    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
+    // Only FINANCE assigns a gift or resubmits a disbursement hold; BOARD only reads the queues.
+    visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
       const { getNavCounts, getOrgId } = await import("@checkin/bulk-donation");
@@ -43,7 +42,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "workflow-mapping",
-    visible: (u) => hasAnyRole(u, RECEIVING_ROLES),
+    // Only INVENTORY_MANAGER maps or applies a receipt; FINANCE and BOARD only read receiving.
+    visible: (u) => u.isInventoryManager === true,
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
@@ -56,7 +56,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "income",
-    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
+    // Only FINANCE runs and resolves reconciliation; BOARD only reads income.
+    visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> =>
       process.env.INCOME_DATABASE_URL
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }
