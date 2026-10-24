@@ -1,4 +1,4 @@
-// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER): FINANCE sets a line's
+// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a line's
 // account by hand and resubmits. The same resubmit retries a failed QuickBooks post.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";

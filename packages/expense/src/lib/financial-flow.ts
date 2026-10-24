@@ -24,12 +24,13 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
   // Resolve owners and their bucket kind before opening a transaction. Outside backfill, a mapped
-  // bucket that is no longer live leaves the line unresolved, for FINANCE to assign.
+  // bucket that is no longer live leaves the line unresolved, for FINANCE to assign. A non-inventory
+  // line has no part to map, so FINANCE always assigns it.
   const resolvedOwners = new Map<number, number | null>();
   const orgLevel = new Map<number, boolean>();
   const live = await liveBucketIds();
   for (const li of lineItems) {
-    const mapped = li.gtin13 ? await partOwners.resolveItemOwner(orgId, li.gtin13) : null;
+    const mapped = li.gtin13 && !li.nonInventory ? await partOwners.resolveItemOwner(orgId, li.gtin13) : null;
     const ownerId = mapped !== null && (backfill || live.has(mapped)) ? mapped : null;
     resolvedOwners.set(li.id, ownerId);
     if (ownerId !== null && !orgLevel.has(ownerId)) orgLevel.set(ownerId, await isOrgLevelBucket(ownerId));

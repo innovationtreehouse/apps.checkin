@@ -70,8 +70,8 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
   const [email, setEmail] = useState("");
   const [reason, setReason] = useState("");
   const path = `/mail-items/${item.id}`;
-  const act = async (verb: string, body: unknown, success: string) => {
-    if (await send(`${path}/${verb}`, "POST", body, success)) onDone();
+  const act = async (verb: string, body: unknown, success: string, failed: string) => {
+    if (await send(`${path}/${verb}`, "POST", body, success, failed)) onDone();
   };
   return (
     <Paper withBorder p="md">
@@ -83,21 +83,21 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
         <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
         {item.status === "deferred" && (
           <Group>
-            <Button onClick={() => act("assign", { release: true }, "Released")}>Release now as the sender</Button>
+            <Button onClick={() => act("assign", { release: true }, "Released", "Couldn't release this mail")}>Release now as the sender</Button>
           </Group>
         )}
         <Group align="end">
           <TextInput label="Assign to (sign-in email)" value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
-          <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created")}>Assign</Button>
+          <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created", "Couldn't assign this mail")}>Assign</Button>
         </Group>
         <Group align="end">
           <TextInput label="Discard reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: 1 }} />
-          <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded")}>Discard</Button>
+          <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded", "Couldn't discard this mail")}>Discard</Button>
           <Button
             color="red"
             variant="subtle"
             disabled={!reason.trim()}
-            onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on")}
+            onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on", "Couldn't discard and ignore this file")}
           >
             Discard and ignore this file from now on
           </Button>
@@ -111,7 +111,7 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
 function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () => void }) {
   if (entries.length === 0) return null;
   const remove = async (id: number) => {
-    if (await send(`/ignored-files/${id}`, "DELETE", undefined, "Removed from the ignore list")) onDone();
+    if (await send(`/ignored-files/${id}`, "DELETE", undefined, "Removed from the ignore list", "Couldn't remove the file from the ignore list")) onDone();
   };
   return (
     <Stack mt="xl">

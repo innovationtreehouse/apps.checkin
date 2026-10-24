@@ -132,6 +132,14 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         ),
         everydayTotalLimitCents: settings.everydayTotalLimitCents,
         everydayItemLimitCents: settings.everydayItemLimitCents,
+        receiptReview: receipt.financeReview && {
+          create: {
+            reasons: receipt.financeReview.reasons,
+            approvedByUserId: receipt.financeReview.decidedByPersonId,
+            note: receipt.financeReview.note,
+            approvedAt: new Date(receipt.financeReview.decidedAt),
+          },
+        },
       },
     });
 
@@ -147,8 +155,10 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           quantity: li.quantity,
           unitPriceCents: li.unitPriceCents,
           totalPriceCents: li.totalPriceCents,
-          gtin13: li.gtin13,
+          // A non-inventory line is no catalog part, so it keeps no GTIN to map an owner by.
+          gtin13: li.nonInventory ? null : li.gtin13,
           isDelayed: li.isDelayed,
+          nonInventory: li.nonInventory ?? false,
         },
       });
     }

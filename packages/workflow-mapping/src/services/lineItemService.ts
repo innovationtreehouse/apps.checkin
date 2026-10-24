@@ -153,7 +153,7 @@ export const lineItemService = {
       provisionalItemGtin13: null,
       conversionFactor,
       conversionVersion: 1,
-    }, actor);
+    });
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
@@ -206,7 +206,7 @@ export const lineItemService = {
       provisionalItemGtin13: provisionalGtin13,
       conversionFactor,
       conversionVersion: 1,
-    }, actor);
+    });
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
@@ -228,7 +228,7 @@ export const lineItemService = {
     const edit = await loadEditableLine(receiptId, lineId);
     const { received } = edit;
 
-    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null }, actor);
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
 
     await insertAuditEvent(db, {
       orgId: received.orgId,

@@ -5,7 +5,7 @@ import {
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCanSeeReceiving, useCatalogNames, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
@@ -49,13 +49,37 @@ const FIELD_LABELS: Record<string, string> = {
 
 const toId = (v: string | null) => (v ? Number(v) : null);
 
+/** The columns the org-items route can order by. */
+type SortCol = "gtin13" | "location" | "backstock";
+type SortDir = "asc" | "desc";
+const TH_SORT_STYLE = { cursor: "pointer", userSelect: "none" } as const;
+
+function SortHeader({ col, label, sortBy, sortDir, onSort }: {
+  col: SortCol; label: string; sortBy: SortCol; sortDir: SortDir; onSort: (col: SortCol) => void;
+}) {
+  const active = sortBy === col;
+  const Icon = !active ? IconSelector : sortDir === "asc" ? IconChevronUp : IconChevronDown;
+  return (
+    <Table.Th
+      onClick={() => onSort(col)}
+      style={TH_SORT_STYLE}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <Group gap={4} wrap="nowrap">{label} <Icon size={14} /></Group>
+    </Table.Th>
+  );
+}
+
 function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const canManage = useCanManage();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortCol>("gtin13");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
-  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&page=${page}&limit=${PAGE_SIZE}`);
+  const order = new URLSearchParams({ sortBy, sortDir });
+  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`);
   const count = useLoad<{ total: number }>(`/org-items/count?${filter}`);
   const locations = useLoad<LocationRef[]>("/locations");
   const names = useCatalogNames((rows.data ?? []).map((r) => r.gtin13));
@@ -67,6 +91,13 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
 
   const locationOptions = (locations.data ?? []).map((l) => ({ value: String(l.id), label: l.name }));
   const reload = () => { rows.reload(); count.reload(); };
+
+  function toggleSort(col: SortCol) {
+    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortBy(col); setSortDir("asc"); }
+    setPage(1);
+  }
+  const sortProps = { sortBy, sortDir, onSort: toggleSort };
 
   function openEdit(item: OrgItemRow | null) {
     setIsNew(item === null);
@@ -154,11 +185,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Name</Table.Th>
-            <Table.Th>Part No.</Table.Th>
+            <SortHeader col="gtin13" label="Part No." {...sortProps} />
             <Table.Th>Have</Table.Th>
             <Table.Th>Desired</Table.Th>
-            <Table.Th>Location</Table.Th>
-            <Table.Th>Backstock</Table.Th>
+            <SortHeader col="location" label="Location" {...sortProps} />
+            <SortHeader col="backstock" label="Backstock" {...sortProps} />
             {canManage && <Table.Th w={90}>Actions</Table.Th>}
           </Table.Tr>
         </Table.Thead>

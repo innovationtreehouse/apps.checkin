@@ -126,6 +126,40 @@ describe("a receipt opened at /receipts/[id]", () => {
   });
 });
 
+describe("the finance decision on a receipt in financial review", () => {
+  beforeEach(() => {
+    mockPathname = "/receipts/r1";
+    mockSearch = new URLSearchParams();
+  });
+
+  it("approves a tax-flagged receipt with no note", async () => {
+    wrap(<ReceiptDetailPage />);
+    expect(screen.queryAllByRole("textbox", { name: /note/i })).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt"));
+  });
+
+  it("does not send the reject reason with an approval", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "personal purchase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt"));
+  });
+
+  it("rejects with the reason typed in its own field", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "  personal purchase " } });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "personal purchase" }, "Rejected", "Couldn't reject this receipt"));
+  });
+
+  it("rejects without a reason", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: null }, "Rejected", "Couldn't reject this receipt"));
+  });
+});
+
 describe("the review queue", () => {
   it("opens a receipt under /receipts/review, carrying the selected queue", () => {
     mockSearch = new URLSearchParams("queue=duplicate_flagged");

@@ -69,6 +69,21 @@ describeDb("S1 — replay and org", () => {
     expect(sinks.calls.expense[0].reimburseePersonId).toBe(31);
   });
 
+  it("passes the receipt's financeReview through to the stored receipt and the money push", async () => {
+    const sinks = recordingSinks();
+    configure({ catalogReader: recognizeAll, ...sinks });
+    const financeReview = {
+      outcome: "approved" as const,
+      reasons: ["tax" as const],
+      decidedByPersonId: 12,
+      decidedAt: "2026-06-02T09:30:00.000Z",
+    };
+    const res = await ingestReceipt({ ...buildReceiptPayload(), financeReview });
+    const row = await db.receivedReceipt.findUniqueOrThrow({ where: { id: res.id } });
+    expect(JSON.parse(row.receiptJson).financeReview).toEqual(financeReview);
+    expect(sinks.calls.expense[0].financeReview).toEqual(financeReview);
+  });
+
   it("rejects a reimburseePersonId that is not a positive integer", async () => {
     await expect(ingestReceipt({ ...buildReceiptPayload(), reimburseePersonId: 0 })).rejects.toThrow();
   });

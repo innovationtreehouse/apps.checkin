@@ -29,9 +29,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return parse<T>(await fetch(`${BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...options }));
 }
 
-/** Multipart upload; the browser sets the boundary header. */
+/**
+ * Multipart upload; the browser sets the boundary header. A success tells the host nav to
+ * refetch its pills, since the new receipt may already wait on its uploader.
+ */
 export async function upload<T>(form: FormData): Promise<T> {
-  return parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  const receipt = await parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  window.dispatchEvent(new Event("nav-counts-mutated"));
+  return receipt;
 }
 
 export function errorMessage(e: unknown): string {
@@ -41,15 +46,16 @@ export function errorMessage(e: unknown): string {
 /**
  * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
  * host nav to refetch its pills, since a write can move a receipt into or out of the caller's hands.
+ * A failure stays on screen until dismissed, titled `failed` with the server's reason below it.
  */
-export async function send(path: string, method: string, body: unknown, success: string): Promise<boolean> {
+export async function send(path: string, method: string, body: unknown, success: string, failed: string): Promise<boolean> {
   try {
     await api(path, { method, body: JSON.stringify(body) });
     window.dispatchEvent(new Event("nav-counts-mutated"));
     notifications.show({ message: success, color: "green" });
     return true;
   } catch (err) {
-    notifications.show({ message: errorMessage(err), color: "red" });
+    notifications.show({ title: failed, message: errorMessage(err), color: "red", autoClose: false });
     return false;
   }
 }

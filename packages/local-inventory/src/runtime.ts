@@ -64,3 +64,8 @@ export function getServices(): ReturnType<typeof buildServices> {
   services ??= buildServices();
   return services;
 }
+
+/** The host nav's pill counts for the current org: open receive-queue lines. */
+export async function getNavCounts(): Promise<{ openBackorders: number }> {
+  return { openBackorders: await getServices().receiveQueueService.countOpen(await getOrgId()) };
+}

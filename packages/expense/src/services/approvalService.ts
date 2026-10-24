@@ -199,7 +199,7 @@ export async function assignOwner(
   await refuseConflicted(principal, expense);
 
   const lineItem = await expenseRepo.findLineItemById(approval.lineItemId);
-  const gtin13 = permanent ? (lineItem?.gtin13 ?? null) : null;
+  const gtin13 = permanent && !lineItem?.nonInventory ? (lineItem?.gtin13 ?? null) : null;
   const [sameExpense, listed] = gtin13
     ? await Promise.all([
         expenseRepo.listSameExpenseUnassignedApprovalsByGtin13(expenseId, gtin13, approvalId),
