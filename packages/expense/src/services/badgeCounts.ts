@@ -11,11 +11,14 @@ import { CLOSED_STATES, availableSigners, boardAuthorizationRefusal, missingSeat
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { listOpenFlags } from "./flagService";
 
-/** Expenses with a pending account hold, and flags open to the caller's audience (FINANCE, Board). */
+/**
+ * Expenses with a pending account hold, for FINANCE only (only FINANCE sets the account and
+ * resubmits), and flags open to the caller's audience (FINANCE, Board).
+ */
 export async function expenseOpsCounts(principal: ExpensePrincipal): Promise<{ holds: number; openFlags: number }> {
   if (!principal.isFinance && !principal.isBoard) return { holds: 0, openFlags: 0 };
   const [holds, flags] = await Promise.all([
-    db.expense.count({ where: { orgId: await getOrgId(), holds: { some: { status: "PENDING" } } } }),
+    principal.isFinance ? db.expense.count({ where: { orgId: await getOrgId(), holds: { some: { status: "PENDING" } } } }) : 0,
     listOpenFlags(principal),
   ]);
   return { holds, openFlags: flags.length };
