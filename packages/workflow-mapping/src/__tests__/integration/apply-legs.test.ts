@@ -178,6 +178,7 @@ describeDb("an inventory leg that applied but lost its stamp", () => {
     }
     const stuck = await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(stuck).toMatchObject({ state: "applying", inventoryAppliedAt: null });
+    expect(stuck.inventoryUnconfirmedAt).not.toBeNull();
     await expect(lineItemService.markNonInventory(r.id, ls.id)).rejects.toMatchObject({ status: 409 });
 
     expect(await receiptService.retryApply(r.id)).toEqual({ state: "applying" });
