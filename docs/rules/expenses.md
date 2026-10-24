@@ -95,9 +95,7 @@ Things the app takes as true because they are handled outside it.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A conflicted person also may not reject a receipt, change its tax or date as
-  finance, name the person reimbursed, or check off its flags. A Board member
-  standing in for someone is reviewed by someone outside the households of
-  everyone who signed.
+  finance, name the person reimbursed, or check off its flags.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A person conflicted on an expense may not choose which QuickBooks entry it is
@@ -164,9 +162,9 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - The app flags an expense for review when it crosses a dollar threshold,
-  includes capital equipment, has no known person to reimburse, has a Board
-  member standing in for someone, or fails to reach the books. Every check-off
-  records who made it. A flag never holds money back by itself.
+  includes capital equipment, has no known person to reimburse, or fails to
+  reach the books. Every check-off records who made it. A flag never holds money
+  back by itself.
   [Decision — *Principle: accountability*]
 
 - Tax is decided in the receipt's finance review, and an expense respects that
