@@ -305,6 +305,7 @@ def rerun_gate(probs, higher, p):
 
 
 def route_selftest():
+    assert label_tier(["ai-review", "ai-review:high"]) == "high" and label_tier(["ai-review:max", "ai-review"]) is None
     assert pick({"free": 0.02, "mid": 0.6, "high": 0.38}, ORDER) == "free"
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
     assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
@@ -529,6 +530,11 @@ def first_round(pr, repo):
         return False
 
 
+def label_tier(names):
+    """The tier a maintainer asked for with an `ai-review:<tier>` label, else None."""
+    return next((n[10:] for n in names if n[:10] == "ai-review:" and n[10:] in RUNG), None)
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
@@ -554,7 +560,14 @@ def route():
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
     # A high-ladder PR (risky profile, several profiles, very large) keeps normal routing: later
     # rounds only verify, so the first round is its only full sweep.
-    if (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
+    try:
+        asked = label_tier(json.loads(gh("pr", "view", pr, "-R", repo, "--json", "labels", "--jq", "[.labels[].name]")))
+    except Exception as e:
+        print(f"::warning::could not read PR labels ({e}); no tier label", file=sys.stderr)
+        asked = None
+    if asked:
+        tier, t_by, tier_probs = asked, f"label ai-review:{asked}", None
+    elif (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
             and suggested != "high" and first_round(pr, repo)):
         tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
     else:

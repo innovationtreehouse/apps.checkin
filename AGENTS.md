@@ -250,6 +250,8 @@ The approval sequence for each PR:
 4. **Approval is a maintainer's.** A maintainer approves after reading the AI
    review and the other reviews. The AI review never submits an approval.
 
+To request a specific reviewer, add `ai-review:free`, `ai-review:mid`, `ai-review:high` or `ai-review:top`; it overrides the router's tier choice (the low-credit guard still applies).
+
 Remove `ai-review` only to stop further reviews on a PR, for example while it
 is parked. Each run spends the OpenRouter key.
 

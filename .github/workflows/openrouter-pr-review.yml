@@ -9,8 +9,9 @@ permissions:
   pull-requests: write
 
 # Unrelated label events get their own group so they cannot cancel a running review.
+# ai-review:<tier> labels request a reviewer tier (see ai-review-route.py), so they start a review.
 concurrency:
-  group: openrouter-review-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'ai-review') && github.run_id || 'review' }}
+  group: openrouter-review-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && !startsWith(github.event.label.name, 'ai-review')) && github.run_id || 'review' }}
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +20,7 @@ jobs:
     # label (applying labels needs triage access). Fork PRs get no secrets anyway.
     if: >-
       contains(github.event.pull_request.labels.*.name, 'ai-review') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'ai-review') &&
+      (github.event.action != 'labeled' || startsWith(github.event.label.name, 'ai-review')) &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
