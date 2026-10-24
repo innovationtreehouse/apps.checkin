@@ -23,6 +23,8 @@ import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, 
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
+import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
+import { approveTax } from "../services/taxApprovalService";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
@@ -133,17 +135,17 @@ export const detail: ExpenseRouteHandler = async ({ params }) => {
     include: {
       lineItems: { where: lines, orderBy: { lineNumber: "asc" }, include: { signoffs: true } },
       approvals: { where: scopedApprovals(scope), orderBy: { id: "asc" } },
-      // Holds, the audit trail and flags are FINANCE and Board's; an approver sees their lines only.
+      // Holds, the audit trail, reviews and reasons are FINANCE and Board's; an approver sees their lines only.
       ...(scope.all
         ? {
             holds: { orderBy: { id: "asc" } },
             auditLog: { orderBy: { changedAt: "asc" } },
-            flags: { orderBy: { raisedAt: "asc" } },
+            flags: { where: OPEN_REVIEWS_WHERE, orderBy: { raisedAt: "asc" } },
           }
         : {}),
     },
   });
-  return { Expense };
+  return { Expense, ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [] };
 };
 
 export const lineItemApprovals: ExpenseRouteHandler = async ({ params }) => {
@@ -298,5 +300,12 @@ export const testData: ExpenseRouteHandler = async ({ req, params }) => {
   const { isTestData } = await parseBody(req, z.object({ isTestData: z.boolean() }));
   const principal = await getPrincipal();
   await mapServiceErrors(() => setTestData(principal, params.id, isTestData));
+  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+};
+
+export const taxApproval: ExpenseRouteHandler = async ({ req, params }) => {
+  const { note } = await parseBody(req, z.object({ note: z.string().nullish() }));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() => approveTax(principal, params.id, note?.trim() || null));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
 };

@@ -73,14 +73,14 @@ export interface Loaded<T> {
   reload: () => void;
 }
 
-/** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
+/** Load `path` on mount and on reload(); null loads nothing. A stale response never overwrites a newer one. */
 export function useLoad<T>(path: string | null): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   useEffect(() => {
-    if (!path) return;
+    if (path === null) return;
     const mine = ++seq.current;
     api<T>(path)
       .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
@@ -107,6 +107,10 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
+  /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */
+  pushGivenUp?: boolean;
+  lastPushFailedAt?: string | null;
+  lastPushFailure?: string | null;
 }
 
 export { STATE_LABELS } from "../lib/stateLabels";

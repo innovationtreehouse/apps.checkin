@@ -4,15 +4,15 @@ import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { visibleLinks } from "@/lib/nav/gates";
-import { EXPENSE_OPS, EXPENSE_OPS_ROLES } from "@/lib/nav/sections/expenseOps";
+import { FINANCE, FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { sectionTabBadge } from "@/components/navBadges";
 import { TabBadge } from "@/components/ui/CountBadge";
 
-/** Expense Ops chrome, shared by /expense and /budgets. Admits FINANCE or BOARD. */
-export default function ExpenseOpsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, ready } = useRequireRole(EXPENSE_OPS_ROLES);
+/** Finance section chrome for the expense screens, shared by /expense and /budgets. Admits FINANCE or BOARD. */
+export default function ExpenseFinanceLayout({ children }: { children: React.ReactNode }) {
+  const { user, loading, ready } = useRequireRole(FINANCE_ROLES);
   const counts = useTodoCounts(ready);
 
   if (loading) {
@@ -20,7 +20,7 @@ export default function ExpenseOpsLayout({ children }: { children: React.ReactNo
       <Center mih="60vh">
         <Stack align="center">
           <Loader />
-          <Text>Verifying Expense Ops Access...</Text>
+          <Text>Verifying Finance Access...</Text>
         </Stack>
       </Center>
     );
@@ -28,7 +28,7 @@ export default function ExpenseOpsLayout({ children }: { children: React.ReactNo
 
   if (!ready) return null;
 
-  const links = visibleLinks(EXPENSE_OPS, user, counts);
+  const links = visibleLinks(FINANCE, user, counts);
   return (
     <PageContainer>
       <SectionTabs

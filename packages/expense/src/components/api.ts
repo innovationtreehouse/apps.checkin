@@ -31,7 +31,7 @@ export function errorMessage(e: unknown): string {
 }
 
 /**
- * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
+ * Sends a write, shows the outcome, and reports whether it succeeded. A success tells the
  * host nav to refetch its pills, since any write can change the holds, flags or sign-off counts.
  */
 export async function send(path: string, method: string, body: unknown, success: string): Promise<boolean> {
@@ -41,9 +41,15 @@ export async function send(path: string, method: string, body: unknown, success:
     notifications.show({ message: success, color: "green" });
     return true;
   } catch (err) {
-    notifications.show({ message: errorMessage(err), color: "red" });
+    // A refusal stays on screen until dismissed.
+    notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     return false;
   }
+}
+
+/** Leaves for `href`, as a fresh page load so every list and count is reread. */
+export function goTo(href: string): void {
+  window.location.assign(href);
 }
 
 /** The caller's finance roles, read through a narrow cast of the host's session user. */
