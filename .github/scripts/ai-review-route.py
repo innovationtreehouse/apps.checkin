@@ -12,7 +12,7 @@ own: path matches for profiles, a fixed ladder for the model.
 `adjudicate` (after the review) asks the decision model whether the posted review is complete and,
 if not, which stronger model on LADDER should rerun it.
 """
-import json, os, re, subprocess, sys, urllib.request, uuid
+import json, os, re, subprocess, sys, time, urllib.request, uuid
 
 # The workflow points this at the default branch's copy, so a PR cannot edit its own reviewer.
 CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
@@ -154,22 +154,26 @@ def api(repo, path):
     return [x for page in json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/{path}")) for x in page]
 
 
+def pr_diff(pr, repo, base, head):
+    try:
+        return gh("pr", "diff", pr, "-R", repo)
+    except Exception as e:
+        # GitHub refuses a diff over 300 files or 20,000 lines (HTTP 406). The checkout has full history.
+        try:
+            diff = subprocess.check_output(["git", "diff", "--no-color", "--no-ext-diff", f"{base}...{head}"], text=True)
+            print(f"::notice::GitHub refused the PR diff ({e}); used git diff base...head", file=sys.stderr)
+            return diff
+        except Exception as e2:
+            print(f"::warning::could not read the diff ({e}; then {e2}); deciding on the file list", file=sys.stderr)
+            return ""
+
+
 def pr_state(pr, repo):
     meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions,baseRefOid,headRefOid"))
     files = [f["path"] for f in meta["files"]]
     # The decision model gets the whole diff; fit_rounds trims older rounds to the state cap.
     # On Jev the whole diff is cheap: over ~32 KB it only switches to a slower long-context mode.
-    try:
-        diff = gh("pr", "diff", pr, "-R", repo)
-    except Exception as e:
-        # GitHub refuses a diff over 300 files or 20,000 lines (HTTP 406). The checkout has full history.
-        try:
-            diff = subprocess.check_output(["git", "diff", "--no-color", "--no-ext-diff",
-                                            f"{meta['baseRefOid']}...{meta['headRefOid']}"], text=True)
-            print(f"::notice::GitHub refused the PR diff ({e}); used git diff base...head", file=sys.stderr)
-        except Exception as e2:
-            print(f"::warning::could not read the diff ({e}; then {e2}); deciding on the file list", file=sys.stderr)
-            diff = ""
+    diff = pr_diff(pr, repo, meta["baseRefOid"], meta["headRefOid"])
     # PR text is untrusted; it only ever appears here as data, never as instructions.
     return files, {"untrusted_pr_title": meta["title"], "changed_files": files,
                    "changed_lines": meta["additions"] + meta["deletions"], "file_count": len(files),
@@ -766,12 +770,13 @@ def recommend():
 
 
 ANSWER_MARK = "<!-- ai-answer:%s:%s -->"
-ASKS_AI = re.compile(r"@github-actions|\b(?:ai|bot|reviewer|review bot)\b", re.I)
+ASKS_AI = re.compile(r"@github-actions(?:\[bot\])?\b", re.I)
 MAX_ANSWERS = 5
+ANSWER_BUDGET = 300  # seconds; no new question starts after this
 
 
 def is_question(body):
-    return _clean(body, 4000).rstrip("`* \n").endswith("?")
+    return re.sub(r"<!--.*?-->", "", body or "", flags=re.S).strip().rstrip("`* \n").endswith("?")
 
 
 def pending_questions(review_comments, issue_comments):
@@ -782,24 +787,34 @@ def pending_questions(review_comments, issue_comments):
     bot_roots = {c["id"] for c in review_comments
                  if (c.get("user") or {}).get("login") == BOT and not c.get("in_reply_to_id")}
     found = []
+    # Newest first, and a question a later human reply follows is treated as settled by people.
     for kind, comments in (("r", review_comments), ("i", issue_comments)):
-        for c in comments:
+        for pos, c in reversed(list(enumerate(comments))):
             body = c.get("body") or ""
             if (c.get("user") or {}).get("login") == BOT or not _trusted(c) or not is_question(body) \
                     or f"{kind}:{c['id']}" in done:
                 continue
             root = c.get("in_reply_to_id") or c["id"]
+            if kind == "r" and any((x.get("in_reply_to_id") or x["id"]) == root and (x.get("user") or {}).get("login") != BOT
+                                   for x in comments[pos + 1:]):
+                continue
             if (kind == "r" and root in bot_roots) or ASKS_AI.search(body):
                 found.append((kind, c["id"], root, c))
+    found.sort(key=lambda f: f[3].get("created_at") or "", reverse=True)
     return found[:MAX_ANSWERS]
 
 
 def code_around(path, line, n=30):
-    """Lines of the checked-out head file around a comment; empty if the path is unsafe or missing."""
-    if not path or not line or path.startswith("/") or ".." in path.split("/"):
+    """Lines of the head file around a comment; empty unless the real path stays inside the repo
+    (symlinks followed) and outside the trusted config checkout."""
+    if not path or not line:
+        return ""
+    root = os.path.realpath(".")
+    real = os.path.realpath(os.path.join(root, path))
+    if not real.startswith(root + os.sep) or real.startswith(os.path.join(root, ".ai-review-base") + os.sep):
         return ""
     try:
-        lines = open(path, errors="replace").read().splitlines()
+        lines = open(real, errors="replace").read().splitlines()
     except OSError:
         return ""
     lo = max(0, line - n)
@@ -818,7 +833,7 @@ def ask_model(model, diff, q):
     req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=body, headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as r:
-        return json.load(r)["choices"][0]["message"]["content"].strip()
+        return (json.load(r)["choices"][0]["message"]["content"] or "").strip()
 
 
 def answer():
@@ -831,23 +846,35 @@ def answer():
     if not todo or not model:
         print(f"answer: {len(todo)} question(s), model {model or 'none'}; nothing to do")
         return
-    diff = gh("pr", "diff", pr, "-R", repo)
+    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "baseRefOid,headRefOid"))
+    diff = pr_diff(pr, repo, meta["baseRefOid"], meta["headRefOid"])
+    start = time.monotonic()
     for kind, cid, root, c in todo:
-        thread = "\n".join(f"{(x.get('user') or {}).get('login')}: {_clean(x.get('body'), 1500)}"
-                           for x in rc if (x.get("in_reply_to_id") or x["id"]) == root) if kind == "r" else ""
-        text = ask_model(model, diff, {"path": c.get("path") if kind == "r" else "", "line": c.get("line") or c.get("original_line"),
-                                       "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)})
-        mark = ANSWER_MARK % (kind, cid)
-        if kind == "r":
-            gh("api", f"repos/{repo}/pulls/{pr}/comments/{root}/replies", "-f", f"body={mark}\n{text}")
-        else:
-            quote = "> " + _clean(c["body"], 200).replace("\n", "\n> ")
-            gh("api", f"repos/{repo}/issues/{pr}/comments", "-f", f"body={mark}\n{quote}\n\n{text}")
-        print(f"answered {kind}:{cid}")
+        if time.monotonic() - start > ANSWER_BUDGET:
+            print("::warning::answer time budget spent; remaining questions wait for the next round")
+            break
+        try:
+            thread = "\n".join(f"{(x.get('user') or {}).get('login')}: {_clean(x.get('body'), 1500)}"
+                               for x in rc if (x.get("in_reply_to_id") or x["id"]) == root) if kind == "r" else ""
+            line = c.get("line") if c.get("side") == "RIGHT" else None  # LEFT or outdated: no head-file excerpt
+            text = ask_model(model, diff, {"path": c.get("path") if kind == "r" else "", "line": line,
+                                           "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)})
+            text = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()  # a forged marker would hide a question
+            if not text:
+                continue
+            mark = ANSWER_MARK % (kind, cid)
+            if kind == "r":
+                gh("api", f"repos/{repo}/pulls/{pr}/comments/{root}/replies", "-f", f"body={mark}\n{text}")
+            else:
+                quote = "> " + _clean(c["body"], 200).replace("\n", "\n> ")
+                gh("api", f"repos/{repo}/issues/{pr}/comments", "-f", f"body={mark}\n{quote}\n\n{text}")
+            print(f"answered {kind}:{cid}")
+        except Exception as e:
+            print(f"::warning::could not answer {kind}:{cid}: {getattr(e, 'stderr', None) or e}", file=sys.stderr)
 
 
 def answer_selftest():
-    u = lambda n, a="MEMBER": {"login": n, "type": "User"}
+    u = lambda n: {"login": n}
     rc = [{"id": 1, "user": u(BOT), "body": "finding"},
           {"id": 2, "user": u("ann"), "author_association": "MEMBER", "body": "why is this needed?", "in_reply_to_id": 1},
           {"id": 3, "user": u("ann"), "author_association": "MEMBER", "body": "fixed.", "in_reply_to_id": 1},
@@ -859,9 +886,29 @@ def answer_selftest():
           {"id": 11, "user": u("bo"), "author_association": "OWNER", "body": "Joe, is this safe?"},
           {"id": 12, "user": u(BOT), "body": "Should we merge?"}]
     got = [(k, i) for k, i, _, _ in pending_questions(rc, ic)]
-    assert got == [("r", 2), ("i", 10)], got
+    assert got == [("i", 10)], got
     assert is_question("why?\n```") and is_question("why? ") and not is_question("ok.")
     assert code_around("../etc/passwd", 3) == "" and code_around("/etc/passwd", 3) == ""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        cwd = os.getcwd()
+        os.chdir(d)
+        try:
+            open("a.txt", "w").write("one\ntwo\n")
+            os.symlink("/etc/hostname", "ln")
+            os.makedirs(".ai-review-base")
+            open(".ai-review-base/b.txt", "w").write("x\n")
+            assert code_around("a.txt", 1).startswith("1: one")
+            assert code_around("ln", 1) == "" and code_around(".ai-review-base/b.txt", 1) == "" and code_around("a.txt", None) == ""
+        finally:
+            os.chdir(cwd)
+    c2 = [{"id": 1, "user": u(BOT), "body": "f"}, {"id": 2, "user": u("ann"), "author_association": "MEMBER", "body": "why?", "in_reply_to_id": 1, "created_at": "1"},
+          {"id": 3, "user": u("bob"), "author_association": "MEMBER", "body": "because x", "in_reply_to_id": 1, "created_at": "2"},
+          {"id": 4, "user": u("ann"), "author_association": "MEMBER", "body": "Should the AI review rerun?", "created_at": "3"},
+          {"id": 5, "user": u("ann"), "author_association": "MEMBER", "body": "a" * 5000 + "?", "created_at": "4"},
+          {"id": 6, "user": u("ann"), "author_association": "MEMBER", "body": "@github-actions why?", "created_at": "5"}]
+    assert [i for _, i, _, _ in pending_questions(c2, [])] == [6], pending_questions(c2, [])
+    assert is_question("a" * 5000 + "? <!-- x -->") and not ASKS_AI.search("bot reviewer AI")
     print("answer selftest ok")
 
 

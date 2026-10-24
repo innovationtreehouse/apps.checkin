@@ -157,6 +157,7 @@ jobs:
       # bot replies cannot loop; questions asked after a review are answered on the next push or label.
       - if: always() && steps.route.outputs.model != ''
         continue-on-error: true
+        timeout-minutes: 8
         run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py answer
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
