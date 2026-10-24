@@ -296,10 +296,14 @@ describe("signatureTab", () => {
   });
 
   it("lists a line in a tab only once the function offers its signature, so only after the earlier steps", () => {
-    const tabs = (c: Case) => run(c).actions.map((a) => signatureTab({ ...base, ...c.facts }, a, c.caller)).filter((t) => t !== null);
+    const tabs = (c: Case) => {
+      const approved = (c.approval ?? { status: "pending" }).status === "approved";
+      const facts = { ...base, approved, approver: approved ? 2 : null, ...c.facts };
+      return run(c).actions.map((a) => signatureTab(facts, a, c.caller)).filter((t) => t !== null);
+    };
     expect(tabs({ caller: 3 })).toEqual([]);
     expect(tabs({ caller: 3, ...APPROVED })).toEqual(["toSign"]);
-    const card = { ...APPROVED, facts: { ...APPROVED.facts, kind: "card_charge" as const, boardSeat: true } };
+    const card = { ...APPROVED, facts: { kind: "card_charge" as const, boardSeat: true } };
     expect(tabs({ caller: 5, ...card })).toEqual([]);
     expect(tabs({ caller: 5, ...card, filled: seats(["TREASURER", 3]) })).toEqual(["board"]);
   });
