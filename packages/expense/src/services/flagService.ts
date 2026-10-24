@@ -1,11 +1,10 @@
-// GC-FIN-CONTROL flags: raised for awareness, checked off by the audience they route to, audited.
+// Finance reviews (ExpenseFlag rows of the kept kinds): raised by the QuickBooks paths, checked off with a note, audited.
 import { db, type Db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getExpenseRuntime, getOrgId } from "../runtime";
+import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { FLAG_AUDIENCE, HOLD_FLAGS, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
-import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
+import { FLAG_AUDIENCE, FLAG_KINDS, isFlagKind, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -34,16 +33,11 @@ function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {
   return [...(principal.isFinance ? ["FINANCE" as const] : []), ...(principal.isBoard ? ["BOARD" as const] : [])];
 }
 
-/** Open flags for the caller's audience; a hold flag drops out once its expense is closed and the hold is moot. */
+/** Open reviews of the kept kinds for the caller's audience. */
 export async function listOpenFlags(principal: ExpensePrincipal) {
   actorOf(principal);
   return db.expenseFlag.findMany({
-    where: {
-      orgId: await getOrgId(),
-      checkedOffAt: null,
-      audience: { in: audiencesOf(principal) },
-      NOT: { kind: { in: [...HOLD_FLAGS.keys()] }, expense: { state: { in: [...CLOSED_STATES] } } },
-    },
+    where: { orgId: await getOrgId(), checkedOffAt: null, kind: { in: [...FLAG_KINDS] }, audience: { in: audiencesOf(principal) } },
     orderBy: { raisedAt: "asc" },
   });
 }
@@ -52,6 +46,7 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   const actor = actorOf(principal);
   const flag = await db.expenseFlag.findFirst({ where: { id: flagId, orgId: await getOrgId() } });
   if (!flag) throw new ServiceError(404, "Flag not found");
+  if (!isFlagKind(flag.kind)) throw new ServiceError(409, "This kind is no longer checked off; the finance queue reads it from the expense");
   if (!audiencesOf(principal).includes(flag.audience as FlagAudience)) {
     throw new ServiceError(403, `Only ${flag.audience} can check off this flag`);
   }
@@ -61,20 +56,6 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   // its reimbursee, or anyone in their households.
   if ((await conflictedParties(expense)).includes(actor.userId)) {
     throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
-  }
-  // A COI flag is raised by a sign-off, so no signer on the expense, nor their household, checks it off.
-  // Signers come from the audit log: a voided sign-off loses its seat row but the flag stays open.
-  if (flag.kind === "COI") {
-    const signoffs = await db.expenseAuditLog.findMany({ where: { expenseId: flag.expenseId, action: "signoff" }, select: { userId: true } });
-    const signers = [...new Set(signoffs.map((s) => s.userId))];
-    if (signers.length > 0 && [...signers, ...(await getExpenseRuntime().signoff.householdOf(signers))].includes(actor.userId)) {
-      throw new ServiceError(403, "You signed this expense, or are in a signer's household, and cannot check off its conflict flag");
-    }
-  }
-  // REIMBURSEE_UNKNOWN is the queue's only sign of the hold, so it stays open while the hold applies.
-  const holdReason = HOLD_FLAGS.get(flag.kind);
-  if (holdReason && reimburseeUnknown(expense) && !CLOSED_STATES.has(expense.state)) {
-    throw new ServiceError(409, holdReason);
   }
 
   await db.$transaction(async (tx) => {

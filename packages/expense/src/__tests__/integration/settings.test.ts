@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
+import { financeQueueRows } from "../../services/financeQueueService";
 import { principal, ORG } from "../helpers/seed";
 import { DEFAULT_EXPENSE_SETTINGS, getExpenseSettings, updateExpenseSettings } from "../../services/settingsService";
 import { receiveCompletedReceipt } from "../../services/intakeService";
@@ -46,8 +47,8 @@ describeDb("expense settings", () => {
     ]);
   });
 
-  it("intake flags read the configured thresholds", async () => {
-    await updateExpenseSettings(ORG, { boardReviewTotalCents: 1_000, capitalEquipmentUnitCents: 900 }, FINANCE);
+  it("the Board tab reads the configured Board-review total", async () => {
+    await updateExpenseSettings(ORG, { boardReviewTotalCents: 1_000 }, FINANCE);
     await receiveCompletedReceipt({
       receiptId: "r-thresholds",
       orgId: ORG,
@@ -66,7 +67,7 @@ describeDb("expense settings", () => {
       lineItems: [{ receiptLineItemId: 1, lineNumber: 1, description: "Drill", partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1_000, totalPriceCents: 1_000, isDelayed: false }],
     });
 
-    const kinds = (await db.expenseFlag.findMany({ where: { expenseId: "r-thresholds" } })).map((f) => f.kind).sort();
-    expect(kinds).toEqual(["CAPITAL_EQUIPMENT", "THRESHOLD_CROSSED"]);
+    const rows = await financeQueueRows(principal(3, { isFinance: true }), "board");
+    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => x.code)])).toEqual([["r-thresholds", ["board_approval_not_recorded"]]]);
   });
 });

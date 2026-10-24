@@ -339,7 +339,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {(e.flags ?? []).filter((f) => !f.checkedOffAt).map((f) => (
             <Text key={f.id} size="sm">🚩 {f.kind} ({f.audience}){f.detail ? ` — ${f.detail}` : ""}</Text>
           ))}
-          <Anchor href="/expense/flags" size="sm">Check off on the Flags screen</Anchor>
+          <Anchor href="/finance/review?queue=qb" size="sm">Finance review › QuickBooks</Anchor>
         </Paper>
       )}
 

@@ -11,6 +11,7 @@ import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 import { updateExpenseSettings } from "../../services/settingsService";
 import { storedTaxNeedsFinance } from "../../services/flagService";
+import { financeQueueRows } from "../../services/financeQueueService";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -79,16 +80,14 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect((await db.expense.findFirst({ where: { id: hasProvisional.receiptId } }))!.reimburseePersonId).toBeNull();
   });
 
-  it("a reimbursement without reimburseePersonId raises REIMBURSEE_UNKNOWN to FINANCE; with one, or as a card charge, it does not", async () => {
-    const flagsOf = async (id: string) => (await db.expenseFlag.findMany({ where: { expenseId: id, kind: "REIMBURSEE_UNKNOWN" } })).map((f) => f.audience);
+  it("intake raises no flag: a reimbursement without a reimbursee, tax and a large total each show as a queue reason instead", async () => {
     bindPorts({ signoff: directory({}) });
-    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true });
-    expect(await flagsOf(allRecognized.receiptId)).toEqual(["FINANCE"]);
-
-    await receiveCompletedReceipt({ ...hasProvisional, needsReimbursement: true, reimburseePersonId: 9 });
-    await receiveCompletedReceipt({ ...allRecognized, receiptId: "r-card" });
-    expect(await flagsOf(hasProvisional.receiptId)).toEqual([]);
-    expect(await flagsOf("r-card")).toEqual([]);
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, taxCents: 125, receiptTotalCents: 250_000 });
+    expect(await db.expenseFlag.count()).toBe(0);
+    const finance = principal(3, { isFinance: true });
+    const codes = async (tab: "expenses" | "board") => (await financeQueueRows(finance, tab)).flatMap((r) => r.reasons.map((x) => x.code));
+    expect(await codes("expenses")).toEqual(expect.arrayContaining(["reimbursee_to_name", "tax_not_reviewed"]));
+    expect(await codes("board")).toEqual(["board_approval_not_recorded"]);
   });
 
   it("a reimburseePersonId that names no Person is held like a missing one", async () => {
@@ -96,8 +95,6 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, reimburseePersonId: 9 });
 
     expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.reimburseePersonId).toBeNull();
-    const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId, kind: "REIMBURSEE_UNKNOWN" } });
-    expect(flags.map((f) => f.detail)).toEqual(["receipt named Person 9, not found"]);
   });
 
   it("a repeat call returns already_applied and changes nothing", async () => {
@@ -120,29 +117,6 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(s.expenses).toBe(1);
     expect(s.payloads).toHaveLength(1);
     expect(s.payloads[0]).toMatchObject({ status: "applied", failureReason: null });
-  });
-
-  it("raises no TAX_ATTACHED when receipt finance review approved that tax", async () => {
-    await receiveCompletedReceipt(financeApproved);
-    expect(await db.expenseFlag.count({ where: { expenseId: financeApproved.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
-  });
-
-  it("raises no TAX_ATTACHED when the receipt org does not hold tax for review", async () => {
-    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, taxReviewRequired: false });
-    expect(await db.expenseFlag.count({ where: { expenseId: allRecognized.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
-  });
-
-  it("raises TAX_ATTACHED when the tax differs from the amount finance approved", async () => {
-    await receiveCompletedReceipt({ ...financeApproved, taxCents: 90, receiptTotalCents: 3090 });
-    const flags = await db.expenseFlag.findMany({ where: { expenseId: financeApproved.receiptId } });
-    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
-  });
-
-  it("raises a TAX_ATTACHED flag for finance when the receipt carries tax", async () => {
-    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125 });
-
-    const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId } });
-    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
   });
 
   it("stores the receipt's finance approval and review-required flag with the expense; a receipt with neither stores none", async () => {

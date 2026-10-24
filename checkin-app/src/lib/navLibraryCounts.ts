@@ -17,7 +17,7 @@ export type LibraryCountProvider = {
   library: LibraryKey;
   /** Whether this viewer may see the counts — mirror the library's read gate. */
   visible: (user: SessionUser) => boolean;
-  /** Named counts for this viewer, e.g. { holds: 2, openFlags: 1 }. */
+  /** Named counts for this viewer, e.g. { financeQueue: 2, approver: 1 }. */
   count: (user: SessionUser) => Promise<Record<string, number>>;
 };
 

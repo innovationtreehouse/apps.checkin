@@ -31,7 +31,6 @@ import {
   IconMoon,
   IconPackage,
   IconReceipt,
-  IconReceiptTax,
   IconReportMoney,
   IconSettings,
   IconShieldCheck,
@@ -67,8 +66,7 @@ import { MEMBERSHIP_OPS } from '@/lib/nav/sections/membershipOps';
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
 import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
-import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
-import { RECEIPT_REVIEW } from '@/lib/nav/sections/receiptReview';
+import { FINANCE } from '@/lib/nav/sections/finance';
 import { SYSTEM_STATUS } from '@/lib/nav/sections/systemStatus';
 import { SETTINGS } from '@/lib/nav/sections/settings';
 import { DEV_TOOLS } from '@/lib/nav/sections/devTools';
@@ -98,8 +96,7 @@ const NAV_ITEMS: NavItem[] = [
   { section: MEMBERSHIP_AUDIT, icon: <IconUserSearch size={18} /> },
   { section: PROGRAM_OPS, icon: <IconBriefcase size={18} /> },
   { section: REVENUE_OPS, icon: <IconCoin size={18} /> },
-  { section: EXPENSE_OPS, icon: <IconReportMoney size={18} /> },
-  { section: RECEIPT_REVIEW, icon: <IconReceiptTax size={18} /> },
+  { section: FINANCE, icon: <IconReportMoney size={18} /> },
   { section: SYSTEM_STATUS, icon: <IconSettings size={18} /> },
   { section: SETTINGS, icon: <IconAdjustments size={18} /> },
   { section: INDEX, icon: <IconList size={18} /> },
@@ -164,7 +161,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
     const tabs = visibleLinks(section, user, todoCounts);
     const href = section.hrefFor?.(user, todoCounts) ?? section.href;
     // Longest href this item claims for the current path, so a path under two
-    // sections (/receipts/review sits under /receipts) highlights only the closer one.
+    // sections (/receipts/settings sits under /receipts) highlights only the closer one.
     const match = Math.max(0, ...[href, section.href, ...tabs.flatMap(tabHrefs)].filter((h) => isActive(pathname, h)).map((h) => h.length));
     return { ...item, tabs, href, match };
   });
