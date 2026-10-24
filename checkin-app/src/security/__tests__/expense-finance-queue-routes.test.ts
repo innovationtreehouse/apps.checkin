@@ -142,7 +142,6 @@ describe('expense detail reasons', () => {
     const reason = {
         code: 'qb_post_failed',
         tab: 'quickbooks',
-        audience: 'FINANCE',
         actionable: true,
         amountCents: null,
         detail: 'Vendor Pat Doe is inactive',

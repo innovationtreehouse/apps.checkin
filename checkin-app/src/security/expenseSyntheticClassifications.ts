@@ -113,7 +113,6 @@ export const classifications = {
   ExpenseQueueReason: {
     code: "internal",
     tab: "internal",
-    audience: "internal",
     actionable: "internal",
     amountCents: "internal",
     detail: "personal",
