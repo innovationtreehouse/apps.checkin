@@ -393,9 +393,10 @@ retired one:
   re-kinded to `QB_DUPLICATE_TO_VOID`.
 - Every other open row of a retired kind (every `COI` row, held or stand-in; exhausted
   `QB_POST_FAILED`, `TAX_ATTACHED`, `THRESHOLD_CROSSED`, `CAPITAL_EQUIPMENT`,
-  `REIMBURSEE_UNKNOWN`, `QB_NO_CLASS`, `QB_OVER_CAP`) is closed: checked off
-  by the system user with the note "retired: the queue now reads this from the
-  expense". The condition behind it, if it still holds, shows as a derived
+  `REIMBURSEE_UNKNOWN`, `QB_NO_CLASS`, `QB_OVER_CAP`) is closed with no
+  closer: `checkedOffAt` is set, `checkedOffByUserId` and
+  `checkedOffByUsername` stay null (no system account stands in), and the note
+  says why: "retired: the queue now reads this from the expense". The condition behind it, if it still holds, shows as a derived
   reason.
 
 The re-kind is safe against the unique constraint, because no row of the new
@@ -486,7 +487,8 @@ Each PR is based on `main`. None is stacked on another's branch.
    `GET /api/expense/flags` and `GET /api/expense/expense-holds` with their
    route files. A separate boundary PR in the same release drops
    `expense_holds` from `ExpenseCounts`. The §9 re-kind and close SQL runs
-   again here.
+   again here, closing any leftover rows the same way: no closer, and the
+   note saying why.
 8. **Capital setting removal** (3.7), in two releases. Expand-and-contract, as
    #2441 did for the "not Everyday" marks
    (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`):
