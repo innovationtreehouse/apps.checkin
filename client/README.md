@@ -7,7 +7,18 @@ A thin Python client for Raspberry Pi that runs at the facility entrance. It act
 1. **Transparent signing proxy** — serves on `localhost:8083`, proxies all requests to the backend with Ed25519 signature headers injected automatically
 2. **Kiosk display wrapper** — serves an HTML wrapper at `/` that iframes `kiosk_path` (default `/attendance/current?mode=kiosk`) from the backend, with a flash banner overlay for scan feedback
 3. **Listens for badge scans** — reads USB barcode/QR scanner input, sends signed POST to `/api/scan`
-4. **Scan feedback** — displays check-in/check-out confirmation banners via a polling mechanism
+4. **Scan feedback** — displays check-in/check-out confirmation banners over the SSE stream at `/events`
+
+Every scan needs the backend reachable: the kiosk sends the badge and shows what
+the server said. It keeps no queue, no roster and no close state of its own, so a
+scan taken while the network is down is refused on screen, not stored for later.
+
+The kiosk pings `GET /api/system-status/kiosk-version` once a second and fetches
+the roster only when that answer says the server's roster generation moved. The
+server answers the ping from its own memory — a process-cached sha, the
+attendance cache read without computing — so the pace costs it no database work,
+and whether a poll becomes a query is the server's decision, not the kiosk's.
+The building state in that answer rides on the kiosk's signature.
 
 ## Setup
 
@@ -105,7 +116,8 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 | `usb_device` | Device name or path (e.g. `Newtologic` or `/dev/input/event0`), empty for stdin |
 | `listen_port` | Local HTTP server port (default `8083`) |
 | `kiosk_path` | Backend path for the kiosk display and initial data fetch (default `/attendance/current?mode=kiosk`) |
-| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The kiosk rests while the building is known empty (the last real roster showed nobody, with no badge or on-screen check-in since and nothing queued), at any hour: the roster poll, the server-version check and the dead-letter retry pause, and once each board page has had the real empty roster, the proxy answers its roster `GET`s with `204` and no body. The next badge ends it. Assumes this is the only door scanner. A web check-in into an empty building does not reach the screen until the next badge. |
+| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables roster fetching; the ping still watches the deploy version. |
+| `ping_interval` | Seconds between pings (default `1`). The answer is served from the server's memory, so this is a liveness/latency knob, not a database-load one. Raising it only delays how soon the board notices a change. |
 
 ## Architecture
 
@@ -145,7 +157,7 @@ releases, so a Pi following `main` runs client code whose server counterpart is
 not deployed yet — the paths it calls may not exist.
 
 `kiosk.sh` fetches and checks out the target at the top of each loop;
-`client.py`'s `version_poller` restarts the client when `HEAD` no longer matches
+`client.py`'s `self_update_poller` restarts the client when `HEAD` no longer matches
 it. Both read the target from `resolve_update_target()`, so they cannot disagree
 about where the Pi is meant to be.
 

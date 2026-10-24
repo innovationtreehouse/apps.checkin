@@ -1,7 +1,7 @@
 """Trace recorder for validating the check-in TLA+ model against real kiosk
-runs: one NDJSON line per model action point (badge, live send and result,
-drain send and outcome). Only a test turns it on, with start(path); nothing in
-the kiosk does, so a production kiosk records nothing."""
+runs: one NDJSON line per model action point (KioskBadge when a badge is read,
+KioskScanResult for what the server answered). Only a test turns it on, with
+start(path); nothing in the kiosk does, so a production kiosk records nothing."""
 
 import json
 import threading

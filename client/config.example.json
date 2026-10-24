@@ -5,6 +5,7 @@
   "listen_port": 8083,
   "kiosk_path": "/attendance/current?mode=kiosk",
   "attendance_path": "/api/attendance",
+  "ping_interval": 1,
   "allow_reboot": false,
   "allow_wifi_bounce": false
 }
