@@ -154,8 +154,8 @@ describeDb("nav badge counts", () => {
     await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "QB_DRIFT", audience: "FINANCE" } });
     await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
     const finance = await financeQueueCounts(principal(3, { isFinance: true }));
-    expect(finance.accountHolds).toMatchObject({ actionable: 1, total: 1, byReason: { account_hold: 1 } });
-    expect(finance.quickbooks).toMatchObject({ actionable: 1, total: 1, byReason: { qb_drift: 1 } });
+    expect(finance.accountHolds).toMatchObject({ actionable: 1, total: 1, byReason: { ACCOUNT_HOLD: 1 } });
+    expect(finance.quickbooks).toMatchObject({ actionable: 1, total: 1, byReason: { QB_DRIFT: 1 } });
     expect(await financeQueueActionable(principal(APPROVER))).toBe(0);
   });
 

@@ -103,7 +103,7 @@ describeDb("sign-off seats", () => {
     expect((await signoffStatus(id))[0].blocked).toEqual(["TREASURER"]);
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
     const board = await financeQueueRows(principal(6, { isBoard: true }), "board");
-    expect(board.find((r) => r.expenseId === id)?.reasons.map((x) => x.code)).toContain("board_held");
+    expect(board.find((r) => r.expenseId === id)?.reasons.map((x) => x.code)).toContain("SIGNER_HELD");
   });
 
   it("an org-level line skips owner approval but still needs every seat, a Board member in the program seat", async () => {
@@ -284,7 +284,7 @@ describeDb("sign-off seats", () => {
 
     it("a reimbursee to name is a finance queue reason while the expense is open, and leaves it once closed", async () => {
       const { id } = await unknownReimbursee();
-      expect((await financeQueueRows(FINANCE, "expenses")).map((r) => [r.expenseId, r.reasons.map((x) => x.code)])).toEqual([[id, ["reimbursee_to_name"]]]);
+      expect((await financeQueueRows(FINANCE, "expenses")).map((r) => [r.expenseId, r.reasons.map((x) => x.code)])).toEqual([[id, ["REIMBURSEE_TO_NAME"]]]);
       await db.expense.update({ where: { id }, data: { state: "rejected" } });
       expect(await financeQueueRows(FINANCE, "expenses")).toEqual([]);
     });

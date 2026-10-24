@@ -27,6 +27,18 @@ export function isFlagKind(kind: string): kind is FlagKind {
   return (FLAG_KINDS as readonly string[]).includes(kind);
 }
 
+/** What the duplicate path writes into a QB_DUPLICATE_TO_VOID review's detail. */
+export const NEEDS_VOIDING = "needs voiding";
+
+/** The three questions finance decides as a review, each with a required note: every kept kind. */
+export const REVIEW_KINDS = FLAG_KINDS;
+export type ReviewKind = FlagKind;
+
+/** The review a flag row asks for, or null for a row of a retired kind. */
+export function reviewKindOf(flag: { kind: string }): ReviewKind | null {
+  return isFlagKind(flag.kind) ? flag.kind : null;
+}
+
 /** The expense's stored receipt review (ExpenseReceiptReview), or null when the receipt sent none. */
 export interface StoredReceiptReview {
   taxReviewRequired: boolean | null;

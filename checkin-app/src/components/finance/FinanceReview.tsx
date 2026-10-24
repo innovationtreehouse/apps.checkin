@@ -101,10 +101,8 @@ export default function FinanceReview() {
   const reason = params.get("reason");
   const applyFailed = useApplyFailed(queue === NOT_PUSHED);
 
-  const show = (q: string, chip: string | null = null) => {
-    const sp = new URLSearchParams({ queue: q, ...(chip ? { reason: chip } : {}) });
-    router.replace(`${FINANCE_REVIEW_PATH}?${sp}`, { scroll: false });
-  };
+  const hrefFor = (q: string, chip: string | null = null) => `${FINANCE_REVIEW_PATH}?${new URLSearchParams({ queue: q, ...(chip ? { reason: chip } : {}) })}`;
+  const show = (q: string, chip: string | null = null) => router.replace(hrefFor(q, chip), { scroll: false });
 
   const current = ordered.find((t) => t.queue === queue);
   const next = current ? [...ordered.slice(ordered.indexOf(current) + 1), ...ordered.slice(0, ordered.indexOf(current))].find((t) => t.actionable > 0) : undefined;
@@ -168,7 +166,7 @@ export default function FinanceReview() {
           </Anchor>
         </Alert>
       )}
-      {queue && expenseTab && <FinanceQueueList tab={expenseTab.key} counts={expenses.counts} reason={reason} onReason={(r) => show(queue, r)} />}
+      {queue && expenseTab && <FinanceQueueList tab={expenseTab.key} counts={expenses.counts} reason={reason} returnHref={hrefFor(queue, reason)} onReason={(r) => show(queue, r)} />}
       {queue && !expenseTab && <ReceiptQueueList queue={queue === ALL ? "" : queue} />}
     </>
   );

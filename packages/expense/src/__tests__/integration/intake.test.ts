@@ -86,8 +86,8 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(await db.expenseFlag.count()).toBe(0);
     const finance = principal(3, { isFinance: true });
     const codes = async (tab: "expenses" | "board") => (await financeQueueRows(finance, tab)).flatMap((r) => r.reasons.map((x) => x.code));
-    expect(await codes("expenses")).toEqual(expect.arrayContaining(["reimbursee_to_name", "tax_not_reviewed"]));
-    expect(await codes("board")).toEqual(["board_approval_not_recorded"]);
+    expect(await codes("expenses")).toEqual(expect.arrayContaining(["REIMBURSEE_TO_NAME", "TAX_NOT_REVIEWED"]));
+    expect(await codes("board")).toContain("BOARD_APPROVAL");
   });
 
   it("a reimburseePersonId that names no Person is held like a missing one", async () => {

@@ -1,3 +1,5 @@
+import type { QueueTab, ReasonCode } from "./lib/reasons";
+
 /**
  * The finance queue's expense tabs (#2481 §3): their keys, the `?queue=` value each rides under on
  * the host's Finance review screen, and the reasons each holds. Shared by the service and the
@@ -14,30 +16,38 @@ export const FINANCE_QUEUE_TABS = [
 
 export type FinanceQueueTabKey = (typeof FINANCE_QUEUE_TABS)[number]["key"];
 
-/** Each reason, in the order a tab's list sorts by, with its chip label. */
-export const FINANCE_QUEUE_REASONS = {
-  bucket_to_assign: { tab: "expenses", label: "Bucket to assign" },
-  bucket_unknown: { tab: "expenses", label: "Bucket unknown" },
-  owner_exception: { tab: "expenses", label: "Exception raised by a budget owner" },
-  capital_review: { tab: "expenses", label: "Capital review" },
-  depreciation_cycle: { tab: "expenses", label: "Depreciation cycle" },
-  reimbursee_to_name: { tab: "expenses", label: "Reimbursee to name" },
-  tax_not_reviewed: { tab: "expenses", label: "Tax not reviewed on the receipt" },
-  intake_failed: { tab: "expenses", label: "Receipt didn't become an expense" },
-  treasurer_signature: { tab: "toSign", label: "Treasurer signature" },
-  account_hold: { tab: "accountHolds", label: "No account rule" },
-  qb_post_failed: { tab: "quickbooks", label: "Posting failed" },
-  qb_duplicate_to_void: { tab: "quickbooks", label: "Duplicate entry in QuickBooks needs voiding" },
-  qb_drift: { tab: "quickbooks", label: "Changed in QuickBooks after posting" },
-  qb_post_held: { tab: "quickbooks", label: "Closed but not posted" },
-  qb_no_class: { tab: "quickbooks", label: "Bucket has no QuickBooks class" },
-  qb_ambiguous: { tab: "quickbooks", label: "Waiting for a match" },
-  board_approval_not_recorded: { tab: "board", label: "Board approval not recorded" },
-  board_held: { tab: "board", label: "No Board member without a conflict can sign; held" },
-  board_signature: { tab: "board", label: "Board signature to give" },
-} as const satisfies Record<string, { tab: FinanceQueueTabKey; label: string }>;
+/** The tab an expense-page reason sits in, keyed by its `?queue=` value. */
+export const TAB_OF_QUEUE: Record<QueueTab, FinanceQueueTabKey> = { expenses: "expenses", holds: "accountHolds", qb: "quickbooks", board: "board" };
 
-export type FinanceQueueReasonCode = keyof typeof FINANCE_QUEUE_REASONS;
+/**
+ * The finance queue's reason codes: every expense-page reason (lib/reasons.ts), a failed intake,
+ * and the signatures the viewer may give.
+ */
+export type FinanceQueueReasonCode = ReasonCode | "INTAKE_FAILED" | "TREASURER_SIGNATURE" | "BOARD_SIGNATURE";
+
+/** Each reason's chip label, in the order a tab's list sorts by. */
+export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
+  BUCKET_TO_ASSIGN: "Bucket to assign",
+  BUCKET_UNKNOWN: "Bucket unknown",
+  OWNER_EXCEPTION: "Exception raised by a budget owner",
+  CAPITAL_REVIEW: "Capital review",
+  DEPRECIATION_CYCLE: "Depreciation cycle",
+  REIMBURSEE_TO_NAME: "Reimbursee to name",
+  TAX_NOT_REVIEWED: "Tax not reviewed",
+  INTAKE_FAILED: "Receipt didn't become an expense",
+  TREASURER_SIGNATURE: "Treasurer signature",
+  ACCOUNT_HOLD: "No account rule",
+  QB_POST_FAILED: "Posting failed",
+  QB_DUPLICATE_TO_VOID: "Duplicate to void",
+  QB_DRIFT: "Changed in QuickBooks",
+  QB_POST_HELD: "Closed but not posted",
+  QB_NO_CLASS: "No QuickBooks class",
+  QB_AWAITING_MATCH: "Waiting for a match",
+  QB_VENDOR_MISSING: "No QuickBooks vendor",
+  BOARD_APPROVAL: "Board approval not recorded",
+  SIGNER_HELD: "Held, no conflict-free signer",
+  BOARD_SIGNATURE: "Board signature to give",
+};
 
 /** One reason on a row: its code, the plain-word line, and where to act when that isn't the expense page. */
 export interface FinanceQueueReason {

@@ -32,11 +32,10 @@ function waited(since: string): string {
 
 const money = (cents: number, currency: string) => (cents / 100).toLocaleString("en-US", { style: "currency", currency });
 
-/** Where a row opens: the expense, carrying the tab and chip so it returns to them, or the reason's own link. */
-function rowHref(row: FinanceQueueRow, queue: string, reason: string | null): string {
+/** Where a row opens: the expense, carrying the tab and the page to return to, or the reason's own link. */
+function rowHref(row: FinanceQueueRow, queue: string, returnHref: string): string {
   if (!row.expenseId) return row.reasons[0].href ?? "#";
-  const params = new URLSearchParams({ queue, ...(reason ? { reason } : {}) });
-  return `/expense/expenses/${encodeURIComponent(row.expenseId)}?${params}`;
+  return `/expense/expenses/${encodeURIComponent(row.expenseId)}?${new URLSearchParams({ queue, from: returnHref })}`;
 }
 
 interface ListProps {
@@ -44,6 +43,8 @@ interface ListProps {
   counts: FinanceQueueCounts | null;
   /** The selected reason chip, from `?reason=`. */
   reason: string | null;
+  /** The host's URL for this tab and chip, which a decision on the expense returns to. */
+  returnHref: string;
   onReason: (reason: string | null) => void;
 }
 
@@ -51,7 +52,7 @@ interface ListProps {
  * One expense tab's rows: date, vendor, amount, the reasons in plain words, and how long it has
  * waited. A tab whose rows carry more than one reason shows a chip per reason that filters it.
  */
-export function FinanceQueueList({ tab, counts, reason, onReason }: ListProps) {
+export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: ListProps) {
   const queue = FINANCE_QUEUE_TABS.find((t) => t.key === tab)!.queue;
   const rows = useLoad<FinanceQueueRow[]>(`/finance-queue?tab=${queue}`);
   useEffect(() => {
@@ -70,7 +71,7 @@ export function FinanceQueueList({ tab, counts, reason, onReason }: ListProps) {
         <Group gap="xs" mb="md">
           {codes.map((code) => (
             <Chip key={code} size="sm" checked={code === reason} onChange={() => onReason(code === reason ? null : code)}>
-              {FINANCE_QUEUE_REASONS[code].label} {byReason[code] ?? 0}
+              {FINANCE_QUEUE_REASONS[code]} {byReason[code] ?? 0}
             </Chip>
           ))}
         </Group>
@@ -90,7 +91,7 @@ export function FinanceQueueList({ tab, counts, reason, onReason }: ListProps) {
             {shown.map((row) => (
               <Table.Tr key={row.expenseId ?? `${row.reasons[0].href}:${row.date}:${row.vendorName}:${row.waitingSince}`}>
                 <Table.Td>
-                  <Anchor component={Link} href={rowHref(row, queue, reason)}>{row.date ?? "No date"}</Anchor>
+                  <Anchor component={Link} href={rowHref(row, queue, returnHref)}>{row.date ?? "No date"}</Anchor>
                 </Table.Td>
                 <Table.Td>{row.vendorName ?? "Unknown vendor"}</Table.Td>
                 <Table.Td>{money(row.amountCents, row.currency)}</Table.Td>

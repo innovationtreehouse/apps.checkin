@@ -140,7 +140,8 @@ async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
  * clears the hold on a purchase at or over the Board-review total; an expense needing neither
  * takes none. It is not an approval. The text is required, a conflicted caller is refused (a
- * FINANCE holder records it, else a Board member), and once recorded it is not changed.
+ * FINANCE holder records it, else a Board member), and once recorded it is not changed. It closes
+ * THRESHOLD_CROSSED, which asks the same question.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);

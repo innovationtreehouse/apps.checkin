@@ -468,7 +468,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(fetches);
   });
 
-  it("finance fixes the account and retries: the account is re-resolved and the expense posts", async () => {
+  it("finance fixes the account and retries: the account is re-resolved, the expense posts and its flag closes", async () => {
     const { id, line } = await outboxedManual("not-an-account");
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
@@ -478,6 +478,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await resubmitHeldExpense(finance, id);
 
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
+    expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_FAILED" } })).toMatchObject({ checkedOffByUserId: 500, notes: "retry posted" });
     expect(qbo.posts).toHaveLength(1);
     expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
   });
@@ -496,6 +497,15 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
     expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a retry that fails again leaves the flag open", async () => {
+    const { id } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    await resubmitHeldExpense(principal(500, { isFinance: true }), id);
+
+    expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
+    expect((await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_FAILED" } }))?.checkedOffAt).toBeNull();
   });
 
   it("a refused retry answers 409 and records no retry", async () => {

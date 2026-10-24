@@ -173,44 +173,44 @@ describe("the expense tabs", () => {
   it("shows each row's date, vendor, amount and plain-word reasons, linking to the expense with the tab", () => {
     mockSearch = new URLSearchParams("queue=board");
     counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, board: tab(1) });
-    mockExpenseLoads["/finance-queue?tab=board"] = { data: [row("e1", [{ code: "board_approval_not_recorded", text: "Board approval of a $2,340.00 purchase not recorded" }])], error: null };
+    mockExpenseLoads["/finance-queue?tab=board"] = { data: [row("e1", [{ code: "BOARD_APPROVAL", text: "Board approval of a $2,340.00 purchase not recorded" }])], error: null };
     wrap();
     expect(screen.getByText("Board approval of a $2,340.00 purchase not recorded")).toBeInTheDocument();
     expect(screen.getByText("$2,340.00")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "2026-10-01" })).toHaveAttribute("href", "/expense/expenses/e1?queue=board");
-    expect(screen.queryByText("board_approval_not_recorded")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "2026-10-01" })).toHaveAttribute("href", `/expense/expenses/e1?queue=board&from=${encodeURIComponent("/finance/review?queue=board")}`);
+    expect(screen.queryByText("BOARD_APPROVAL")).not.toBeInTheDocument();
   });
 
   it("splits a tab by reason with a chip per reason that rides in the URL", () => {
     mockSearch = new URLSearchParams("queue=expenses");
-    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(3, 3, { reimbursee_to_name: 1, capital_review: 2 }) });
+    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(3, 3, { REIMBURSEE_TO_NAME: 1, CAPITAL_REVIEW: 2 }) });
     mockExpenseLoads["/finance-queue?tab=expenses"] = {
-      data: [row("e1", [{ code: "reimbursee_to_name", text: "Reimbursee to name" }]), row("e2", [{ code: "capital_review", text: "Capital review" }])],
+      data: [row("e1", [{ code: "REIMBURSEE_TO_NAME", text: "Reimbursee to name" }]), row("e2", [{ code: "CAPITAL_REVIEW", text: "Capital review" }])],
       error: null,
     };
     wrap();
     fireEvent.click(screen.getByRole("checkbox", { name: "Capital review 2" }));
-    expect(mockReplace).toHaveBeenCalledWith("/finance/review?queue=expenses&reason=capital_review", { scroll: false });
+    expect(mockReplace).toHaveBeenCalledWith("/finance/review?queue=expenses&reason=CAPITAL_REVIEW", { scroll: false });
   });
 
   it("filters to the chip in the URL and carries it to the expense", () => {
-    mockSearch = new URLSearchParams("queue=expenses&reason=capital_review");
-    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(3, 3, { reimbursee_to_name: 1, capital_review: 2 }) });
+    mockSearch = new URLSearchParams("queue=expenses&reason=CAPITAL_REVIEW");
+    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(3, 3, { REIMBURSEE_TO_NAME: 1, CAPITAL_REVIEW: 2 }) });
     mockExpenseLoads["/finance-queue?tab=expenses"] = {
-      data: [row("e1", [{ code: "reimbursee_to_name", text: "Reimbursee to name" }]), row("e2", [{ code: "capital_review", text: "Capital review" }])],
+      data: [row("e1", [{ code: "REIMBURSEE_TO_NAME", text: "Reimbursee to name" }]), row("e2", [{ code: "CAPITAL_REVIEW", text: "Capital review" }])],
       error: null,
     };
     wrap();
     const links = screen.getAllByRole("link", { name: "2026-10-01" });
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/expense/expenses/e2?queue=expenses&reason=capital_review");
+    expect(links[0]).toHaveAttribute("href", `/expense/expenses/e2?queue=expenses&from=${encodeURIComponent("/finance/review?queue=expenses&reason=CAPITAL_REVIEW")}`);
   });
 
   it("links a failed intake row to Receiving", () => {
     mockSearch = new URLSearchParams("queue=expenses");
     counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(1) });
     mockExpenseLoads["/finance-queue?tab=expenses"] = {
-      data: [row(null, [{ code: "intake_failed", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }])],
+      data: [row(null, [{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }])],
       error: null,
     };
     wrap();
