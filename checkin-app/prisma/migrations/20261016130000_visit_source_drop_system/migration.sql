@@ -14,14 +14,20 @@ SET "arrivedVia" = 'LEAD_MARKED'
 WHERE "arrivedVia" = 'SYSTEM';
 
 -- Fail closed: abort rather than guess if anything else still holds SYSTEM.
+-- The snapshot query sits in its own IF: PL/pgSQL parses a whole condition
+-- before AND short-circuits, so naming a missing table there errors (42P01).
+-- Staging copies only the public schema, so the snapshot is absent there.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM "Visit" WHERE "arrivedVia" = 'SYSTEM' OR "departedVia" = 'SYSTEM')
-       OR EXISTS (SELECT 1 FROM "PresenceEvent" WHERE "source" = 'SYSTEM')
-       OR (to_regclass('"backfill"."_visit_source_web_backfill"') IS NOT NULL
-           AND EXISTS (SELECT 1 FROM "backfill"."_visit_source_web_backfill"
-                       WHERE "arrivedVia" = 'SYSTEM' OR "departedVia" = 'SYSTEM')) THEN
+       OR EXISTS (SELECT 1 FROM "PresenceEvent" WHERE "source" = 'SYSTEM') THEN
         RAISE EXCEPTION 'VisitSource SYSTEM is still in use; refusing to drop it';
+    END IF;
+    IF to_regclass('"backfill"."_visit_source_web_backfill"') IS NOT NULL THEN
+        IF EXISTS (SELECT 1 FROM "backfill"."_visit_source_web_backfill"
+                   WHERE "arrivedVia" = 'SYSTEM' OR "departedVia" = 'SYSTEM') THEN
+            RAISE EXCEPTION 'VisitSource SYSTEM is still in use in the WEB-relabel snapshot; refusing to drop it';
+        END IF;
     END IF;
 END $$;
 

@@ -16,6 +16,7 @@ type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: 
 
 const allRecognized = fixture<Receipt>("S2-expense-receipt/all-recognized-gtin");
 const hasProvisional = fixture<Receipt>("S2-expense-receipt/has-provisional");
+const hasNonInventory = fixture<Receipt>("S2-expense-receipt/has-non-inventory");
 const financeApproved = fixture<Receipt>("S2-expense-receipt/finance-approved-tax");
 
 async function snapshot(receiptId: string) {
@@ -35,6 +36,24 @@ describe("S2 intake — contract guard", () => {
 
   it("rejects a malformed payload", async () => {
     await expect(receiveCompletedReceipt({ receiptId: "x" })).rejects.toThrow();
+  });
+});
+
+describeDb("S2 intake — has-non-inventory fixture", () => {
+  it("stores the non-inventory mark on its line and leaves the line for FINANCE to assign", async () => {
+    await receiveCompletedReceipt(hasNonInventory);
+    const lines = await db.expenseLineItem.findMany({ where: { expenseId: hasNonInventory.receiptId }, orderBy: { lineNumber: "asc" } });
+    expect(lines.map((l) => l.nonInventory)).toEqual([false, true]);
+    const approval = await db.lineItemOwnerApproval.findFirst({ where: { lineItemId: lines[1].id } });
+    expect(approval!.ownerId).toBeNull();
+    expect((await db.expense.findFirst({ where: { id: hasNonInventory.receiptId } }))!.state).toBe("assign_ownership");
+  });
+
+  it("stores no GTIN on a non-inventory line, even when the payload carries one", async () => {
+    const lineItems = hasNonInventory.lineItems.map((li, i) => (i === 1 ? { ...li, gtin13: "0000000000017" } : li));
+    await receiveCompletedReceipt({ ...hasNonInventory, lineItems });
+    const line = await db.expenseLineItem.findFirst({ where: { expenseId: hasNonInventory.receiptId, nonInventory: true } });
+    expect(line!.gtin13).toBeNull();
   });
 });
 

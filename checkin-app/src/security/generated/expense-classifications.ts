@@ -91,6 +91,7 @@ export const classifications = {
         totalPriceCents: 'internal',
         gtin13: 'internal',
         isDelayed: 'internal',
+        nonInventory: 'internal',
         isCapital: 'internal',
         capitalOwnerId: 'pii',
         depreciationYears: 'internal',

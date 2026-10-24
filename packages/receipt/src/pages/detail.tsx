@@ -1,15 +1,16 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
-import { returnQueue, reviewHref } from "../components/reviewQueue";
+import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -29,6 +30,13 @@ interface Receipt extends ReceiptListRow {
   shippingCents: number | null;
   discountCents: number | null;
   reimbursementFor?: string | null;
+  fileHash?: string;
+  receiptNumber?: string | null;
+  orderNumber?: string | null;
+  currency?: string;
+  /** Finance and board views only. */
+  duplicateSuspectReceiptId?: string | null;
+  duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: ServerLine[];
 }
@@ -57,6 +65,12 @@ export default function ReceiptDetailPage() {
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
+  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
+  const comparing = (isFinance || isBoard) && suspectId !== null && receipt.data?.state === "duplicate_flagged";
+  const original = useLoad<Receipt>(comparing ? `/${suspectId}` : null);
+  useEffect(() => {
+    if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
+  }, [original.error]);
   const [note, setNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -78,8 +92,8 @@ export default function ReceiptDetailPage() {
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
-  const act = async (path: string, method: string, body: unknown, success: string, decides = false) => {
-    if (await send(`/${id}${path}`, method, body, success)) {
+  const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
+    if (await send(`/${id}${path}`, method, body, success, failed)) {
       if (decides && fromReview) {
         router.push(back.href);
         return;
@@ -91,6 +105,15 @@ export default function ReceiptDetailPage() {
       audit.reload();
     }
   };
+  const discardOriginal = async () => {
+    if (!suspectId) return;
+    if (await send(`/${suspectId}/discard`, "POST", {}, "The original is discarded", "Couldn't discard the original")) {
+      receipt.reload();
+      original.reload();
+      audit.reload();
+    }
+  };
+  const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
@@ -156,6 +179,24 @@ export default function ReceiptDetailPage() {
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
       )}
+      {comparing && (
+        <DuplicateCompare
+          receipt={r}
+          original={original.data}
+          originalHref={originalHref}
+          isFinance={isFinance}
+          own={own}
+          onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}
+          onDiscardReceipt={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}
+          onDiscardOriginal={() => void discardOriginal()}
+        />
+      )}
+      {!comparing && suspectId && (
+        <Text size="sm">
+          This receipt was flagged as a possible duplicate of <Anchor component={Link} href={originalHref}>another receipt</Anchor>
+          {r.duplicateFlagClearedAt ? " and cleared as not a duplicate." : "."}
+        </Text>
+      )}
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
@@ -197,24 +238,24 @@ export default function ReceiptDetailPage() {
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed"))}>Confirm</Button>
+                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>Confirm</Button>
                 {isAdult && !r.isInKind && (
-                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated")}>
+                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
                   </Button>
                 )}
               </>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
             )}
             {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", true))}>
+              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", "Couldn't resubmit this receipt", true))}>
                 {dirty ? "Save and resubmit" : "Resubmit"}
               </Button>
             )}
-            {(own || isFinance) && !TERMINAL.has(r.state) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
+            {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
+              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
 
@@ -224,30 +265,30 @@ export default function ReceiptDetailPage() {
                 <Text fw={500} size="sm">Finance</Text>
                 {r.state === "financial_review" && !own && (
                   <>
-                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", true)}>Approve</Button>
+                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
                     <Group align="end" gap="xs">
                       <Textarea label="Reason (optional)" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", true)}>Reject</Button>
+                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
                     </Group>
                   </>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
-                {r.state === "duplicate_flagged" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared", true)}>Not a duplicate</Button>
+                {r.state === "duplicate_flagged" && !comparing && !own && (
+                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}>Not a duplicate</Button>
                 )}
                 {r.state === "flow_error" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", true)}>Restart</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
                 {r.state === "discarded" && (
                   <Group align="end">
                     <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
-                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on")}>
+                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on", "Couldn't ignore this file")}>
                       Ignore this file from now on
                     </Button>
                   </Group>
                 )}
                 {r.state === "receipt_finalized" && !r.pushedAt && (
-                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent")}>Send downstream</Button>
+                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent", "Couldn't send this receipt downstream")}>Send downstream</Button>
                 )}
               </Stack>
             </Paper>

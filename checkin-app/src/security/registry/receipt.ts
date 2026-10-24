@@ -29,6 +29,9 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/reimbursement', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/in-kind', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+// The people an uploader may name as reimbursee on upload, matching ?q=: each one's id
+// and name, both `public` on Person, and nothing else.
+defineRoute({ endpoint: 'GET /api/receipts/reimbursee-options', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptReimburseeOption'], orderedView: [['authenticated', ['public']]] });
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
@@ -43,6 +46,7 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-
 
 // FINANCE reads (BOARD too).
 defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 
@@ -65,6 +69,23 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize:
 defineRoute({ endpoint: 'POST /api/receipts/[id]/ignore-file', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/ignored-files', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/ignored-files/[id]', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
+
+// Receipt flow status: how many receipts, receiving records and expenses sit in
+// each state, counts only. FINANCE and BOARD read every section (expenses.md).
+// INVENTORY_MANAGER reads the receiving section alone (inventory.md, Access),
+// tiered `public` like the receiving queue counts; its view holds no `internal`
+// grant, so the receipt and expense sections strip.
+defineRoute({
+    endpoint: 'GET /api/receipt-flow/status',
+    authorize: { anyRole: ['isFinance', 'isBoardMember', 'isInventoryManager'] },
+    envelope: null,
+    returns: ['ReceiptFlowStatus'],
+    orderedView: [
+        ['isFinance', ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+        ['isInventoryManager', ['public']],
+    ],
+});
 
 // Files: the only way receipt bytes leave. Naming each field here
 // makes it file-only, so the JSON stripper drops it on every route. Headers are

@@ -5,7 +5,11 @@
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),
  * plus the detail screen's line items and review reasons and "My receipts"'
- * paid status (`reimbursement`: `{ paidOn }` or null). Tiers match the generated
+ * paid status (`reimbursement`: `{ paidOn }` or null), and on a finalized receipt
+ * not yet delivered to receiving its push record: whether catch-up has given up
+ * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
+ * `lastPushFailure`). The message is the push_failed audit row's `valueAfter`, so
+ * it keeps that column's `personal` tier. Tiers match the generated
  * models field for field. No file column is listed, so the stripper drops one if
  * a projection ever passes it through: the file leaves only through the file
  * route (plan rule 7).
@@ -15,12 +19,26 @@
  * row by itself, so without the stamp a submitter's `their_own` view would strip
  * every line of their own receipt. A line without the stamp fails closed.
  *
+ * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
+ * a count per state, finalized receipts not yet delivered, and those catch-up
+ * gave up on. Counts only, `internal`.
+ *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
  *
  * ReceiptIgnoredFileView — one entry of the mailbox ignore list: a file's hash,
  * finance's free-text reason, the adding person's id and when. All `internal`
  * (owner ruling 2026-10-16): a hash fingerprints a file without holding it.
+ *
+ * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
+ * receipts (plus finalized ones not yet delivered), receiving records and
+ * expenses, each a list of `{ state, label, count }`, and when they were read.
+ * Counts only, no record field. Receiving and the time are `public`, matching
+ * WorkflowReceiptCount; receipts and expenses are `internal`.
+ *
+ * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
+ * Person's `id` and `name`, both `public` on Person, so any receipt submitter
+ * reads them.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
@@ -67,6 +85,9 @@ export const classifications = {
     financialReviewReasons: "internal",
     complete: "internal",
     reimbursement: "internal",
+    pushGivenUp: "internal",
+    lastPushFailedAt: "internal",
+    lastPushFailure: "personal",
   },
   ReceiptLineView: {
     id: "internal",
@@ -90,6 +111,21 @@ export const classifications = {
   },
   ReceiptPushResult: {
     pushed: "internal",
+  },
+  ReceiptQueueCounts: {
+    byState: "internal",
+    notPushed: "internal",
+    pushGivenUp: "internal",
+  },
+  ReceiptFlowStatus: {
+    asOf: "public",
+    receipt: "internal",
+    receiving: "public",
+    expense: "internal",
+  },
+  ReceiptReimburseeOption: {
+    id: "public",
+    name: "public",
   },
   ReceiptIgnoredFileView: {
     id: "internal",

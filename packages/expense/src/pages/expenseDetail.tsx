@@ -8,12 +8,15 @@ import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import NonInventoryBadge from "../components/NonInventoryBadge";
 
 interface Line {
   id: number;
   lineNumber: number;
   description: string;
   partNumber: string | null;
+  gtin13?: string | null;
+  nonInventory?: boolean;
   quantity: number;
   totalPriceCents: number;
   isCapital: boolean;
@@ -195,6 +198,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
+  // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
+  const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
+  const canMapPart = dialog?.action === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
   // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
   const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD") || s.missing.includes("BOARD_APPROVAL"));
   const held = e.reimburseePersonId !== undefined
@@ -251,7 +257,10 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             return (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.lineNumber}</Table.Td>
-                <Table.Td>{l.description}{l.partNumber && <Text size="xs" c="dimmed">{l.partNumber}</Text>}</Table.Td>
+                <Table.Td>
+                  {l.description}{l.nonInventory && <NonInventoryBadge />}
+                  {l.partNumber && <Text size="xs" c="dimmed">{l.partNumber}</Text>}
+                </Table.Td>
                 <Table.Td>{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
                 <Table.Td>{a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}</Table.Td>
                 <Table.Td>
@@ -381,7 +390,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {needsBucket ? (
             <>
               <Select label="Bucket" data={bucketOptions} value={bucket} onChange={setBucket} searchable />
-              {dialog?.action === "assign-owner" && (
+              {canMapPart && (
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />
               )}
             </>

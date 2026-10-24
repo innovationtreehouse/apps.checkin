@@ -9,7 +9,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, ORG } from "../helpers/seed";
+import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, principal, ORG } from "../helpers/seed";
 
 const inv = vi.hoisted(() => ({
   listCategories: vi.fn(),
@@ -19,6 +19,7 @@ const inv = vi.hoisted(() => ({
 }));
 
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
+import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 
 /** Default catalog: one category/subcategory, every part resolves cleanly. */
 function catalogResolvesAll(gtinByItemId: Record<number, string>) {
@@ -115,6 +116,40 @@ describeDb("checkAndProcessExpense — negative / hold paths", () => {
 
     expect(await stateOf(id)).toBe("qb_complete");
     expect(await holdsFor(id)).toHaveLength(0);
+  });
+});
+
+describeDb("checkAndProcessExpense — non-inventory lines", () => {
+  it("holds a part-numbered non-inventory line as NON_INVENTORY without a catalog lookup", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PZ-LG", nonInventory: true, totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" }); // a wildcard rule it must not take
+
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+
+    expect(await stateOf(id)).toBe("qb_on_hold");
+    expect(await holdsFor(id)).toMatchObject([{ reason: "NON_INVENTORY", status: "PENDING", lineItemId: li }]);
+    expect(inv.lookupItems).not.toHaveBeenCalled();
+  });
+
+  it("finance sets the account and resubmits: the hold clears and the line books to that account", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PZ-LG", nonInventory: true, totalPriceCents: 100 });
+    catalogResolvesAll({});
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(await stateOf(id)).toBe("qb_on_hold");
+
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, li, "6100");
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await holdsFor(id)).map((h) => h.status)).not.toContain("PENDING");
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
+    expect(inv.lookupItems).not.toHaveBeenCalled();
   });
 });
 

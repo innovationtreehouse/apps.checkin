@@ -71,7 +71,7 @@ describe("correcting a receipt whose totals don't add up", () => {
     wrap();
     type("Line 2 unit price", "10.50");
     fireEvent.click(screen.getByRole("button", { name: "Save and resubmit" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/resubmit", "POST", {}, "Resubmitted"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/resubmit", "POST", {}, "Resubmitted", "Couldn't resubmit this receipt"));
     expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 10.5 }) });
   });
 
@@ -150,7 +150,7 @@ describe("reviewing an OCR-read receipt", () => {
     wrap();
     type("Retailer", "Acme Hardware");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
     expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ retailer: "Acme Hardware" }) });
   });
 });
