@@ -5,6 +5,7 @@ export const APPLIED_LINES_LOCKED = "Part of this receipt was already applied, s
 type LockFields = {
   state: string;
   inventoryAppliedAt: Date | string | null;
+  inventoryUnconfirmedAt: Date | string | null;
   expenseAppliedAt: Date | string | null;
   donationAppliedAt: Date | string | null;
 };
@@ -14,6 +15,8 @@ export function lineLockReason(received: LockFields): string | null {
   if (!EDITABLE_RECEIPT_STATES.some((s) => s === received.state)) {
     return `Cannot edit lines of a receipt in state "${received.state}"`;
   }
-  if (received.inventoryAppliedAt || received.expenseAppliedAt || received.donationAppliedAt) return APPLIED_LINES_LOCKED;
+  if (received.inventoryAppliedAt || received.inventoryUnconfirmedAt || received.expenseAppliedAt || received.donationAppliedAt) {
+    return APPLIED_LINES_LOCKED;
+  }
   return null;
 }

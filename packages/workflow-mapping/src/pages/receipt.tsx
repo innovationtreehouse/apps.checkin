@@ -15,6 +15,7 @@ interface Receipt {
   state: string;
   validationNotes?: string | null;
   inventoryAppliedAt: string | null;
+  inventoryUnconfirmedAt: string | null;
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
 }
