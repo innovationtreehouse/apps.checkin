@@ -44,9 +44,8 @@ async function advanceCursor(eventId: number): Promise<void> {
 
 /**
  * Point lines still provisional on this GTIN at the catalog's real item, on editable receipts
- * only. A line the manager has since linked or marked not-inventory keeps that decision. Not a
- * late edit when a leg applied: inventory and expense resolve the same provisional from their own
- * S5 consumers, and the donation leg records no lines, so nothing needs a hand fix.
+ * only, so a receipt with an applied leg keeps the mapping its retry resends. A line the manager
+ * has since linked or marked not-inventory keeps that decision.
  */
 async function remapProvisional(
   orgId: string,

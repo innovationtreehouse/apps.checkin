@@ -9,6 +9,7 @@ import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
 import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import { canSubmitReceipts } from "@/lib/volunteer";
+import { financeQueueCountKey } from "@checkin/receipt/nav";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
@@ -47,6 +48,13 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
   {
+    library: "local-inventory",
+    // Only INVENTORY_MANAGER fulfils or cancels a queued line; FINANCE and BOARD only read the queue.
+    visible: (u) => u.isInventoryManager === true,
+    count: async (): Promise<Record<string, number>> =>
+      process.env.LOCAL_INVENTORY_DATABASE_URL ? (await import("@checkin/local-inventory")).getNavCounts() : {},
+  },
+  {
     library: "income",
     visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
     count: async (): Promise<Record<string, number>> =>
@@ -56,19 +64,24 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "receipt",
-    // An uploader counts their own receipts; FINANCE counts its queues. BOARD reads the queues
-    // but cannot act on them, so it gets no queue count.
+    // An uploader counts their own receipts; FINANCE counts its queues, less the receipts it is
+    // conflicted on. BOARD reads the queues but cannot act on them, so it gets no queue count.
     visible: (u) => canSubmitReceipts(u) || u.isFinance === true,
     count: async (u): Promise<Record<string, number>> => {
-      if (!process.env.RECEIPT_DATABASE_URL) return {};
+      if (!process.env.RECEIPT_DATABASE_URL || typeof u.id !== "number") return {};
       const { receiptService } = await import("@checkin/receipt");
-      const [awaitingMe, awaitingFinance] = await Promise.all([
-        canSubmitReceipts(u) && typeof u.id === "number" ? receiptService.countAwaitingSubmitter(u.id) : null,
-        u.isFinance === true ? receiptService.countAwaitingFinance() : null,
+      const [awaitingMe, finance] = await Promise.all([
+        canSubmitReceipts(u) ? receiptService.countAwaitingSubmitter(u.id) : null,
+        u.isFinance === true ? receiptService.countAwaitingFinance(u.id) : null,
       ]);
       return {
         ...(awaitingMe === null ? {} : { awaitingMe }),
-        ...(awaitingFinance === null ? {} : { awaitingFinance }),
+        ...(finance === null
+          ? {}
+          : {
+              awaitingFinance: finance.total,
+              ...Object.fromEntries(Object.entries(finance.byState).map(([state, n]) => [financeQueueCountKey(state), n])),
+            }),
       };
     },
   },

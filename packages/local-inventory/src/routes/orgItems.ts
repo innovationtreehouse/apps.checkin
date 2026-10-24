@@ -42,6 +42,19 @@ async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput>
   return where;
 }
 
+/**
+ * The list order from `sortBy` (gtin13, location or backstock) and `sortDir`, default part
+ * number ascending. Names live in the catalog's database, so the list cannot order by name.
+ */
+export function itemOrderBy(sp: URLSearchParams): Prisma.OrgItemOrderByWithRelationInput[] {
+  const dir: Prisma.SortOrder = sp.get("sortDir") === "desc" ? "desc" : "asc";
+  switch (sp.get("sortBy")) {
+    case "location": return [{ location: { name: dir } }, { gtin13: "asc" }];
+    case "backstock": return [{ backstockLocation: { name: dir } }, { gtin13: "asc" }];
+    default: return [{ gtin13: dir }];
+  }
+}
+
 async function findItem(gtin13: string) {
   return db.orgItem.findFirst({ where: { orgId: await getOrgId(), gtin13 }, include });
 }
@@ -51,7 +64,7 @@ export const list: InventoryRouteHandler = async ({ req }) => {
   return {
     OrgItem: await db.orgItem.findMany({
       where: await itemWhere(sp),
-      orderBy: { gtin13: "asc" },
+      orderBy: itemOrderBy(sp),
       include,
       ...pageArgs(sp),
     }),

@@ -25,6 +25,7 @@ export const classifications = {
         expenseAppliedAt: 'public',
         donationAppliedAt: 'public',
         applyClaimedAt: 'public',
+        applySweepAttempts: 'public',
         createdAt: 'public',
         updatedAt: 'public',
     },
