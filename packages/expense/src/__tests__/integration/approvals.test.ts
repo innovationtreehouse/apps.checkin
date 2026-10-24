@@ -8,7 +8,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
-import { signLine } from "../../services/signoffService";
+import { setReimbursee, signLine } from "../../services/signoffService";
 import { approveLine, approveLines, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
 const LEADER = principal(2);
@@ -54,6 +54,22 @@ describeDb("approveLine", () => {
     const { id, approvalId } = await lineInApproval();
     await approveLine(FINANCE, id, approvalId);
     expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 3, notes: null });
+  });
+});
+
+describeDb("the reimbursee is known before the approval", () => {
+  it("nobody approves a reimbursement line while its reimbursee is unknown; once FINANCE names them, the approver does", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+    const approvalId = await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+
+    await expect(approveLine(LEADER, id, approvalId)).rejects.toMatchObject({ status: 409 });
+    await expect(approveLine(BOARD, id, approvalId, "leader away")).rejects.toMatchObject({ status: 409 });
+    expect(await approval(approvalId)).toMatchObject({ status: "pending" });
+
+    await setReimbursee(ORG, id, 1, FINANCE);
+    await approveLine(LEADER, id, approvalId);
+    expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 2 });
   });
 });
 
@@ -165,13 +181,23 @@ describeDb("approveLines (Approve All)", () => {
     expect(await statuses(approvalIds)).toEqual(["pending", "pending"]);
   });
 
-  it("refuses a Board stand-in line, since Approve All carries no reason", async () => {
+  it("refuses a Board stand-in line a bucket approver could approve", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [5], 101: [2] }, board: [5] }) });
     const { id, approvalIds } = await linesInApproval([100, 101]);
 
-    await expect(approveLines(BOARD, id, approvalIds)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Line 2: /) });
+    await expect(approveLines(BOARD, id, approvalIds)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/^Line 2: A bucket approver can approve/) });
 
     expect(await statuses(approvalIds)).toEqual(["pending", "pending"]);
+  });
+
+  it("approves org-level lines, where the Board is the only one who can act, as a stand-in", async () => {
+    bindPorts({ signoff: directory({ orgLevel: [300], board: [5] }) });
+    const { id, approvalIds } = await linesInApproval([300, 300]);
+
+    await approveLines(BOARD, id, approvalIds);
+
+    expect(await statuses(approvalIds)).toEqual(["approved", "approved"]);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved_board_stand_in", userId: 5 } })).toBe(2);
   });
 
   it("refuses an empty list and an approval from another expense", async () => {

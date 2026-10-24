@@ -8,7 +8,7 @@ import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
-import { approvalRefusal, approvesAsStandIn } from "../lib/signoff";
+import { approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -77,7 +77,8 @@ export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
  * The program approver's sign-off on one line, inside a transaction holding the expense lock. A
  * bucket approver approves; a Board member without a conflict may approve any line in place of its
  * approvers, giving the reason, which is kept on the approval and its audit row. Whoever a seat on
- * the line would refuse is refused.
+ * the line would refuse is refused. With `soleStandIn`, a Board stand-in is refused while a bucket
+ * approver could approve the line.
  */
 async function approveLocked(
   tx: Prisma.TransactionClient,
@@ -85,6 +86,7 @@ async function approveLocked(
   expense: Awaited<ReturnType<typeof lockedInOwnerApproval>>,
   approval: ApprovalRead & { lineItemId: number },
   text: string | null,
+  soleStandIn = false,
 ): Promise<void> {
   if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
   const facts = (await signoffFactsByLine(tx, expense)).get(approval.lineItemId)!;
@@ -92,6 +94,9 @@ async function approveLocked(
   const refusal = approvalRefusal(facts, filled, actor.userId);
   if (refusal) throw new ServiceError(403, refusal);
   const standIn = approvesAsStandIn(facts, actor.userId);
+  if (standIn && soleStandIn && facts.approvers.some((id) => approvalRefusal(facts, filled, id) === null)) {
+    throw new ServiceError(403, "A bucket approver can approve this line; a Board member approves it on its own, giving the reason");
+  }
   if (standIn && !facts.orgLevel && !text) {
     throw new ServiceError(400, "A Board member approving in place of the bucket's approvers gives the reason");
   }
@@ -105,12 +110,13 @@ async function approveLocked(
   });
 }
 
-/** Locks the expense and returns it, refused unless it waits for owner approval. */
+/** Locks the expense and returns it, refused unless it waits for owner approval with its reimbursee known. */
 async function lockedInOwnerApproval(tx: Prisma.TransactionClient, expenseId: string) {
   await lockExpense(tx, expenseId);
   const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
   return expense;
 }
 
@@ -137,7 +143,8 @@ export async function approveLine(
 
 /**
  * Approve All: approves every listed line under one expense lock, each through the same checks as
- * a single approval, or none of them. A refusal names the line by its number.
+ * a single approval, or none of them. A Board stand-in is approved only on a line no bucket
+ * approver can approve. A refusal names the line by its number.
  */
 export async function approveLines(principal: ExpensePrincipal, expenseId: string, approvalIds: number[]): Promise<void> {
   const actor = actorOf(principal);
@@ -154,8 +161,8 @@ export async function approveLines(principal: ExpensePrincipal, expenseId: strin
     if (approvals.length !== ids.length) throw new ServiceError(404, "Approval record not found");
     for (const approval of approvals) {
       try {
-        // No reason: a Board stand-in line, which needs one, is refused as a single approval without it is.
-        await approveLocked(tx, actor, expense, approval, null);
+        // No reason: a stand-in line that needs one is refused, as a single approval without it is.
+        await approveLocked(tx, actor, expense, approval, null, true);
       } catch (err) {
         if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${approval.lineItem.lineNumber}: ${err.message}`);
         throw err;

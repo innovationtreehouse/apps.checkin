@@ -11,7 +11,8 @@ export interface LineActsStatus {
 
 /**
  * The approval rows of every line whose main act for the caller is an approval that needs no
- * note. A line whose approval needs a note is approved on its own, where the note is asked for.
+ * note. A Board stand-in's approval is the main act only where no bucket approver can act, and one
+ * that needs a reason is approved on its own, where the reason is asked for.
  */
 export function approvableIds(statuses: LineActsStatus[], approvals: { id: number; lineItemId: number }[]): number[] {
   const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a.id]));
