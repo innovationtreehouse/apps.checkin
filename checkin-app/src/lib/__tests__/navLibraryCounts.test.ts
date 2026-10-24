@@ -8,7 +8,8 @@ const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
 jest.mock("@checkin/receipt", () => ({
   receiptService: {
     countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
-    countAwaitingSubmitter: async (id: number) => id * 10,
+    // A Board member's count adds the confirmations only the Board gives.
+    countAwaitingSubmitter: async (id: number, isBoardMember = false) => id * 10 + (isBoardMember ? 1 : 0),
   },
 }));
 
@@ -31,7 +32,7 @@ describe("the receipt provider", () => {
     });
     expect(mockCountAwaitingFinance).toHaveBeenCalledWith(5);
     expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingMe: 10 },
+      receipt: { awaitingMe: 11 },
     });
     expect(mockCountAwaitingFinance).toHaveBeenCalledTimes(1);
   });

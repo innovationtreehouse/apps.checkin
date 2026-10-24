@@ -11,13 +11,13 @@ const BOARD = { id: 500, name: "bea", firstName: "Bea", lastName: "Board", isAdu
 
 let ports: ReturnType<typeof recordingPorts>;
 let awaiting: AwaitedConfirmation[];
-let confirmed: Array<{ receiptId: string; reimburseePersonId: number; signerId: number }>;
+let confirmed: Array<{ receiptId: string; reimburseePersonId: number; signerId: number; reason?: string }>;
 
 const confirmations: SubmitterConfirmations = {
   awaiting: async () => awaiting,
-  confirm: async (receiptId, reimburseePersonId, signer) => {
+  confirm: async (receiptId, reimburseePersonId, signer, reason) => {
     if (!awaiting.some((a) => a.receiptId === receiptId && a.reimburseePersonId === reimburseePersonId)) return false;
-    confirmed.push({ receiptId, reimburseePersonId, signerId: signer.id });
+    confirmed.push({ receiptId, reimburseePersonId, signerId: signer.id, ...(reason ? { reason } : {}) });
     awaiting = awaiting.filter((a) => a.receiptId !== receiptId);
     return true;
   },
@@ -73,6 +73,7 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
 
   it.each([
     ["receiptDate", { receiptDate: "2020-01-01" }],
+    ["currency", { currency: "CAD" }],
     ["shippingCents", { shipping: "1.00" }],
     ["taxCents", { tax: "1.00" }],
     ["discountCents", { discount: "1.00" }],
@@ -108,7 +109,6 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
 
   it.each([
     ["the retailer", { retailer: "Other Store" }],
-    ["the currency", { currency: "CAD" }],
   ])("a finance change to %s does not void it", async (_label, change) => {
     const { id } = await confirmedInValidation();
     actAs(FINANCE);
@@ -187,16 +187,38 @@ describeDb("the person reimbursed confirms, not the uploader", () => {
 });
 
 describeDb("a Board member confirms for a reimbursee with no account", () => {
-  it("lists it, and the confirmation records that it was on their behalf, and by whom", async () => {
+  it("lists it, and the confirmation records that it was on their behalf, by whom, and why", async () => {
     const id = await uploadFor(NO_ACCOUNT.id);
     actAs(BOARD);
     expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, onBehalf: true })]);
-    await receiptService.confirmAsReimbursee(id);
-    expect(ports.calls.pushes[0].submitterConfirmation).toMatchObject({ confirmedByPersonId: NO_ACCOUNT.id, onBehalfByPersonId: BOARD.id });
+    await receiptService.confirmAsReimbursee(id, "  Nora has no email address  ");
+    expect((await db.receiptDetail.findUniqueOrThrow({ where: { id } })).reviewedOnBehalfReason).toBe("Nora has no email address");
+    expect(ports.calls.pushes[0].submitterConfirmation).toMatchObject({
+      confirmedByPersonId: NO_ACCOUNT.id,
+      onBehalfByPersonId: BOARD.id,
+      onBehalfReason: "Nora has no email address",
+    });
     expect(await db.receiptAuditLog.findFirst({ where: { receiptId: id, action: "submitter_review_confirmed" } })).toMatchObject({
       userId: BOARD.id,
-      valueAfter: `on behalf of ${NO_ACCOUNT.id}`,
+      valueAfter: `on behalf of ${NO_ACCOUNT.id}: Nora has no email address`,
     });
+  });
+
+  it("refuses a blank reason, and confirms nothing", async () => {
+    const id = await uploadFor(NO_ACCOUNT.id);
+    actAs(BOARD);
+    for (const reason of [undefined, null, "", "   "]) {
+      await expect(receiptService.confirmAsReimbursee(id, reason)).rejects.toMatchObject({ status: 400 });
+    }
+    expect(await stateOf(id)).toBe("submitter_review");
+  });
+
+  it("counts on a Board member's pill, and only theirs", async () => {
+    await uploadFor(NO_ACCOUNT.id);
+    await uploadFor(BOB.id);
+    expect(await receiptService.countAwaitingSubmitter(BOARD.id, true)).toBe(1);
+    expect(await receiptService.countAwaitingSubmitter(BOARD.id, false)).toBe(0);
+    expect(await receiptService.countAwaitingSubmitter(ALICE.id, true)).toBe(0);
   });
 
   it("a Board member who is party to the receipt cannot", async () => {
@@ -217,7 +239,7 @@ describeDb("confirming again once the expense exists", () => {
   async function sentFor(reimburseePersonId: number) {
     const id = await uploadFor(reimburseePersonId);
     actAs(reimburseePersonId === BOB.id ? BOB : BOARD);
-    await receiptService.confirmAsReimbursee(id);
+    await receiptService.confirmAsReimbursee(id, reimburseePersonId === BOB.id ? null : "no account");
     awaiting = [{ receiptId: id, reimburseePersonId, changedFields: ["reimbursee"] }];
     return id;
   }
@@ -238,11 +260,12 @@ describeDb("confirming again once the expense exists", () => {
     expect(await receiptService.listConfirmations()).toEqual([]);
   });
 
-  it("a Board member confirms again for a reimbursee with no account", async () => {
+  it("a Board member confirms again for a reimbursee with no account, giving the reason", async () => {
     const id = await sentFor(NO_ACCOUNT.id);
     actAs(BOARD);
-    await receiptService.confirmAsReimbursee(id);
-    expect(confirmed).toEqual([{ receiptId: id, reimburseePersonId: NO_ACCOUNT.id, signerId: BOARD.id }]);
+    await expect(receiptService.confirmAsReimbursee(id, " ")).rejects.toMatchObject({ status: 400 });
+    await receiptService.confirmAsReimbursee(id, "still no account");
+    expect(confirmed).toEqual([{ receiptId: id, reimburseePersonId: NO_ACCOUNT.id, signerId: BOARD.id, reason: "still no account" }]);
   });
 
   it("is refused when nothing waits for it", async () => {

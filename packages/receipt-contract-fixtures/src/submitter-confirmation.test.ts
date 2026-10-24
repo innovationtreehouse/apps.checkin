@@ -16,8 +16,9 @@ describe("CompletedReceipt.submitterConfirmation", () => {
     expect(CompletedReceiptSchema.parse(withConfirmation({})).submitterConfirmation).toEqual(confirmation);
   });
 
-  it("names the Board member who confirmed on the reimbursee's behalf", () => {
-    expect(CompletedReceiptSchema.parse(withConfirmation({ onBehalfByPersonId: 5 })).submitterConfirmation).toEqual({ ...confirmation, onBehalfByPersonId: 5 });
+  it("names the Board member who confirmed on the reimbursee's behalf, and why", () => {
+    const onBehalf = { onBehalfByPersonId: 5, onBehalfReason: "no email address" };
+    expect(CompletedReceiptSchema.parse(withConfirmation(onBehalf)).submitterConfirmation).toEqual({ ...confirmation, ...onBehalf });
   });
 
   it.each([

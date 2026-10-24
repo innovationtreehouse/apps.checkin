@@ -66,13 +66,14 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   {
     library: "receipt",
     // An uploader counts their own receipts; FINANCE counts its queues, less the receipts it is
-    // conflicted on. BOARD reads the queues but cannot act on them, so it gets no queue count.
-    visible: (u) => canSubmitReceipts(u) || u.isFinance === true,
+    // conflicted on. BOARD reads the queues but cannot act on them, so it gets no queue count; it
+    // counts only the confirmations it alone gives, for a reimbursee with no account.
+    visible: (u) => canSubmitReceipts(u) || u.isFinance === true || u.isBoardMember === true,
     count: async (u): Promise<Record<string, number>> => {
       if (!process.env.RECEIPT_DATABASE_URL || typeof u.id !== "number") return {};
       const { receiptService } = await import("@checkin/receipt");
       const [awaitingMe, finance] = await Promise.all([
-        canSubmitReceipts(u) ? receiptService.countAwaitingSubmitter(u.id) : null,
+        canSubmitReceipts(u) || u.isBoardMember === true ? receiptService.countAwaitingSubmitter(u.id, u.isBoardMember === true) : null,
         u.isFinance === true ? receiptService.countAwaitingFinance(u.id) : null,
       ]);
       return {

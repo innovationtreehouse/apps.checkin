@@ -122,6 +122,7 @@ function submitterConfirmation(row: ReceiptRow) {
   return {
     confirmedByPersonId: row.reimburseePersonId,
     onBehalfByPersonId: confirmer === row.reimburseePersonId ? undefined : confirmer,
+    onBehalfReason: confirmer === row.reimburseePersonId ? undefined : (row.reviewedOnBehalfReason ?? undefined),
     confirmedAt: row.reviewedAt.toISOString(),
   };
 }

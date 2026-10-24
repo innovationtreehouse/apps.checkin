@@ -280,7 +280,7 @@ export interface ReimbursementStatus {
  */
 export interface SubmitterConfirmations {
   awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
-  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }): Promise<boolean>;
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */

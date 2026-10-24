@@ -165,7 +165,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
     const confirmation = receipt.submitterConfirmation;
     if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
       const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
-      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt });
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt, reason: confirmation.onBehalfReason });
     }
 
     await tx.expenseFlag.createMany({

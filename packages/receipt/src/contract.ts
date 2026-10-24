@@ -92,9 +92,9 @@ export interface SubmitterConfirmations {
   awaiting(): Promise<AwaitedConfirmation[]>;
   /**
    * Records the confirmation on every line of the receipt's expense still waiting for it, signed by
-   * `signer`: the reimbursee, or a Board member on their behalf. False when none waits.
+   * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.
    */
-  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }): Promise<boolean>;
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */

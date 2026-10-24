@@ -1,5 +1,6 @@
 "use client";
-import { Alert, Badge, Button, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import { useState } from "react";
+import { Alert, Badge, Button, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
 import { dollars, send, useLoad, type ReceiptConfirmation, type ReceiptListRow } from "./api";
 
 /** A reimbursement's confirm is the submitter's signature on its lines and amounts. */
@@ -8,6 +9,7 @@ export const CONFIRM_AS_READ = "These lines and amounts are right";
 const CHANGED_FIELD_LABELS: Record<string, string> = {
   lineItems: "line items",
   receiptDate: "receipt date",
+  currency: "currency",
   shippingCents: "shipping",
   taxCents: "tax",
   discountCents: "discount",
@@ -22,14 +24,17 @@ export function confirmedByReimbursee(r: Pick<ReceiptListRow, "needsReimbursemen
 
 /**
  * Reimbursements waiting for the caller to confirm them as read: as the person reimbursed, or as a
- * Board member on behalf of someone with no account. Renders nothing when none waits.
+ * Board member on behalf of someone with no account, which takes the Board member's reason.
+ * Renders nothing when none waits.
  */
 export default function ConfirmationList() {
   const list = useLoad<ReceiptConfirmation[]>("/confirmations");
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   if (list.error) return <Alert color="red" mb="md">{list.error}</Alert>;
   if (!list.data?.length) return null;
-  const confirm = async (id: string) => {
-    if (await send(`/${id}/confirmation`, "POST", {}, "Confirmed", "Couldn't confirm this receipt")) list.reload();
+  const confirm = async (c: ReceiptConfirmation) => {
+    const body = c.onBehalf ? { reason: reasons[c.id]?.trim() } : {};
+    if (await send(`/${c.id}/confirmation`, "POST", body, "Confirmed", "Couldn't confirm this receipt")) list.reload();
   };
   return (
     <Stack mb="lg">
@@ -61,7 +66,21 @@ export default function ConfirmationList() {
                 ))}
               </Table.Tbody>
             </Table>
-            <Button size="xs" w="fit-content" onClick={() => void confirm(c.id)}>{CONFIRM_AS_READ}</Button>
+            {c.onBehalf && (
+              <Textarea
+                label="Why the Board confirms on their behalf"
+                required
+                autosize
+                value={reasons[c.id] ?? ""}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setReasons((r) => ({ ...r, [c.id]: value }));
+                }}
+              />
+            )}
+            <Button size="xs" w="fit-content" disabled={c.onBehalf && !reasons[c.id]?.trim()} onClick={() => void confirm(c)}>
+              {CONFIRM_AS_READ}
+            </Button>
           </Stack>
         </Paper>
       ))}

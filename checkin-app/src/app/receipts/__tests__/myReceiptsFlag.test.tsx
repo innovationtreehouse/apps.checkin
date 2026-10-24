@@ -60,8 +60,11 @@ describe("My receipts", () => {
     expect(screen.getByText("For a person with no account")).toBeInTheDocument();
     expect(screen.getByText(/Finance changed this receipt; confirm it again\. Changed: reimbursee\./)).toBeInTheDocument();
     expect(screen.getByText("Hinge")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
-    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", {}, "Confirmed", "Couldn't confirm this receipt");
+    const confirm = screen.getByRole("button", { name: "These lines and amounts are right" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Why the Board confirms on their behalf/), { target: { value: "No email address" } });
+    fireEvent.click(confirm);
+    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", { reason: "No email address" }, "Confirmed", "Couldn't confirm this receipt");
     mockConfirmations = [];
   });
 });

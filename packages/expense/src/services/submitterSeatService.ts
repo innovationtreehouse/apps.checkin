@@ -19,19 +19,21 @@ const TAKES_SUBMITTER_SEAT = { needsReimbursement: true, backfill: false, state:
 
 /**
  * Signs the submitter seat on each given line still without one, by `signer`: the person
- * reimbursed, or a Board member on their behalf. Each is audited citing the confirmation.
+ * reimbursed, or a Board member on their behalf with their reason. Each is audited citing the
+ * confirmation.
  */
 export async function recordSubmitterSeats(
   tx: Prisma.TransactionClient,
   expenseId: string,
   lineItemIds: number[],
   signer: Actor,
-  confirmation: { reimburseePersonId: number; confirmedAt: string },
+  confirmation: { reimburseePersonId: number; confirmedAt: string; reason?: string | null },
 ): Promise<number> {
   const signed = new Set(
     (await tx.expenseLineSignoff.findMany({ where: { expenseId, seat: "SUBMITTER" }, select: { lineItemId: true } })).map((r) => r.lineItemId),
   );
   const onBehalf = signer.userId === confirmation.reimburseePersonId ? "" : ` on behalf of ${confirmation.reimburseePersonId}`;
+  const reason = onBehalf && confirmation.reason ? `: ${confirmation.reason}` : "";
   const open = lineItemIds.filter((id) => !signed.has(id));
   for (const lineItemId of open) {
     await tx.expenseLineSignoff.create({
@@ -43,7 +45,7 @@ export async function recordSubmitterSeats(
       lineItemId,
       fieldChanged: "seat",
       valueAfter: "SUBMITTER",
-      notes: `confirmed the receipt as read${onBehalf} at ${confirmation.confirmedAt}`,
+      notes: `confirmed the receipt as read${onBehalf} at ${confirmation.confirmedAt}${reason}`,
     });
   }
   return open.length;
@@ -79,7 +81,7 @@ export const submitterConfirmations: SubmitterConfirmations = {
     return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));
   },
 
-  async confirm(receiptId, reimburseePersonId, person) {
+  async confirm(receiptId, reimburseePersonId, person, reason) {
     const signer = { userId: person.id, username: person.name };
     const result = await db.$transaction(async (tx) => {
       await lockExpense(tx, receiptId);
@@ -88,7 +90,7 @@ export const submitterConfirmations: SubmitterConfirmations = {
       // A Board member on the reimbursee's behalf is no party to the expense.
       if (signer.userId !== reimburseePersonId && (await conflictedParties(expense)).includes(signer.userId)) return null;
       const lines = await tx.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } });
-      const signed = await recordSubmitterSeats(tx, expense.id, lines.map((l) => l.id), signer, { reimburseePersonId, confirmedAt: new Date().toISOString() });
+      const signed = await recordSubmitterSeats(tx, expense.id, lines.map((l) => l.id), signer, { reimburseePersonId, confirmedAt: new Date().toISOString(), reason });
       return signed > 0 ? expense : null;
     });
     if (!result) return false;

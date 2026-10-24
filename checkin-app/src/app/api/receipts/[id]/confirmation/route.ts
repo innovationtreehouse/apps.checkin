@@ -6,5 +6,9 @@ import { receiptRoute } from "@/lib/receipt/route";
 
 export const POST = handler(
   "POST /api/receipts/[id]/confirmation",
-  receiptRoute<{ id: string }>(async ({ params }) => ({ ReceiptConfirmationView: await receiptService.confirmAsReimbursee(params.id) })),
+  receiptRoute<{ id: string }>(async ({ req, params }) => {
+    const body: unknown = await req.json().catch(() => ({}));
+    const reason = typeof body === "object" && body !== null && "reason" in body && typeof body.reason === "string" ? body.reason : null;
+    return { ReceiptConfirmationView: await receiptService.confirmAsReimbursee(params.id, reason) };
+  }),
 );

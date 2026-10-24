@@ -53,6 +53,8 @@ export const CompletedReceiptSubmitterConfirmationSchema = z.object({
   confirmedByPersonId: z.number().int().positive(),
   // The Board member who confirmed on their behalf, when the person reimbursed has no account.
   onBehalfByPersonId: z.number().int().positive().optional(),
+  // That Board member's reason.
+  onBehalfReason: z.string().optional(),
   confirmedAt: z.string().datetime(),
 });
 
