@@ -107,8 +107,24 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
-  /** A reimbursement whose expense waits for its submitter to confirm it again, with the fields finance changed. */
-  submitterReconfirm?: { changedFields: string[] } | null;
+  reimburseePersonId?: number | null;
+}
+
+/** A reimbursement waiting for the caller's confirmation, as the person reimbursed or a Board member on their behalf. */
+export interface ReceiptConfirmation {
+  id: string;
+  state: string;
+  retailer: string | null;
+  receiptDate: string | null;
+  currency: string;
+  shippingCents: number;
+  taxCents: number;
+  discountCents: number;
+  receiptTotalCents: number | null;
+  onBehalf: boolean;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+  lineItems: Array<{ id: number; lineNumber: number; description: string; quantity: number; totalPriceCents: number; isDelayed: boolean }>;
 }
 
 export { STATE_LABELS } from "../lib/stateLabels";

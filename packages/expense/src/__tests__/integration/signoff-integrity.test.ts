@@ -75,13 +75,13 @@ describeDb("seats follow the payee", () => {
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 7 });
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
-    await signLine(principal(1), li, "SUBMITTER");
+    await signLine(principal(7), li, "SUBMITTER");
     await signLine(FINANCE, li, "TREASURER");
 
     await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ status: 409 });
 
     expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
-    expect(await seatsOf(li)).toEqual([["SUBMITTER", 1], ["TREASURER", 3]]);
+    expect(await seatsOf(li)).toEqual([["SUBMITTER", 7], ["TREASURER", 3]]);
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "reimbursee_set" } })).toBe(0);
   });
 

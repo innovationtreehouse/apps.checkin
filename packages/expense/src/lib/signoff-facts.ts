@@ -32,14 +32,14 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 }
 
 /**
- * Household members of everyone seated on the expense outside the submitter seat, the approvers
- * of its lines included, minus the seated people themselves: one household holds at most one
- * seat on an expense.
+ * Household members of everyone seated on the expense, the approvers of its lines and a Board
+ * member confirming on a reimbursee's behalf included, minus the seated people themselves: one
+ * household holds at most one seat on an expense.
  */
 export async function seatedHouseholds(db: Db, expenseId: string): Promise<number[]> {
   const dir = getExpenseRuntime().signoff;
   const [rows, approvals] = await Promise.all([
-    db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { signerUserId: true } }),
+    db.expenseLineSignoff.findMany({ where: { expenseId }, select: { signerUserId: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
   ]);
   const signers = [...new Set([...rows.map((r) => r.signerUserId), ...approvals.map((a) => a.decidedByUserId!)])];
@@ -96,6 +96,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
       const facts: SignoffFacts = {
         kind,
         submitterId: expense.submitterId,
+        reimburseeId: expense.reimburseePersonId,
         approvers: b?.approvers ?? [],
         orgLevel: b?.orgLevel ?? false,
         reimburseeIsMember: isMember,

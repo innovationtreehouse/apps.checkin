@@ -12,11 +12,16 @@ describe("CompletedReceipt.submitterConfirmation", () => {
     expect(CompletedReceiptSchema.parse(reimbursement).submitterConfirmation).toBeUndefined();
   });
 
-  it("carries who confirmed the receipt as read, and when", () => {
+  it("carries whose confirmation it is, the person reimbursed, and when", () => {
     expect(CompletedReceiptSchema.parse(withConfirmation({})).submitterConfirmation).toEqual(confirmation);
   });
 
+  it("names the Board member who confirmed on the reimbursee's behalf", () => {
+    expect(CompletedReceiptSchema.parse(withConfirmation({ onBehalfByPersonId: 5 })).submitterConfirmation).toEqual({ ...confirmation, onBehalfByPersonId: 5 });
+  });
+
   it.each([
+    ["a non-positive Board member", withConfirmation({ onBehalfByPersonId: 0 })],
     ["a non-positive confirmer", withConfirmation({ confirmedByPersonId: 0 })],
     ["a time that is not ISO", withConfirmation({ confirmedAt: "this morning" })],
   ])("refuses %s", (_label, input) => {

@@ -17,6 +17,7 @@ import {
 const pending: SignoffFacts = {
   kind: "reimbursement",
   submitterId: 1,
+  reimburseeId: 1,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
@@ -40,6 +41,12 @@ describe("the submitter seat", () => {
     const card = { ...base, kind: "card_charge" as const };
     expect(missingSeats(card, [])).not.toContain("SUBMITTER");
     expect(signoffRefusal(card, [], "SUBMITTER", 1)).toMatch(/card charge takes no submitter seat/);
+  });
+
+  it("the person reimbursed fills it, not the submitter, when they differ", () => {
+    const forSomeoneElse = { ...base, reimburseeId: 9, conflicted: [1, 8, 9] };
+    expect(signoffRefusal(forSomeoneElse, [], "SUBMITTER", 9)).toBeNull();
+    expect(signoffRefusal(forSomeoneElse, [], "SUBMITTER", 1)).toMatch(/only the person reimbursed/);
   });
 
   it("a reimbursement's line is approved only after the submitter seat is signed; a card charge's needs none", () => {
@@ -177,7 +184,7 @@ describe("independence", () => {
   it("a signer in the reimbursee's household is refused for every seat but the submitter's own", () => {
     const facts = { ...base, finance: [8], board: [8] };
     expect(signoffRefusal(facts, [], "TREASURER", 8)).toMatch(/household/);
-    expect(signoffRefusal(base, [], "SUBMITTER", 8)).toMatch(/only the submitter/);
+    expect(signoffRefusal(base, [], "SUBMITTER", 8)).toMatch(/only the person reimbursed/);
     expect(signoffRefusal(base, [], "SUBMITTER", 1)).toBeNull();
   });
 

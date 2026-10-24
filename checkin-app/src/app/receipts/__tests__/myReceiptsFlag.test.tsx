@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import MyReceiptsPage from "@checkin/receipt/pages/mine";
 
@@ -11,12 +11,15 @@ const rows = [
   row("b", "Bolt Co", "financial_review"),
   row("c", "Cogs", "submitter_review"),
   row("d", "Drills", "receipt_finalized"),
-  { ...row("e", "Epoxy", "receipt_finalized"), needsReimbursement: true, submitterReconfirm: { changedFields: ["reimbursee"] } },
+  { ...row("e", "Epoxy", "submitter_review"), needsReimbursement: true, reimburseePersonId: 2 },
 ];
+let mockConfirmations: unknown[] = [];
+const mockSend = jest.fn<Promise<boolean>, unknown[]>();
 
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
-  useLoad: () => ({ data: rows, error: null, reload: jest.fn() }),
+  useLoad: (path: string) => ({ data: path === "/confirmations" ? mockConfirmations : rows, error: null, reload: jest.fn() }),
+  send: (...args: unknown[]) => mockSend(...args),
 }));
 
 beforeAll(() => {
@@ -40,8 +43,25 @@ describe("My receipts", () => {
     expect(within(rowOf("Drills")).queryByText("Needs you")).not.toBeInTheDocument();
   });
 
-  it("flags a reimbursement finance changed after it was sent, for its submitter to confirm again", () => {
+  it("does not flag a reimbursement for someone else, which the person reimbursed confirms", () => {
     render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
-    expect(within(rowOf("Epoxy")).getByText("Needs you")).toBeInTheDocument();
+    expect(within(rowOf("Epoxy")).queryByText("Needs you")).not.toBeInTheDocument();
+  });
+
+  it("lists reimbursements waiting for the caller's confirmation, with what finance changed, and confirms one", () => {
+    mockConfirmations = [{
+      id: "f", state: "receipt_finalized", retailer: "Fasteners Inc", receiptDate: "2026-10-01", currency: "USD", shippingCents: 0, taxCents: 0,
+      discountCents: 0, receiptTotalCents: 1000, onBehalf: true, changedFields: ["reimbursee"],
+      lineItems: [{ id: 1, lineNumber: 1, description: "Hinge", quantity: 2, totalPriceCents: 1000, isDelayed: false }],
+    }];
+    mockSend.mockResolvedValue(true);
+    render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
+    expect(screen.getByText("Receipts to confirm")).toBeInTheDocument();
+    expect(screen.getByText("For a person with no account")).toBeInTheDocument();
+    expect(screen.getByText(/Finance changed this receipt; confirm it again\. Changed: reimbursee\./)).toBeInTheDocument();
+    expect(screen.getByText("Hinge")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
+    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", {}, "Confirmed", "Couldn't confirm this receipt");
+    mockConfirmations = [];
   });
 });

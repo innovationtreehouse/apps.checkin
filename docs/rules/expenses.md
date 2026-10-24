@@ -118,12 +118,18 @@ Income and donation rules are in `revenue.md`.
   charge's receipt without the submitter.
   [Decision — owner]
 
+- The person reimbursed gives the submitter's signature on a reimbursement, by
+  confirming its receipt, whoever uploaded it. When they have no account in the
+  app, a Board member without a conflict confirms on their behalf, and the
+  record names both.
+  [Decision — owner]
+
 - Once the submitter has confirmed a reimbursement, a change finance makes to
   what the submitter claimed or what they are paid voids the submitter's
   signature: its line items, a line's quantity or unit price, tax, shipping,
   discount, the total, the receipt date, or the person reimbursed. The
-  reimbursement does not reach the books until the submitter confirms it
-  again. Finance's bookkeeping does not void it: a line's bucket, the
+  reimbursement does not reach the books until the person reimbursed confirms
+  it again. Finance's bookkeeping does not void it: a line's bucket, the
   accounting-system account set on a hold, or the capital or depreciation
   designation. The void and the new confirmation are both recorded.
   [Decision — owner]

@@ -274,12 +274,13 @@ export interface ReimbursementStatus {
 }
 
 /**
- * Receipt callee: the reimbursement submitter's signature, recorded on the expense from their
- * confirmation of the receipt, and given again after a finance change clears it.
+ * Receipt callee: the reimbursement submitter's signature, recorded on the expense from the person
+ * reimbursed's confirmation of the receipt (a Board member's on their behalf when they have no
+ * account), and given again after a finance change clears it.
  */
 export interface SubmitterConfirmations {
-  awaiting(personId: number): Promise<Map<string, string[]>>;
-  confirm(receiptId: string, person: { id: number; name: string | null }): Promise<boolean>;
+  awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }): Promise<boolean>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */

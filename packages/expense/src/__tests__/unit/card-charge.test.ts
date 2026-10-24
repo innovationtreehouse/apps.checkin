@@ -74,6 +74,7 @@ describe("which lines take the Board seat", () => {
 const card: SignoffFacts = {
   kind: "card_charge",
   submitterId: 1,
+  reimburseeId: null,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,

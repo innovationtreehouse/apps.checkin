@@ -172,7 +172,7 @@ async function voidConfirmation(
   fields: string[],
 ): Promise<void> {
   if (asSubmitter || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
-  await tx.receiptDetail.update({ where: { id: row.id }, data: { reviewedAt: null } });
+  await tx.receiptDetail.update({ where: { id: row.id }, data: { reviewedAt: null, reviewedByUserId: null } });
   await audit(tx, row.id, actor, {
     action: "submitter_confirmation_voided",
     fieldChanged: fields.join(","),
@@ -351,11 +351,59 @@ async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undef
 /** At most this many people answer one reimbursee search. */
 const REIMBURSEE_SEARCH_LIMIT = 20;
 
-/** What finance changed on a reimbursement whose expense waits for its submitter to confirm it again, else null. */
-async function reconfirmOf(row: ReceiptRow): Promise<{ changedFields: string[] } | null> {
-  if (!row.pushedAt || !row.needsReimbursement) return null;
-  const changedFields = (await ports().submitterConfirmations.awaiting(row.uploadedByUserId)).get(row.id);
-  return changedFields ? { changedFields } : null;
+/** A reimbursement the person reimbursed confirms, not its uploader: someone else is reimbursed. */
+function reimburseeConfirms<R extends Pick<ReceiptRow, "needsReimbursement" | "reimburseePersonId" | "uploadedByUserId">>(row: R): row is R & { reimburseePersonId: number } {
+  return row.needsReimbursement && row.reimburseePersonId != null && row.reimburseePersonId !== row.uploadedByUserId;
+}
+
+/** A reimbursement waiting for the confirmation that signs it, as the confirming person reads it. */
+async function confirmationView(row: ReceiptRow & { reimburseePersonId: number }, onBehalf: boolean, changedFields: string[]) {
+  const lines = await receiptRepo.listLineItems(row.id);
+  return {
+    id: row.id,
+    reimburseePersonId: row.reimburseePersonId,
+    state: row.state,
+    retailer: row.retailer,
+    receiptDate: row.receiptDate,
+    currency: row.currency,
+    shippingCents: row.shippingCents,
+    taxCents: row.taxCents,
+    discountCents: row.discountCents,
+    receiptTotalCents: row.receiptTotalCents,
+    onBehalf,
+    changedFields,
+    lineItems: lines.map((li) => ({
+      id: li.id,
+      reimburseePersonId: row.reimburseePersonId,
+      lineNumber: li.lineNumber,
+      description: li.description,
+      quantity: li.quantity,
+      unitPriceCents: li.unitPriceCents,
+      totalPriceCents: li.totalPriceCents,
+      isDelayed: li.isDelayed,
+    })),
+  };
+}
+
+/**
+ * How `actor` may confirm this reimbursement: as the person reimbursed, or as a Board member on
+ * behalf of a reimbursee with no account, if no party to the receipt; else null.
+ */
+async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"self" | "on_behalf" | null> {
+  if (row.reimburseePersonId == null) return null;
+  if (row.reimburseePersonId === actor.id) return "self";
+  if (!actor.isBoardMember || (await ports().reimbursees.hasAccount(row.reimburseePersonId))) return null;
+  return (await conflictedParties(row)).includes(actor.id) ? null : "on_behalf";
+}
+
+/** Reimbursements waiting for this person's confirmation, before finance and once their expense exists. */
+async function awaitingConfirmation(personId: number): Promise<{ inReview: ReceiptRow[]; sent: Map<string, string[]> }> {
+  const orgId = (await getOrg()).id;
+  const [inReview, awaited] = await Promise.all([
+    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: personId, uploadedByUserId: { not: personId }, details: { state: "submitter_review" } }),
+    ports().submitterConfirmations.awaiting(),
+  ]);
+  return { inReview, sent: new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields])) };
 }
 
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {
@@ -628,27 +676,73 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
-  /**
-   * The uploader confirms the receipt as read. On a reimbursement already sent to expense, whose
-   * confirmation finance's change cleared there, it records the confirmation on the expense.
-   */
+  /** The uploader confirms the receipt as read. A reimbursement for someone else is the reimbursee's to confirm. */
   async submitterConfirm(id: string) {
     const actor = await requireActor();
-    const sent = await load(id, "submitter", actor);
-    if (sent.pushedAt) {
-      if (!sent.needsReimbursement || !(await ports().submitterConfirmations.confirm(id, actor))) {
-        throw new ServiceError(409, "This receipt is not waiting for your confirmation");
-      }
-      await audit(db, id, actor, { action: "submitter_reconfirmed" });
-      return { ...toSubmitterView(sent), submitterReconfirm: null };
-    }
     const row = await loadForChange(id, "submitter", actor);
     if (row.needsReimbursement && !row.reimbursementFor?.trim()) {
       throw new ServiceError(400, "reimbursementFor is required when needsReimbursement is set");
     }
-    await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date() } }, actor, "submitter_review_confirmed");
+    if (reimburseeConfirms(row)) throw new ServiceError(403, "The person reimbursed confirms this receipt");
+    await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date(), reviewedByUserId: actor.id } }, actor, "submitter_review_confirmed");
     await runFullFlow(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
+  },
+
+  /**
+   * Reimbursements waiting for the caller's confirmation: as the person reimbursed, and, for a
+   * Board member, those whose reimbursee has no account and that the caller is no party to.
+   */
+  async listConfirmations() {
+    const actor = await requireActor();
+    const mine = await awaitingConfirmation(actor.id);
+    const orgId = (await getOrg()).id;
+    const sent = await receiptRepo.list({ orgId, id: { in: [...mine.sent.keys()] } });
+    const views = [
+      ...mine.inReview.filter(reimburseeConfirms).map((r) => confirmationView(r, false, [])),
+      ...sent.filter((r): r is ReceiptRow & { reimburseePersonId: number } => r.reimburseePersonId != null).map((r) => confirmationView(r, false, mine.sent.get(r.id) ?? [])),
+    ];
+    if (actor.isBoardMember) {
+      const awaited = await ports().submitterConfirmations.awaiting();
+      const candidates = [
+        ...(await receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { not: null }, details: { state: "submitter_review" } })),
+        ...(await receiptRepo.list({ orgId, id: { in: awaited.map((a) => a.receiptId) } })),
+      ];
+      const changed = new Map(awaited.map((a) => [a.receiptId, a.changedFields]));
+      for (const r of candidates) {
+        if (r.reimburseePersonId == null || (await confirmerRole(r, actor)) !== "on_behalf") continue;
+        views.push(confirmationView(r as ReceiptRow & { reimburseePersonId: number }, true, changed.get(r.id) ?? []));
+      }
+    }
+    return Promise.all(views);
+  },
+
+  /**
+   * The person reimbursed confirms the receipt as read, or a Board member does on behalf of a
+   * reimbursee with no account. Before finance it moves the receipt on from submitter review; once
+   * the expense exists it signs the lines still waiting there.
+   */
+  async confirmAsReimbursee(id: string) {
+    const actor = await requireActor();
+    const row = await receiptRepo.find(id, (await getOrg()).id);
+    if (!row || !row.needsReimbursement || row.reimburseePersonId == null) throw new ServiceError(404, "Receipt not found");
+    const role = await confirmerRole(row, actor);
+    if (!role) throw new ServiceError(403, "Only the person reimbursed, or a Board member on behalf of someone with no account, confirms this receipt");
+    const reimbursee = row.reimburseePersonId;
+    const onBehalf = role === "on_behalf" ? `on behalf of ${reimbursee}` : null;
+
+    if (row.pushedAt) {
+      if (!(await ports().submitterConfirmations.confirm(id, reimbursee, actor))) {
+        throw new ServiceError(409, "This receipt is not waiting for a confirmation");
+      }
+      await audit(db, id, actor, { action: "submitter_reconfirmed", valueAfter: onBehalf });
+    } else {
+      if (row.state !== "submitter_review") throw new ServiceError(409, "This receipt is not waiting for a confirmation");
+      await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date(), reviewedByUserId: actor.id } }, actor, "submitter_review_confirmed", onBehalf);
+      await runFullFlow(id, actor);
+    }
+    const after = (await receiptRepo.find(id, row.orgId))!;
+    return confirmationView({ ...after, reimburseePersonId: reimbursee }, role === "on_behalf", []);
   },
 
   async submitterDiscard(id: string) {
@@ -739,7 +833,7 @@ export const receiptService = {
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const receipt = access === "finance" ? row : toSubmitterView(row);
-    return { ...receipt, lineItems, financialReviewReasons: reasons, submitterReconfirm: await reconfirmOf(row) };
+    return { ...receipt, lineItems, financialReviewReasons: reasons };
   },
 
   /**
@@ -763,7 +857,6 @@ export const receiptService = {
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
     const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
-    const awaiting = owed.length ? await ports().submitterConfirmations.awaiting(actor.id) : new Map<string, string[]>();
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid.get(r.id)?.paidOn ?? null) : null;
@@ -771,9 +864,7 @@ export const receiptService = {
         r.state === "discarded" ||
         r.state === "rejected" ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      const changedFields = awaiting.get(r.id);
-      const submitterReconfirm = changedFields ? { changedFields } : null;
-      return { ...toSubmitterView(r), reimbursement: r.needsReimbursement ? { paidOn } : null, complete, submitterReconfirm };
+      return { ...toSubmitterView(r), reimbursement: r.needsReimbursement ? { paidOn } : null, complete };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
   },
@@ -825,17 +916,21 @@ export const receiptService = {
     return access === "finance" ? rows : rows.map(toSubmitterView);
   },
 
-  /** How many of this person's receipts wait on them, for the host's nav pill. */
+  /**
+   * How many receipts wait on this person, for the host's nav pill: their own in a state that waits
+   * on the uploader, and reimbursements waiting for their confirmation as the person reimbursed.
+   */
   async countAwaitingSubmitter(personId: number): Promise<number> {
-    const [inReview, awaiting] = await Promise.all([
+    const [own, toConfirm] = await Promise.all([
       receiptRepo.count({
         orgId: (await getOrg()).id,
         uploadedByUserId: personId,
         details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+        NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
       }),
-      ports().submitterConfirmations.awaiting(personId),
+      awaitingConfirmation(personId),
     ]);
-    return inReview + awaiting.size;
+    return own + toConfirm.inReview.length + toConfirm.sent.size;
   },
 
   async listAuditLogs(id: string) {

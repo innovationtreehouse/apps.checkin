@@ -41,7 +41,7 @@ export const inertReimbursementStatus: ReimbursementStatus = {
 
 /** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
 export const inertSubmitterConfirmations: SubmitterConfirmations = {
-  awaiting: async () => new Map(),
+  awaiting: async () => [],
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
@@ -61,6 +61,7 @@ export const inertPeople: ReceiptPeople = {
 export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
   byId: async () => null,
+  hasAccount: async () => true,
 };
 
 /** Logs the alert: nothing reaches finance until the host binds alerts. */

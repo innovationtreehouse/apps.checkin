@@ -17,6 +17,8 @@ export interface ReceiptPrincipal {
   isAdult: boolean;
   /** Mailed receipts get the raised daily limit (a program lead or Board member); set by the sender lookup. */
   raisedMailLimit?: boolean;
+  /** A Board member, who confirms a reimbursement on behalf of a reimbursee with no account. */
+  isBoardMember?: boolean;
 }
 
 export interface ReceiptAuth {
@@ -73,15 +75,26 @@ export interface ReimbursementStatus {
 
 // ── Submitter confirmations ← expense ──────────────────────────────────────
 
+/** A reimbursement whose expense waits for the person reimbursed to confirm its receipt. */
+export interface AwaitedConfirmation {
+  receiptId: string;
+  reimburseePersonId: number;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+}
+
 /**
- * The submitter's signature on a reimbursement whose expense exists. Finance changing what the
- * submitter claimed or is paid clears it there, and the submitter confirms the receipt again.
+ * The submitter's signature on a reimbursement whose expense exists, given by the person
+ * reimbursed. Finance changing what was claimed or is paid clears it there, and it is given again.
  */
 export interface SubmitterConfirmations {
-  /** This person's receipts whose expense waits for their confirmation, each with the fields finance changed. */
-  awaiting(personId: number): Promise<Map<string, string[]>>;
-  /** Records the confirmation on every line of the receipt's expense still waiting for it; false when none waits. */
-  confirm(receiptId: string, person: { id: number; name: string | null }): Promise<boolean>;
+  /** The org's reimbursements whose expense waits for the confirmation. */
+  awaiting(): Promise<AwaitedConfirmation[]>;
+  /**
+   * Records the confirmation on every line of the receipt's expense still waiting for it, signed by
+   * `signer`: the reimbursee, or a Board member on their behalf. False when none waits.
+   */
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }): Promise<boolean>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
@@ -150,6 +163,8 @@ export interface ReceiptReimbursees {
   search(query: string, limit: number): Promise<ReimburseeOption[]>;
   /** The live person with this id, else null. */
   byId(personId: number): Promise<ReimburseeOption | null>;
+  /** Whether this person has an account to sign in with, and so confirms for themself. */
+  hasAccount(personId: number): Promise<boolean>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>

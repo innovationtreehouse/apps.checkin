@@ -161,9 +161,11 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
       lineItemIds.push(id);
     }
 
+    // The person reimbursed's confirmation signs every line: theirs, or a Board member's on their behalf.
     const confirmation = receipt.submitterConfirmation;
-    if (receipt.needsReimbursement && !receipt.backfill && confirmation?.confirmedByPersonId === receipt.submitterId) {
-      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, { userId: receipt.submitterId, username: null }, confirmation.confirmedAt);
+    if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
+      const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt });
     }
 
     await tx.expenseFlag.createMany({

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
 import { dollars, STATE_LABELS, type ReceiptListRow } from "./api";
 import { SUBMITTER_ACTION_STATES } from "../nav";
+import { confirmedByReimbursee } from "./ConfirmationList";
 
 /**
  * One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement
@@ -42,7 +43,7 @@ export default function ReceiptTable({
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
                 {STATE_LABELS[r.state] ?? r.state}
-                {flagMine && (SUBMITTER_ACTION_STATES.includes(r.state) || r.submitterReconfirm) && (
+                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && !(r.state === "submitter_review" && confirmedByReimbursee(r)) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}
               </Table.Td>

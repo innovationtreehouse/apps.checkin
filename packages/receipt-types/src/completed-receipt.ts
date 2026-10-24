@@ -46,11 +46,13 @@ export const CompletedReceiptFinanceReviewSchema = z.object({
   decidedAt: z.string().datetime(),
 });
 
-// The uploader's confirmation of the receipt as read, its lines and amounts. On a reimbursement it
-// is the submitter's signature on every line.
+// The confirmation of a reimbursement's receipt as read, its lines and amounts: the submitter's
+// signature on every line, given by the person reimbursed.
 export const CompletedReceiptSubmitterConfirmationSchema = z.object({
-  // The confirming checkin Person.id.
+  // The person reimbursed, whose signature it is (checkin Person.id).
   confirmedByPersonId: z.number().int().positive(),
+  // The Board member who confirmed on their behalf, when the person reimbursed has no account.
+  onBehalfByPersonId: z.number().int().positive().optional(),
   confirmedAt: z.string().datetime(),
 });
 
@@ -82,7 +84,7 @@ export const CompletedReceiptSchema = z.object({
   isInKind: z.boolean().optional().default(false),
   // Absent when the receipt never waited on finance review.
   financeReview: CompletedReceiptFinanceReviewSchema.optional(),
-  // Absent when the uploader never confirmed the receipt (a manual card charge, or a backfill).
+  // Absent on a card charge, and on a reimbursement nobody confirmed (a backfill).
   submitterConfirmation: CompletedReceiptSubmitterConfirmationSchema.optional(),
   // The receipt org's settings hold this receipt's tax for finance review (tax-exempt org,
   // review-with-tax on, tax above zero, not in-kind).

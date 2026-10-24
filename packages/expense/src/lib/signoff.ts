@@ -12,6 +12,8 @@ export type LineKind = "reimbursement" | "card_charge";
 export interface SignoffFacts {
   kind: LineKind;
   submitterId: number;
+  /** The person reimbursed, who gives the submitter's signature; null on a card charge or while unknown. */
+  reimburseeId: number | null;
   /** The line's bucket approvers (owner + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
@@ -203,7 +205,7 @@ export function signoffRefusal(
 
   if (seat === "SUBMITTER") {
     if (facts.kind === "card_charge") return "a card charge takes no submitter seat";
-    return signerUserId === facts.submitterId ? null : "only the submitter fills the submitter seat";
+    return signerUserId === facts.reimburseeId ? null : "only the person reimbursed fills the submitter seat";
   }
   if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";
   const outOfOrder = orderRefusal(facts, filled, seat);

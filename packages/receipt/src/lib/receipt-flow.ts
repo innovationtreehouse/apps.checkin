@@ -111,6 +111,22 @@ export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
 }
 
 /**
+ * The confirmation that signs a reimbursement: the person reimbursed's, given by them or by a Board
+ * member on their behalf. A confirmation with no recorded confirmer was the uploader's, so it counts
+ * only when the uploader is the person reimbursed.
+ */
+function submitterConfirmation(row: ReceiptRow) {
+  if (!row.reviewedAt || !row.needsReimbursement || row.reimburseePersonId == null) return undefined;
+  const confirmer = row.reviewedByUserId ?? (row.uploadedByUserId === row.reimburseePersonId ? row.uploadedByUserId : null);
+  if (confirmer === null) return undefined;
+  return {
+    confirmedByPersonId: row.reimburseePersonId,
+    onBehalfByPersonId: confirmer === row.reimburseePersonId ? undefined : confirmer,
+    confirmedAt: row.reviewedAt.toISOString(),
+  };
+}
+
+/**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
  * null with an audit row, for the catch-up step or the manual button to resend.
  */
@@ -145,9 +161,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
       // QB-linked ⇒ historical backfill: downstream skips the QB re-post.
       backfill: !!row.qbTxnId,
       isInKind: row.isInKind,
-      submitterConfirmation: row.reviewedAt
-        ? { confirmedByPersonId: row.uploadedByUserId, confirmedAt: row.reviewedAt.toISOString() }
-        : undefined,
+      submitterConfirmation: submitterConfirmation(row),
       financeReview:
         review?.outcome === "approved"
           ? {
