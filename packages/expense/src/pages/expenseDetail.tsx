@@ -14,8 +14,12 @@ interface Line {
   lineNumber: number;
   description: string;
   partNumber: string | null;
+  manufacturer: string | null;
   quantity: number;
+  unitPriceCents: number;
   totalPriceCents: number;
+  gtin13: string | null;
+  isDelayed: boolean;
   isCapital: boolean;
   depreciationYears: number | null;
   capitalOwnerId: number | null;
@@ -39,7 +43,11 @@ interface Expense {
   vendorName: string | null;
   receiptDate: string | null;
   receiptTotalCents: number;
+  taxCents: number;
+  shippingCents: number;
+  discountCents: number;
   currency: string;
+  submittedAt: string;
   state: string;
   needsReimbursement: boolean;
   reimbursementFor?: string | null;
@@ -88,6 +96,15 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   if (a.status === "unknown") return ["resolve-unknown"];
   if (state === "assign_ownership" && a.ownerId === null) return ["assign-owner"];
   return [];
+}
+
+function Amount({ label, value }: { label: string; value: string }) {
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed">{label}</Text>
+      <Text size="sm">{value}</Text>
+    </Stack>
+  );
 }
 
 interface VendorLink {
@@ -228,16 +245,28 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Group>
       )}
       <Text size="sm">
-        {e.receiptDate ?? "No receipt date"} · {formatCents(e.receiptTotalCents, e.currency)}
+        {e.receiptDate ?? "No receipt date"}
         {e.needsReimbursement && ` · Reimbursement${e.reimbursementFor ? ` for ${e.reimbursementFor}` : ""}`}
       </Text>
+      <Group gap="xl" align="start">
+        <Amount label="Total" value={formatCents(e.receiptTotalCents, e.currency)} />
+        <Amount label="Tax" value={formatCents(e.taxCents, e.currency)} />
+        {e.shippingCents !== 0 && <Amount label="Shipping" value={formatCents(e.shippingCents, e.currency)} />}
+        {e.discountCents !== 0 && <Amount label="Discount" value={`−${formatCents(e.discountCents, e.currency)}`} />}
+        <Amount label="Submitted" value={new Date(e.submittedAt).toLocaleString()} />
+      </Group>
 
       <Table>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>#</Table.Th>
             <Table.Th>Description</Table.Th>
-            <Table.Th>Total</Table.Th>
+            <Table.Th>Part #</Table.Th>
+            <Table.Th>Manufacturer</Table.Th>
+            <Table.Th ta="right">Qty</Table.Th>
+            <Table.Th ta="right">Unit</Table.Th>
+            <Table.Th ta="right">Total</Table.Th>
+            <Table.Th>GTIN-13</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
@@ -251,8 +280,21 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             return (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.lineNumber}</Table.Td>
-                <Table.Td>{l.description}{l.partNumber && <Text size="xs" c="dimmed">{l.partNumber}</Text>}</Table.Td>
-                <Table.Td>{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
+                <Table.Td>
+                  {l.description}
+                  {(l.isDelayed || l.isCapital) && (
+                    <Group gap={4} mt={2}>
+                      {l.isDelayed && <Badge color="orange" size="xs">Delayed</Badge>}
+                      {l.isCapital && <Badge color="indigo" size="xs">Capital</Badge>}
+                    </Group>
+                  )}
+                </Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.partNumber ?? "—"}</Text></Table.Td>
+                <Table.Td><Text size="xs">{l.manufacturer ?? "—"}</Text></Table.Td>
+                <Table.Td ta="right">{l.quantity}</Table.Td>
+                <Table.Td ta="right">{formatCents(l.unitPriceCents, e.currency)}</Table.Td>
+                <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
                 <Table.Td>{a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}</Table.Td>
                 <Table.Td>
                   {a && <Badge variant="light">{a.status}</Badge>}
