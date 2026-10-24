@@ -11,14 +11,23 @@ export interface CatalogNavLink {
   href: string;
   /** Emoji icon (checkin's SectionTabs render an emoji string). */
   icon: string;
+  /** Screens grouped under this tab, shown as a second tab row; the tab opens the first. */
+  subLinks?: readonly Omit<CatalogNavLink, "subLinks">[];
 }
 
 /** The section tabs under the Inventory entry (rendered by checkin's SectionTabs). */
 export const CATALOG_NAV_LINKS: readonly CatalogNavLink[] = [
-  { name: "Items", href: "/catalog/items", icon: "📦" },
-  { name: "Categories", href: "/catalog/categories", icon: "🗂️" },
-  { name: "Proposals", href: "/catalog/proposals", icon: "📥" },
-  { name: "Conversion Challenges", href: "/catalog/conversion-challenges", icon: "⚖️" },
+  {
+    name: "Global Catalog",
+    href: "/catalog/items",
+    icon: "📦",
+    subLinks: [
+      { name: "Items", href: "/catalog/items", icon: "📦" },
+      { name: "Categories", href: "/catalog/categories", icon: "🗂️" },
+      { name: "Proposals", href: "/catalog/proposals", icon: "📥" },
+      { name: "Conversion Challenges", href: "/catalog/conversion-challenges", icon: "⚖️" },
+    ],
+  },
 ];
 
 /** The top-level sidebar entry checkin splices into NAV_ITEMS (icon is checkin's). */

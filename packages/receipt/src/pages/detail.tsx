@@ -3,13 +3,25 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewHref } from "../components/reviewQueue";
+
+const REVIEW_REASON_LABELS: Record<string, string> = {
+  tax: "tax was charged",
+  old_date: "the receipt is older than the age limit",
+  future_date: "the receipt is dated in the future",
+  submitter_correction: "the submitter changed the tax or date",
+};
+
+/** Marks a value that is a reason the receipt is in finance review. */
+function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return on ? <Mark color="red">{children}</Mark> : <>{children}</>;
+}
 
 interface Receipt extends ReceiptListRow {
   mimeType: string;
@@ -59,6 +71,9 @@ export default function ReceiptDetailPage() {
     ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
     : { href: "/receipts", label: "My receipts" };
 
+  const reasons = r.financialReviewReasons;
+  const dateFlagged = reasons.includes("old_date") || reasons.includes("future_date");
+  const taxFlagged = reasons.includes("tax");
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
@@ -136,16 +151,18 @@ export default function ReceiptDetailPage() {
         </Group>
       </Group>
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
-      {r.financialReviewReasons.length > 0 && <Alert color="blue">Finance review: {r.financialReviewReasons.join(", ")}</Alert>}
+      {r.financialReviewReasons.length > 0 && (
+        <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+      )}
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
           <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
-          <Text>Date: {r.receiptDate ?? "—"}</Text>
+          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged></Text>
           <Text>
-            Total: {dollars(r.receiptTotalCents)} (tax {dollars(r.taxCents)}, shipping {dollars(r.shippingCents)}
+            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>, shipping {dollars(r.shippingCents)}
             {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
           </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}

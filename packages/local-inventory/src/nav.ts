@@ -13,11 +13,20 @@ export interface InventoryNavLink {
   managerOnly?: boolean;
   /** True for receiving screens, whose routes admit INVENTORY_MANAGER, FINANCE or BOARD. */
   receiving?: boolean;
+  /** Screens grouped under this tab, shown as a second tab row; the tab opens the first. */
+  subLinks?: readonly Omit<InventoryNavLink, "subLinks">[];
 }
 
 export const INVENTORY_NAV_LINKS: readonly InventoryNavLink[] = [
-  { name: "Org Inventory", href: "/inventory/org-items", icon: "🏷️" },
-  { name: "Locations", href: "/inventory/locations", icon: "📍" },
+  {
+    name: "Org Inventory",
+    href: "/inventory/org-items",
+    icon: "🏷️",
+    subLinks: [
+      { name: "Items", href: "/inventory/org-items", icon: "🏷️" },
+      { name: "Locations", href: "/inventory/locations", icon: "📍" },
+    ],
+  },
   { name: "Receive Queue", href: "/inventory/receive-queue", icon: "🚚", receiving: true },
   { name: "Applied Deltas", href: "/inventory/received-deltas", icon: "🧾", receiving: true },
   { name: "Merge Conflicts", href: "/inventory/merge-conflicts", icon: "⚠️", managerOnly: true },

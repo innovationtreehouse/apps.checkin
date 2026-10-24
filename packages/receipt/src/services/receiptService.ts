@@ -29,6 +29,7 @@ import { getOrg, limits, ports, requireActor } from "../runtime";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
+import { FINANCE_ACTION_STATES, SUBMITTER_ACTION_STATES } from "../nav";
 
 /**
  * Who the route admitted. `submitter` sees and acts on only the caller's own receipts;
@@ -682,6 +683,11 @@ export const receiptService = {
     return receiptRepo.list({ orgId: (await getOrg()).id, details: { state } });
   },
 
+  /** How many of the org's receipts wait on FINANCE, for the host's nav pill. */
+  async countAwaitingFinance(): Promise<number> {
+    return receiptRepo.count({ orgId: (await getOrg()).id, details: { state: { in: [...FINANCE_ACTION_STATES] } } });
+  },
+
   async listNeedsAttention(access: Access) {
     const actor = await requireActor();
     const rows = await receiptRepo.list({
@@ -690,6 +696,15 @@ export const receiptService = {
       details: { state: { in: NEEDS_ATTENTION } },
     });
     return access === "finance" ? rows : rows.map(toSubmitterView);
+  },
+
+  /** How many of this person's receipts wait on them, for the host's nav pill. */
+  async countAwaitingSubmitter(personId: number): Promise<number> {
+    return receiptRepo.count({
+      orgId: (await getOrg()).id,
+      uploadedByUserId: personId,
+      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+    });
   },
 
   async listAuditLogs(id: string) {
