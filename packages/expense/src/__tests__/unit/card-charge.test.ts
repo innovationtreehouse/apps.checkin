@@ -78,6 +78,7 @@ const card: SignoffFacts = {
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3, 4],
   board: [5, 6],
   conflicted: [1, 8],
