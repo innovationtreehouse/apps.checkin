@@ -57,10 +57,10 @@ describe("X12 reimbursementStatus", () => {
 });
 
 describe("flags", () => {
-  const LIMITS = { boardReviewTotalCents: 200_000, capitalEquipmentUnitCents: 50_000 };
+  const LIMITS = { boardReviewTotalCents: 200_000 };
   const line = (unitPriceCents: number, totalPriceCents = unitPriceCents) => ({ unitPriceCents, totalPriceCents });
 
-  it("raises tax, $2,000 review and $500 equipment flags; threshold and COI go to the board", () => {
+  it("raises tax and $2,000 review flags, never a capital-equipment flag; threshold and COI go to the board", () => {
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual([]);
     const reimbursement = { taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)], needsReimbursement: true };
     expect(detectIntakeFlags(reimbursement, LIMITS)).toEqual(["REIMBURSEE_UNKNOWN"]);
@@ -70,7 +70,7 @@ describe("flags", () => {
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 199_999, lineItems: [line(49_999)] }, LIMITS)).toEqual([]);
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 200_000, lineItems: [line(100)] }, LIMITS)).toEqual(["THRESHOLD_CROSSED"]);
     // A line's total does not cross the Board-review total; only the receipt's does.
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
+    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual([]);
     expect(FLAG_AUDIENCE.COI).toBe("BOARD");
     expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
   });

@@ -6,7 +6,6 @@ export const classifications = {
         orgId: 'internal',
         capitalTotalThresholdCents: 'internal',
         capitalLineItemThresholdCents: 'internal',
-        capitalEquipmentUnitCents: 'internal',
         boardReviewTotalCents: 'internal',
         noteInLieuLimitCents: 'internal',
         everydayTotalLimitCents: 'internal',
