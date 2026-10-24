@@ -9,7 +9,7 @@ export { MAX_IMPORT_BATCH, MAX_LINE_ITEMS } from "./lib/schemas";
 export { DEFAULT_LIMITS, type ReceiptLimits } from "./lib/limits";
 export { parseListFilter, type ReceiptListFilter } from "./lib/listFilter";
 export type { ReceiptRow } from "./repositories/receipt";
-export { receiptService, type Access, type SubmitterReceipt } from "./services/receiptService";
+export { receiptService, type Access, type FinanceCounts, type SubmitterReceipt } from "./services/receiptService";
 export { importReceipts, type ImportRowResult } from "./services/importService";
 export { orgSettingsService } from "./services/orgSettingsService";
 export { createGmailReader } from "./lib/gmail";
