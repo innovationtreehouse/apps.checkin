@@ -66,6 +66,23 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/ignore-file', authorize: 'finan
 defineRoute({ endpoint: 'GET /api/receipts/ignored-files', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/ignored-files/[id]', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 
+// Receipt flow status: how many receipts, receiving records and expenses sit in
+// each state, counts only. FINANCE and BOARD read every section (expenses.md).
+// INVENTORY_MANAGER reads the receiving section alone (inventory.md, Access),
+// tiered `public` like the receiving queue counts; its view holds no `internal`
+// grant, so the receipt and expense sections strip.
+defineRoute({
+    endpoint: 'GET /api/receipt-flow/status',
+    authorize: { anyRole: ['isFinance', 'isBoardMember', 'isInventoryManager'] },
+    envelope: null,
+    returns: ['ReceiptFlowStatus'],
+    orderedView: [
+        ['isFinance', ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+        ['isInventoryManager', ['public']],
+    ],
+});
+
 // Files: the only way receipt bytes leave. Naming each field here
 // makes it file-only, so the JSON stripper drops it on every route. Headers are
 // fixed by fileHandler per content type: images inline under a CSP sandbox, PDF
