@@ -205,7 +205,7 @@ describe('X4 InventorySink → local-inventory apply', () => {
 
         expect(result).toEqual({
             state: 'apply_failed',
-            error: 'This source was already applied with a different inventory delta.',
+            error: 'Inventory: This source was already applied with a different inventory delta.',
         });
         const row = await legs(id);
         expect(row.state).toBe('apply_failed');
