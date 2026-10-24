@@ -29,9 +29,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return parse<T>(await fetch(`${BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...options }));
 }
 
-/** Multipart upload; the browser sets the boundary header. */
+/**
+ * Multipart upload; the browser sets the boundary header. A success tells the host nav to
+ * refetch its pills, since the new receipt may already wait on its uploader.
+ */
 export async function upload<T>(form: FormData): Promise<T> {
-  return parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  const receipt = await parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  window.dispatchEvent(new Event("nav-counts-mutated"));
+  return receipt;
 }
 
 export function errorMessage(e: unknown): string {
