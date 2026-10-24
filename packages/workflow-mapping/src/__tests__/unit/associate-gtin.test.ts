@@ -1,4 +1,5 @@
 /** Associate's GTIN gate: only a well-formed GTIN-13 naming an approved, non-archived catalog item reaches the line. */
+import { ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogReader, CatalogSubmissions } from "../../contract";
 import { configure } from "../helpers/setup";
@@ -82,6 +83,17 @@ describe("associateGtin GTIN check", () => {
     expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "CatalogReader.getActiveItem not wired" }));
     logged.mockRestore();
     expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("502 with the catalog's own message for an expected catalog failure", async () => {
+    getActiveItem.mockRejectedValue(new ServiceError(409, "Proposal was already reviewed"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({
+      status: 502,
+      message: "Proposal was already reviewed",
+    });
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
   });
 
   it("records a valid, active item's GTIN on the line", async () => {

@@ -1,4 +1,4 @@
-import { httpError } from "@checkin/component-kit";
+import { httpError, isServiceError } from "@checkin/component-kit";
 import { isValidGtin13 } from "@checkin/gtin";
 import {
   catalogCheckReferencesSchema,
@@ -35,11 +35,15 @@ export function normalizeDescription(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Run a catalog call; any failure is logged and surfaces as a plain 502. */
+/**
+ * Run a catalog call; any failure surfaces as 502. A catalog ServiceError keeps its message;
+ * any other error is logged and answered with a plain message.
+ */
 async function viaCatalog<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
+    if (isServiceError(err)) throw httpError(502, err.message);
     console.error("[workflow-mapping] catalog call failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   }
