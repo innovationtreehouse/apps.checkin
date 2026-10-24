@@ -116,8 +116,62 @@ retired kinds' old rows stay in the table as history and are no longer listed.
 ### 3. The queue
 
 The queue moves to `/finance/review`, labelled "Finance review" in the nav
-(decided). It keeps #2466's receipt tabs, its "Other states" picker and its
-counts. Four expense tabs follow the receipt tabs:
+(decided). It holds about ten tabs, which is too many for one row, so this
+section starts with how a person moves through them and then lists what each
+tab holds.
+
+#### How a finance holder works the queue
+
+The tabs sit in three labelled groups, one row each:
+
+| Group | Tabs | Shown to |
+| --- | --- | --- |
+| Receipts | Finance review, Duplicates, Totals off, Unreadable, Errors, and a "More" picker for #2466's other states, "Not delivered" among them | FINANCE and Board |
+| Expenses | Expenses, Account holds, QuickBooks | FINANCE and Board |
+| Board | Board | FINANCE and Board |
+
+Each tab shows a green count of the items this viewer can act on (§7). A tab
+with nothing for the viewer is dimmed, not hidden, so the layout never shifts
+under them.
+
+1. **One number in the nav.** The "Finance review" link carries one green pill,
+   the total across every tab. That number is the whole job.
+2. **They land where the work is.** Opening `/finance/review` with no `?queue=`
+   selects the first tab, in the order above, that has something for this
+   viewer. If nothing waits anywhere, it opens Finance review and says
+   "Nothing waiting on you."
+3. **The loop.** They open a row, decide on the record, and come back to the
+   same tab with the list and every count refreshed (§4). If the record still
+   has another reason for them, for example an expense with both a QuickBooks
+   failure and a reimbursee to name, they stay on the page and its reasons
+   alert lists what is left.
+4. **A tab that empties points onward.** When the last row goes, the tab says
+   so and names the next tab with work: "Nothing left here. Next: QuickBooks
+   (2)." They never hunt for what is left; following "Next" walks every tab
+   that needs them and ends at "Nothing waiting on you."
+5. **A busy tab splits by reason.** A tab whose rows carry more than one reason
+   shows a chip per reason above the list, each with its count ("Bucket to
+   assign 3", "Capital review 1"), and the list sorts by reason, oldest first.
+   A chip filters the list; the selected chip rides in the URL, so returning
+   from a record keeps it. This matters most for the Expenses tab if open
+   question 2 folds the expense list's finance views into it.
+
+A Board member without the finance role sees all three groups, because the
+Board reads receipt and expense data, but the counts are green only on the
+Board tab, and only for items they can act on. They land on the Board tab when
+it has something for them.
+
+For example, a finance holder sees 6 on the nav pill and opens it. Finance
+review has 2 receipts, so the page opens there. They approve both and come back
+to an empty tab that offers "Next: Expenses (3)". The Expenses tab shows chips
+"Reimbursee to name 1" and "Capital review 2". They name the reimbursee, submit
+one capital review, and leave the other for later. The tab now shows 1, and
+"Next: QuickBooks (1)" takes them to a failed post, which they retry. The
+pill shows 1, the capital review they left.
+
+#### What each tab holds
+
+The Receipts tabs are #2466's, unchanged. The Expenses and Board groups hold:
 
 | Tab | Reasons | Who acts |
 | --- | --- | --- |
@@ -181,9 +235,10 @@ The expense detail page gains what the receipt detail page has had since #2447:
 
 - **Return to the queue** (3.12). When the page was opened from the queue
   (`?queue=` present) and an action leaves the viewer with no reason they can
-  act on, the page goes back to that tab, the way receipt detail does. A
-  partial decision, such as one line of three, reloads in place. A page opened
-  from elsewhere always reloads in place.
+  act on, the page goes back to that tab and chip, the way receipt detail does.
+  A partial decision, such as one line of three, or a record with another
+  reason left for this viewer, reloads in place with the reasons alert
+  updated. A page opened from elsewhere always reloads in place.
 
 ### 5. Account holds on the expense page
 
@@ -225,11 +280,14 @@ question 7.
   for FINANCE by #2462's `countAwaitingFinance`. No change.
 - **Expense tabs**: a new `GET /api/expense/finance-queue/counts` returns
   `{ expenses, accountHolds, quickbooks, board }`, each as
-  `{ actionable, total }`. "Actionable" leaves out records the viewer is
+  `{ actionable, total, byReason }`, where `byReason` holds the actionable
+  count per reason for the chips. "Actionable" leaves out records the viewer is
   conflicted on, using the same `conflictedParties` predicate the refusals use.
   For the Board tab it counts only items this viewer may act on: a COI review
   they didn't sign, or a Board authorization they may record. The tab badges use
-  #2466's `queueBadge`: green for actionable, gray for the rest.
+  #2466's `queueBadge`: green for actionable, gray for the rest. The same
+  counts pick the landing tab and the "Next" tab (§3), and give each reason
+  chip its number.
 - **Nav**: the Expense Ops "Holds" and "Flags" pills go. The "Finance review"
   link carries one green pill, the receipt and expense actionable counts added,
   through `/api/nav/todo-counts` as #2462 does for receipts. A Board-only
