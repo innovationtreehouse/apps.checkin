@@ -52,16 +52,16 @@ describeDb("workflow transitions", () => {
 describeDb("flags", () => {
   it("raising a checked-off flag reopens it; raising an open one leaves it as is", async () => {
     const id = await seedExpense();
-    await raiseFlag(id, "COI", "first substitution");
-    const [flag] = await listOpenFlags(BOARD);
-    await checkOffFlag(BOARD, flag.id, "seen");
-    expect(await listOpenFlags(BOARD)).toEqual([]);
-
-    await raiseFlag(id, "COI", "second substitution");
-    await raiseFlag(id, "COI", "ignored while open");
-
-    const open = await listOpenFlags(BOARD);
-    expect(open.map((f) => [f.id, f.detail, f.checkedOffAt, f.notes])).toEqual([[flag.id, "second substitution", null, null]]);
+    await raiseFlag(id, "QB_POST_HELD", "first hold");
+    const [flag] = await listOpenFlags(FINANCE);
+    await checkOffFlag(FINANCE, flag.id, "seen");
     expect(await listOpenFlags(FINANCE)).toEqual([]);
+
+    await raiseFlag(id, "QB_POST_HELD", "second hold");
+    await raiseFlag(id, "QB_POST_HELD", "ignored while open");
+
+    const open = await listOpenFlags(FINANCE);
+    expect(open.map((f) => [f.id, f.detail, f.checkedOffAt, f.notes])).toEqual([[flag.id, "second hold", null, null]]);
+    expect(await listOpenFlags(BOARD)).toEqual([]);
   });
 });

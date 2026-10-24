@@ -6,7 +6,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from "@/components/TimezoneProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import type { ReceiptFlowStatus, StateCount } from "@/lib/receiptFlow/status";
-import { RECEIPT_FLOW_ROLES } from "@/lib/nav/sections/receiptReview";
+import { RECEIPT_FLOW_ROLES } from "@/lib/nav/sections/finance";
 
 const UNREACHABLE = "Couldn't load the counts. Check your connection and try again.";
 
