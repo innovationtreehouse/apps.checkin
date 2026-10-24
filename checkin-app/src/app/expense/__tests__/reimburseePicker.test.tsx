@@ -3,10 +3,15 @@ import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
+let mockErrors: Record<string, string> = {};
 const mockSend = jest.fn(async () => true);
 
 jest.mock("@checkin/expense/components/api", () => ({
-  useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
+  useLoad: (path: string | null) => ({
+    data: path ? mockLoads[path] ?? null : null,
+    error: path ? mockErrors[path] ?? null : null,
+    reload: () => {},
+  }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
   useBuckets: () => [],
   send: (...args: unknown[]) => mockSend(...(args as [])),
@@ -28,7 +33,10 @@ beforeAll(() => {
       }) as unknown as MediaQueryList);
 });
 
-function load(options: { personId: number; name: string | null }[]) {
+const OPTIONS = "/expenses/e1/reimbursee/options";
+
+function load(options: { personId: number; name: string | null }[] | null) {
+  mockErrors = {};
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000, currency: "USD", state: "owner_approval",
@@ -37,7 +45,7 @@ function load(options: { personId: number; name: string | null }[]) {
     "/expenses/e1/line-item-approvals": [],
     "/expenses/e1/signoffs": [],
     "/expenses/e1/reimbursee-vendor": { ExpenseReimburseeVendor: null, ExpenseReimburseeView: null },
-    "/expenses/e1/reimbursee/options": options,
+    ...(options ? { [OPTIONS]: options } : {}),
   };
 }
 
@@ -59,6 +67,22 @@ describe("reimbursee picker", () => {
     load([]);
     wrap();
     expect(screen.getByText(/No eligible reimbursee/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reimburse/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the options still loading, with nothing to click", () => {
+    load(null);
+    wrap();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reimburse/ })).not.toBeInTheDocument();
+  });
+
+  it("shows why the options failed to load, with nothing to click", () => {
+    load(null);
+    mockErrors = { [OPTIONS]: "Only FINANCE sets the reimbursee" };
+    wrap();
+    expect(screen.getByText("Only FINANCE sets the reimbursee")).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reimburse/ })).not.toBeInTheDocument();
   });
 });
