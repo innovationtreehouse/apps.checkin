@@ -1,4 +1,5 @@
 import { httpError } from "@checkin/component-kit";
+import { isValidGtin13 } from "@checkin/gtin";
 import {
   catalogCheckReferencesSchema,
   catalogItemReferenceProposalSchema,
@@ -7,7 +8,7 @@ import {
 } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
-import { createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
+import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
 import { insertAuditEvent } from "../lib/audit";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { ports, requireActor } from "../runtime";
@@ -47,14 +48,21 @@ export const lineItemService = {
   /**
    * CI3: optimistic association. The line is recognized with the manager's GTIN at once; a
    * reference proposal and any conflict reports go to the catalog without gating the receipt.
+   * The GTIN must name an approved, non-archived catalog item: 400 if malformed, 404 if none.
    */
   async associateGtin(receiptId: number, lineId: number, body: AssociateBody): Promise<void> {
     const actor = await requireActor();
     const { gtin13 } = body;
+    if (!isValidGtin13(gtin13)) {
+      throw httpError(400, `"${gtin13}" is not a GTIN-13: it needs 13 digits ending in a valid check digit`);
+    }
     const conversionFactor = body.conversionFactor ?? 1;
     const edit = await loadEditableLine(receiptId, lineId);
     const { received, lineItem, receipt } = edit;
     const { catalogReader, catalogSubmissions } = ports();
+
+    const item = await viaCatalog(async () => activeCatalogItemSchema.parse(await catalogReader.getActiveItem(gtin13)));
+    if (!item) throw httpError(404, `No catalog item has GTIN ${gtin13}`);
 
     const retailer = receipt.vendorName ?? undefined;
     const normalizedDesc =

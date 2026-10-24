@@ -13,6 +13,9 @@ const recognizeAll = {
   checkReferences: async () => {
     throw new Error("unused");
   },
+  getActiveItem: async () => {
+    throw new Error("unused");
+  },
 };
 
 beforeEach(async () => {
@@ -86,6 +89,7 @@ describeDb("S1 — recognition and push", () => {
           throw new Error("catalog down");
         },
         checkReferences: recognizeAll.checkReferences,
+        getActiveItem: recognizeAll.getActiveItem,
       },
     });
     const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));

@@ -90,6 +90,9 @@ export function createCatalogRepository(db: PrismaClient) {
     findItemByGtin13: (gtin13: string) =>
       db.item.findFirst({ where: { gtin13 } }),
 
+    findActiveItemByGtin13: (gtin13: string) =>
+      db.item.findFirst({ where: { gtin13, archivedAt: null }, select: { gtin13: true, name: true } }),
+
     findItemByGtin13WithIncludes: (gtin13: string) =>
       db.item.findFirst({ where: { gtin13 }, include: ITEM_INCLUDE }),
 
