@@ -9,11 +9,6 @@ import { logError } from "./logger";
 
 const partOwners = createPartOwnerRepository(db);
 
-/** Finance assigning a line to an org-level bucket is the approval; a program bucket waits for its approvers. */
-export async function isOrgLevelBucket(bucketId: number): Promise<boolean> {
-  return (await getExpenseRuntime().signoff.bucketApprovers(bucketId)).orgLevel;
-}
-
 /** Buckets a line may be assigned to: listed by the host, not archived. */
 export async function liveBucketIds(): Promise<Set<number>> {
   return new Set((await getExpenseRuntime().budgetOwners.list()).filter((b) => !b.archivedAt).map((b) => b.id));
@@ -23,17 +18,14 @@ export async function liveBucketIds(): Promise<Set<number>> {
 export async function initFinancialFlow(expenseId: string, orgId: string, backfill = false): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
-  // Resolve owners and their bucket kind before opening a transaction. Outside backfill, a mapped
-  // bucket that is no longer live leaves the line unresolved, for FINANCE to assign. A non-inventory
-  // line has no part to map, so FINANCE always assigns it.
+  // Resolve owners before opening a transaction. Outside backfill, a mapped bucket that is no
+  // longer live leaves the line unresolved, for FINANCE to assign. A non-inventory line has no part
+  // to map, so FINANCE always assigns it.
   const resolvedOwners = new Map<number, number | null>();
-  const orgLevel = new Map<number, boolean>();
   const live = await liveBucketIds();
   for (const li of lineItems) {
     const mapped = li.gtin13 && !li.nonInventory ? await partOwners.resolveItemOwner(orgId, li.gtin13) : null;
-    const ownerId = mapped !== null && (backfill || live.has(mapped)) ? mapped : null;
-    resolvedOwners.set(li.id, ownerId);
-    if (ownerId !== null && !orgLevel.has(ownerId)) orgLevel.set(ownerId, await isOrgLevelBucket(ownerId));
+    resolvedOwners.set(li.id, mapped !== null && (backfill || live.has(mapped)) ? mapped : null);
   }
 
   // Backfill: owner re-signoff is skipped (already approved historically) — treat owners as resolved
@@ -48,15 +40,14 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
     const claimed = await tx.expense.updateMany({ where: { id: expenseId, state: "pending" }, data: { state: "pending" } });
     if (claimed.count === 0) return;
     for (const li of lineItems) {
-      const ownerId = resolvedOwners.get(li.id) ?? null;
-      const preApproved = backfill || (ownerId !== null && orgLevel.get(ownerId) === true);
+      // Every line, an org-level one included, waits for its approval; a backfill takes none.
       await tx.lineItemOwnerApproval.create({
         data: {
           expenseId,
           lineItemId: li.id,
-          ownerId,
-          status: preApproved ? "approved" : "pending",
-          decidedAt: preApproved ? now : null,
+          ownerId: resolvedOwners.get(li.id) ?? null,
+          status: backfill ? "approved" : "pending",
+          decidedAt: backfill ? now : null,
           notes: backfill ? "backfill: already booked in QuickBooks" : null,
         },
       });
@@ -90,7 +81,6 @@ export async function checkOwnershipAutoTransition(expenseId: string, actor: Act
       action: "state_transition",
     }).catch(unlessRaceLost);
     if (moved === null) return;
-    // Lines finance assigned to org-level buckets may already be approved.
     await checkApprovalAutoTransition(expenseId, actor);
   }
 }
