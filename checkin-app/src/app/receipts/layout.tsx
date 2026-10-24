@@ -10,6 +10,9 @@ import { linkAllowed } from "@/lib/nav/gates";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import { MY_RECEIPTS } from "@/lib/nav/sections/myReceipts";
 import { RECEIPT_REVIEW } from "@/lib/nav/sections/receiptReview";
+import { useTodoCounts } from "@/hooks/useTodoCounts";
+import { sectionTabBadge } from "@/components/navBadges";
+import { TabBadge } from "@/components/ui/CountBadge";
 
 const allowedLinks = (section: NavSection, user: NavUser | undefined) =>
   section.links.filter((l) => linkAllowed(section, l, user, null));
@@ -25,6 +28,7 @@ export default function ReceiptsLayout({ children }: { children: React.ReactNode
   const router = useRouter();
   const pathname = usePathname();
   const user = session?.user;
+  const counts = useTodoCounts(status === "authenticated");
   const mine = allowedLinks(MY_RECEIPTS, user);
   const review = allowedLinks(RECEIPT_REVIEW, user);
   const authorized = mine.length > 0 || review.length > 0;
@@ -50,7 +54,12 @@ export default function ReceiptsLayout({ children }: { children: React.ReactNode
 
   return (
     <PageContainer>
-      <SectionTabs links={links} prefixMatch mb="md" />
+      <SectionTabs
+        links={links}
+        prefixMatch
+        mb="md"
+        badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
+      />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

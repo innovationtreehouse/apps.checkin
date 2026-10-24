@@ -3,7 +3,7 @@ import { db } from "../../db";
 import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 const taxed = () => manualDetails({ tax: "1.00", receiptTotal: "21.00" });
 
@@ -69,5 +69,16 @@ describeDb("financial review", () => {
       donor: { self: true },
     });
     expect(r.state).toBe("financial_review");
+  });
+});
+
+describeDb("receipts awaiting finance", () => {
+  it("counts the org's receipts in the queues only FINANCE can clear, across uploaders", async () => {
+    expect((await receiptService.upload(textFile("A"), "text/plain", { details: taxed() })).state).toBe("financial_review");
+    actAs(BOB);
+    expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("financial_review");
+    const off = await receiptService.upload(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    expect(off.state).toBe("validation_failed");
+    expect(await receiptService.countAwaitingFinance()).toBe(2);
   });
 });

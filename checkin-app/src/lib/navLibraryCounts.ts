@@ -53,6 +53,15 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }
         : {},
   },
+  {
+    library: "receipt",
+    // BOARD reads the review queues but cannot act on them, so only FINANCE gets their count.
+    visible: (u) => u.isFinance === true,
+    count: async (): Promise<Record<string, number>> =>
+      process.env.RECEIPT_DATABASE_URL
+        ? { awaitingFinance: await (await import("@checkin/receipt")).receiptService.countAwaitingFinance() }
+        : {},
+  },
 ];
 
 /**

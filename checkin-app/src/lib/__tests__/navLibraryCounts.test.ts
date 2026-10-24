@@ -1,4 +1,20 @@
-import { collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
+import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
+
+jest.mock("@checkin/receipt", () => ({ receiptService: { countAwaitingFinance: async () => 5 } }));
+
+describe("the receipt provider", () => {
+  const receipt = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "receipt");
+
+  beforeEach(() => { process.env.RECEIPT_DATABASE_URL = "postgres://receipt"; });
+  afterEach(() => { delete process.env.RECEIPT_DATABASE_URL; });
+
+  it("reports the review count to FINANCE and not to BOARD, which cannot act on the queues", async () => {
+    expect(await collectLibraryCounts({ id: 1, isFinance: true }, ["receipt"], receipt)).toEqual({
+      receipt: { awaitingFinance: 5 },
+    });
+    expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toBeUndefined();
+  });
+});
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
