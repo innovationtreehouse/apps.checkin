@@ -264,17 +264,24 @@ describe('middleware ops-stg gate is inert outside staging', () => {
 });
 
 /**
- * The matcher — not the function body — is what exempts /api from the gate. Next applies it
- * before invoking middleware(), so assert the regex itself: API/signin/static excluded,
- * real page routes included.
+ * The page pattern — not the function body — is what keeps the gate off /api. Next applies the
+ * matcher before invoking middleware(), so assert the regexes themselves: the page pattern
+ * excludes API/signin/static and includes real page routes; the /api pattern covers all of /api.
  */
 describe('middleware matcher', () => {
+    const [pagePattern, apiPattern] = middlewareConfig.matcher as string[];
+    const matchesPage = (path: string) => new RegExp(`^${pagePattern}$`).test(path);
     const matches = (path: string) =>
         (middlewareConfig.matcher as string[]).some((p) => new RegExp(`^${p}$`).test(path));
 
-    it('exempts /api routes (they self-enforce auth; never redirect JSON to /signin)', () => {
-        expect(matches('/api/scan')).toBe(false);
-        expect(matches('/api/auth/callback/google')).toBe(false);
+    it('keeps /api out of the page pattern (routes self-enforce auth; never redirect JSON to /signin)', () => {
+        expect(matchesPage('/api/scan')).toBe(false);
+        expect(matchesPage('/api/auth/callback/google')).toBe(false);
+    });
+
+    it('matches every /api route with the /api pattern', () => {
+        expect(new RegExp(`^${apiPattern}$`).test('/api/scan')).toBe(true);
+        expect(new RegExp(`^${apiPattern}$`).test('/api/donations/uploaded-files')).toBe(true);
     });
 
     it('exempts signin and framework/static paths', () => {

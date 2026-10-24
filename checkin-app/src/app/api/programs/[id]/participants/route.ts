@@ -2,13 +2,17 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
-import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { isDuesSettled } from "@/lib/orgMembership";
+import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
+import { householdLeadship } from "@/lib/household/leads";
+import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { changeProgramStockWith } from "@/lib/shopify/stock";
+import { isSaleEnded } from "@/lib/programs/saleState";
 import { apiError } from "@/lib/api-response";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -63,6 +67,17 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
+        // A family that claimed in time can always pay: an existing PENDING
+        // claim skips every limit below (capacity would count its own row) and
+        // gets the 409 the program page folds back into its checkout.
+        const existingClaim = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId: participantId } },
+            select: { status: true },
+        });
+        if (existingClaim?.status === 'PENDING') {
+            return apiError("Participant is already enrolled in this program.", 409);
+        }
+
         const override = body.override === true;
 
         // Conflict of interest: an override and a comp are both one-actor
@@ -103,14 +118,19 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             if (currentProgram.enrollmentStatus === 'CLOSED') {
                 return NextResponse.json({ error: "Program enrollment is currently closed.", requiresOverride: true }, { status: 400 });
             }
+            // The off-sale date closes new claims at once; the daily sweep only
+            // records it. Claims made in time returned 409 above and still pay.
+            if (isSaleEnded(currentProgram)) {
+                return NextResponse.json({ error: "Sales for this program have ended.", requiresOverride: true }, { status: 400 });
+            }
 
             // Members-only, judged on the PERSON being enrolled (a household lead
             // enrolling a dependent is judged on the dependent's household). This is
             // the authoritative join gate: a publiclyVisible members-only program is
             // shown to non-members, so a non-member can reach the enroll button and
-            // must be refused here. Dues-settled, not ACTIVE — it admits a paid
+            // must be refused here. Fee-settled, not ACTIVE — it admits a paid
             // household awaiting background clearance, matching the read gates.
-            if (currentProgram.orgMemberOnly && !(await isDuesSettled(participantId))) {
+            if (currentProgram.orgMemberOnly && !(await isMembershipFeeSettled(participantId))) {
                 return NextResponse.json({ error: "This program is for Treehouse Members only.", requiresOverride: true }, { status: 400 });
             }
 
@@ -165,20 +185,26 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 
-        const enrollment = await prisma.$transaction(async (tx) => {
+        // A comp takes its seat out of Shopify stock: the stamp, the row and the -1 commit in
+        // one transaction, so a crash leaves all three or none. What a crash can still leave is
+        // a recorded -1 not yet pushed; it stays owed in the carry and the daily heal lands it.
+        const takesSeatWithoutSale = isExternalAdmin && override && currentProgram.maxParticipants !== null;
+        const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "comp", async (tx) => {
             // Re-check capacity under a row lock right before insert, so
             // concurrent enrollers can't both pass a stale count and overfill.
             if (enforceLimits) {
                 await lockProgramAndCheckCapacity(tx, programId, 1, currentProgram.maxParticipants);
             }
-            return tx.programParticipant.create({
+            const row = await tx.programParticipant.create({
                 data: {
                     programId,
                     personId: participantId,
-                    status: initialStatus
+                    status: initialStatus,
+                    ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
                 }
             });
-        });
+            return { result: row, delta: takesSeatWithoutSale ? -1 : 0 };
+        }, { inRequest: true });
 
         await prisma.auditLog.create({
             data: {
@@ -197,7 +223,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // A board/sysadmin comp (external admin, confirmed override) seats a
         // participant WITHOUT a Shopify checkout, so unlike a normal PENDING
         // enrollment nothing ever fires Shopify's own sale-time -1. Reconcile it
-        // here: -1 on the pool, exactly like a paid sale and like scholarship
+        // above: -1 on the pool, exactly like a paid sale and like scholarship
         // apply (request-payment-plan -1). Without it the roster takes a seat
         // the storefront still shows as available (oversell).
         //
@@ -205,22 +231,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // hold-ledger: invariants I1/I2/I3 (enrollmentState.ts) make a held seat
         // PENDING-and-scholarship only, and the lifecycle reconciler auto-heals
         // an ACTIVE+held row by releasing +1 — which would silently undo this
-        // decrement. A comp is a permanent consumption like a paid seat, and
-        // like a paid seat it is not auto-restocked on withdrawal (that stays a
-        // manual Shopify action, same as a refund). Uncapped programs track no
+        // decrement. A recorded -1 is stamped (seatTakenWithoutSaleAt), and
+        // withdrawing the comp puts that seat back on sale (+1, see
+        // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
-        // adjustProgramInventory additionally no-ops when no variant is wired.
+        // the stock writer additionally no-ops when no variant is wired.
+        // Enrollment and its -1 are committed above; on a push failure keep both and warn
+        // (the stock writer has logged + emailed the board), mirroring the cap-edit and withdraw siblings.
         let warning: string | undefined;
-        if (isExternalAdmin && override && currentProgram.maxParticipants !== null) {
-            // Enrollment already committed above; on Shopify failure keep it and
-            // warn (adjustProgramInventory has logged + emailed sysadmins),
-            // mirroring the cap-edit and withdraw siblings. There is no stamp to
-            // roll back — deleting the just-created comp would be the worse
-            // half-commit.
-            const ok = await adjustProgramInventory(currentProgram, -1);
-            if (!ok) {
-                warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
-            }
+        if (takesSeatWithoutSale && !stockLanded) {
+            warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
         }
 
         const responseObj: Record<string, unknown> = { success: true, enrollment };
@@ -241,11 +261,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     }
 });
 
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
+async function owesShortfall(programId: number): Promise<boolean> {
+    const row = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyStockCarry: true } });
+    return (row?.shopifyStockCarry ?? 0) < 0;
+}
+
+async function isLeadOfParticipant(actorId: number, participantId: number): Promise<boolean> {
+    const hh = await householdLeadship(actorId);
+    if (!hh?.canManage) return false;
+    const participant = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
+    return sharesHousehold(hh.householdId, participant?.householdId);
 }
 
 export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -260,6 +285,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         const body = await req.json();
         const { participantId } = body;
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
         if (!participantId) {
             return apiError("participantId is required", 400);
@@ -278,7 +304,37 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const isLeadMentor = currentProgram.leadMentorId === currentUserId;
         const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
 
-        if (!isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard) {
+        // A household lead may withdraw only an unpaid enrollment: a paid
+        // withdrawal (refund, restock) is the board's call. Enforced by the
+        // conditional delete below, not a separate read, so a payment landing
+        // mid-request cannot slip through.
+        const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
+        // Same for an adult removing themselves: a paid place is not the household's
+        // to withdraw — only the Board removes it.
+        // "Paid" is decided on the place, not the program's price today: a place with
+        // an order or an approved scholarship/payment plan stays paid even if the Board
+        // later zeroes the price. A free program's never-paid place stays theirs.
+        // ponytail: places paid before shopifyOrderId existed carry no order, so on a
+        // still-priced program only PENDING goes; a backfill would let this drop isFree.
+        const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
+        // Staff removing a place in their own household (or their own) has a
+        // conflict of interest (Ethics Policy Art. III §III.5): they keep only the
+        // household's own unpaid withdrawal, and someone outside removes a paid place.
+        const isStaff = isLeadMentor || isSysAdminOrBoard;
+        const subject = isStaff && !isSelfRemoval
+            ? await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } })
+            : null;
+        const isConflictedStaff = isStaff
+            && (isSelfRemoval || await hasHouseholdConflict(prisma, currentUserId, subject?.householdId));
+        // Only the Board removes a paid place, with a written reason (Standards of
+        // Conduct §XVI.3). The Board role is read from the database, not the session.
+        const isBoardRemoval = isStaff && !isConflictedStaff
+            && !!(await prisma.person.findUnique({ where: { id: currentUserId }, select: { isBoardMember: true } }))?.isBoardMember;
+        const unpaidOnly = !(isBoardRemoval && reason);
+        const unpaidWhere: Prisma.ProgramParticipantWhereInput = isHouseholdLeadPath || !isFree
+            ? { status: 'PENDING' }
+            : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null }] };
+        if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
             return apiError("Forbidden: Not authorized to remove this participant", 403);
         }
 
@@ -295,12 +351,36 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
         }
 
-        // Hold-ledger: withdrawal is one of the three release paths — if this
-        // PENDING participant was holding a
-        // scholarship seat (inventoryHeldAt set), releasing it back to
-        // Shopify (+1) happens with the removal, exactly once (see
-        // withdrawAndReleaseHold).
-        const { enrollment, released, shopifyOk } = await withdrawAndReleaseHold(programId, participantId, currentProgram);
+        // A seat taken out of Shopify without a payment — a scholarship hold, or
+        // a comped/approved place — goes back on sale (+1) with the removal,
+        // exactly once (see withdrawAndReleaseHold).
+        let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
+        try {
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, unpaidOnly ? unpaidWhere : undefined, { inRequest: true });
+        } catch (error) {
+            if (unpaidOnly && isPrismaError(error, 'P2025')) {
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId, personId: participantId } },
+                    select: { status: true },
+                });
+                if (row?.status === 'ACTIVE') {
+                    if (isConflictedStaff) {
+                        return apiError("This place is paid and is in your own household; someone outside your household must remove it.", 403);
+                    }
+                    if (isBoardRemoval) {
+                        return apiError("A written reason is required to remove a paid place.", 400);
+                    }
+                    if (isStaff) {
+                        return apiError("Only the Board removes a paid place.", 403);
+                    }
+                    return apiError(isSelfRemoval
+                        ? "Your place is paid; ask the board to withdraw you."
+                        : "This child has paid; ask the board to withdraw them.", 403);
+                }
+            }
+            throw error;
+        }
+        const { enrollment, released, shopifyOk } = withdrawal;
 
         await prisma.auditLog.create({
             data: {
@@ -309,25 +389,30 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
                 tableName: 'ProgramParticipant',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                oldData: enrollment
+                oldData: enrollment,
+                ...(reason && { newData: { reason } }),
             }
         });
 
-        // No raw enrollment echo: this route is reachable by the program's lead
-        // mentor, and the deleted row carries board/finance-confidential hardship
-        // fields (paymentPlanDeniedAt, inventoryHeldAt). The audit log above keeps
-        // the full row server-side.
-        const responseObj: Record<string, unknown> = { success: true, released };
-        if (released && !shopifyOk) {
+        // Nothing here may reveal whether a scholarship hold existed: this route
+        // is reachable by the program's lead mentor, who must never see
+        // scholarship / payment-plan status. So no enrollment echo, no
+        // `released` flag, and the hold-release warning is staff-only. The audit
+        // log above keeps the full row server-side.
+        const responseObj: Record<string, unknown> = { success: true };
+        if (isSysAdminOrBoard && released && !shopifyOk) {
             responseObj.warning = "Participant removed, but the Shopify inventory release failed. Capacity may be out of sync — check System Status > Link Status.";
         }
 
-        // Advise a manual Shopify restock only when an ACTIVE removal freed a
-        // tracked seat; `released` already handles the PENDING hold path (+1).
+        // Advise a manual Shopify restock only when a paid removal freed a
+        // tracked seat; `released` covers the holds and comps put back (+1).
         // Staff-only: a lead mentor or self-removing parent can't act on Shopify
         // inventory, so the advisory is noise (and a foot-gun) for them.
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
-        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant) {
+        // After the sale ends a freed seat is not resold, so there is nothing to advise.
+        // An over-capacity program (negative carry) owes this seat to its shortfall, not to the store.
+        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)
+            && !(await owesShortfall(programId))) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";
         }
         return NextResponse.json(responseObj);

@@ -25,6 +25,15 @@ top.
 
 ---
 
+## Assumptions
+
+Things every domain takes as true because they are handled outside the app.
+
+- Every Board member is an insider. If an outside Board member ever joins, every
+  rule that grants the Board access is reconsidered.
+
+---
+
 ## Self-scope and repair
 
 - **A person acts on their own records, and nobody else's.** Ownership is the
@@ -43,7 +52,7 @@ top.
 
 *Which* superuser is not settled by this principle, and today it varies — some
 surfaces admit the board and a sysadmin, others only the board. That inconsistency
-is a live question, not an application of this rule.
+is a live question (issue #1551), not an application of this rule.
 
 The two halves are load-bearing together. Scope without repair produces states
 nobody can fix; repair without scope is just an absence of access control.
@@ -137,14 +146,38 @@ when the answer is not available at the time it is needed.
   carries the difference through rather than flattening it.
 
 - **Where finishing an operation would take inventing a fact, refuse to finish
-  it.** Not a plausible departure time for someone whose visit was never closed,
+  it, or hold it for the person who knows.** Not a plausible departure time for
+  someone whose visit was never closed,
   not a guess at which of two conflicting records is the real one. Refusing is
   visible and recoverable; an invented value is neither, because nothing
   downstream can tell it from a real one. The operation stops and says what it
-  needs — the person who knows supplies it.
+  needs — the person who knows supplies it. A held operation is late, not lost.
 
 The tell is a default. Every `?? 0`, `|| false`, and empty-result branch is this
 principle being decided, usually without anyone noticing they decided it.
+
+---
+
+## Apply once
+
+Anything that changes money, stock, standing or attendance takes effect once,
+however many times it is sent.
+
+- **A repeat of the same thing is recognised and does nothing.**
+
+- **A repeat that differs is refused, not merged.**
+
+- **A retry or catch-up only finishes what is missing.** It never replays what
+  already happened.
+
+- **Where the system cannot tell a repeat from a new event, it holds the event
+  for a person.**
+
+Holding follows *fail closed*; catching up late is allowed by *urgency of
+consistency follows risk*.
+
+The tell is a retry, resend or catch-up that does the work again instead of
+finishing what is missing.
 
 ---
 
@@ -340,3 +373,30 @@ believed it covered two.
 
 The failure mode is not usually a missing log — it is a log that records the
 happy path and goes quiet exactly where a human exercised judgement.
+
+---
+
+## Urgency of consistency follows risk
+
+How soon a copy of the app's data has to agree with its source depends on what a
+gap between them would put at risk. A gap that can only make a record late is
+allowed to close over time.
+
+- **Who is in the building agrees as soon as a scan can reach the server.** The
+  only accepted lag is a kiosk that is offline, and it replays every scan at the
+  time it was read and never loses one.
+
+- **The finances are eventually consistent.** Income and spending take time to
+  reach the books in full. They wait on people, because each entry is reviewed,
+  matched and signed off by the people the expense rules require, and on the app,
+  which works at its own pace, on its own schedule and within its own safety
+  limits.
+
+- **The books are complete once everything is matched, not the moment money
+  moves.** An entry still waiting to reach the books is late, not lost; waiting
+  is the normal state, not a fault. Catching up never applies anything twice
+  (see *Apply once*).
+
+The tell is a change that makes something wait on the books agreeing, or reports
+them as wrong while they are still catching up, when the only thing the gap
+risks is that the books are late.

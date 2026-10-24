@@ -113,16 +113,16 @@ newData: auditData
 ### Site 1: `household/member/route.ts`
 
 `updatedHouseholdMember` comes from a `person.update(..., select: HOUSEHOLD_PEER_SELECT)`.
-Destructure before the audit call at line 117.
+Destructure before the `auditLog.create` that writes `newData: updatedHouseholdMember`.
 
 ### Site 2: `profile/route.ts`
 
 `updatedProfile` comes from `person.update` with a select including `dateOfBirth`.
-Destructure before the audit call at line 75.
+Destructure before the `auditLog.create` that writes `newData: updatedProfile`.
 
 ### Site 3: `membership-ops/participants/merge/route.ts`
 
-`personPreImage()` (line 50) explicitly lists `dateOfBirth: p.dateOfBirth`.
+`personPreImage()`, a module-level function in that file, explicitly lists `dateOfBirth: p.dateOfBirth`.
 Remove that line from the function. This strips DOB from both the merge-target
 and the keeper pre-images in `oldData`.
 

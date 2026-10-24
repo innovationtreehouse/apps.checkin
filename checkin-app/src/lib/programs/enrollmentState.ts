@@ -25,7 +25,7 @@ import type { Prisma, ProgramParticipantStatus as PrismaStatus } from '@/generat
 
 /** Local status union — the trunk `status` column. `UNENROLLED` (∅/no row) is
  *  not a status value; it appears only in the transition table. */
-export type ProgramParticipantStatus = 'PENDING' | 'ACTIVE';
+export type ProgramParticipantStatus = 'PENDING' | 'ACTIVE' | 'WITHDRAWN';
 
 // Parity: fails to compile if the schema enum and this union diverge (§3.4).
 // The runtime twin (assertEnumParity) lives in the unit test.
@@ -102,6 +102,12 @@ export const STATES = {
         statuses: ['ACTIVE'] as const,
         flags: { inventoryHeldAt: false },
     }),
+    /** WITHDRAWN, held=null. Terminal present-row exit: the row stays as history
+     *  (#1462). No transition writes it yet. */
+    WITHDRAWN: mk({
+        statuses: ['WITHDRAWN'] as const,
+        flags: { inventoryHeldAt: false },
+    }),
 } as const;
 
 // ---- fromWhere (§5 CAS from-state, #1080) -----------------------------------
@@ -137,7 +143,8 @@ export type EnrollmentStateName =
     | 'PENDING_HOLD_FAILED'
     | 'PENDING_HELD'
     | 'PENDING_HELD_DENIED'
-    | 'ACTIVE';
+    | 'ACTIVE'
+    | 'WITHDRAWN';
 
 /**
  * Name the row's legal state, or `null` if it is off-diagram (an I1–I4 violation,
@@ -149,6 +156,9 @@ export function classify(row: EnrollmentRow): EnrollmentStateName | null {
         case 'ACTIVE':
             // I1: ACTIVE ⟹ held null. A held seat on an ACTIVE row is off-diagram.
             return row.inventoryHeldAt ? null : 'ACTIVE';
+        case 'WITHDRAWN':
+            // I2: a held seat is only ever on a PENDING row.
+            return row.inventoryHeldAt ? null : 'WITHDRAWN';
         case 'PENDING':
             if (!row.inventoryHeldAt) {
                 // held=null: I4 — a denial is only ever stamped on a held seat.
@@ -208,12 +218,14 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T2 enroll(comp)', from: 'UNENROLLED', to: 'ACTIVE', actor: 'user/admin', guardSite: 'participants/route.ts POST — initialStatus in same tx' },
     { event: 'T3 apply(−1 ok)', from: 'PENDING_UNPAID', to: 'PENDING_HELD', actor: 'user', guardSite: 'request-payment-plan/route.ts — CAS status:PENDING, held:null' },
     { event: 'T3 re-apply', from: 'PENDING_HELD_DENIED', to: 'PENDING_HELD', actor: 'user', guardSite: 'request-payment-plan/route.ts — CAS held:{not:null} (clears denial, no 2nd −1)' },
-    { event: 'T3f apply(−1 FAILS)', from: 'PENDING_UNPAID', to: 'PENDING_HOLD_FAILED', actor: 'user', guardSite: 'request-payment-plan/route.ts — roll held back to null; req stays true' },
+    { event: 'T3f apply(−1 FAILS)', from: 'PENDING_UNPAID', to: 'PENDING_HOLD_FAILED', actor: 'user', guardSite: 'request-payment-plan/route.ts — hold and −1 roll back together; the request flag is written alone' },
     { event: 'T3m manual-hold', from: 'PENDING_HOLD_FAILED', to: 'PENDING_HELD', actor: 'admin', guardSite: 'finance-ops/payment-plans/manual-hold/route.ts — CAS held:null, req:true → stamp held' },
     { event: 'T4 activate(payment)', from: 'PENDING_UNPAID', to: 'ACTIVE', actor: 'shopify-webhook', guardSite: 'activateEnrollment.ts — CAS status:PENDING; release CAS held:{not:null}→null (fires on any PENDING)' },
-    { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1; COI guard' },
+    { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1, stamping seatTakenWithoutSaleAt only when a hold was held (T11); COI guard' },
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard' },
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 withdraw', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
+    { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts settleRestockedSeats → removeRefundedEnrollment — only children the order identifies, deleteMany scoped to the refunded order + audit row in one tx; no +1 (Shopify restocked); unidentified public seats taken back with -k' },
+    { event: 'T11 withdraw(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
 ] as const;

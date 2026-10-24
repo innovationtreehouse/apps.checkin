@@ -228,7 +228,7 @@ describe('Admin Participants API Integration Tests', () => {
             expect(membership).toBeNull();
         });
 
-        it('should grant an ACTIVE membership when alreadyMember is true', async () => {
+        it('should reject alreadyMember with 400 and create no participant or membership', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
             });
@@ -243,16 +243,12 @@ describe('Admin Participants API Integration Tests', () => {
             });
 
             const res = await POST(req as unknown as Parameters<typeof POST>[0]);
-            expect(res.status).toBe(200);
-            const data = await res.json();
+            expect(res.status).toBe(400);
 
             const created = await prisma.person.findUnique({
-                where: { id: data.participant.id }
+                where: { email: 'new-paid-participants-test@example.com' }
             });
-            const membership = await prisma.orgMembership.findUnique({
-                where: { householdId: created!.householdId! }
-            });
-            expect(membership?.status).toBe('ACTIVE');
+            expect(created).toBeNull();
         });
 
         it('should create a child participant and auto-generate a parent and household if parentEmail does not exist', async () => {
@@ -325,7 +321,7 @@ describe('Admin Participants API Integration Tests', () => {
 
         it('should successfully update a participant name, email, and phone', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: true }
             });
 
             // Create a disposable user just for this edit test
@@ -335,7 +331,7 @@ describe('Admin Participants API Integration Tests', () => {
 
             const req = new Request(`http://localhost:4000/api/membership-ops/participants/${editUser.id}`, {
                 method: 'PUT',
-                body: JSON.stringify({ name: 'Updated Name', email: 'updated-email@example.com', phone: '5551234567' })
+                body: JSON.stringify({ name: 'Updated Name', email: 'updated-email@example.com', emailChangeReason: 'New address', phone: '5551234567' })
             });
 
             const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: editUser.id.toString() }) });

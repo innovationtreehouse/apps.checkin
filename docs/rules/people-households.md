@@ -121,6 +121,17 @@ Things the app takes as true because they are handled outside it.
   a member family, and cannot add members to its own household. The board and
   sysadmin path for adding someone to any household is unaffected.  [Decision]
 
+- Nobody is moved into or out of a denied household, by the board's household
+  move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
+- The board and sysadmin path adds nobody to a denied household, and nobody,
+  a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
+- Only the board or a sysadmin moves an existing person out to a new household of
+  their own. The person becomes its lead, so a youth cannot be moved into one, and the new
+  household starts with no org membership: a membership stays with the household
+  it belongs to.  [Decision]
+
 ### Identity and age
 
 - Every household member has a date of birth or an over-25 declaration, never
@@ -146,8 +157,27 @@ Things the app takes as true because they are handled outside it.
 
 - Email identity is case-insensitive.  [Decision]
 
-- Where someone signs in with Google, the address they sign in with is the
-  address they are contacted at. There is no second one to diverge from it.  [Decision]
+- Where someone signs in through the outside sign-in service, the address they
+  sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
+
+- A member's email is not edited from the household card, by them or by a lead,
+  once they have signed in or hold anything the board granted: a role, a program
+  they lead or volunteer on, or a background check on file. The board changes it,
+  and the refusal says how to ask. A member with neither stays editable, and
+  resending the unchanged address is not a change.  [Decision]
+
+- On the board and sysadmin person edit, only a board member changes a person's
+  email, and only with a written reason, which the edit's record keeps. Nobody
+  changes the email of anyone in their own household this way. The email decides
+  who signs in as the person, so changing it hands over everything they hold.  [Decision — *Principle: identity is not authorisation*]
+
+- An account with the sign-in service must have a verified email before it is
+  first linked to a person record; an account already linked keeps signing in unchanged.  [Decision]
+
+- A first sign-in through the sign-in service links to the person whose email
+  matches, or creates a new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
+
+- Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
 - A person's identifier is opaque, and its only job is to be unique and to stay
   unique. It is never reissued and never worked out from the people already on
@@ -173,6 +203,30 @@ Things the app takes as true because they are handled outside it.
   records never alters it as a side effect. A merge that would move a person
   across a denied-or-revoked boundary, or abandon an active membership, is refused
   until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+
+### Roles
+
+- Nobody grants or removes a role or flag — board, keyholder, staging access, a
+  program's treasurer, or any other — for themself or for anyone in their own
+  household. A sysadmin may grant roles in general; this binds them like anyone
+  else. The board and sysadmin household-move paths refuse to move anyone out of
+  or into the actor's own household, which would get around it, and the board and
+  sysadmin paths that add a person to an existing household or make someone a lead
+  refuse the actor's own household for the same reason. A lead promoting within
+  their own household is unaffected.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- A merge moves the merged-away record's roles under the same checks as a hand
+  grant. It is refused when either record is in the actor's household, or when
+  the merged-away record holds the board role and the actor is not on the board.
+  An import that updates an existing person is refused for the actor's own
+  household in the same way.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Only a board member removes someone's board role, and the last board member
+  cannot be removed. A sysadmin may add a board member but not remove one.  [Decision]
+
+- Signing in never grants a role, with one exception: an address on the
+  deployment's bootstrap list becomes sysadmin only while the system has no
+  sysadmin, and never if that person's sysadmin role was once removed.  [Decision — *Principle: least privilege*]
 
 ### Who may see what
 

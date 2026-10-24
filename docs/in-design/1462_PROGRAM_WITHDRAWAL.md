@@ -4,8 +4,9 @@
 accompanies this doc. Do not cite it as ground truth.
 
 Leaving a program hard-deletes the enrollment row. `withdrawAndReleaseHold`
-([capacity.ts:66](../../checkin-app/src/lib/program/capacity.ts)) `delete()`s the
-`ProgramParticipant`, and it is the only exit path. So a person who withdrew and
+([capacity.ts](../../checkin-app/src/lib/program/capacity.ts)) `delete()`s the
+`ProgramParticipant`, and it is the only withdrawal path (a refund that Shopify
+restocks deletes the row too, through `removeRefundedEnrollment`). So a person who withdrew and
 a person who was never enrolled look identical afterwards: there is no row to
 read. That is the gap — the system cannot tell "done" from "never here."
 
@@ -35,13 +36,13 @@ gap — is explicitly **not** here. See §8.
 | Fact | Where |
 |---|---|
 | `ProgramParticipantStatus` is `PENDING \| ACTIVE` — no exit value | [schema.prisma](../../checkin-app/prisma/schema.prisma) `enum ProgramParticipantStatus` |
-| `ProgramParticipant` PK is composite `@@id([programId, personId])` — one row per (person, program), ever | [schema.prisma:1038](../../checkin-app/prisma/schema.prisma) |
-| The enrollment state machine's present-row states are `PENDING_UNPAID / PENDING_HOLD_FAILED / PENDING_HELD / PENDING_HELD_DENIED / ACTIVE`; `UNENROLLED` is the **no-row** (∅) state | [enrollmentState.ts:72-133,199](../../checkin-app/src/lib/programs/enrollmentState.ts) |
-| **No transition leaves `ACTIVE`.** T4/T5 go *to* ACTIVE; the only withdraw transition is `T9 PENDING_HELD → UNENROLLED` via `delete()` | [enrollmentState.ts:207-218](../../checkin-app/src/lib/programs/enrollmentState.ts) |
-| `withdrawAndReleaseHold` `delete()`s the row; `delete()` **is** the exactly-once boundary for the scholarship-hold +1 | [capacity.ts:56-81](../../checkin-app/src/lib/program/capacity.ts) |
-| `inventoryHeldAt` NOT NULL is already "the transactional guard every release path checks before adjusting Shopify"; an ACTIVE row has it null by definition | [schema.prisma:1013-1021](../../checkin-app/prisma/schema.prisma), [enrollmentState.ts:100](../../checkin-app/src/lib/programs/enrollmentState.ts) |
-| CAS from-state guards spread `status` from `fromWhere(STATES[x])`, so every existing guard is implicitly `status:'PENDING'` or `status:'ACTIVE'` | [enrollmentState.ts:127](../../checkin-app/src/lib/programs/enrollmentState.ts) |
-| The attached-person predicate's participant arm is `{ programParticipants: { some: {} } }` — attached to any program **ever** | [filters.ts:22-28](../../checkin-app/src/lib/person/filters.ts) `PROGRAM_ATTACHED_WHERE` |
+| `ProgramParticipant` PK is composite `@@id([programId, personId])` — one row per (person, program), ever | [schema.prisma](../../checkin-app/prisma/schema.prisma) `model ProgramParticipant` |
+| The enrollment state machine's present-row states are `PENDING_UNPAID / PENDING_HOLD_FAILED / PENDING_HELD / PENDING_HELD_DENIED / ACTIVE`; `UNENROLLED` is the **no-row** (∅) state | [enrollmentState.ts](../../checkin-app/src/lib/programs/enrollmentState.ts) `STATES`, `LifecycleState` |
+| Two transitions leave `ACTIVE`, both to `UNENROLLED` (no row): `T10 refund restocked` (Shopify webhook, `removeRefundedEnrollment`, no +1 because Shopify restocked) and `T11 withdraw(comp/approved)` (admin, `withdrawAndReleaseHold` `delete()`, +1 only when `seatTakenWithoutSaleAt` is set). The other withdraw transition is `T9 PENDING_HELD → UNENROLLED` via `delete()` | [enrollmentState.ts](../../checkin-app/src/lib/programs/enrollmentState.ts) transition table |
+| `withdrawAndReleaseHold` `delete()`s the row; `delete()` **is** the exactly-once boundary for the scholarship-hold +1 and for T11's seat return | [capacity.ts](../../checkin-app/src/lib/program/capacity.ts) `withdrawAndReleaseHold` |
+| `inventoryHeldAt` NOT NULL is "the transactional guard every release path checks before adjusting Shopify"; an ACTIVE row has it null by definition. An ACTIVE row's seat-return guard is `seatTakenWithoutSaleAt`: stamped when a comp, or an approved request whose hold was taken, took the seat out of Shopify without a sale. Withdrawal returns the seat only when it is set | [schema.prisma](../../checkin-app/prisma/schema.prisma) `ProgramParticipant.inventoryHeldAt`, `.seatTakenWithoutSaleAt` |
+| CAS from-state guards spread `status` from `fromWhere(STATES[x])`, so every existing guard is implicitly `status:'PENDING'` or `status:'ACTIVE'` | [enrollmentState.ts](../../checkin-app/src/lib/programs/enrollmentState.ts) `fromWhere` |
+| The attached-person predicate is a function of the clock, `programAttachedWhere(now)`. Its participant arm is `{ programParticipants: { some: { program: recentProgramWhere(now) } } }`: attached to a program that is current or ended within the lookback, in any enrollment status | [filters.ts](../../checkin-app/src/lib/person/filters.ts) `programAttachedWhere` |
 
 **Two callers of the exit path, not three.** The issue body lists a "non-payment
 kick" as a third deleting caller — that is stale. `cron/pending-participants` no
@@ -52,10 +53,10 @@ board then acts through the manual route. So `withdrawAndReleaseHold` has exactl
 two live callers:
 
 1. **Manual removal** — `DELETE /api/programs/[id]/participants`
-   ([route.ts:305](../../checkin-app/src/app/api/programs/[id]/participants/route.ts)).
+   ([route.ts](../../checkin-app/src/app/api/programs/[id]/participants/route.ts), `DELETE`).
    Also where a board member acts on a flagged non-payment overdue.
 2. **Grace-expiry** — `cron/scholarship-grace-expiry`
-   ([route.ts:48](../../checkin-app/src/app/api/cron/scholarship-grace-expiry/route.ts)).
+   ([route.ts](../../checkin-app/src/app/api/cron/scholarship-grace-expiry/route.ts)).
    The row sits in `PENDING_HELD_DENIED` the whole time: denied a plan, never
    paid, timed out.
 
@@ -107,6 +108,12 @@ to the state set and add two transitions:
 |---|---|---|
 | T10 | `withdraw(ACTIVE) → WITHDRAWN` | manual route — CAS `status:'ACTIVE' → WITHDRAWN, endedAt` (no hold to release; ACTIVE's `inventoryHeldAt` is null) |
 | T11 | `re-enrol WITHDRAWN → PENDING_UNPAID \| ACTIVE` | enrol path — CAS `status:'WITHDRAWN'` (§5) |
+
+Main already uses T10 and T11 for its two ACTIVE → UNENROLLED transitions (§1),
+so these two need new numbers when built. Main's T11 also returns a seat on an
+ACTIVE withdrawal when `seatTakenWithoutSaleAt` is set, so "no hold to release"
+below does not hold for comp and approved places; the release ordering has to
+cover that guard too.
 
 T9 changes meaning: `withdraw(PENDING_HELD)` keeps the row as `WITHDRAWN` instead
 of `delete → UNENROLLED`, and it is the one withdraw case that *does* release a
@@ -172,11 +179,29 @@ the new stint to the old money:
 | `wasOrgMemberAtApproval` | `null` | stale approval-time membership snapshot |
 | `shopifyOrderId` | `null` | `reconcile.ts` ([:345/:450](../../checkin-app/src/lib/finance/reconcile.ts)) joins a later refund/chargeback on the **old** order to the new stint; `memberDiscountCode.ts` ([:64](../../checkin-app/src/lib/finance/memberDiscountCode.ts)) re-lends the old discount |
 
-Open question for the board: is a **late refund on a withdrawn row's order**
-meant to match back to that (now `WITHDRAWN`) row, or be treated as orphaned? The
-reconciler currently finds the row by `shopifyOrderId`; keeping the row means that
-join now lands on a `WITHDRAWN` row instead of finding nothing. Decide before the
-reconciler ships against kept rows.
+**A late refund or chargeback attaches to the withdrawn record.** A withdrawn row
+keeps its `shopifyOrderId`, so the reconciler's match by order lands on the
+`WITHDRAWN` row and records the refund or chargeback there, not as an orphan.
+The row stays `WITHDRAWN`.
+
+That needs a change to the refund path, because today it would delete the
+row. `removeRefundedEnrollment`
+([reversals.ts](../../checkin-app/src/lib/finance/reconcile/reversals.ts))
+deletes by `programId`, `personId` and `shopifyOrderId` with no status filter, so
+a late restocking refund on a withdrawn row's order would delete the record it
+should attach to. The build must:
+
+- add `status: 'ACTIVE'` to that function's `where`, so the refund-restocked exit
+  (main's `ACTIVE → UNENROLLED`) only ever removes an `ACTIVE` row; and
+- route a refund or chargeback that matches a `WITHDRAWN` row to attach to it,
+  with an audit entry against the row and no delete. If the refund restocked,
+  Shopify has put a unit back on sale for a seat the withdrawal may already
+  have returned; the build checks that case and takes the extra unit back off
+  sale, the same way the reconciler already handles restocked seats it cannot
+  match to a child.
+
+Once the person re-enrols, the reset above clears the old order from the row,
+and a refund on that old order no longer matches the new stint.
 
 <!-- ponytail: one row per (person, program) keeps only the LAST stint's exit.
      Multi-stint history (enrolled, withdrew, came back across years) would need a
@@ -185,7 +210,7 @@ reconciler ships against kept rows.
 
 ## 6. Downstream: a withdrawn row is still a row
 
-This is the load-bearing section. Narrowing `PROGRAM_ATTACHED_WHERE` is necessary
+This is the load-bearing section. Narrowing `programAttachedWhere(now)` is necessary
 but **not sufficient** — most enrollment reads count `ProgramParticipant` rows
 filtered by `LIVE_PERSON` or nothing, never by status, so a `WITHDRAWN` row keeps
 counting as enrolled everywhere until each site is taught otherwise.
@@ -207,7 +232,7 @@ Sites that must adopt it (all confirmed status-blind on `main`):
 
 | Site | Today | Effect if unfixed |
 |---|---|---|
-| `PROGRAM_ATTACHED_WHERE` participant arm ([filters.ts:22](../../checkin-app/src/lib/person/filters.ts)) | `some: {}` | withdrawn people stay on BG + compliance chase lists |
+| `programAttachedWhere(now)` participant arm ([filters.ts](../../checkin-app/src/lib/person/filters.ts)) | `some: { program: recentProgramWhere(now) }`, status-blind | withdrawn people stay on BG + compliance chase lists |
 | `capacity.ts:40` count | `person: LIVE_PERSON` | a withdrawn seat is consumed forever — contradicts §5 "run the normal capacity logic" |
 | `programs/[id]/route.ts:250` | `person: LIVE_PERSON` | `maxParticipants` can't be lowered below withdrawn-inflated enrollment |
 | `programs/mine/route.ts:19` | `personId in …` | withdrawn programs show in the household's "my programs" |

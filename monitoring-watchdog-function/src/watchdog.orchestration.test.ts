@@ -1,7 +1,7 @@
 /**
  * Orchestration tests for runWatchdog — the layer between the pure deciders (covered in
  * watchdog.test.ts) and their side effects: metric emission, the transactional incident
- * write, the advisory lock, and the liveness heartbeat. The two @inventory packages are
+ * write, the advisory lock, and the liveness heartbeat. The two @checkin packages are
  * mocked so these run with no database, matching the fleet's no-DB unit-test convention.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -18,7 +18,7 @@ const m = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@inventory/monitoring-db", () => ({
+vi.mock("@checkin/monitoring-db", () => ({
   prisma: { __brand: "prisma" },
   recordIncident: m.recordIncident,
   readServiceHeartbeats: m.readServiceHeartbeats,
@@ -35,7 +35,7 @@ vi.mock("@inventory/monitoring-db", () => ({
   Severity: { CRITICAL: "CRITICAL", WARNING: "WARNING" },
 }));
 
-vi.mock("@inventory/telemetry", () => ({
+vi.mock("@checkin/telemetry", () => ({
   logger: m.logger,
   newCorrelationId: m.newCorrelationId,
   emitServiceError: m.emitServiceError,
@@ -44,9 +44,9 @@ vi.mock("@inventory/telemetry", () => ({
 }));
 
 import { runWatchdog } from "./watchdog.js";
-import { ConcurrentRunError, prisma } from "@inventory/monitoring-db";
+import { ConcurrentRunError, prisma } from "@checkin/monitoring-db";
 import type { WatchdogConfig } from "./registry.js";
-import type { ServiceFreshness } from "@inventory/monitoring-db";
+import type { ServiceFreshness } from "@checkin/monitoring-db";
 
 const NOW = Date.now();
 const secsAgo = (s: number) => new Date(NOW - s * 1000);
@@ -78,7 +78,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: lock is acquired, run the protected work; read returns no rows; write succeeds.
   m.withAdvisoryLock.mockImplementation(
-    async (_prisma: unknown, _key: string, fn: () => Promise<unknown>) => fn(),
+    async (_key: string, fn: () => Promise<unknown>) => fn(),
   );
   m.readServiceHeartbeats.mockResolvedValue(new Map());
   m.recordIncident.mockResolvedValue({ healthEventId: 1n, outboxId: 2n, suppressed: false });
@@ -295,26 +295,5 @@ describe("runWatchdog — edge cases", () => {
     expect(input.summary).not.toContain("E".repeat(301));
     // ...while the structured detail retains the full error for forensics.
     expect(input.detail.error).toBe(longError);
-  });
-
-  it("invokes the lock-release error callback (logs a warning, doesn't fail the run)", async () => {
-    // Drive the 4th arg to withAdvisoryLock — the onUnlockError callback that runWatchdog
-    // passes for a best-effort release failure — so its logging path is exercised.
-    m.withAdvisoryLock.mockImplementation(
-      async (_p: unknown, _k: string, fn: () => Promise<unknown>, onUnlockError: (e: unknown) => void) => {
-        const out = await fn();
-        onUnlockError(new Error("release failed"));
-        return out;
-      },
-    );
-    m.readServiceHeartbeats.mockResolvedValue(heartbeats({ "shopify-read": fresh }));
-
-    const result = await runWatchdog(cfg([entry("shopify-read")]));
-
-    expect(result).toEqual({ checked: 1, incidents: 0 });
-    expect(m.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("failed to release lock"),
-      expect.objectContaining({ err: expect.any(Error) }),
-    );
   });
 });

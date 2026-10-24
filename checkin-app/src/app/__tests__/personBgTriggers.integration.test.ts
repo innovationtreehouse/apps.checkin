@@ -211,7 +211,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         // The subject's household has NO OrgMembership (a program lead in a non-member
         // household) — the gate must still work off the subject's household.
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
 
         // First distinct reviewer: not enough (2 required) → still awaiting.
@@ -330,9 +330,22 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const hh = await makeHousehold('rejectHh');
         const subject = await makePerson('reject-subject', hh.id, { dateOfBirth: ADULT_DOB });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
         await attest(rev1, proc.id, { result: 'REJECT' });
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('BLOCKED');
+    });
+
+    it('gate: attest refuses a PERSON_BG that has not been submitted (no consent) and records nothing', async () => {
+        const hh = await makeHousehold('noConsentHh');
+        const subject = await makePerson('noconsent-subject', hh.id, { dateOfBirth: ADULT_DOB });
+        const proc = await prisma.orgMembershipProcess.create({
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+        });
+        for (const result of ['APPROVE', 'REJECT'] as const) {
+            await expect(attest(rev1, proc.id, { result })).rejects.toMatchObject({ code: 'wrong_phase' } as Partial<ReviewError>);
+        }
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: proc.id } })).toBe(0);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_BG_REVIEW');
     });
 });

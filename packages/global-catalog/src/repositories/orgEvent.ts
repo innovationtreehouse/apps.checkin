@@ -41,11 +41,11 @@ export function createOrgEventRepository(db: PrismaClient) {
       });
     },
 
-    listOrgEvents: (orgId: string, after: number) =>
+    listOrgEvents: (orgId: string, after: number, take = 100) =>
       db.orgEvent.findMany({
         where: { orgId, id: { gt: after } },
         orderBy: { id: "asc" },
-        take: 100,
+        take,
       }),
   };
 }

@@ -125,7 +125,7 @@ describe("OutreachSettingsPage", () => {
       "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
       "/api/outreach/status": {
         body: {
-          inFlight: { id: 5, emailType: "opening", audience: "a", startedAt: new Date().toISOString(), completedAt: null, counts: { queued: 3, sent: 7, failed: 0, skipped_unsubscribed: 0, sending: 0, total: 10 } },
+          inFlight: { id: 5, emailType: "opening", audience: "a", startedAt: new Date().toISOString(), completedAt: null, counts: { queued: 3, sent: 7, failed: 0, skipped_unsubscribed: 0, skipped_denied: 0, sending: 0, total: 10 } },
           lastCompleted: null,
         },
       },
@@ -142,7 +142,7 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/status": {
         body: {
           inFlight: null,
-          lastCompleted: { id: 9, emailType: "reminder", audience: "c", startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), counts: { queued: 0, sent: 8, failed: 2, skipped_unsubscribed: 0, sending: 0, total: 10 } },
+          lastCompleted: { id: 9, emailType: "reminder", audience: "c", startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), counts: { queued: 0, sent: 8, failed: 2, skipped_unsubscribed: 0, skipped_denied: 0, sending: 0, total: 10 } },
         },
       },
     });

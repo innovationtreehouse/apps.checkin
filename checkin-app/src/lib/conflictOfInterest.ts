@@ -5,7 +5,7 @@ import type { DbClient } from "@/lib/db-client";
  *
  * The policy is uniform across the app: an actor may not approve, certify, clear,
  * or grant something for their OWN household — approving your own family is the
- * same abuse whether it's a background-check review, membership dues, a program
+ * same abuse whether it's a background-check review, membership fee, a program
  * payment plan, or a direct membership grant.
  *
  * No role is exempt. `isSysadmin` is an application role with no counterpart in the
@@ -38,9 +38,20 @@ export function sharesHousehold(
 }
 
 /**
+ * The actor's household, or null when the actor id is not a positive integer or
+ * resolves to nobody. Callers treat null as "refuse" (fail closed).
+ */
+export async function resolveActorHouseholdId(db: DbClient, actorId: unknown): Promise<number | null> {
+    if (typeof actorId !== "number" || !Number.isInteger(actorId) || actorId <= 0) return null;
+    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
+    return actor?.householdId ?? null;
+}
+
+/**
  * Whether `actorId` has a household conflict with a subject in `subjectHouseholdId`.
  * Resolves the actor's household so callers don't re-roll the same findUnique.
- * Returns false (no conflict) only when the subject has no household to conflict with.
+ * Returns false (no conflict) only when the subject has no household to conflict
+ * with; an actor that can't be resolved is a conflict (fail closed).
  */
 export async function hasHouseholdConflict(
     db: DbClient,
@@ -48,6 +59,6 @@ export async function hasHouseholdConflict(
     subjectHouseholdId: number | null | undefined,
 ): Promise<boolean> {
     if (subjectHouseholdId == null) return false;
-    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    return sharesHousehold(actor?.householdId, subjectHouseholdId);
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
+    return actorHouseholdId === null || sharesHousehold(actorHouseholdId, subjectHouseholdId);
 }

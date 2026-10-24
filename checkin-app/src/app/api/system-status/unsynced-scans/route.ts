@@ -20,6 +20,7 @@ export const GET = handler('GET /api/system-status/unsynced-scans', async () => 
             timestamp: true,
             location: true,
             reviewReason: true,
+            scannedValue: true,
             person: { select: { id: true, name: true } },
         },
         orderBy: { timestamp: "desc" },

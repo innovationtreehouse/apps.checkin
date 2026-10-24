@@ -78,6 +78,8 @@ export interface OwnerInfo {
   id: number;
   name: string;
   archivedAt: Date | null;
+  /** The QuickBooks Class id a created deposit books this bucket's lines to; null until linked. */
+  quickBooksClassId: string | null;
 }
 
 /** Read-only list of checkin's budget-owner buckets. Same port bulk donation declares. */
@@ -85,12 +87,9 @@ export interface OwnerDirectory {
   list(): Promise<OwnerInfo[]>;
 }
 
-/**
- * QuickBooks OAuth access-token source. Local stand-in for the type QB-0 adds to
- * `@inventory/quickbooks`; replace with that import once the package is on main.
- */
-export interface AccessTokenSource {
-  current(): Promise<string>;
+/** QuickBooks Class ids that are active. A Class made inactive or removed is absent. */
+export interface QbClassSource {
+  activeClassIds(): Promise<string[]>;
 }
 
 /** A QuickBooks Deposit, reduced to the fields reconciliation needs. `txnDate` is YYYY-MM-DD. */
@@ -99,9 +98,54 @@ export interface QbDeposit {
   txnDate: string;
   totalCents: number;
   depositToAccount: string | null;
+  /** The app key a deposit the app created carries; absent on hand-booked deposits. */
+  appKey?: string;
 }
 
-/** Read-only QuickBooks deposit feed (QB-0's `depositsSince`, built over an AccessTokenSource). */
-export interface QbDepositSource {
-  depositsSince(from: Date): Promise<QbDeposit[]>;
+/**
+ * QuickBooks deposits another lane (bulk donation) holds. Income never claims one, and that
+ * lane reads income's holds through incomeClaimedDepositIds.
+ */
+export interface OtherLaneClaims {
+  claimedDepositIds(orgId: string): Promise<string[]>;
 }
+
+/**
+ * Read-only QuickBooks deposit feed: deposits with txnDate in [from, to], both inclusive
+ * YYYY-MM-DD, at most MAX_WINDOW_DAYS wide. `quickBooksDepositSource` binds it to QuickBooks.
+ */
+export interface QbDepositSource {
+  depositsBetween(from: string, to: string): Promise<QbDeposit[]>;
+}
+
+/** The acting host user, projected to what income rows stamp. */
+export interface IncomePrincipal {
+  /** Host person id, stamped as actorUserId / resolvedByUserId / excludedByUserId. */
+  id: number;
+  /** Display name, stamped as actorUsername. Null when the host has no name. */
+  name: string | null;
+}
+
+/** Org identity stamped on every income row. */
+export interface OrgIdentity {
+  id: string;
+  name: string;
+}
+
+export interface IncomeAuth {
+  /**
+   * The current host user, or null when unauthenticated. Host admission runs before any
+   * route body, so a factory that reaches getPrincipal() treats null as an invariant breach.
+   */
+  getPrincipal(): Promise<IncomePrincipal | null>;
+}
+
+/** The slice of a route context a factory consumes: request + path params. */
+export interface IncomeRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type IncomeBag = Record<string, unknown>;
+export type IncomeRouteHandler = (ctx: IncomeRouteCtx) => Promise<IncomeBag>;

@@ -2,11 +2,11 @@
  * Category route factories (#1286). Thin: parse → repo → model bag. The host's
  * handler() runs admission + the stripper over the returned `{ Category }` bag.
  */
+import { httpError, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createCatalogRepository } from "../repositories/catalog";
-import { getDb, catalogError } from "../runtime";
+import { getDb } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, readJson, parseBody, query } from "./_shared";
 
 const repo = () => createCatalogRepository(getDb());
 
@@ -25,36 +25,37 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 };
 
 export const create: CatalogRouteHandler = async ({ req }) => {
-  const { name, letter } = parseBody(bodySchema, await readJson(req));
+  const { name, letter } = await parseBody(req, bodySchema);
   const r = repo();
-  if (await r.findActiveCategoryByLetter(letter)) {
-    throw catalogError(409, "A category with that letter already exists");
+  // Archived categories still own their letter: their items' GTINs carry it.
+  if (await r.findCategoryByLetter(letter)) {
+    throw httpError(409, "A category with that letter already exists");
   }
   const trimmedName = name.trim();
   if (await r.findActiveCategoryByName(trimmedName)) {
-    throw catalogError(409, "A category with that name already exists");
+    throw httpError(409, "A category with that name already exists");
   }
   return { Category: await r.createCategory({ name: trimmedName, letter }) };
 };
 
 export const update: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { name, letter } = parseBody(bodySchema, await readJson(req));
+  const { name, letter } = await parseBody(req, bodySchema);
   const r = repo();
   const existing = await r.findCategoryById(id);
-  if (!existing) throw catalogError(404, "Category not found");
+  if (!existing) throw httpError(404, "Category not found");
 
   if (existing.letter !== letter) {
     if (await r.findItemInCategory(id)) {
-      throw catalogError(409, "Cannot change letter: items exist in this category");
+      throw httpError(409, "Cannot change letter: items exist in this category");
     }
-    if (await r.findActiveCategoryByLetterExcluding(letter, id)) {
-      throw catalogError(409, "A category with that letter already exists");
+    if (await r.findCategoryByLetterExcluding(letter, id)) {
+      throw httpError(409, "A category with that letter already exists");
     }
   }
   const trimmedName = name.trim();
   if (existing.name !== trimmedName && (await r.findActiveCategoryByNameExcluding(trimmedName, id))) {
-    throw catalogError(409, "A category with that name already exists");
+    throw httpError(409, "A category with that name already exists");
   }
   return { Category: await r.updateCategory(id, { name: trimmedName, letter }) };
 };
@@ -63,8 +64,8 @@ export const archive: CatalogRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const r = repo();
   const existing = await r.findCategoryById(id);
-  if (!existing) throw catalogError(404, "Category not found");
-  if (existing.archivedAt) throw catalogError(409, "Category already archived");
+  if (!existing) throw httpError(404, "Category not found");
+  if (existing.archivedAt) throw httpError(409, "Category already archived");
   return { Category: await r.updateCategory(id, { archivedAt: new Date() }) };
 };
 
@@ -72,10 +73,10 @@ export const unarchive: CatalogRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const r = repo();
   const existing = await r.findCategoryById(id);
-  if (!existing) throw catalogError(404, "Category not found");
-  if (!existing.archivedAt) throw catalogError(409, "Category is not archived");
+  if (!existing) throw httpError(404, "Category not found");
+  if (!existing.archivedAt) throw httpError(409, "Category is not archived");
   if (await r.findActiveCategoryByLetterExcluding(existing.letter, id)) {
-    throw catalogError(409, "Cannot unarchive: another active category uses this letter");
+    throw httpError(409, "Cannot unarchive: another active category uses this letter");
   }
   return { Category: await r.updateCategory(id, { archivedAt: null }) };
 };

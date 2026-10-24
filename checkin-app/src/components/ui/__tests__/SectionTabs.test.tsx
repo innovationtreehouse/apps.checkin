@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { SectionTabs } from "@/components/ui/SectionTabs";
+import { SectionTabs, activeTab } from "@/components/ui/SectionTabs";
 
 const push = jest.fn();
 let mockPathname = "/program-ops";
@@ -92,5 +92,35 @@ describe("SectionTabs tab row sizing", () => {
     const list = container.querySelector(".mantine-Tabs-list") as HTMLElement;
     expect(list.style.minWidth).toBe("max-content");
     expect(list.style.flexWrap).toBe("nowrap");
+  });
+});
+
+describe("activeTab", () => {
+  const GROUPED = [
+    { name: "Plans", href: "/finance-ops/payment-plan" },
+    {
+      name: "Shopify",
+      href: "/finance-ops/shopify-holds",
+      subLinks: [
+        { name: "Holds", href: "/finance-ops/shopify-holds" },
+        { name: "Payments", href: "/finance-ops/payments" },
+      ],
+    },
+  ];
+
+  it("selects a grouped tab from any of its sub-link pages", () => {
+    expect(activeTab(GROUPED, "/finance-ops/payments", true)?.name).toBe("Shopify");
+    expect(activeTab(GROUPED, "/finance-ops/payments/7", true)?.name).toBe("Shopify");
+    expect(activeTab(GROUPED, "/finance-ops/payment-plan", true)?.name).toBe("Plans");
+  });
+
+  it("matches exactly without prefixMatch", () => {
+    expect(activeTab(GROUPED, "/finance-ops/payments/7")).toBeUndefined();
+    expect(activeTab(GROUPED, "/finance-ops/payments")?.name).toBe("Shopify");
+  });
+
+  it("prefers the longest matching href", () => {
+    expect(activeTab(LINKS, "/program-ops/events/3", true)?.name).toBe("Events");
+    expect(activeTab(LINKS, "/program-ops/other", true)?.name).toBe("Programs");
   });
 });

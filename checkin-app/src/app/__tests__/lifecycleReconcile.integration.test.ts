@@ -16,10 +16,11 @@
  *    the negative-authz coverage authzRegistry.test.ts requires.
  *
  * Shopify is mocked (no network): the reconciler imports only adjustProgramInventory
- * + reportShopifyFailure from @/lib/shopify, so replacing the whole module with two
- * jest.fn()s is sufficient (SWC's non-configurable exports block jest.spyOn).
+ * (@/lib/shopify/stock) and reportShopifyFailure (@/lib/shopify/client), so replacing
+ * both modules with a jest.fn() each is sufficient (SWC's non-configurable exports block jest.spyOn).
  */
-import { adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
+import { reportShopifyFailure } from '@/lib/shopify/client';
+import { adjustProgramInventory } from '@/lib/shopify/stock';
 import { runLifecycleReconcile, scanLifecycleViolations } from '@/lib/lifecycleDrift';
 import { GET as LIFECYCLE_GET } from '@/app/api/system-status/lifecycle/route';
 import prisma from '@/lib/prisma';
@@ -27,9 +28,13 @@ import { toRow, validate } from '@/lib/programs/enrollmentState';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     __esModule: true,
     adjustProgramInventory: jest.fn(),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
+}));
+jest.mock('@/lib/shopify/client', () => ({
+    __esModule: true,
     reportShopifyFailure: jest.fn(),
 }));
 
@@ -50,7 +55,7 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
         });
         selfId = self.id;
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `LCR Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: VARIANT },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `LCR Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT },
         });
         programId = program.id;
     });
@@ -95,8 +100,9 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
 
         // The missed release fired: adjustProgramInventory(program, +1).
         expect(adjustSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ shopifyVariantId: VARIANT }),
+            expect.objectContaining({ id: programId, shopifyVariantId: VARIANT }),
             1,
+            'reconcile-heal',
         );
 
         // Audit trail for the heal.
@@ -111,6 +117,25 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
             (c) => typeof c[1]?.message === 'string' && c[1].message.includes(`person ${selfId}`),
         );
         expect(reportedMine).toBe(false);
+    });
+
+    it('I1: once the sale has ended, clears the stranded hold without a +1', async () => {
+        await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: new Date() } });
+        try {
+            await prisma.programParticipant.create({
+                data: { programId, personId: selfId, status: 'ACTIVE', inventoryHeldAt: new Date() },
+            });
+
+            await runLifecycleReconcile();
+
+            const row = await prisma.programParticipant.findUniqueOrThrow({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row.inventoryHeldAt).toBeNull();
+            expect(adjustSpy).not.toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: VARIANT }), expect.anything());
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: null } });
+        }
     });
 
     it('non-I1: reports a membership INTAKE-with-payment violation but does NOT mutate it', async () => {

@@ -52,20 +52,21 @@ export default function ParticipantEventsDashboard() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const fetchEvents = useCallback(async () => {
-    try {
-      const res = await fetch('/api/events/mine');
+  const fetchEvents = useCallback(() => fetch('/api/events/mine')
+    .then(async (res) => {
       if (res.ok) {
         setEvents(await res.json());
       } else {
         setMessage("Failed to load your events.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -144,7 +145,7 @@ export default function ParticipantEventsDashboard() {
                     </div>
                     <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
                       {rows.some((r) => r.isLead) && (
-                        <Badge color="indigo" variant="light">Lead Mentor</Badge>
+                        <Badge color="indigo" variant="light">Program Leader</Badge>
                       )}
                       {rows.some((r) => r.isVolunteer) && (
                         <Badge color="grape" variant="light">Volunteer</Badge>

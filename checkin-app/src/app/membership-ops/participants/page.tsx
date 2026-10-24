@@ -3,14 +3,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, TextInput, UnstyledButton } from "@mantine/core";
+import { Alert, Badge, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useCsvImportEnabled } from "@/components/EnvProvider";
 
 type HouseholdRef = {
   id: number;
@@ -51,7 +53,10 @@ export default function AdminParticipantsIndex() {
   // role gate: board + operations, sysadmin deliberately excluded there).
   const { user: me } = useRequireRole([]);
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
+  const csvImportEnabled = useCsvImportEnabled();
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
+  // The email decides who signs in as a person, so only the board changes it (with a reason).
+  const canEditEmail = !!me?.isBoardMember;
 
   const toggleSort = (col: "id" | "name" | "email" | "household") => {
     if (sortBy === col) {
@@ -80,11 +85,6 @@ export default function AdminParticipantsIndex() {
     return 0;
   });
 
-  useEffect(() => {
-    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
-    return () => clearTimeout(id);
-  }, [searchQuery]);
-
   const fetchParticipants = async (query = "") => {
     setLoading(true);
     try {
@@ -100,6 +100,11 @@ export default function AdminParticipantsIndex() {
     }
   };
 
+  useEffect(() => {
+    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
+
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<PersonRow | null>(null);
   const [householdId, setHouseholdId] = useState("");
@@ -110,8 +115,10 @@ export default function AdminParticipantsIndex() {
   // Edit Participant State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<PersonRow | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, lastBackgroundCheck: "", bgCheckReason: "", emailChangeReason: "" });
   const [savingDetails, setSavingDetails] = useState(false);
+  const priorBgDate = editingParticipant?.lastBackgroundCheck?.slice(0, 10) ?? "";
+  const bgDateExtended = editForm.lastBackgroundCheck !== "" && editForm.lastBackgroundCheck > priorBgDate;
 
   // Admin edit of household's own info (name, address, emergency contact)
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
@@ -172,16 +179,38 @@ export default function AdminParticipantsIndex() {
     }
   };
 
-  const handleEditParticipant = async (e: React.FormEvent) => {
+  const emailChanged = !!editingParticipant
+    && editForm.email.trim().toLowerCase() !== (editingParticipant.email ?? "").trim().toLowerCase();
+
+  const handleEditParticipant = (e: React.FormEvent) => {
     e.preventDefault();
+    saveParticipant(false);
+  };
+
+  const saveParticipant = async (confirmBgStale: boolean) => {
     if (!editingParticipant) return;
     setSavingDetails(true);
     try {
       const res = await fetch(`/api/membership-ops/participants/${editingParticipant.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify({ ...editForm, confirmBgStale })
       });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        if (data.requiresConfirmation) {
+          modals.openConfirmModal({
+            title: "Background check will no longer be valid",
+            children: <Text size="sm">{data.warning}</Text>,
+            labels: { confirm: "Save anyway", cancel: "Cancel" },
+            confirmProps: { color: "orange" },
+            onConfirm: () => saveParticipant(true),
+          });
+        } else {
+          showNotification(data.error || "Failed to update person", "error");
+        }
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setResults(results.map(p => p.id === editingParticipant.id ? { ...p, ...data.participant } : p));
@@ -245,7 +274,7 @@ export default function AdminParticipantsIndex() {
           <Text c="dimmed">Search and manage system people and households.</Text>
         </div>
         <Group>
-          {isStaff && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
+          {isStaff && csvImportEnabled && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
           {isStaff && <Button onClick={() => router.push('/membership-ops/participants/new')}>+ New Person</Button>}
           {canAddContact && <Button variant="outline" onClick={() => setAddContactOpen(true)}>+ Add contact</Button>}
         </Group>
@@ -325,7 +354,7 @@ export default function AdminParticipantsIndex() {
                             )}
                             <Button size="xs" fz={15} variant="default" onClick={() => {
                               setEditingParticipant(p);
-                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "" });
+                              setEditForm({ name: p.name || "", email: p.email || "", phone: p.phone || "", isDeclaredAdult: !!p.isDeclaredAdult, lastBackgroundCheck: p.lastBackgroundCheck ? p.lastBackgroundCheck.slice(0, 10) : "", bgCheckReason: "", emailChangeReason: "" });
                               setEditModalOpen(true);
                             }}>
                               Details
@@ -440,7 +469,18 @@ export default function AdminParticipantsIndex() {
                 call time. Reading it lazily inside the updater intermittently crashed with
                 "Cannot read properties of null (reading 'value')". */}
             <TextInput label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." required value={editForm.name} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, name: value })); }} />
-            <TextInput type="email" label="Email Address" value={editForm.email} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, email: value })); }} />
+            <TextInput type="email" label="Email Address" disabled={!canEditEmail} description={canEditEmail ? undefined : "Only a board member can change a person's email."} value={editForm.email} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, email: value })); }} />
+            {emailChanged && (
+              <Textarea
+                label="Reason for the email change"
+                description="Recorded in the audit log. Changing the email signs this person out of Google; only the new address can sign in as them."
+                required
+                autosize
+                minRows={2}
+                value={editForm.emailChangeReason}
+                onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, emailChangeReason: value })); }}
+              />
+            )}
             <TextInput type="tel" label="Phone Number" value={editForm.phone} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, phone: value })); }} placeholder="(555) 123-4567" />
             {editingParticipant?.dateOfBirth ? (
               <Text size="sm" c="dimmed">Age is derived from date of birth on file; the adult declaration doesn&apos;t apply.</Text>
@@ -459,6 +499,17 @@ export default function AdminParticipantsIndex() {
               value={editForm.lastBackgroundCheck}
               onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, lastBackgroundCheck: value })); }}
             />
+            {bgDateExtended && (me?.isBoardMember ? (
+              <Textarea
+                label="Why is this check current?"
+                description="A later date clears this person with no reviewer. State the check you are asserting happened."
+                required
+                value={editForm.bgCheckReason}
+                onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, bgCheckReason: value })); }}
+              />
+            ) : (
+              <Text size="sm" c="orange">Only a Board member can set a later background check date.</Text>
+            ))}
             {editingParticipant?.household && (
               <div>
                 <Text fw={500} size="sm" mb={4}>Household</Text>
@@ -486,7 +537,7 @@ export default function AdminParticipantsIndex() {
           </Stack>
           <Group justify="flex-end" mt="xl">
             <Button type="button" variant="default" onClick={() => { setEditModalOpen(false); setEditingParticipant(null); }} disabled={savingDetails}>Cancel</Button>
-            <Button type="submit" disabled={savingDetails} loading={savingDetails}>Save Details</Button>
+            <Button type="submit" disabled={savingDetails || (bgDateExtended && !me?.isBoardMember)} loading={savingDetails}>Save Details</Button>
           </Group>
         </form>
       </Modal>

@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { Box } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { MY_ACTIVITIES_NAV_LINKS } from "@/lib/myActivitiesNav";
+import { MY_ACTIVITIES } from "@/lib/nav/sections/myActivities";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 export default function MyActivitiesLayout({ children }: { children: React.ReactNode }) {
@@ -27,7 +27,7 @@ export default function MyActivitiesLayout({ children }: { children: React.React
 
   return (
     <PageContainer>
-      <SectionTabs links={MY_ACTIVITIES_NAV_LINKS} prefixMatch mb="md" />
+      <SectionTabs links={MY_ACTIVITIES.links} prefixMatch mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

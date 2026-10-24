@@ -4,7 +4,7 @@
  * what gets stamped on every row — derived from the live store, never trusted from
  * config. This is the single source of truth for "which store" a sync belongs to.
  */
-import { type PrismaClient, legacyIdFromGid, logger } from "@inventory/s-ingest-core";
+import { type PrismaClient, legacyIdFromGid, logger } from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "../shopify/client.js";
 import { SHOP_IDENTITY_QUERY } from "../shopify/queries.js";
 

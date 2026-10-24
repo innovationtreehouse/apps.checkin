@@ -72,7 +72,7 @@ export const POST = withAuth({}, async (req, auth) => {
     }
 
     // Tombstone, never a row removal — the same reversible delete every other
-    // visit-write path takes (design §3). Resolving a conflict is a judgement
+    // visit-write path takes. Resolving a conflict is a judgement
     // about which of two overlapping records is real; it must be possible to
     // back that judgement out.
     await tx.visit.update({

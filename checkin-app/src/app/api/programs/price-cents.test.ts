@@ -1,4 +1,4 @@
-import { dollarsToCents, dollarsToCentsOrNull, formatCents } from "@inventory/money";
+import { dollarsToCents, dollarsToCentsOrNull, formatCents } from "@checkin/money";
 
 // Guards the dollars→cents store / cents→dollars display round-trip used by the
 // Program price API boundary. Cents must not truncate $25.99 → $25.

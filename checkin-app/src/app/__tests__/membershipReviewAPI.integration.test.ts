@@ -124,13 +124,13 @@ describe('Membership BG review API', () => {
 
         // rev2 approves with volunteer checkbox -> advances
         as(rev2, { isBackgroundCheckReviewer: true });
-        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteer: true, subjectPersonIds: [proc.leadId] }) as never);
+        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteerFamily: true, subjectPersonIds: [proc.leadId] }) as never);
         expect((await r2.json()).outcome.status).toBe('PENDING_PAYMENT');
 
         const updated = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.processId } });
         expect(updated?.status).toBe('PENDING_PAYMENT');
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
-        expect(membership?.isVolunteer).toBe(true);
+        expect(membership?.isVolunteerFamily).toBe(true);
         const parent = await prisma.person.findFirst({ where: { householdId: proc.householdId, isHouseholdLead: true } });
         expect(parent?.lastBackgroundCheck).not.toBeNull();
 
@@ -140,17 +140,39 @@ describe('Membership BG review API', () => {
         expect(advance?.actorId).toBe(rev2);
     });
 
+    it('accepts the pre-rename isMarkedVolunteer key from a stale review page', async () => {
+        const proc = await makeApplicantProcess('StaleKey');
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteer: true, subjectPersonIds: [proc.leadId] }) as never);
+        as(rev2, { isBackgroundCheckReviewer: true });
+        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        expect((await r2.json()).outcome.status).toBe('PENDING_PAYMENT');
+        expect((await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } }))?.isVolunteerFamily).toBe(true);
+    });
+
     it('applies volunteer status from a pre-designation (Gmail dot-insensitive), without a checkbox', async () => {
         // Gmail drops dots, so vol.parent... matches the dotless designation. Non-Gmail
         // domains keep dots significant (see volunteerMatch.test.ts) — that's the fix.
         const proc = await makeApplicantProcess('Predesig', `vol.parent-${TAG}@gmail.com`);
+        await prisma.account.create({ data: { userId: proc.leadId, type: 'oauth', provider: 'google', providerAccountId: `predesig-${TAG}-${proc.leadId}` } });
         await prisma.volunteerDesignation.create({ data: { email: `volparent-${TAG}@gmail.com` } }); // no dot
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
         as(rev2, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
-        expect(membership?.isVolunteer).toBe(true);
+        expect(membership?.isVolunteerFamily).toBe(true);
+    });
+
+    it('does not apply a pre-designation to a lead whose address was never verified at sign-in', async () => {
+        const proc = await makeApplicantProcess('PredesigUnverified', `unverified-parent-${TAG}@example.com`);
+        await prisma.volunteerDesignation.create({ data: { email: `unverified-parent-${TAG}@example.com` } });
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        as(rev2, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
+        expect(membership?.isVolunteerFamily).toBe(false);
     });
 
     it('a single REJECT blocks the application', async () => {
@@ -217,6 +239,11 @@ describe('Membership BG review API', () => {
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.processId }, orderBy: { id: 'desc' } });
         expect(audit?.actorId).toBe(board);
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ action: 'board reset' });
+        // The deleted rejection and its note are kept in the audit row.
+        expect(normalizeAuditData(audit?.oldData)).toMatchObject({
+            status: 'BLOCKED',
+            attestations: [expect.objectContaining({ reviewerId: rev1, result: 'REJECT', note: 'Needs another look' })],
+        });
     });
 
     it('board override-approve on a BLOCKED app forces it to PENDING_PAYMENT', async () => {

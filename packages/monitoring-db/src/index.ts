@@ -1,9 +1,9 @@
 /**
- * @inventory/monitoring-db — the dedicated monitoring Postgres layer.
+ * @checkin/monitoring-db — the dedicated monitoring Postgres layer.
  *
  * The DB-backed enrichment tier from MONITORING-PRD.md: the append-only `health_event`
  * log, the transactional `monitoring_outbox`, and the helpers that the watchdog (write)
- * and relay (read) use. Kept separate from @inventory/telemetry so that services which
+ * and relay (read) use. Kept separate from @checkin/telemetry so that services which
  * only need to *emit* metrics/logs don't pull in Prisma/Postgres.
  */
 

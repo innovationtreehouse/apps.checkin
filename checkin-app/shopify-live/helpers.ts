@@ -1,7 +1,7 @@
 /**
  * Shared plumbing for the Shopify LIVE contract suite (see
  * docs/ops/shopify-live-tests.md). These tests run the app's REAL
- * lib/shopify.ts functions against the REAL dev store — no fetch mocks — to
+ * lib/shopify/ functions against the REAL dev store — no fetch mocks — to
  * catch Admin-API contract drift that mocked tests structurally cannot.
  *
  * Every suite must call ensureLiveStore() in beforeAll (dev-store-only guard)
@@ -9,7 +9,7 @@
  * clean up even after a mid-test crash.
  */
 import { assertLiveTestStore, CITEST_PREFIX } from "./guard";
-import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify";
+import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
 
 export function ensureLiveStore(): string {
     return assertLiveTestStore(process.env);

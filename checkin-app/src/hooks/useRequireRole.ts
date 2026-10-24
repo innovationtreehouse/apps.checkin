@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import type { BusinessRole } from "@/types/auth";
+import type { RoleFlag } from "@/lib/roles";
+import { hasAnyRole } from "@/lib/nav/gates";
 
 type AdminSessionUser = NonNullable<ReturnType<typeof useSession>["data"]>["user"];
 
@@ -36,7 +37,7 @@ export interface RequireRoleResult {
  *   if (!ready) return null; // a redirect is in flight
  */
 export function useRequireRole(
-  allowed: BusinessRole[],
+  allowed: readonly RoleFlag[],
   options?: { redirectTo?: string },
 ): RequireRoleResult {
   const redirectTo = options?.redirectTo ?? "/";
@@ -45,7 +46,7 @@ export function useRequireRole(
   const user = session?.user;
   // Empty `allowed` = any authenticated user (a plain sign-in gate); otherwise
   // the user must hold one of the listed roles.
-  const authorized = !!user && (allowed.length === 0 || allowed.some((role) => user[role] === true));
+  const authorized = !!user && (allowed.length === 0 || hasAnyRole(user, allowed));
 
   useEffect(() => {
     if (status === "unauthenticated") {

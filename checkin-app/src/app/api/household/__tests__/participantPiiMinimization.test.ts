@@ -13,7 +13,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import prisma from "@/lib/prisma";
-import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { GET as householdGET } from "@/app/api/household/route";
 import { GET as attendanceGET } from "@/app/api/attendance/route";
@@ -29,10 +29,9 @@ jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         person: { findUnique: jest.fn() },
+        // GET /api/household derives valid-until for an ACTIVE household; no membership row here.
+        household: { findUnique: jest.fn().mockResolvedValue(null) },
         visit: { findMany: jest.fn() },
-        // getFullAttendance also reads held (PARKED_CLOSED) presence events; empty
-        // by default here so it doesn't perturb these PII assertions.
-        presenceEvent: { findMany: jest.fn() },
         // The supervising-adult test reads the board's background-check recheck
         // policy (#1436); unset here, which is the default.
         boardSettings: { findUnique: jest.fn() },
@@ -50,7 +49,6 @@ beforeEach(() => {
     mockPubKeys.mockReturnValue([]);
     mockVerify.mockReturnValue({ ok: false });
     mockSession.mockResolvedValue(null);
-    (prisma.presenceEvent.findMany as jest.Mock).mockResolvedValue([]);
 });
 
 describe("Participant PII minimization (M1, M2)", () => {
@@ -78,6 +76,7 @@ describe("Participant PII minimization (M1, M2)", () => {
             waiverSignedBy: 1,
             notificationSettings: null,
             householdId: 10,
+            _count: { accounts: 1 },
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
@@ -91,7 +90,7 @@ describe("Participant PII minimization (M1, M2)", () => {
                 household: {
                     id: 10,
                     name: "Test Household",
-                    orgMembership: { id: 1, status: "ACTIVE", memberSince: new Date(), isVolunteer: false, householdId: 10 },
+                    orgMembership: { id: 1, status: "ACTIVE", memberSince: new Date(), isVolunteerFamily: false, householdId: 10 },
                     householdMembers: [projected],
                 },
             });
@@ -119,9 +118,14 @@ describe("Participant PII minimization (M1, M2)", () => {
         expect(peer.waiverSignedBy).toBeUndefined();
         expect(peer.notificationSettings).toBeUndefined();
 
+        // A linked sign-in reaches the client as a boolean only.
+        expect(peer.hasSignIn).toBe(true);
+        expect(peer._count).toBeUndefined();
+        expect(peer.accounts).toBeUndefined();
+
         // Pin the actual query shape, not just this test's mock.
         const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
-        expect(callArgs.include.household.include.householdMembers).toEqual({ where: LIVE_PERSON, select: HOUSEHOLD_PEER_SELECT });
+        expect(callArgs.include.household.include.householdMembers).toEqual({ where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
     });
 
     // Household.intakeNotes is the family's free-text note TO the board (tier
@@ -172,8 +176,13 @@ describe("Participant PII minimization (M1, M2)", () => {
             expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
         });
 
-        it("returns the note to a sysadmin", async () => {
+        it("strips the note for a sysadmin who is not a lead", async () => {
             mockCaller({ isHouseholdLead: false, isSysadmin: true });
+            expect((await get()).intakeNotes).toBeNull();
+        });
+
+        it("returns the note to a sysadmin who leads the household", async () => {
+            mockCaller({ isHouseholdLead: true, isSysadmin: true });
             expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
         });
     });

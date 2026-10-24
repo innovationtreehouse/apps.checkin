@@ -1,4 +1,4 @@
 # Lifecycle review artifacts are unicode-dense (mermaid arrows, box-drawing).
 # Force git to treat them as diffable text so reviewers see real diffs.
 checkin-app/src/lib/lifecycle/artifacts.ts text diff
-checkin-app/docs/generated/lifecycle/*.md   text diff
+docs/generated/lifecycle/*.md   text diff

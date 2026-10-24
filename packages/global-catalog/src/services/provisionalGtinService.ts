@@ -4,14 +4,14 @@ import { createCatalogRepository } from "../repositories/catalog";
 import { nextProvisionalSequenceId } from "../db/sequence";
 import { usageBehaviorEnum } from "../db/schema";
 import type { ProvisionalItem, ProvisionalItemStatus, UsageBehavior } from "../db/schema";
-import { buildProvisionalGtin13 } from "../lib/gtin";
-import { ServiceError } from "./categoryService";
+import { buildProvisionalGtin13, isProvisionalGtin13, parseProvisionalSequence } from "../lib/gtin";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { allocateAndInsertItem, resolveItemContext } from "./itemService";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 import { getCanonicalConversion } from "./referenceMatchingService";
 import { assertProvisionalProposalTransition } from "../workflows/provisional-proposal.machine";
 import type { ProvisionalProposalContext } from "../workflows/provisional-proposal.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
@@ -38,6 +38,16 @@ export interface ApproveProvisionalProposalOverrides {
   usageBehavior?: string;
 }
 
+const ALREADY_REVIEWED = "Proposal was already reviewed";
+
+/** A provisional GTIN is accepted only in its canonical form and only for a sequence this catalog allocated. */
+async function assertAllocatedProvisionalGtin(gtin13: string): Promise<void> {
+  const seq = isProvisionalGtin13(gtin13) ? parseProvisionalSequence(gtin13) : NaN;
+  const canonical = Number.isInteger(seq) && buildProvisionalGtin13(seq) === gtin13;
+  const allocated = canonical && (await db.provisionalPartSequence.findUnique({ where: { id: seq } })) !== null;
+  if (!allocated) throw new ServiceError(400, "provisionalGtin13 is not an allocated provisional GTIN");
+}
+
 export async function allocateNextProvisionalGtin(): Promise<{ gtin13: string }> {
   const seqId = await nextProvisionalSequenceId();
   return { gtin13: buildProvisionalGtin13(seqId) };
@@ -49,6 +59,7 @@ export async function createProvisionalItem(
   if (!(usageBehaviorEnum as readonly string[]).includes(params.proposedUsageBehavior)) {
     throw new ServiceError(400, `proposedUsageBehavior must be one of: ${usageBehaviorEnum.join(", ")}`);
   }
+  await assertAllocatedProvisionalGtin(params.provisionalGtin13);
 
   return proposalRepo.createProvisionalItem({
     provisionalGtin13: params.provisionalGtin13,
@@ -87,8 +98,7 @@ export async function approveProvisionalProposal(
   try {
     approvedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "APPROVE", approvalContext);
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const finalName = overrides.name ?? proposal.proposedName;
@@ -109,10 +119,12 @@ export async function approveProvisionalProposal(
 
   const now = new Date();
 
-  return db.$transaction(async (tx) => {
-    const created = await allocateAndInsertItem(itemCtx, tx, userId);
+  return transactionWithEvents(async (tx) => {
+    const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt: now });
+    if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 
-    await proposalRepo.updateProvisionalItem(tx, proposalId, { status: approvedStatus, reviewedByUserId: userId, reviewedAt: now, resultGtin13: created.gtin13 });
+    const created = await allocateAndInsertItem(itemCtx, tx, userId);
+    await tx.provisionalItem.update({ where: { id: proposalId }, data: { resultGtin13: created.gtin13 } });
 
     await proposalRepo.createProvisionalItemMappingLog(tx, {
       orgId: proposal.orgId,
@@ -167,13 +179,13 @@ export async function rejectProvisionalProposal(
   try {
     rejectedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const now = new Date();
-  await db.$transaction(async (tx) => {
-    await proposalRepo.updateProvisionalItem(tx, proposalId, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: now, rejectionReason: reason });
+  await transactionWithEvents(async (tx) => {
+    const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: now, rejectionReason: reason });
+    if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
     await recordTransition(tx, "provisional_item_proposal", proposalId, proposal.status, rejectedStatus, userId, reason);
     await emitOrgEvent(tx, proposal.orgId, {
       eventType: "provisional_rejected",
@@ -195,8 +207,7 @@ export async function mapProvisionalToExisting(
   try {
     mappedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "MAP_TO_EXISTING");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const item = await catalogRepo.findItemByGtin13(realGtin13);
@@ -208,8 +219,9 @@ export async function mapProvisionalToExisting(
   const canonical = await getCanonicalConversion(realGtin13);
 
   const now = new Date();
-  await db.$transaction(async (tx) => {
-    await proposalRepo.updateProvisionalItem(tx, proposalId, { status: mappedStatus, reviewedByUserId: userId, reviewedAt: now, resultGtin13: realGtin13 });
+  await transactionWithEvents(async (tx) => {
+    const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: mappedStatus, reviewedByUserId: userId, reviewedAt: now, resultGtin13: realGtin13 });
+    if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 
     await proposalRepo.createProvisionalItemMappingLog(tx, {
       orgId: proposal.orgId,

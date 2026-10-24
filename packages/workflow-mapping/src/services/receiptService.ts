@@ -1,9 +1,10 @@
+import { httpError } from "@checkin/component-kit";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrg, httpError, requireActor } from "../runtime";
+import { getOrg, requireActor } from "../runtime";
 import {
   areAllLinesResolved,
   assertWorkflowMappingTransition,
@@ -23,7 +24,7 @@ export const receiptService = {
     await requireActor();
     const filter = states?.map(asState);
     const rows = await db.receivedReceipt.findMany({
-      where: { orgId: getOrg().id, ...(filter ? { state: { in: filter } } : {}) },
+      where: { orgId: (await getOrg()).id, ...(filter ? { state: { in: filter } } : {}) },
       orderBy: { createdAt: "desc" },
     });
 
@@ -52,7 +53,7 @@ export const receiptService = {
     const rows = await db.receivedReceipt.groupBy({
       by: ["state"],
       _count: { _all: true },
-      where: { orgId: getOrg().id, state: { in: ["pending_review", "apply_failed", "applying"] } },
+      where: { orgId: (await getOrg()).id, state: { in: ["pending_review", "apply_failed", "applying"] } },
     });
     const counts = { pending_review: 0, apply_failed: 0, applying: 0 };
     for (const row of rows) {
@@ -150,7 +151,9 @@ export const receiptService = {
     const parsed = parseStoredReceipt(received.receiptJson);
     if (!parsed.ok) throw httpError(422, parsed.error);
 
-    return executePushAndSettle(receiptId, received, actor.id, actor.name);
+    const result = await executePushAndSettle(receiptId, received, actor.id, actor.name);
+    if (!result) throw httpError(409, "Receipt is already being applied");
+    return result;
   },
 
   async retryApply(receiptId: number): Promise<{ state: ReceivedReceiptState }> {
@@ -162,6 +165,13 @@ export const receiptService = {
     }
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "RETRY");
 
+    // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
+    const { count } = await db.receivedReceipt.updateMany({
+      where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
+      data: { state: nextState },
+    });
+    if (count !== 1) throw httpError(409, "Receipt was already retried");
+
     await insertAuditEvent(db, {
       orgId: received.orgId,
       actorUserId: actor.id,
@@ -172,8 +182,6 @@ export const receiptService = {
       toState: nextState,
     });
 
-    await db.receivedReceipt.update({ where: { id: receiptId }, data: { state: nextState } });
-
     return { state: nextState };
   },
 
@@ -183,7 +191,7 @@ export const receiptService = {
     const before = opts.before && !Number.isNaN(opts.before.getTime()) ? opts.before : null;
     const rows = await db.workflowAuditLog.findMany({
       where: {
-        orgId: getOrg().id,
+        orgId: (await getOrg()).id,
         ...(opts.receiptId ? { receivedReceiptId: opts.receiptId } : {}),
         ...(before ? { createdAt: { lt: before } } : {}),
       },

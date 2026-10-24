@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { AccountMap } from "../generated/prisma/client";
 import { z } from "zod";
 
@@ -27,7 +27,8 @@ function parseMatchedRows(raw: string): AccountMap[] {
 }
 
 export const disbursementService = {
-  async getHoldsGrouped(orgId: string) {
+  /** Pending holds as DisbursementHold rows with their transaction; matchedRows parsed from JSON. */
+  async listPendingHolds(orgId: string, page?: { skip: number; take: number }) {
     const holds = await db.disbursementHold.findMany({
       where: { orgId, status: "PENDING" },
       include: {
@@ -36,29 +37,15 @@ export const disbursementService = {
         },
       },
       orderBy: [{ disbursementId: "asc" }, { id: "asc" }],
+      ...page,
     });
-
-    type HoldWithTx = (typeof holds)[number] & { matchedRows: AccountMap[] };
-    const grouped: Record<string, HoldWithTx[]> = {};
-    for (const hold of holds) {
-      const { transaction: tx, ...rest } = hold;
-      const row = {
-        ...rest,
-        txCompanyName: tx?.companyName ?? null,
-        txCorporatePeerCampaign: tx?.corporatePeerCampaign ?? null,
-        txDonationMethod: tx?.donationMethod ?? null,
-        txDonationType: tx?.donationType ?? null,
-        matchedRows: parseMatchedRows(hold.matchedRows),
-      } as unknown as HoldWithTx;
-      if (!grouped[hold.disbursementId]) grouped[hold.disbursementId] = [];
-      grouped[hold.disbursementId].push(row);
-    }
-
-    return grouped;
+    return holds.map((hold) => ({ ...hold, matchedRows: parseMatchedRows(hold.matchedRows) }));
   },
 
-  async listEvents(orgId: string) {
-    return db.disbursementEvent.findMany({ where: { orgId }, orderBy: { createdAt: "desc" } });
+  async listEvents(orgId: string, page?: { skip: number; take: number }, qbStates?: string[], noted = false) {
+    const byState = qbStates && { qbMatchState: { in: qbStates } };
+    const filter = byState && noted ? { OR: [byState, { qbNote: { not: null } }] } : byState;
+    return db.disbursementEvent.findMany({ where: { orgId, ...filter }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
   },
 
   async resubmitHold(orgId: string, disbursementId: string, audit: AuditContext) {

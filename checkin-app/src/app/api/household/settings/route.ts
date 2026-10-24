@@ -65,7 +65,9 @@ export const PATCH = withAuth(
                 }
             });
 
-            return NextResponse.json({ household: updatedHousehold }, { status: 200 });
+            // Only a lead reads the note back, matching GET /api/household.
+            const household = user.isHouseholdLead ? updatedHousehold : { ...updatedHousehold, intakeNotes: null };
+            return NextResponse.json({ household }, { status: 200 });
 
         } catch (error: unknown) {
             if (error instanceof EmergencyContactError || error instanceof AddressValidationError) {

@@ -29,7 +29,6 @@ vi.mock("../../generated/prisma/client", () => ({
   PrismaClient: class {
     constructor(public opts: unknown) {}
   },
-  Prisma: { PrismaClientKnownRequestError: class {} },
 }));
 
 const ENV = "INCOME_DATABASE_URL";
@@ -73,5 +72,14 @@ describe("getPrisma construction (env-read wiring)", () => {
     process.env[ENV] = "postgresql://not-read-until-first-use/db";
     await import(CLIENT);
     expect(adapterArgs).toEqual([]);
+  });
+});
+
+describe("isUniqueConstraintError", () => {
+  it("matches a P2002 by code, whichever client instance threw it", async () => {
+    const { isUniqueConstraintError } = await import(CLIENT);
+    expect(isUniqueConstraintError({ code: "P2002" })).toBe(true);
+    expect(isUniqueConstraintError({ code: "P2025" })).toBe(false);
+    expect(isUniqueConstraintError(null)).toBe(false);
   });
 });

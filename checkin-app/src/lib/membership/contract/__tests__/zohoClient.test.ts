@@ -6,6 +6,7 @@ import {
     createRequest,
     getEmbeddedSignUrl,
     getRequestStatus,
+    recallRequest,
     ZohoError,
     _resetTokenCache,
 } from "@/lib/membership/contract/zohoClient";
@@ -126,6 +127,17 @@ describe("zohoClient", () => {
             mockFetchOnce({ requests: { request_status: dead } });
             await expect(getRequestStatus("t", "req-1")).resolves.toBe("terminal");
         }
+    });
+
+    it("recallRequest POSTs /requests/{id}/recall and surfaces a failure as ZohoError", async () => {
+        mockFetchOnce({ code: 0, status: "success", message: "Document has been recalled" });
+        await expect(recallRequest("t", "req-1")).resolves.toBeUndefined();
+        const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+        expect(url).toBe("https://sign.zoho.com/api/v1/requests/req-1/recall");
+        expect(init.method).toBe("POST");
+
+        mockFetchOnce({ code: 4003, status: "failure" }, false, 400);
+        await expect(recallRequest("t", "req-1")).rejects.toBeInstanceOf(ZohoError);
     });
 
     it("rejects with a ZohoError timeout when the connection hangs (never resolves)", async () => {

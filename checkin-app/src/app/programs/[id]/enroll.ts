@@ -51,7 +51,7 @@ export function aggregateEnrollOutcomes(outcomes: EnrollOutcome[]): {
  * household = one membership tier = one variant.
  *
  * `discountCode` (single-pool model only — see mintMemberDiscountCode in
- * lib/shopify.ts) is prepended as `discount=<code>`, mirroring
+ * lib/shopify/discounts.ts) is prepended as `discount=<code>`, mirroring
  * buildMembershipCheckoutUrl's existing discount-code convention.
  */
 export function buildShopifyCheckoutUrl(
@@ -67,4 +67,24 @@ export function buildShopifyCheckoutUrl(
     parts.push(`attributes[CheckMeIn_Account_ID]=${accountIds}`);
     parts.push(`attributes[Program_ID]=${programId}`);
     return `https://${storeDomain}/cart/${variantId}:${enrolledIds.length}?${parts.join('&')}`;
+}
+
+export type RepeatPayment = { personId: number; name: string };
+
+/**
+ * The selected children already ACTIVE (paid) in this program. Matched per child
+ * (personId), so a sibling already paid never flags a new sibling. PENDING is not
+ * flagged: resuming an abandoned checkout is the normal path. The page warns on
+ * these and lets the family continue: flag, don't prevent.
+ */
+export function findRepeatPayments(
+    selectedIds: number[],
+    rows: { personId: number; status?: string; person?: { name: string | null } }[],
+    nameOf: (personId: number) => string | null | undefined,
+): RepeatPayment[] {
+    return selectedIds.flatMap((personId) => {
+        const row = rows.find((r) => r.personId === personId && r.status === 'ACTIVE');
+        if (!row) return [];
+        return [{ personId, name: nameOf(personId) || row.person?.name || 'This participant' }];
+    });
 }

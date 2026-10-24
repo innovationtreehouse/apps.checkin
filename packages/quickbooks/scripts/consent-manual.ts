@@ -3,7 +3,7 @@
 // with ?code=...&realmId=... in the address bar. You paste that URL; this exchanges the code.
 //
 // Set QBO_REDIRECT_URI to the EXACT https URI registered in the production app, then:
-//   npm run consent:manual -w @inventory/quickbooks
+//   npm run consent:manual -w @checkin/quickbooks
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { oauthConfigFromEnv, authUrl, exchangeCode } from "../src/oauth";

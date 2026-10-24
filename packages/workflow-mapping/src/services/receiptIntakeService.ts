@@ -1,4 +1,4 @@
-import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptState } from "../db/schema";
@@ -54,7 +54,7 @@ export interface IngestResult {
  * payload, an org mismatch, or a database failure; a failed push is recorded as `apply_failed`.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
   const receipt = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
     message: "receipt orgId does not match this org",
     path: ["orgId"],
@@ -111,7 +111,7 @@ export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema
 
   if (initialState === "applying") {
     const result = await executePushAndSettle(inserted.id, inserted, null);
-    return { id: inserted.id, state: result.state, created: true };
+    return { id: inserted.id, state: result?.state ?? "applying", created: true };
   }
 
   return { id: inserted.id, state: initialState, created: true };

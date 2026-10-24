@@ -33,6 +33,7 @@ jobs:
     # frequent and the label can't have gone stale without a retarget.
     if: github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Sync target:* label(s)
         env:

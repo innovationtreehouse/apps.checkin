@@ -13,7 +13,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 
 /** The Postgres image the integration tier runs against. Pin to the deployed RDS major. */
-export const DEFAULT_PG_IMAGE = "postgres:17-alpine";
+export const DEFAULT_PG_IMAGE = "public.ecr.aws/docker/library/postgres:17-alpine";
 
 export interface StartedPg {
   /** `postgresql://user:pass@host:port/db` for both `migrate deploy` and the test client. */

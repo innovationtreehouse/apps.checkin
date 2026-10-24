@@ -13,6 +13,18 @@ export interface AuditContext {
   correlationId?: string | null;
 }
 
+/** First key of the two-key advisory lock; keeps disbursement locks apart from any other lock class in this DB. */
+const DISBURSEMENT_LOCK_CLASS = 0x0b0d_0001;
+
+/**
+ * Serializes, until the transaction ends, every reader and writer of one disbursement's gift set:
+ * the completion cycle and the upload's completed-check + insert. Callers locking several
+ * disbursements take them in sorted order.
+ */
+export async function lockDisbursementTx(tx: DbOrTx, orgId: string, disbursementId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${DISBURSEMENT_LOCK_CLASS}::int, hashtext(${orgId} || ':' || ${disbursementId}))`;
+}
+
 /**
  * Run one workflow cycle for a disbursement INSIDE an existing transaction:
  * load snapshot, send the event, run account determination if it enters
@@ -28,6 +40,7 @@ export async function runDisbursementCycleTx(
   event: DisbursementEvent,
   audit: AuditContext = {},
 ): Promise<void> {
+  await lockDisbursementTx(tx, orgId, disbursementId);
   const done = await tx.disbursementEvent.findFirst({
     where: { orgId, disbursementId },
     select: { id: true },
@@ -201,6 +214,7 @@ async function resolvePendingHolds(
  * the mutation and the workflow advance commit atomically.
  */
 export async function runOwnerAssignedCycleTx(tx: DbOrTx, orgId: string, disbursementId: string, audit: AuditContext = {}): Promise<void> {
+  await lockDisbursementTx(tx, orgId, disbursementId);
   const allReady = await isAllOwnersReady(tx, orgId, disbursementId);
   await runDisbursementCycleTx(tx, orgId, disbursementId, { type: 'OWNER_ASSIGNED', allReady }, audit);
 }

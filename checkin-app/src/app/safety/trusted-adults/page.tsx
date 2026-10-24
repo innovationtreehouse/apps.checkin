@@ -119,22 +119,26 @@ export default function AdminTrustedAdultsPage() {
         setPrompt(cfg);
     };
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await fetch("/api/safety/trusted-adults");
+    const loadList = useCallback(() => fetch("/api/safety/trusted-adults")
+        .then(async (res) => {
             if (res.ok) {
                 const data = await res.json();
                 setItems(data.trustedAdults || []);
             }
-        } finally {
+        })
+        .finally(() => {
             setLoading(false);
-        }
-    }, []);
+        }),
+    []);
+
+    const load = () => {
+        setLoading(true);
+        return loadList();
+    };
 
     useEffect(() => {
-        if (ready) load();
-    }, [ready, load]);
+        if (ready) loadList();
+    }, [ready, loadList]);
 
     const decide = async (reviewId: number, decision: string, extra?: Record<string, unknown>) => {
         setBusyId(reviewId);

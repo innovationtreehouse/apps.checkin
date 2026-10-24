@@ -34,6 +34,12 @@ import {
     type ClassifyRow as MembershipRow,
 } from '@/lib/membership/lifecycle';
 
+import {
+    TRANSITIONS as HOUSEHOLD_TRANSITIONS,
+    STATES as HOUSEHOLD_STATES,
+    INITIAL_STATES as HOUSEHOLD_INITIAL_STATES,
+} from '@/lib/membership/householdStatus';
+
 const BOOLS = [false, true] as const;
 
 describe('enrollment — exhaustive state space', () => {
@@ -139,6 +145,34 @@ describe('membership — exhaustive state space', () => {
             ['ACTIVE', 'ARCHIVED'],
         );
         expect(r.unreachable).toEqual(['RENEWAL_PENDING_BG']);
+        expect(r.deadEnds).toEqual([]);
+    });
+});
+
+describe('household status — owner rulings hold in the table', () => {
+    const edges = HOUSEHOLD_TRANSITIONS.filter((t) => t.from !== '∅');
+
+    test('DENIED → ACTIVE is not an edge', () => {
+        expect(edges.some((t) => t.from === 'DENIED' && t.to === 'ACTIVE')).toBe(false);
+    });
+
+    test("DENIED's only exit is the board's restore to NONE", () => {
+        const exits = edges.filter((t) => t.from === 'DENIED');
+        expect(exits.map((t) => [t.to, t.actor])).toEqual([['NONE', 'board']]);
+    });
+
+    test('ACTIVE can only become ACTIVE via NONE, REVOKED (convergence)', () => {
+        const into = edges.filter((t) => t.to === 'ACTIVE').map((t) => t.from).sort();
+        expect(into).toEqual(['NONE', 'REVOKED']);
+    });
+
+    test('nothing returns ACTIVE or REVOKED to NONE', () => {
+        expect(edges.filter((t) => t.to === 'NONE').map((t) => t.from)).toEqual(['DENIED']);
+    });
+
+    test('every state is reachable from creation', () => {
+        const r = reachability(HOUSEHOLD_TRANSITIONS, HOUSEHOLD_STATES, HOUSEHOLD_INITIAL_STATES, HOUSEHOLD_STATES);
+        expect(r.unreachable).toEqual([]);
         expect(r.deadEnds).toEqual([]);
     });
 });

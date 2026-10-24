@@ -11,8 +11,6 @@
  * Field keys stay aligned with the intake form keys used by IntakeError.fields
  * ("address", "emergencyContact", "primaryName") so the client can highlight
  * the offending inputs unchanged.
- *
- * See docs/designs/auth-first-registration.md §9.3.
  */
 
 export type FieldKey = "address" | "emergencyContact" | "primaryName" | "participantDob" | "notes";

@@ -11,19 +11,20 @@ const PAGE_LIMIT = 200;
 
 export default function ConversionChallengesClient() {
   const [challenges, setChallenges] = useState<ConversionChallengeRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<number | null>(null);
 
+  function fetchChallenges() {
+    return api<ConversionChallengeRow[]>(`/conversion-challenges?page=1&limit=${PAGE_LIMIT}`)
+      .then((rows) => { setChallenges(rows); setError(null); }, (e) => setError(errorMessage(e)))
+      .finally(() => setLoading(false));
+  }
+  useEffect(() => { fetchChallenges(); }, []);
   async function load() {
     setLoading(true);
-    try {
-      setChallenges(await api<ConversionChallengeRow[]>(`/conversion-challenges?page=1&limit=${PAGE_LIMIT}`));
-      setError(null);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setLoading(false); }
+    await fetchChallenges();
   }
-  useEffect(() => { load(); }, []);
 
   async function handleAccept(id: number) {
     setActing(id);

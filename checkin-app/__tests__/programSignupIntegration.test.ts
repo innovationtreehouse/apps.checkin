@@ -16,10 +16,19 @@ jest.mock('@/lib/notifications', () => ({
     sendNotification: jest.fn(),
 }));
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
+    adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/shopify/products', () => ({
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
+    }),
+    createClaimantProduct: jest.fn().mockResolvedValue({
+        claimantShopifyProductId: 'mock-claimant-product-id',
+        claimantShopifyVariantId: 'mock-claimant-variant-id',
     }),
 }));
 
@@ -67,6 +76,9 @@ jest.mock('@/lib/prisma', () => {
     auditLog: {
       create: jest.fn(),
     },
+    boardSettings: {
+      findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2000-09-01T00:00:00Z') }),
+    },
     appSettings: {
       // Event creation reads the org timezone via getAppSettings().
       upsert: jest.fn().mockResolvedValue({ id: 1, timezone: 'America/Chicago', locale: 'en-US' }),
@@ -88,6 +100,7 @@ const mockGetSession = require('next-auth/next').getServerSession;
 describe('Full Program Signup Integration Flow', () => {
     const sysAdminId = 1;
     const leadUserId = 2;
+    const mentorId = 4;
     const childParticipantId = 3;
     const programId = 10;
     const householdId = 100;
@@ -110,10 +123,10 @@ describe('Full Program Signup Integration Flow', () => {
             body: JSON.stringify({
                 name: 'Integration Test Program',
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
+                endAt: '2026-06-30',
                 memberPrice: 50,
                 nonMemberPrice: 100,
-                leadMentorId: sysAdminId,
+                leadMentorId: mentorId,
                 maxParticipants: 50,
             }),
         });
@@ -140,13 +153,15 @@ describe('Full Program Signup Integration Flow', () => {
         expect(addEventRes.status).toBe(200);
 
         // 3. SysAdmin publishes the program via the base PATCH
+        const programDates = { startAt: new Date('2099-01-01'), endAt: new Date('2099-12-31'), minAge: null, maxAge: null };
         (prisma.program.findUnique as jest.Mock).mockResolvedValue({
             id: programId,
             leadMentorId: sysAdminId,
             phase: 'PLANNING',
+            ...programDates,
         });
         (prisma.event.count as jest.Mock).mockResolvedValue(1);
-        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN' });
+        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN', ...programDates });
 
         const publishReq = new Request(`http://localhost/api/programs/${programId}`, {
             method: 'PATCH',
@@ -204,13 +219,14 @@ describe('Full Program Signup Integration Flow', () => {
 
         // 8. Shopify Webhook call
         (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
-        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id' });
+        // The app's checkout sells the claimant variant; a paid line on it counts as a seat.
+        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id', claimantShopifyVariantId: 'mock-claimant-variant-id' });
         (prisma.programParticipant.count as jest.Mock).mockResolvedValue(1);
         (prisma.programParticipant.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
         const webhookPayload = JSON.stringify({
             financial_status: 'paid',
-            line_items: [{ variant_id: 'mock-variant-id', quantity: 1 }],
+            line_items: [{ variant_id: 'mock-claimant-variant-id', quantity: 1 }],
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(childParticipantId) },
                 { name: 'Program_ID', value: String(programId) },

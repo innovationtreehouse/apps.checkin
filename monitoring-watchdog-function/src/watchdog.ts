@@ -24,7 +24,7 @@ import {
   emitServiceError,
   emitDbUnreachable,
   emitMonitorHeartbeat,
-} from "@inventory/telemetry";
+} from "@checkin/telemetry";
 import {
   prisma,
   recordIncident,
@@ -35,7 +35,7 @@ import {
   Severity,
   type IncidentInput,
   type ServiceFreshness,
-} from "@inventory/monitoring-db";
+} from "@checkin/monitoring-db";
 import type { ServiceEntry, WatchdogConfig } from "./registry.js";
 
 /** The newest failed/abandoned run, as the erroring check consumes it. */
@@ -220,12 +220,7 @@ export async function runWatchdog(
   // concurrency = 1 alone.
   let result: { checked: number; incidents: number };
   try {
-    result = await withAdvisoryLock(
-      prisma,
-      `watchdog:${cfg.env}`,
-      () => check(cfg),
-      (err) => logger.warn("watchdog failed to release lock (auto-releases on session end)", { err }),
-    );
+    result = await withAdvisoryLock(`watchdog:${cfg.env}`, () => check(cfg));
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       // Another invocation owns the run — skip WITHOUT emitting a heartbeat. The lock-holder

@@ -5,10 +5,12 @@ import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schem
 
 const challengeRepo = createConversionChallengeRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
-import { ServiceError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
+
+const ALREADY_REVIEWED = "Challenge was already reviewed";
 
 export interface SubmitChallengeParams {
   orgId: string;
@@ -47,24 +49,22 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
   try {
     acceptedStatus = assertConversionChallengeTransition(challenge.status as ConversionChallengeStatus, "ACCEPT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
   const ref = await itemRefRepo.findById(challenge.itemReferenceId);
   if (!ref) throw new ServiceError(404, "Item reference not found");
 
-  const newVersion = ref.conversionVersion + 1;
-
-  await db.$transaction(async (tx) => {
-    await tx.itemReference.update({
-      where: { id: challenge.itemReferenceId },
-      data: { conversionFactor: challenge.proposedFactor, conversionVersion: newVersion },
-    });
-
-    await tx.conversionChallenge.update({
-      where: { id: challengeId },
+  await transactionWithEvents(async (tx) => {
+    const { count } = await tx.conversionChallenge.updateMany({
+      where: { id: challengeId, status: challenge.status },
       data: { status: acceptedStatus, reviewedByUserId: userId, reviewedAt: new Date() },
+    });
+    if (count === 0) throw new ServiceError(409, ALREADY_REVIEWED);
+
+    const { conversionVersion: newVersion } = await tx.itemReference.update({
+      where: { id: challenge.itemReferenceId },
+      data: { conversionFactor: challenge.proposedFactor, conversionVersion: { increment: 1 } },
     });
 
     await recordTransition(tx, "conversion_challenge", challengeId, challenge.status, acceptedStatus, userId);
@@ -87,15 +87,15 @@ export async function rejectChallenge(challengeId: number, userId: number): Prom
   try {
     rejectedStatus = assertConversionChallengeTransition(challenge.status as ConversionChallengeStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
-  await db.$transaction(async (tx) => {
-    await tx.conversionChallenge.update({
-      where: { id: challengeId },
+  await transactionWithEvents(async (tx) => {
+    const { count } = await tx.conversionChallenge.updateMany({
+      where: { id: challengeId, status: challenge.status },
       data: { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date() },
     });
+    if (count === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 
     await recordTransition(tx, "conversion_challenge", challengeId, challenge.status, rejectedStatus, userId);
     await emitOrgEvent(tx, challenge.orgId, {

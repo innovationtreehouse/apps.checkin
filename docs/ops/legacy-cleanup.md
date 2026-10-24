@@ -42,3 +42,23 @@ them.
 - **Code must tolerate it:** yes. An activation with no order is legitimate and
   must not be reported as a missing payment.
 
+
+## Kiosks that predate the close request
+
+A kiosk below scan protocol 6 cannot ask the server to close the building, so
+the server still decides a close from that kiosk's keyholder checkout: the
+`shownEmpty` flag, else its own records. It also still maps the old close
+fields, `forceCloseConfirmed` and a kiosk `forceCloseToken`, from that kiosk's
+live scans and queued rows. All of it is the `LegacyKiosk` branch of
+`processCheckout` and its caller in the scan route.
+
+- **Surfaced:** not by the app; the server keeps no record of which protocol a
+  kiosk speaks. The door kiosk's release tag says which it runs, and System
+  Status shows its unsynced-scan count.
+- **Exit:** every kiosk runs a release that speaks protocol 6 or later, and its
+  unsynced count has read zero since the upgrade, so no queued row can still
+  carry the old fields. Then delete the legacy branch, `shownEmpty`, and the old
+  close fields.
+- **Code must tolerate it:** yes, until the exit. Removing the branch while an
+  old kiosk is at the door lets a lone keyholder leave without closing the
+  building.

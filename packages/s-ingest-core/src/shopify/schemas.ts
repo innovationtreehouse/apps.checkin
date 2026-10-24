@@ -45,6 +45,8 @@ const orderLineSchema = z
     title: z.string().nullish(),
     name: z.string().nullish(),
     quantity: z.number().nullish(),
+    // Excludes units an order edit removed or a refund took back; `quantity` keeps them.
+    currentQuantity: z.number().nullish(),
     // Null for custom/deleted-product lines — Shopify's LineItem.variant is nullable.
     // legacyResourceId may arrive as number or string depending on the API surface.
     variant: z
@@ -116,6 +118,8 @@ export interface NormalizedOrderLine {
   sku?: string;
   title?: string;
   quantity: number;
+  /** Units still on the order after edits and refunds. Absent when the payload predates the field. */
+  currentQuantity?: number;
   /** Shopify ProductVariant GID (gid://shopify/ProductVariant/N). Absent for custom/deleted-product lines. */
   variantGid?: string;
   /** Numeric variant id — what checkin stores in BoardSettings/Program shopify*VariantId, so this is the reconciliation join key. */
@@ -164,6 +168,7 @@ export function normalizeOrder(node: OrderNode): NormalizedOrder {
     sku: l.sku ?? undefined,
     title: l.title ?? l.name ?? undefined,
     quantity: l.quantity ?? 1,
+    currentQuantity: l.currentQuantity ?? undefined,
     variantGid: l.variant?.id ?? undefined,
     variantLegacyId:
       l.variant?.legacyResourceId != null

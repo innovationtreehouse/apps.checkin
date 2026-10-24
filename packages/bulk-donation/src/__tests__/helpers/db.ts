@@ -1,9 +1,3 @@
-/**
- * DB-gate for the integration tier. `describeDb` is `describe` when BULK_DONATION_DATABASE_URL
- * is set (the harness publishes the container URL in test/setupEnv.ts) and `describe.skip`
- * otherwise — so suites that need a real Postgres run against the throwaway container when
- * Docker is up, and cleanly skip (not fail) on a machine without Docker.
- */
-import { describe } from "vitest";
+import { describeDb as gate } from "@checkin/pg-test-harness";
 
-export const describeDb = process.env.BULK_DONATION_DATABASE_URL ? describe : describe.skip;
+export const describeDb = gate("BULK_DONATION_DATABASE_URL");

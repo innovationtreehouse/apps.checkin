@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, Title,
@@ -17,9 +18,12 @@ import { formatPhone } from "@/lib/phone";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { AttendanceTabs } from "../AttendanceTabs";
+import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { CountBadge } from "@/components/ui/CountBadge";
+import { BuildingUnconfirmedAlert } from "@/components/BuildingUnconfirmedAlert";
+import type { BuildingLink } from "@/lib/kioskSeen";
 import { personQueryMatcher } from "@/lib/searchId";
 
 type Person = {
@@ -41,18 +45,18 @@ type Person = {
 type Visit = {
   id: number;
   arrivedAt: string;
+  // Checked in with no keyholder in the building (server-derived).
+  noKeyholder?: boolean;
   participant: Person;
   event?: { program?: { id: number; name: string } };
 };
 
-// A PARKED_CLOSED scan: someone badged in while the facility was closed and has
-// no Visit yet. Display-only — id/name/nickname/time, never PII (the kiosk re-broadcasts it).
-type Held = { id: number; name: string | null; nickname?: string | null; occurredAt: string };
-
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
-type SafetyFlags = { isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; held?: Held[]; counts: Counts; safety?: SafetyFlags };
-type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; self: Visit | null; household: Visit[] };
+type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
+// kioskAsOf: the kiosk proxy served its own view (server unreachable)
+// from the roster it received at this time; null when it never had one.
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
+type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
 function KioskDisplayInner() {
@@ -61,8 +65,12 @@ function KioskDisplayInner() {
   const [isKioskMode, setIsKioskMode] = useState(searchParams.get("mode") === "kiosk");
   const { data: session } = useSession();
   const [data, setData] = useState<AttendanceResponse | null>(null);
+  // When `data` was current: the kiosk's roster time, else when it was loaded.
+  const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk proxy answers 204 while the building is known empty.
+  const [kioskResting, setKioskResting] = useState(false);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
   const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -70,10 +78,7 @@ function KioskDisplayInner() {
   const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
   const [confirmCheckoutOpened, { open: openConfirmCheckout, close: closeConfirmCheckout }] = useDisclosure(false);
   const [pendingCheckoutVisitId, setPendingCheckoutVisitId] = useState<number | null>(null);
-  const [forceCloseOpened, { open: openForceClose, close: closeForceClose }] = useDisclosure(false);
-  const [forceCloseVisitId, setForceCloseVisitId] = useState<number | null>(null);
-  const [forceCloseToken, setForceCloseToken] = useState<string | null>(null);
-  const [forceCloseMessage, setForceCloseMessage] = useState("");
+  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Person[]>([]);
@@ -98,8 +103,12 @@ function KioskDisplayInner() {
   const rawSafety = data?.safety;
   const safety =
     typeof rawSafety?.isTwoDeepViolation === "boolean" && typeof rawSafety?.isLastKeyholder === "boolean"
+      && typeof rawSafety?.facilityOpen === "boolean"
       ? rawSafety
       : null;
+  // Off the kiosk, building state is stated as fact only while the server can
+  // reach the kiosk; a missing link reads as unreachable.
+  const unconfirmed = !isKioskMode && data !== null && data.building?.reachable !== true;
 
   // Prefer the server-computed flag (the only youth signal the kiosk payload carries),
   // fall back to the birth date the privileged payload still ships. This feeds the
@@ -107,9 +116,6 @@ function KioskDisplayInner() {
   const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, { unknownIs: "youth" });
 
   const fullAttendance = isFull ? (data as FullResponse).attendance : [];
-  // Memoized so its reference is stable for the kioskHeldNames useMemo below —
-  // a bare ternary would be a new array every render (react-hooks/exhaustive-deps).
-  const heldList = useMemo(() => (isFull ? (data as FullResponse).held ?? [] : []), [isFull, data]);
   const matchesSignOutQuery = personQueryMatcher(searchSignOutQuery);
   const keyholderList = fullAttendance.filter(v => v.participant.isKeyholder);
   const volunteerList = fullAttendance.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
@@ -146,6 +152,7 @@ function KioskDisplayInner() {
   // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
   // proxy actually loads) or the signedRequest response flag.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
+  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -160,9 +167,15 @@ function KioskDisplayInner() {
       }
 
       const res = await fetch("/api/attendance", { headers });
+      setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
+        setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
         setError(null);
         if (json.signedRequest === true) setIsKioskMode(true);
       } else if (!res.ok) {
@@ -171,21 +184,24 @@ function KioskDisplayInner() {
     } catch (error) {
       console.error("Failed to fetch attendance:", error);
       setError("Network error occurred.");
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      if (!isKioskDisplay) notifications.show({ color: "red", message: "Network error", autoClose: false });
     } finally {
       setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, isKioskDisplay]);
 
-  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
+  // The door screen never blanks, and never passes a kept or kiosk-served roster off as fresh.
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskAsOf !== undefined));
   usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Only the kiosk wrapper that frames this page, served from the same Pi proxy origin, may push a roster.
+      if (event.source !== window.parent || event.origin !== window.location.origin) return;
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
-        setData({ access: "full", attendance: event.data.attendance, held: event.data.held, counts: event.data.counts, safety: event.data.safety });
+        setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
+        setAsOf(new Date().toISOString());
         setLoading(false);
-        if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
         fetchAttendance();
       }
@@ -227,9 +243,10 @@ function KioskDisplayInner() {
       headers["x-kiosk-nonce"] = nonceParamsUrl;
     }
     const attRes = await fetch("/api/attendance", { headers });
-    const json = await attRes.json();
+    const json = await attRes.json().catch(() => ({}));
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
+      setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
       if (json.signedRequest) setIsKioskMode(true);
     }
     // Refresh nav/sub-tab building counts too — they read a separate cached fetch.
@@ -245,13 +262,14 @@ function KioskDisplayInner() {
     await doForceCheckout(visitId, true);
   };
 
-  const doForceCheckout = async (visitId: number, isSelf: boolean = false, token?: string) => {
+  const doForceCheckout = async (visitId: number, isSelf: boolean = false, answer?: CloseChoiceAnswer) => {
     setCheckingOut(visitId);
+    let next: CloseChoiceAnswer | null = null;
     try {
       const res = await fetch("/api/attendance", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId, ...(token ? { forceCloseToken: token } : {}) }),
+        body: JSON.stringify({ visitId, ...answer }),
       });
       const resData = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -259,11 +277,8 @@ function KioskDisplayInner() {
           notifications.show({ color: "yellow", message: "Facility closed — all remaining visits ended.", autoClose: 5000 });
         }
         refreshAttendance();
-      } else if (resData.type === "warning" && resData.forceCloseToken) {
-        setForceCloseVisitId(visitId);
-        setForceCloseToken(resData.forceCloseToken);
-        setForceCloseMessage(resData.error);
-        openForceClose();
+      } else if (isCloseChoiceWarning(resData)) {
+        next = await askCloseChoice(resData);
       } else {
         notifications.show({ color: "red", message: isSelf ? "Failed to check out." : "Failed to force checkout.", autoClose: false });
       }
@@ -273,6 +288,7 @@ function KioskDisplayInner() {
     } finally {
       setCheckingOut(null);
     }
+    if (next) await doForceCheckout(visitId, isSelf, next);
   };
 
   const confirmForceCheckout = async () => {
@@ -281,17 +297,6 @@ function KioskDisplayInner() {
     const visitId = pendingCheckoutVisitId;
     setPendingCheckoutVisitId(null);
     await doForceCheckout(visitId);
-  };
-
-  const confirmFacilityClose = async () => {
-    if (forceCloseVisitId === null || forceCloseToken === null) return;
-    closeForceClose();
-    const visitId = forceCloseVisitId;
-    const token = forceCloseToken;
-    setForceCloseVisitId(null);
-    setForceCloseToken(null);
-    setForceCloseMessage("");
-    await doForceCheckout(visitId, false, token);
   };
 
   const handleManualCheckIn = async (participantId: number) => {
@@ -334,11 +339,6 @@ function KioskDisplayInner() {
     return getKioskDisplayNames(allVisits.map(v => ({ id: v.participant.id, name: v.participant.name || null, nickname: v.participant.nickname, email: v.participant.email })));
   }, [isKioskMode, keyholderList, volunteerList, youthList]);
 
-  const kioskHeldNames = useMemo(() => {
-    if (!isKioskMode) return new Map<number, string>();
-    return getKioskDisplayNames(heldList.map(h => ({ id: h.id, name: h.name, nickname: h.nickname })));
-  }, [isKioskMode, heldList]);
-
   const canSeeNames = !isKioskMode && (currentUserIsKeyholder || currentUserIsSysadmin || currentUserIsBoardMember);
 
   const renderPersonCard = (visit: Visit, showCheckout: boolean) => {
@@ -358,6 +358,11 @@ function KioskDisplayInner() {
             </Text>
             <Group gap={6} align="center">
               <Text c="dimmed" size="xs">{formatTime(visit.arrivedAt)}</Text>
+              {visit.noKeyholder && (
+                <Badge size="xs" color="orange" variant="light" title="Checked in with no keyholder in the building">
+                  No keyholder
+                </Badge>
+              )}
               {visit.event?.program?.name && (
                 <Badge size="xs" variant="light" style={{ background: `hsl(${hue}, 60%, 20%)`, color: `hsl(${hue}, 80%, 80%)` }} title={visit.event.program.name}>
                   {visit.event.program.name}
@@ -384,10 +389,10 @@ function KioskDisplayInner() {
       visit.participant.householdId === currentUserHouseholdId)
   );
 
-  const renderColumn = (icon: string, count: number, label: string, color: string, list: Visit[]) => (
+  const renderColumn = (ColumnIcon: Icon, count: number, label: string, color: string, list: Visit[]) => (
     <div>
       <Group gap={8} mb="sm" pb="xs" style={{ borderBottom: `2px solid var(--mantine-color-${color}-5)` }}>
-        <Text fz="xl">{icon}</Text>
+        <ColumnIcon size={28} stroke={1.75} color={`var(--mantine-color-${color}-6)`} aria-hidden />
         <div>
           <Text fz="xl" fw={800} c={color} lh={1}>{count}</Text>
           <Text size="xs" tt="uppercase" c="dimmed">{label}</Text>
@@ -432,7 +437,10 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
-            <CountBadge intent="info" size="lg">People Present: {data ? counts.total : "—"}</CountBadge>
+            {kioskStale && <Text size="sm" c="dimmed">Not up to date{asOf ? ` — as of ${formatTime(asOf)}` : ""}</Text>}
+            <CountBadge intent="info" size="lg">
+              {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
+            </CountBadge>
             {/* A number only — no names, no reasons, no link that invites a
                 login on the kiosk. The panel is the copy of record. */}
             {isKioskDisplay && (counts.needReview ?? 0) > 0 && (
@@ -485,20 +493,27 @@ function KioskDisplayInner() {
         )}
 
         {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
-        {!loading && !safety && (
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {!loading && !unconfirmed && !safety && (
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data
               ? "Attendance loaded without safety flags, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."
               : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
           </Alert>
         )}
-        {data && safety?.isTwoDeepViolation && (
+        {data && !unconfirmed && safety?.isTwoDeepViolation && (
           <Alert color="red" icon="🚨" title="Critical Warning" mb="lg">
             Two-Deep Compliance is failing! An unaccompanied youth is present without sufficient
             adult supervision.
           </Alert>
         )}
-        {data && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
+        {data && !unconfirmed && safety && !safety.facilityOpen && counts.total > 0 && (
+          <Alert color="orange" icon="🔒" title="Facility closed — no keyholder present" mb="lg">
+            The people below checked in without a keyholder in the building. The facility is not
+            open until a keyholder checks in.
+          </Alert>
+        )}
+        {data && !unconfirmed && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
           <Alert color="yellow" icon="⚠️" title="Warning" mb="lg">
             Only one isKeyholder is currently in the building.
           </Alert>
@@ -507,46 +522,20 @@ function KioskDisplayInner() {
         {/* Main content */}
         {loading ? (
           <Center py="xl"><Loader /></Center>
-        ) : error ? (
+        ) : error && !kioskStale ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
+        ) : !data && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
-        ) : counts.total === 0 && heldList.length === 0 ? (
-          <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
+        ) : counts.total === 0 ? (
+          <Center py="xl"><Text c="dimmed">{unconfirmed ? "No open visits recorded." : "The facility is currently empty."}</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-            {renderColumn("🔑", counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
-            {renderColumn("🤝", counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
-            {renderColumn("🎓", counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
+            {renderColumn(IconKey, counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
+            {renderColumn(IconHeartHandshake, counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
+            {renderColumn(IconSchool, counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
           </SimpleGrid>
-        )}
-
-        {/* Held scans: badged in while closed, awaiting a keyholder. Shown so the
-            room reflects who has actually badged (trust what we see); kept out of
-            the counts/columns because no keyholder is present to supervise them. */}
-        {isFull && heldList.length > 0 && (
-          <Paper withBorder radius="md" p="md" mt="lg" style={{ borderStyle: "dashed", borderColor: "var(--mantine-color-orange-5)" }}>
-            <Group gap={8} mb="sm">
-              <Text fz="xl">⏳</Text>
-              <div>
-                <Text fz="xl" fw={800} c="orange" lh={1}>{heldList.length}</Text>
-                <Text size="xs" tt="uppercase" c="dimmed">Awaiting keyholder</Text>
-              </div>
-            </Group>
-            <Text size="xs" c="dimmed" mb="sm">
-              Badged in while the facility was closed. They join the roster automatically once a keyholder checks in.
-            </Text>
-            <SimpleGrid cols={heldList.length > 10 ? 2 : 1} spacing="xs">
-              {heldList.map(h => (
-                <Paper key={h.id} withBorder radius="sm" p="xs">
-                  <Text fw={500} size="sm" truncate>
-                    {isKioskMode ? (kioskHeldNames.get(h.id) || h.name || "—") : (h.name || "—")}
-                  </Text>
-                  <Text c="dimmed" size="xs">{formatTime(h.occurredAt)}</Text>
-                </Paper>
-              ))}
-            </SimpleGrid>
-          </Paper>
         )}
 
         {/* Privacy notice for limited access */}
@@ -651,19 +640,7 @@ function KioskDisplayInner() {
         </Group>
       </Modal>
 
-      {/* Last-keyholder facility-close confirmation */}
-      <Modal
-        opened={forceCloseOpened}
-        onClose={() => { closeForceClose(); setForceCloseToken(null); }}
-        title={<Text span fw={700} fz="lg" c="red">Close Facility?</Text>}
-        centered
-      >
-        <Alert color="yellow" mb="md">{forceCloseMessage}</Alert>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={() => { closeForceClose(); setForceCloseToken(null); }}>Cancel</Button>
-          <Button color="red" onClick={confirmFacilityClose}>Confirm &amp; Close Facility</Button>
-        </Group>
-      </Modal>
+      {closeChoiceDialog}
     </>
   );
 

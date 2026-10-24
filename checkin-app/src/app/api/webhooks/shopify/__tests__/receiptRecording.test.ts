@@ -5,8 +5,7 @@
  * Unit tests for the delivery-receipt recording wired into
  * POST /api/webhooks/shopify (settings → Shopify Webhook tab):
  *   - a valid delivery is recorded (hmacValid true, outcome from the branch taken),
- *   - a failed-HMAC delivery is ALSO recorded (that is the secret-mismatch
- *     diagnostic) and still rejected with 401 exactly as before,
+ *   - a failed-HMAC or unsigned delivery writes nothing and is rejected with 401,
  *   - a failed receipt insert never breaks settlement,
  *   - Shopify's "Send test notification" sample is flagged test: true.
  * Settlement/DB behavior itself is covered by webhookShopify.integration.test.ts.
@@ -19,8 +18,12 @@ import { activateByProcessId } from '@/lib/membership/payment';
 jest.mock('@/lib/membership/payment', () => ({
     activateByProcessId: jest.fn(),
 }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/finance/reconcile/reversals', () => ({
+    returnTestOrderStock: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('@/lib/shopify/stock', () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    changeProgramStockWith: jest.fn((...a: unknown[]) => jest.requireActual('@/test-helpers/stockWith').forwardStockWith(...a)),
 }));
 jest.mock('@/lib/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -71,12 +74,20 @@ beforeEach(() => {
     jest.clearAllMocks();
     auditCreate.mockResolvedValue({});
     boardSettingsFindUnique.mockResolvedValue(null);
-    activate.mockResolvedValue({ status: 'ACTIVE' });
+    activate.mockResolvedValue({ outcome: 'active', process: { status: 'ACTIVE' } });
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
     prisma.boardSettings.findUnique = boardSettingsFindUnique as unknown as typeof prisma.boardSettings.findUnique;
 });
 
 describe('POST /api/webhooks/shopify — delivery receipts', () => {
+    it('never settles a membership from a Shopify test order', async () => {
+        const body = JSON.stringify({ ...JSON.parse(MEMBERSHIP_BODY), test: true });
+        const res = await POST(webhookReq(body, sign(body)));
+        expect(res.status).toBe(200);
+        expect(activate).not.toHaveBeenCalled();
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: true, outcome: 'test order for process 12 — ignored' });
+    });
+
     it('records a valid membership delivery with hmacValid true and a settled outcome', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
@@ -91,31 +102,23 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
             hmacValid: true,
             test: false,
             orderId: '999001',
-            outcome: 'settled process 12',
+            outcome: 'process 12: active',
         });
     });
 
-    it('records a failed-HMAC delivery (hmacValid false) and still rejects with 401', async () => {
+    it('writes nothing for a failed-HMAC delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, 'bogus-signature'));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate).toHaveBeenCalledTimes(1);
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            orderId: '999001',
-            outcome: 'rejected: bad hmac',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 
-    it('records a missing-signature delivery and still rejects with 401', async () => {
+    it('writes nothing for a missing-signature delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, null));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            outcome: 'rejected: missing signature',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 

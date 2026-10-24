@@ -1,6 +1,6 @@
 import type { Db } from "../db/index";
 import type { LocationRepository } from "../repositories/locationRepository";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export function createLocationService({
   locationRepo,

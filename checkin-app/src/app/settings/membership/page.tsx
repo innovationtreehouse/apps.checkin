@@ -8,6 +8,8 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { useSession } from "next-auth/react";
+import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -15,10 +17,13 @@ interface Settings {
   orgMembershipYearBoundary: string | null;
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
-  volunteerDiscountCode: string | null;
+  volunteerFamilyDiscountCode: string | null;
+  // Sent by a server still on the pre-rename release during a deploy.
+  volunteerDiscountCode?: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
+  releasedLibraries: string[];
 }
 
 const dollars = (cents: number) => (cents / 100).toFixed(2);
@@ -64,11 +69,11 @@ export default function MembershipSettingsPage() {
   const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
+  const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
+  const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const sRes = await fetch("/api/settings/membership");
+  const load = useCallback(() => fetch("/api/settings/membership")
+    .then(async (sRes) => {
       if (sRes.ok) {
         const { settings } = (await sRes.json()) as { settings: Settings };
         const snap = {
@@ -79,7 +84,7 @@ export default function MembershipSettingsPage() {
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
           variantId: settings.orgMembershipVariantId ?? "",
           productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerDiscountCode ?? "",
+          discountCode: settings.volunteerFamilyDiscountCode ?? settings.volunteerDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
         setStandardFee(snap.standardFee);
@@ -91,12 +96,14 @@ export default function MembershipSettingsPage() {
         setProductUrl(snap.productUrl);
         setDiscountCode(snap.discountCode);
         setSigningTarget(snap.signingTarget);
+        setReleasedLibraries(settings.releasedLibraries ?? []);
         setInitial(snap);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -126,7 +133,7 @@ export default function MembershipSettingsPage() {
           volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
           orgMembershipVariantId: variantId.trim() || null,
           orgMembershipProductUrl: productUrl.trim() || null,
-          volunteerDiscountCode: discountCode.trim() || null,
+          volunteerFamilyDiscountCode: discountCode.trim() || null,
           bgRecheckMonths: Math.round(parseInt(bgRecheckMonths || "0", 10)),
           scholarshipDenialGraceDays: scholarshipGraceDays.trim() === "" ? null : parseInt(scholarshipGraceDays.trim(), 10),
           // Dev instances only — the API rejects it elsewhere.
@@ -136,7 +143,7 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); await load(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -353,6 +360,8 @@ export default function MembershipSettingsPage() {
               Save settings
             </Button>
           </Card>
+
+          {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

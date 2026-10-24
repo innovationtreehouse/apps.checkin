@@ -7,7 +7,7 @@ import { join } from 'node:path';
  * unlisted, nothing stale).
  *
  * A participant merge has to decide something about EVERY foreign key pointing
- * at `Person`. The list of those decisions lived only in `merge/route.ts`'s
+ * at `Person`. The list of those decisions lived only in the merge's
  * control flow, hand-maintained, and it drifted: #1456 slice 2b-0 found SIX
  * relations the merge had never touched at all — including `RawBadgeLog`
  * (RESTRICT, so the tombstone could never be deleted) and `PersonRole`
@@ -78,7 +78,7 @@ function personForeignKeys(): string[] {
 }
 
 /**
- * What `merge/route.ts` does with each Person FK. Every entry names the FK's
+ * What the merge (`lib/person/merge/execute.ts`) does with each Person FK. Every entry names the FK's
  * `onDelete` too, because that is what decides how bad "do nothing" is: RESTRICT
  * blocks a later delete outright, CASCADE destroys the row silently, SET NULL
  * quietly erases whichever fact the column recorded.
@@ -89,23 +89,27 @@ const DISPOSITIONS: Record<string, string> = {
     'BackgroundCheckAttestation.reviewerId': 'repointed (RESTRICT) — loop-or-skip. A shared process is pre-refused above (#1686): the same human attesting under two identities needs investigation, not a silent move.',
     'BackgroundCheckAttestation.subjectPersonId': 'repointed (SET NULL) — loop-or-skip on bgSubjectKey. Two collision classes are pre-refused: one reviewer naming both identities (the unique triple), and the cross-role case where one record reviewed a check naming the other, which would otherwise become a self-review.',
     'Event.attendanceConfirmedById': 'repointed (SET NULL) — who confirmed attendance is a staff-action audit fact; left behind it reads as nobody.',
+    'FacilityClose.closedById': 'repointed (SET NULL) — who closed the facility is an audit fact; left behind it reads as a deleted closer.',
     'OrgMembershipProcess.noteAckById': 'repointed (SET NULL) — who read the family intake note, same audit-fact rationale.',
+    'OrgMembershipProcess.zohoSignerPersonId': 'repointed (SET NULL) — who the agreement request is addressed to, and who signed; the same human follows the survivor.',
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would pin the very Person that #1456 2b-3 exists to delete. Deliberately the opposite call from Person.mergedIntoId below, which keeps its chain for provenance — the archive already has mergedAt and the AuditLog for that.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
+    'BudgetOwner.ownerId': 'repointed (RESTRICT) — step 5 updateMany. The bucket owner approves its lines; the same human keeps approving as the survivor.',
     'Program.leadMentorId': 'repointed (SET NULL) — step 5 updateMany.',
     'ProgramInstance.leadMentorId': 'repointed (SET NULL) — step 5 updateMany, same as Program.leadMentorId (the offering-tier lead of a run follows the survivor).',
     'RawBadgeLog.personId': 'repointed (RESTRICT) — the FK that makes a later Person delete possible at all. Plain updateMany; no unique constraint.',
     'TrustedAdult.disclosedById': 'repointed (RESTRICT) — step 5 updateMany.',
     'TrustedAdult.trustedAdultPersonId': 'repointed (SET NULL) — step 5 updateMany.',
     'TrustedAdultReview.decidedById': 'repointed (SET NULL) — which board member decided the review, same audit-fact rationale.',
-    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is pre-refused; the in-tx guard that leaves a tombstone open visit in place is defense-in-depth for a TOCTOU race, and the nightly/scan-service force-checkout sweeps drain it.',
+    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is pre-refused; the in-tx guard that leaves a tombstone open visit in place is defense-in-depth for a TOCTOU race, and the nightly/lib/attendance force-checkout sweeps drain it.',
 
     // ── deduped: bare joins, where a duplicate carries no extra decision ──────
     'CorporationLead.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'CorporationMember.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
-    'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Moved unless the survivor already holds that role, in which case the duplicate goes: the survivor already has the grant. Never left on the tombstone, because CASCADE would later destroy a security grant with no audit row (#1456 Decision 4). Person\'s legacy role mirrors are rewritten from an IN-TX read of the survivor\'s final rows, since moving rows directly bypasses applyRoleFlag\'s dual-write and an unconditional four-flag overwrite must not be sourced from a pre-tx snapshot. CAVEAT: which rows to move is still decided from that snapshot, so a grant landing mid-merge stays on the tombstone — the roles surface should refuse tombstone targets, filed as an epic follow-up.',
+    'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Each tombstone role, read in the transaction, moves through setRoleFlag: granted to the survivor (a no-op when it already holds it), then revoked from the tombstone, so the role guards run and every change writes an audit row. Never left on the tombstone, because CASCADE would later destroy a security grant. Person\'s legacy role mirrors are then rewritten from an in-transaction read of the survivor\'s final rows.',
+    'BudgetOwnerTreasurer.personId': 'deduped (RESTRICT) — bare join on (budgetOwnerId, personId); moved, or deleted when the survivor already treasures that bucket.',
     'ProgramVolunteer.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'RSVP.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a past-event duplicate is deleted; a FUTURE-event duplicate is pre-refused, because which answer is real is a human call.',
 
@@ -132,7 +136,7 @@ describe('merge repoint drift guard', () => {
     });
 
     it('every Person foreign key has a merge disposition', () => {
-        // A new one of these must be handled in merge/route.ts and recorded above.
+        // A new one of these must be handled in lib/person/merge/execute.ts and recorded above.
         // "It does not need handling" is itself a disposition — write it down as
         // deliberately-left with the reason, so the next reader inherits it.
         expect(keys.filter((k) => !(k in DISPOSITIONS))).toEqual([]);

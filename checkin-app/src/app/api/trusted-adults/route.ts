@@ -28,9 +28,9 @@ interface Body {
  *
  * A signed-in member discloses for their OWN household by default. Board/isSysadmin
  * may enter on another household's behalf by passing householdId (STAFF_ENTERED).
- * The kiosk must identify the household via householdId.
  */
-export const POST = withAuth({ allowKiosk: true }, async (req, auth) => {
+export const POST = withAuth({}, async (req, auth) => {
+    if (auth.type !== "session") return apiError("Unauthorized", 401);
     let body: Body;
     try {
         body = await req.json();
@@ -42,27 +42,18 @@ export const POST = withAuth({ allowKiosk: true }, async (req, auth) => {
     }
 
     let householdId: number | undefined;
-    let disclosedById = 0;
+    const disclosedById = auth.user.id;
     let origin: "SELF_DISCLOSED" | "STAFF_ENTERED" = "SELF_DISCLOSED";
 
-    if (auth.type === "session") {
-        disclosedById = auth.user.id;
-        const isStaff = auth.user.isBoardMember || auth.user.isSysadmin;
-        if (body.householdId && body.householdId !== auth.user.householdId) {
-            if (!isStaff) {
-                return apiError("You may only add trusted adults for your own household.", 403);
-            }
-            householdId = body.householdId;
-            origin = "STAFF_ENTERED";
-        } else {
-            householdId = auth.user.householdId;
-        }
-    } else {
-        // kiosk
-        if (!body.householdId) {
-            return apiError("householdId is required", 400);
+    const isStaff = auth.user.isBoardMember || auth.user.isSysadmin;
+    if (body.householdId && body.householdId !== auth.user.householdId) {
+        if (!isStaff) {
+            return apiError("You may only add trusted adults for your own household.", 403);
         }
         householdId = body.householdId;
+        origin = "STAFF_ENTERED";
+    } else {
+        householdId = auth.user.householdId;
     }
 
     try {

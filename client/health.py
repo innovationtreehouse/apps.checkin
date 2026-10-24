@@ -127,10 +127,14 @@ class HealthMonitor:
         self.last_nightly_date = None
         self._host = urlparse(base_url).hostname
 
-    def tick(self, now=None, diagnose_fn=None, in_closed_fn=in_closed_window):
+    def tick(self, now=None, diagnose_fn=None, in_closed_fn=in_closed_window, quiet_fn=lambda: False):
         now = now or time.monotonic()
         if in_closed_fn():
             self._nightly_reboot_if_due()
+            return None
+        # A resting kiosk (building known empty, nothing queued) sends the server
+        # nothing, so prod's overnight curfew can fire; the ladder waits with it.
+        if quiet_fn():
             return None
 
         result = (diagnose_fn or diagnose)(self.base_url)
@@ -256,11 +260,11 @@ class HealthMonitor:
 
 def health_monitor(backend_url, state, interval=OPEN_HOURS_INTERVAL,
                    sleep_fn=time.sleep, allow_reboot=False, allow_wifi_bounce=False,
-                   in_closed_fn=in_closed_window):
+                   in_closed_fn=in_closed_window, quiet_fn=lambda: False):
     monitor = HealthMonitor(backend_url, state, allow_reboot, allow_wifi_bounce)
     while True:
         sleep_fn(interval)
         try:
-            monitor.tick(in_closed_fn=in_closed_fn)
+            monitor.tick(in_closed_fn=in_closed_fn, quiet_fn=quiet_fn)
         except Exception as e:
             log.warning("health_monitor tick failed: %s", e)

@@ -188,7 +188,7 @@ it('keeps every designation on a household that has more than one', async () => 
 });
 
 it('matches a designation to its lead under the shared email canonicalization', async () => {
-    // The membership-fee engine (applyVolunteerStatus) canonicalizes, so the roster must too
+    // The membership-fee engine (applyVolunteerFamilyStatus) canonicalizes, so the roster must too
     // — otherwise this household would list twice and the Remove land on the wrong row.
     mockDb({
         memberships: [membership()],

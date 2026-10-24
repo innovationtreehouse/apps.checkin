@@ -7,11 +7,11 @@ import { apiError } from "@/lib/api-response";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/membership-ops/applications/certify-payment — board override.
+ * POST /api/membership-ops/applications/certify-payment — board-only override.
  * Certifies a payment plan and activates the membership without a Shopify payment.
  * Body: { processId, reason }
  */
-export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
+export const POST = withAuth({ roles: ["isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     let body: { processId?: number; reason?: string };
     try {

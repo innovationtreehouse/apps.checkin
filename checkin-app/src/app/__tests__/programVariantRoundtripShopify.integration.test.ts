@@ -31,6 +31,7 @@ import { POST as webhookPOST } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
@@ -58,6 +59,11 @@ function webhookReq(body: string, secret: string) {
 }
 
 describe('Shopify variant round-trip: create -> persist -> webhook match', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let boardId: number;
     let leadId: number;
     let participantId: number;
@@ -113,7 +119,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
             name: `Roundtrip Program ${TAG}`,
             leadMentorId: leadId,
             startAt: '2026-01-01',
-            endAt: '2026-12-31',
+            endAt: '2026-06-30',
             memberPrice: '25.00',
             nonMemberPrice: '35.00',
             maxParticipants: 50,
@@ -168,7 +174,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
                 name: `Warning Path Program ${TAG}`,
                 leadMentorId: leadId,
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
+                endAt: '2026-06-30',
                 memberPrice: '25.00',
                 nonMemberPrice: '35.00',
                 maxParticipants: 50,

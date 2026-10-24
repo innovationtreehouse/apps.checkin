@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { getKioskCertifications } from "@/lib/getKioskCertifications";
+import { buildingLink } from "@/lib/kioskSeen";
 
 // Serves the participant roster for the tool-certification grid: id, the kiosk label
 // (getKioskDisplayNames — never a last name or address), and tool certs. Same data class
@@ -15,7 +16,7 @@ export const GET = withAuth(
         const url = new URL(req.url);
         const limitToPresent = url.searchParams.get("limit_to_present") !== "false";
         const { participants, tools } = await getKioskCertifications({ limitToPresent });
-        return NextResponse.json({ participants, tools });
+        return NextResponse.json({ participants, tools, building: buildingLink() });
     } catch (error) {
         logger.error("Certifications fetch error:", error);
         return apiError("Internal Server Error while fetching certifications.", 500);

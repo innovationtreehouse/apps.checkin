@@ -2,7 +2,7 @@ import { it, expect, beforeEach, afterEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome } from "../../runtime";
-import { runReconcile, lockReconciliation, collectPayouts } from "../../lib/reconcile";
+import { runReconcile, lockReconciliation, collectPayouts, incomeKey, incomeClaimedDepositIds } from "../../lib/reconcile";
 import { reconciliationService } from "../../services/reconciliationService";
 import { seedIncomeDev } from "../../seed";
 import type { MirrorBalanceTxn, MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../../contract";
@@ -14,9 +14,10 @@ let txns: Record<string, MirrorBalanceTxn[]>;
 let deposits: QbDeposit[];
 
 const NOW = new Date("2026-06-30T12:00:00Z");
+const BANK = "35";
 
 const dep = (id: string, txnDate: string, totalCents: number): QbDeposit => ({
-  id, txnDate, totalCents, depositToAccount: "Checking",
+  id, txnDate, totalCents, depositToAccount: BANK,
 });
 
 /** Add a paid payout whose transactions sum to its net unless `txnNet` says otherwise. */
@@ -41,7 +42,8 @@ const mirror: PayoutMirror = {
 function bind() {
   configureIncome({
     mirror,
-    deposits: { depositsSince: async (from) => deposits.filter((d) => d.txnDate >= from.toISOString().slice(0, 10)) },
+    bankAccountId: BANK,
+    deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
   });
 }
 
@@ -66,8 +68,16 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await db.payoutReconciliation.count()).toBe(0);
   });
 
+  it("matches nothing while the bank account is unset, even with both ports bound", async () => {
+    configureIncome({ mirror, deposits: { depositsBetween: async () => deposits } });
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    expect(await runReconcile(ORG_A, NOW)).toEqual({ status: "unbound" });
+    expect(await db.payoutReconciliation.count()).toBe(0);
+  });
+
   it("is a no-op while the mirror is unbound", async () => {
-    configureIncome({ deposits: { depositsSince: async () => [] } });
+    configureIncome({ deposits: { depositsBetween: async () => [] } });
     expect(await runReconcile(ORG_A, NOW)).toEqual({ status: "unbound" });
   });
 
@@ -92,10 +102,10 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await db.incomeAuditLog.count()).toBe(audits);
   });
 
-  it("waits inside the window, then opens NO_DEPOSIT once it elapses", async () => {
+  it("waits in the outbox inside the window, then opens NO_DEPOSIT once it elapses", async () => {
     payout("P1", "2026-06-25", 97);
     await runReconcile(ORG_A, NOW);
-    expect(await db.payoutReconciliation.count()).toBe(0);
+    expect(await rowFor("P1")).toMatchObject({ status: "WAITING", kind: null });
 
     await runReconcile(ORG_A, new Date("2026-07-03T00:00:00Z"));
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
@@ -108,9 +118,9 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null });
   });
 
-  it("ignores deposits outside [issuedAt, issuedAt + window]", async () => {
+  it("ignores deposits outside [issuedAt − grace, issuedAt + window]", async () => {
     payout("P1", "2026-06-10", 97);
-    deposits = [dep("early", "2026-06-09", 97), dep("late", "2026-06-18", 97)];
+    deposits = [dep("early", "2026-06-07", 97), dep("late", "2026-06-18", 97)];
     await runReconcile(ORG_A, NOW);
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
   });
@@ -244,6 +254,15 @@ describeDb("runReconcile — drift", () => {
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT" });
   });
 
+  it("reopens as DRIFT, reason deposit_missing, when the deposit's date moves outside every read window", async () => {
+    await matched();
+    deposits = [dep("D1", "2026-07-20", 97)];
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT", depositId: null });
+    const log = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.drift" } });
+    expect(log.reason).toBe("deposit_missing");
+  });
+
   it("reopens as DRIFT when the payout net changes", async () => {
     await matched();
     setPayout("P1", { netCents: 90 });
@@ -279,7 +298,8 @@ describeDb("runReconcile — drift", () => {
     await matched();
     configureIncome({
       mirror,
-      deposits: { depositsSince: async () => deposits },
+      bankAccountId: BANK,
+      deposits: { depositsBetween: async () => deposits },
       reconcileFrom: new Date("2026-06-15T00:00:00Z"),
     });
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
@@ -313,8 +333,10 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     deposits = [dep("D7", "2026-06-02", 95)];
     const user = newUserId();
-    const saved = await reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: user, username: "fin" });
-    expect(saved).toMatchObject({ status: "RESOLVED", resolution: "MANUAL", depositId: "D7", resolvedByUserId: user });
+    const saved = await reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: user, username: "fin" }, "bank fee taken");
+    expect(saved).toMatchObject({
+      status: "RESOLVED", resolution: "MANUAL", depositId: "D7", resolvedByUserId: user, reason: "bank fee taken",
+    });
     const log = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.matched_manually" } });
     expect(log.actorUserId).toBe(user);
   });
@@ -325,14 +347,50 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     expect((await rowFor("P0")).depositId).toBe("D1");
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
+    });
+  });
+
+  it("manual match needs a reason when the amounts differ, and none when they agree", async () => {
+    const row = await openRow();
+    deposits = [dep("D7", "2026-06-02", 95), dep("D8", "2026-06-02", 97)];
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 }, "  ")).rejects.toMatchObject({
+      status: 400,
+    });
+    expect((await rowFor("P1")).status).toBe("OPEN");
+    expect(await reconciliationService.matchToDeposit(ORG_A, row.id, "D8", { userId: 1 })).toMatchObject({
+      status: "RESOLVED", depositId: "D8", reason: null,
+    });
+  });
+
+  it("manual match neither offers nor accepts a deposit into another account", async () => {
+    const row = await openRow();
+    deposits = [{ ...dep("D7", "2026-06-02", 97), depositToAccount: "99" }];
+    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 })).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
+  it("manual match records a deposit as income's own only when it carries this payout's key", async () => {
+    const row = await openRow();
+    deposits = [{ ...dep("Dother", "2026-06-02", 97), appKey: incomeKey("P9") }];
+    expect(await reconciliationService.matchToDeposit(ORG_A, row.id, "Dother", { userId: 1 })).toMatchObject({
+      origin: "matched",
+    });
+    payout("P2", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const own = await rowFor("P2");
+    deposits = [{ ...dep("Downp2", "2026-06-02", 97), appKey: incomeKey("P2") }];
+    expect(await reconciliationService.matchToDeposit(ORG_A, own.id, "Downp2", { userId: 1 })).toMatchObject({
+      origin: "created",
     });
   });
 
   it("dismiss requires a reason, then resolves", async () => {
     const row = await openRow();
     await expect(reconciliationService.dismiss(ORG_A, row.id, "  ", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
     const saved = await reconciliationService.dismiss(ORG_A, row.id, "booked as a transfer", { userId: 1 });
     expect(saved).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", reason: "booked as a transfer" });
@@ -342,10 +400,10 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     await reconciliationService.dismiss(ORG_A, row.id, "x", { userId: 1 });
     await expect(reconciliationService.dismiss(ORG_A, row.id, "y", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
     await expect(reconciliationService.dismiss(ORG_B, row.id, "y", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 });
@@ -358,20 +416,20 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     });
   }
 
-  it("retry is refused for any row that is not POST_FAILED", async () => {
+  it("retry is refused for any row that is not POST_FAILED or OVER_CAP", async () => {
     payout("P1", "2026-06-01", 97);
     await runReconcile(ORG_A, NOW);
     const row = await rowFor("P1");
     expect(row.kind).toBe("NO_DEPOSIT");
     await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
   it("retry on POST_FAILED reports the deposit write as unavailable and changes nothing", async () => {
     const row = await postFailed();
     await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
-      statusCode: 503,
+      status: 503,
     });
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
   });
@@ -392,7 +450,7 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     const row = await rowFor("P1");
     deposits = [dep("D7", "2026-06-02", 95)];
     expect(
-      await reconciliationService.resolve(ORG_A, row.id, { action: "match", depositId: "D7" }, { userId: 1 }),
+      await reconciliationService.resolve(ORG_A, row.id, { action: "match", depositId: "D7", reason: "bank fee taken" }, { userId: 1 }),
     ).toMatchObject({ status: "RESOLVED", resolution: "MANUAL", origin: "matched" });
   });
 
@@ -452,7 +510,7 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
     await exclude("D1");
     expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
   });
 
@@ -473,14 +531,75 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
   });
 
   it("requires a reason, refuses a duplicate, and refuses a deposit a payout holds", async () => {
-    await expect(exclude("D9", " ")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(exclude("D9", " ")).rejects.toMatchObject({ status: 400 });
     await exclude("D9");
-    await expect(exclude("D9")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D9")).rejects.toMatchObject({ status: 409 });
 
     payout("P1", "2026-06-01", 97);
     deposits = [dep("D1", "2026-06-02", 97)];
     await runReconcile(ORG_A, NOW);
-    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("refuses a deposit that fits a payout still waiting for its deposit", async () => {
+    payout("P1", "2026-06-28", 97);
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("P1")).status).toBe("WAITING");
+    deposits = [dep("D1", "2026-06-29", 97), dep("D2", "2026-06-29", 50)];
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
+    expect(await reconciliationService.listExclusions(ORG_A)).toEqual([]);
+    await expect(exclude("D2")).resolves.toMatchObject({ qbTxnId: "D2" });
+  });
+
+  it("refuses the payout's own created deposit while its create may be retried", async () => {
+    payout("P1", "2026-06-28", 97);
+    await runReconcile(ORG_A, NOW);
+    await db.payoutReconciliation.update({
+      where: { id: (await rowFor("P1")).id },
+      data: { status: "OPEN", kind: "POST_FAILED" },
+    });
+    deposits = [{ ...dep("D1", "2026-06-29", 120), appKey: incomeKey("P1"), depositToAccount: "99" }];
+    await expect(exclude("D1")).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describeDb("claims across lanes", () => {
+  function bindOtherLane(held: string[]) {
+    configureIncome({
+      mirror,
+      bankAccountId: BANK,
+      deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
+      otherLaneClaims: { claimedDepositIds: async (orgId) => (orgId === ORG_A ? held : []) },
+    });
+  }
+
+  it("a deposit another lane holds is never auto-matched", async () => {
+    bindOtherLane(["D1"]);
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null });
+  });
+
+  it("a deposit another lane holds is not offered or accepted as a manual candidate", async () => {
+    bindOtherLane(["D1"]);
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    deposits = [dep("D1", "2026-06-02", 97)];
+    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
+  it("lists the deposits income holds for the other lane, and refuses another org", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    configureIncome({ org: async () => ({ id: ORG_A, name: "A" }) });
+    expect(await incomeClaimedDepositIds(ORG_A)).toEqual(["D1"]);
+    await expect(incomeClaimedDepositIds(ORG_B)).rejects.toThrow("is not this org");
   });
 });
 
@@ -491,8 +610,9 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
     const row = await rowFor("P1");
     configureIncome({
       mirror,
+      bankAccountId: BANK,
       deposits: {
-        depositsSince: async () => {
+        depositsBetween: async () => {
           // A concurrent exclusion lands while the QuickBooks read is in flight.
           await new Promise((r) => setTimeout(r, 50));
           await db.incomeQbMatchExclusion.create({
@@ -503,7 +623,7 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
       },
     });
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      statusCode: 422,
+      status: 422,
     });
     expect((await rowFor("P1")).status).toBe("OPEN");
   });

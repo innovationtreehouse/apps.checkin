@@ -1,4 +1,5 @@
-import { SHOP_NAV_LINKS, shopRoles, defaultShopTab } from "../shopNav";
+import { visibleLinks } from "@/lib/nav/gates";
+import { SHOP_OPS, shopRoles, defaultShopTab } from "@/lib/nav/sections/shopOps";
 import type { Session } from "next-auth";
 
 type SessionUser = Session["user"];
@@ -6,14 +7,13 @@ type SessionUser = Session["user"];
 const user = (overrides: Partial<SessionUser> = {}): SessionUser =>
   ({ id: 1, ...overrides }) as SessionUser;
 
-describe("SHOP_NAV_LINKS", () => {
-  it("lists the three shop-ops tabs with hrefs and visibility predicates", () => {
-    expect(SHOP_NAV_LINKS.map((l) => l.href)).toEqual([
+describe("SHOP_OPS links", () => {
+  it("lists the three shop-ops tabs", () => {
+    expect(SHOP_OPS.links.map((l) => l.href)).toEqual([
       "/shop-ops/manage",
       "/shop-ops/create",
       "/shop-ops/live",
     ]);
-    expect(SHOP_NAV_LINKS.every((l) => typeof l.visible === "function")).toBe(true);
   });
 });
 
@@ -47,10 +47,9 @@ describe("shopRoles", () => {
   });
 });
 
-describe("SHOP_NAV_LINKS visibility filtering by role", () => {
+describe("SHOP_OPS tab visibility by role", () => {
   it("shows all three tabs to an admin", () => {
-    const roles = shopRoles(user({ isSysadmin: true }));
-    const visible = SHOP_NAV_LINKS.filter((l) => l.visible(roles)).map((l) => l.name);
+    const visible = visibleLinks(SHOP_OPS, user({ isSysadmin: true }), null).map((l) => l.name);
     expect(visible).toEqual([
       "Manage Tools & Certifications",
       "Create Tool",
@@ -59,15 +58,13 @@ describe("SHOP_NAV_LINKS visibility filtering by role", () => {
   });
 
   it("hides Create Tool from a certifier who isn't an admin", () => {
-    const roles = shopRoles(user({ toolStatuses: [{ toolId: 1, level: "MAY_CERTIFY_OTHERS" }] }));
-    const visible = SHOP_NAV_LINKS.filter((l) => l.visible(roles)).map((l) => l.name);
+    const visible = visibleLinks(SHOP_OPS, user({ toolStatuses: [{ toolId: 1, level: "MAY_CERTIFY_OTHERS" }] }), null).map((l) => l.name);
     expect(visible).toEqual(["Manage Tools & Certifications", "Live Certifications Center"]);
   });
 
-  it("shows only the always-visible Live Certifications Center to a plain member", () => {
-    const roles = shopRoles(user());
-    const visible = SHOP_NAV_LINKS.filter((l) => l.visible(roles)).map((l) => l.name);
-    expect(visible).toEqual(["Live Certifications Center"]);
+  it("shows no tab to a plain member, whom the section does not admit", () => {
+    expect(visibleLinks(SHOP_OPS, user(), null)).toEqual([]);
+    expect(SHOP_OPS.visible(user(), null)).toBe(false);
   });
 });
 

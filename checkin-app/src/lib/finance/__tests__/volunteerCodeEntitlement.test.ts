@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Unit tests for usesVolunteerCodeUnentitled (lib/finance/reconcile.ts) — the
+ * Unit tests for usesVolunteerCodeUnentitled (lib/finance/reconcile/membership.ts) — the
  * volunteer-coupon entitlement predicate. The integration matrix drives it through
  * runReconcile against a real DB, but that suite is not in the default jest run;
  * this pins the predicate itself in default CI. Heavy reconcile deps are mocked
@@ -15,7 +15,7 @@ jest.mock("@/lib/membership/payment", () => ({ activateByProcessId: jest.fn() })
 jest.mock("@/lib/membership/boardAlerts", () => ({ notifyBoardPaymentException: jest.fn() }));
 jest.mock("@/lib/shopifyRead/client", () => ({}));
 
-import { usesVolunteerCodeUnentitled } from "../reconcile";
+import { usesVolunteerCodeUnentitled } from "../reconcile/membership";
 
 const order = (discountCodes: string[]) => ({ discountCodes } as MirrorOrder);
 

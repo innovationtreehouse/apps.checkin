@@ -39,8 +39,9 @@ under the Finance area, with donor names visible only to the finance role.
 The base architecture is settled; this doc restates none of it. Read in order:
 the parallel port plan (`INVENTORY_PARALLEL_PORT_PLAN.md`, on branch
 `claude/inventory-checkin-parallel-plan-c44a41`), then
-`1286_GLOBAL_CATALOG_INTEGRATION.md` §1–§10, `1287_LOCAL_INVENTORY_INTEGRATION.md`
-§3–§5, and `1272_EXPENSE_QB_INTEGRATION.md` §5–§6 and §9. Everything below is a
+`docs/designs/COMPONENT_ARCHITECTURE.md` (the distilled catalog and local-inventory
+architecture), and `1272_EXPENSE_QB_INTEGRATION.md`
+§5–§6 and §9. Everything below is a
 difference from those, or a decision they leave open.
 
 | Base decision | This port |
@@ -103,7 +104,7 @@ concurrency test verbatim.
 | FD3 part | In the source? | This port |
 |---|---|---|
 | Benevity (corporate) intake | Yes (FD1) | Ported |
-| Shopify online donations | No. checkin's reconciliation passes donations through untouched (`finance-payments.md`, Reconciliation) | Not built; FD4's income port is the natural home |
+| Shopify online donations | No. checkin's reconciliation passes donations through untouched (`revenue.md`, Reconciliation) | Not built; FD4's income port is the natural home |
 | Check / cash entry [board] | No | Net-new, not designed here |
 | In-kind entry [ops] | No. TOPDOWN GC-DONOR calls it its own intake that fans out to catalog, inventory, and donations | Net-new; designed in §2.4 with FR5, built after this port's three PRs |
 | Donation-receipt email | No | Net-new, not designed here |
@@ -180,15 +181,19 @@ joins the two halves on `receiptId`, and either may arrive first:
   is recorded and shows in the finance queue as *donor needed*. It is not booked
   to QuickBooks until the donor arrives, and the entry clears itself when it
   does. An entry that stays means the receipt side's delivery is stuck.
-- **Both present:** the donation is ready to book (§7).
+- **Both present:** the donation waits for finance to accept it, and only then
+  is ready to book (§7). Every in-kind gift, with or without a receipt, is
+  accepted, refused or returned by an independent finance holder first; see
+  `2182_IN_KIND_EXPENSE.md`.
 
 X9 and X13 also change the receipt and orchestrator designs: receipt intake
 needs an "in-kind" mark with the donor fields above and calls X13 itself, and
 the orchestrator sends that receipt's money side to X9 instead of the expense
 crossing (X5). Donor details are `pii` (§4) and are held by donations, which
 links them to no checkin person (§6). If the receipt library persists them, it
-tiers them `pii` too. How goods are valued for QuickBooks, and what the donor's acknowledgement
-says, belong to the in-kind design.
+tiers them `pii` too. How goods are valued for QuickBooks and the accept step
+are in `2182_IN_KIND_EXPENSE.md`; the donor's acknowledgement is #2237, sent
+only for an accepted gift.
 
 ## 3. Database and renames
 
@@ -209,8 +214,8 @@ Default is `internal`; nothing is `public` except the synthetic count model.
 
 | Tier | Fields | Why |
 |---|---|---|
-| `pii` | `Transaction.donorFirstName`, `donorLastName`, `donorComment`; `TransactionCommentRule.comment`; `UploadedFile.fileBlob`; `DonationQbCandidateView.memo` | Names identify a person. Comments are free text that often names one ("in memory of…") and are copied verbatim into rules. The blob is the raw CSV, every name included. A hand-entered QuickBooks memo is free text that may name a donor. |
-| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*`, `DisbursementEvent.qbMatchState`/`qbTxnId`, `DonationQbMatchExclusion.*`, `DonationQbCandidateView` id/type/date/amount (synthetic) | Financial and attribution data; not identifying alone. |
+| `pii` | `Transaction.donorFirstName`, `donorLastName`, `donorComment`; `TransactionCommentRule.comment`; `UploadedFile.fileBlob`; `DonationQbCandidateView.memo`; `ManualInKindDonation.donorFirstName`, `donorLastName`, `donorCompanyName` | Names identify a person. Comments are free text that often names one ("in memory of…") and are copied verbatim into rules. The blob is the raw CSV, every name included. A hand-entered QuickBooks memo is free text that may name a donor. |
+| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*`, `DisbursementEvent.qbMatchState`/`qbTxnId`, `DonationQbMatchExclusion.*`, `DonationQbCandidateView` id/type/date/amount (synthetic), `InKindQueueItemView.*` (synthetic, no donor field), the rest of `ManualInKindDonation` and all of `ManualInKindDonationLine`, `ManualInKindRecordResult.*` (synthetic) | Financial and attribution data; not identifying alone. |
 | `public` | `DonationNavCounts { unassignedQueue, disbursementHolds }` (synthetic, §5) | Two scalars; #1286 §7 pattern. |
 
 `companyName` names the donor's employer. With a name beside it, it narrows
@@ -245,7 +250,7 @@ identity, but the name is already `pii` behind the same gate, so it stays
 `['everyones:pii', 'everyones:internal', 'public']` to both; nobody else is
 authorized at all. `BOARD` is included because the board acts as the superuser
 for finance today (owner decision; Finance Ops is board-only for the same
-reason). Sysadmin is excluded, matching Finance Ops (`finance-payments.md`,
+reason). Sysadmin is excluded, matching Finance Ops (`revenue.md`,
 Ownership). Least-privilege note (`principles.md`): unlike the catalog this
 narrows access, and the narrowing applies to `pii` specifically.
 
@@ -277,10 +282,24 @@ Routes, all human, all under `/api/donations/`, registered in one B PR:
 | `disbursement-events/[disbursementId]/qb-candidates` | GET (returns `DonationQbCandidateView[]`) |
 | `disbursement-events/[disbursementId]/qb-resolve` | POST (pick a candidate, create, or retry) |
 | `qb-exclusions` | GET, POST |
+| `in-kind/queue` | GET (returns `InKindQueueItemView[]`: in-kind donations whose money arrived with no donor, and withdrawals after the money) |
+| `in-kind/manual` | GET (in-kind donations recorded without a receipt, with their lines), POST (record one; returns `ManualInKindRecordResult`) |
+| `in-kind/manual/[id]/load-inventory` | POST (retry a failed inventory load) |
 
-That is 22 entries; the last four serve the drain's finance queue and are registered now so the drain PR touches no boundary. Dropped: `auth/*`, `health`, `system-data`, and the source's `local-owners`: the owner picker reads the bucket list route the expense lane registers with the bucket table (§6), as income does. Volume is
+That is 26 entries. The four before `in-kind/queue` serve the drain's finance queue and are registered now so the drain PR touches no boundary. Dropped: `auth/*`, `health`, `system-data`, and the source's `local-owners`: the owner picker reads the bucket list route the expense lane registers with the bucket table (§6), as income does. Volume is
 hundreds of gifts a year, so no list gets a `.../count` endpoint now. Pages go
 under the Finance section as `NavLink[]` tabs (#1272 §7), gated `FINANCE`/`BOARD`.
+
+The three `in-kind/manual` routes are the exception to the finance gate (owner
+decision): ops records in-kind donations that arrive without a receipt. Recording
+and retrying the load admit `FINANCE`, `OPERATIONS` or `INVENTORY_MANAGER`, not
+`BOARD`. The list admits those three and `BOARD`; `FINANCE` and `BOARD` see the
+donor, while `OPERATIONS` and `INVENTORY_MANAGER` get the `internal` view, so donor
+names are stripped. Ops enters a donor but never reads one back. The item picker
+uses the catalog search route, `GET /api/catalog/items?q=`, which every role holder
+can read. The record route refuses (403, audited) a donation whose donor is the
+recorder or someone in the recorder's household; that check lives in the route,
+not the registry.
 
 ## 6. Owners and donors: two identity decisions
 
@@ -381,7 +400,8 @@ out and is never booked against a card or bank account.
   decision): a Deposit into clearing (credit in-kind contribution income) and a
   Purchase out of clearing (debit the in-kind expense), same date and amount, so
   clearing nets to zero. Not a bank Deposit and no JournalEntry; both reuse the
-  Deposit and Purchase writers. The clearing account is a configured account
+  Deposit and Purchase writers. Only an accepted gift posts, and both sides
+  carry its bucket's Class (`2182_IN_KIND_EXPENSE.md`). The clearing account is a configured account
   reference whose exact name finance confirms.
 
 **Matching model** (owner decision, shared with income and expense). Matching is
@@ -390,7 +410,7 @@ driven from our records, never by scanning QuickBooks.
 - **The work list is our own unmatched records.** Each `DisbursementEvent` and
   each in-kind donation carries a match state: `UNMATCHED` →
   `MATCHED(qbTxnId)` or `CREATED(qbTxnId)`, or a finance-queue state
-  (`AMBIGUOUS`, `BEFORE_LINE`, `WAITING`, `POST_FAILED`). The queue should fall
+  (`AMBIGUOUS`, `UNBOOKED`, `WAITING`, `POST_FAILED`). The queue should fall
   to zero and stay there.
 - **Each search is narrow:** for one record, ask QuickBooks only for entries of
   the right type, in the right account (the bank account for Benevity, the
@@ -406,26 +426,24 @@ driven from our records, never by scanning QuickBooks.
   lane keeps its own exclusion table and classifications merge by model name.
 - **One candidate:** `MATCHED`; post nothing (expense's `backfill` path). **More
   than one:** `AMBIGUOUS`; equal amounts are common, so finance picks or creates,
-  never a guess. **None, after the takeover line:** create, keyed so a retry never
-  books twice. **None, before the line:** `BEFORE_LINE`; a gap among finance's
-  own bookings is finance's to explain.
+  never a guess. **None:** create, keyed so a retry never books twice, but only
+  when the closed-books gate allows it; otherwise `UNBOOKED`, for finance to book
+  or skip.
 
-**The takeover line is derived, never configured, and there is one per stream.**
-Benevity disbursements (matched in the bank account) and in-kind donations
-(matched in the clearing account) each have their own line, so a hand-booked
-Benevity deposit never pushes in-kind records before the line, or the reverse.
-A stream's line is the date of its newest record in `MATCHED` state, meaning tied
-to an entry the app did not create, whether found by matching or picked by
-finance.
-Each run matches first, then reads the line, then creates for what is after it.
-`CREATED` entries never move the line; a late hand booking of a newer record is
-matched and moves it forward. A stream with no `MATCHED` record has no line, and
-the app creates nothing in it: it fails closed.
+**Closed books, open period, switch-on.** The gate is the one in
+`QB_CLOSED_BOOKS.md`: nothing dated on or before QuickBooks' books closing date is
+created; a disbursement uploaded before the lane switched itself on is only
+matched, and an unmatched one waits in finance's queue as `UNBOOKED`, where
+finance has the app book it or dismisses it with a reason. A record the app may
+already have created looks for its own entry by key before anything creates,
+matches or dismisses it, and a daily sweep reports app-keyed entries no record
+holds.
 
 The shared find-or-create in `packages/quickbooks` is stateless: bulk donation
 passes the record, its retry key (org + disbursement id, or the in-kind donation
-id), its stream's takeover line, and its claimed and excluded ids. It answers *found*,
-*ambiguous*, *created*, *failed*, or *before the line*.
+id), the closed-through date, whether it may create, and its claimed and excluded
+ids. It answers *found* (with the entry's date), *ambiguous*, *created*, *failed*,
+*closed*, or *needs finance*.
 
 **When it runs.** No boot drain and no new schedule (plan rule 5). The drain is
 a try/catch step inside the existing prod `/api/cron/reconcile-shopify`, next to
@@ -486,7 +504,7 @@ correct #1272 §6, and decide the bucket ↔ QuickBooks Class sync direction.
 
 ## 11. Distillation at merge
 
-Rules worth extracting go to `docs/rules/finance-payments.md` (no new file):
+Rules worth extracting go to `docs/rules/revenue.md` (no new file):
 donor identity is `pii`, readable by the finance and board roles only; donors are
 not linked to members; every gift's owner is an accounting bucket, not a person; a Benevity gift is
 imported at most once per org; a disbursement is booked only when every gift has

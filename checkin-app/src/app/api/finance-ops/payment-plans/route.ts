@@ -33,11 +33,19 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                 // wasOrgMemberAtApproval is null until approved, so it can't
                 // answer this. Derive live client-side; nothing new to stamp.
                 // householdMembers (leads) carry the family contact email.
+                // Selects stay narrow: finance holds everyones:pii here for the
+                // contact emails, so any other Person/Household column selected
+                // (intake note, date of birth, allergies) would reach them too.
                 person: {
-                    include: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        householdId: true,
                         household: {
-                            include: {
-                                orgMembership: true,
+                            select: {
+                                id: true,
+                                orgMembership: { select: { status: true } },
                                 householdMembers: {
                                     where: { isHouseholdLead: true, ...LIVE_PERSON },
                                     select: { id: true, name: true, email: true },
@@ -46,7 +54,10 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                         },
                     },
                 },
-                program: true, // carries startAt (public) — half of the next-year flag
+                // startAt is half of the next-year flag.
+                program: {
+                    select: { id: true, name: true, startAt: true, orgMemberPriceCents: true, nonOrgMemberPriceCents: true },
+                },
             },
             orderBy: {
                 pendingSince: 'asc'
@@ -95,22 +106,24 @@ export const POST = withAuth(
                 isPaymentPlanRequested: false, // cleared since it's approved
                 pendingSince: null, // reset
                 wasOrgMemberAtApproval,
-                // Hold-ledger (product decision 2026-07-06): approval CONSUMES the
-                // hold — the applicant keeps the seat permanently as a comped
-                // enrollment, so it must never be released later (e.g. if this
-                // now-ACTIVE participant is later removed, that removal must NOT
-                // fire a +1 — see withdrawAndReleaseHold, which only releases when
-                // inventoryHeldAt is still set).
+                // Approval consumes the hold.
                 inventoryHeldAt: null,
             };
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            const { count } = await prisma.programParticipant.updateMany({
-                // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
-                where: { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') },
-                data
+            // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+            const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
+            // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
+            // return it. A request whose hold failed took no seat and records none.
+            const held = await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: { not: null } },
+                data: { ...data, seatTakenWithoutSaleAt: new Date() },
             });
+            const count = held.count || (await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: null },
+                data,
+            })).count;
 
             if (count === 0) {
                 return apiError("No pending payment-plan request", 409);

@@ -5,8 +5,12 @@ import { POST } from '../route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
-import { processCheckin, processCheckout } from '@/lib/scan-service';
+import { processCheckin, processCheckout } from '@/lib/attendance/scan';
+import { processCloseRequest, executePendingCloses } from '@/lib/attendance/close';
+import { lastKeyholderGuard, finishCloseGuard, recordWebClose } from '@/lib/attendance/keyholderGuard';
+import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
 import { config } from '@/lib/config';
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -52,13 +56,29 @@ jest.mock('@/lib/logger', () => ({
     logBackendError: jest.fn(),
 }));
 
-jest.mock('@/lib/scan-service', () => ({
+jest.mock('@/lib/attendance/scan', () => ({
     processCheckin: jest.fn(),
     processCheckout: jest.fn(),
-    finalizeFacilityClose: jest.fn().mockResolvedValue(undefined),
     SUPERVISION_CONFIRM_MS: 15_000,
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
 }));
+jest.mock('@/lib/attendance/close', () => ({
+    processCloseRequest: jest.fn(),
+    executePendingCloses: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('@/lib/attendance/keyholderGuard', () => ({
+    closeActor: jest.fn((user: { id: string }) => ({ id: Number(user.id), isKeyholder: false, isBoardMember: false, isSysadmin: false })),
+    lastKeyholderGuard: jest.fn().mockResolvedValue({ action: 'proceed', facilityClosed: false, choice: null }),
+    finishCloseGuard: jest.fn().mockResolvedValue(undefined),
+    recordWebClose: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/attendance/scanNotify', () => ({
+    notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
+}));
+
+// What the mocked scan services report.
+const checkedIn = { kind: 'checkin', person: { id: 1 }, visit: { id: 9 }, supervisionShort: false, departedAtClose: false };
+const checkedOut = (closed = false) => ({ kind: 'checkout', person: { id: 1 }, visit: { id: 9 }, closed });
 
 describe('POST /api/scan', () => {
     beforeEach(() => {
@@ -106,6 +126,73 @@ describe('POST /api/scan', () => {
         const json = await res.json();
         expect(json.error).toBe('A valid numeric participantId is required.');
     });
+    // An id past Postgres int4 makes the lookup throw (a 500 the kiosk retries
+    // forever at its queue head); a 400 dead-letters it instead.
+    it.each([2147483648, 1.5, 0, -1])('400s participantId %p without touching the DB', async (participantId) => {
+        (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+        const req = new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId })
+        }) as unknown as import('next/server').NextRequest;
+
+        const res = await POST(req);
+        expect(res.status).toBe(400);
+        expect(prisma.person.findUnique).not.toHaveBeenCalled();
+    });
+
+    describe('check-in/out notifications', () => {
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+        });
+
+        it('sends after the transaction commits, stamped with the replay scan time', async () => {
+            const order: string[] = [];
+            (prisma.$transaction as jest.Mock).mockImplementationOnce(async (cb: (tx: typeof prisma) => unknown) => {
+                const r = await cb(prisma);
+                order.push('commit');
+                return r;
+            });
+            (notifyScanOutcome as jest.Mock).mockImplementationOnce(async () => { order.push('notify'); });
+            const checkin = checkedIn;
+            (processCheckin as jest.Mock).mockResolvedValue(checkin);
+
+            const scannedAt = new Date(Date.now() - 60_000).toISOString();
+            await POST(new Request('http://localhost/api/scan', {
+                method: 'POST',
+                body: JSON.stringify({ participantId: 1, clientEventId: 'evt-n', scannedAt, replay: true })
+            }) as unknown as import('next/server').NextRequest);
+
+            expect(order).toEqual(['commit', 'notify']);
+            expect(notifyScanOutcome).toHaveBeenCalledWith(checkin, new Date(scannedAt));
+        });
+
+        it('sends nothing when the transaction rolls back', async () => {
+            const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+            (prisma.$transaction as jest.Mock).mockImplementationOnce(async (cb: (tx: typeof prisma) => unknown) => {
+                await cb(prisma);
+                throw new Error('Transaction already closed: timeout');
+            });
+            (processCheckin as jest.Mock).mockResolvedValue(
+                checkedIn
+            );
+
+            const res = await POST(new Request('http://localhost/api/scan', {
+                method: 'POST',
+                body: JSON.stringify({ participantId: 1 })
+            }) as unknown as import('next/server').NextRequest);
+
+            expect(res.status).toBe(500);
+            expect(notifyScanOutcome).not.toHaveBeenCalled();
+            expect(consoleError).toHaveBeenCalled();
+            consoleError.mockRestore();
+        });
+    });
+
     it('forwards a merged-away badge to the surviving live record and scans as the survivor', async () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'session', user: { id: '1', isSysadmin: true } });
         const req = new Request('http://localhost/api/scan', {
@@ -121,13 +208,13 @@ describe('POST /api/scan', () => {
         });
         (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-        (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
         const res = await POST(req);
         expect(res.status).toBe(200);
 
         // Scanned, recorded, and checked in AS THE SURVIVOR (id 99), not the badge's own id (1).
-        expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+        expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
         expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 99, location: 'Main Entrance' } });
         expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
             badgeId: 1, tombstoneId: 99, survivorId: 99, hops: 1, viaArchive: false,
@@ -148,7 +235,7 @@ describe('POST /api/scan', () => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'session', user: { id: '1', isSysadmin: true } });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         it('follows the PersonMerge archive to the survivor and scans as them', async () => {
@@ -161,7 +248,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq(1));
             expect(res.status).toBe(200);
 
-            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
             expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 99, location: 'Main Entrance' } });
             expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
                 badgeId: 1, tombstoneId: null, survivorId: 99, hops: 1, viaArchive: true,
@@ -183,7 +270,7 @@ describe('POST /api/scan', () => {
 
             const res = await POST(scanReq(1));
             expect(res.status).toBe(200);
-            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
             expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
                 badgeId: 1, tombstoneId: 2, survivorId: 3, hops: 2, viaArchive: false,
             });
@@ -270,7 +357,7 @@ describe('POST /api/scan', () => {
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
         (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-        (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
         const res = await POST(req);
         expect(res.status).toBe(200);
@@ -295,6 +382,54 @@ describe('POST /api/scan', () => {
         const json = await res.json();
         expect(json.type).toBe('ignored_debounce');
         expect(json.message).toBe('Scan ignored due to debounce.');
+    });
+
+    // A current kiosk filters repeat reads at the reader; the server keeps the
+    // 3 s debounce only for callers that don't (older kiosks, the web).
+    describe('repeat-read debounce by protocol', () => {
+        function kioskReplay(overrides: Record<string, unknown> = {}) {
+            return new Request('http://localhost/api/scan', {
+                method: 'POST',
+                body: JSON.stringify({
+                    participantId: 1, clientEventId: 'evt-r', scannedAt: new Date(Date.now() - 60_000).toISOString(),
+                    replay: true, protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION, ...overrides,
+                })
+            }) as unknown as import('next/server').NextRequest;
+        }
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            // A row from a scan under a second ago, by server time.
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date(Date.now() - 500) });
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+        });
+
+        it('applies a current kiosk replay within 3 s of a prior row instead of dropping it', async () => {
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('checkin');
+            expect(processCheckin).toHaveBeenCalled();
+        });
+
+        it('still debounces an older-protocol kiosk', async () => {
+            const res = await POST(kioskReplay({ protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION - 1 }));
+
+            expect((await res.json()).type).toBe('ignored_debounce');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
+
+        it('still ignores the same clientEventId sent twice', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-r' });
+
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
     });
 
     // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
@@ -339,34 +474,46 @@ describe('POST /api/scan', () => {
             expect((await res.json()).error).toContain('replay');
         });
 
-        it('rejects replay:true without a clientEventId — it could neither dedup nor park', async () => {
-            const res = await POST(replayReq({ clientEventId: undefined }));
-            expect(res.status).toBe(400);
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        // A refused replay would block the head of the kiosk's queue: one the
+        // server cannot apply parks as a dead letter instead, never toggling.
+        it.each([
+            ['without a clientEventId', { clientEventId: undefined }],
+            ['without a scannedAt', { scannedAt: undefined }],
+            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
+            ['with an unknown intent', { intent: 'SIDEWAYS' }],
+            ['with a malformed protocolVersion', { protocolVersion: '2' }],
+        ])('parks a replay %s as client_dead:400 instead of refusing it', async (_label, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq(overrides));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'client_dead:400' }),
+            });
+            expect(processCheckin).not.toHaveBeenCalled();
+            expect(processCheckout).not.toHaveBeenCalled();
         });
 
-        // Without a usable scannedAt a replay would silently inherit server-now:
-        // the freshness check passes trivially and the out-of-order guard
-        // compares against now, so a stale replay toggles instead of parking.
-        it('rejects replay:true without a scannedAt', async () => {
-            const res = await POST(replayReq({ scannedAt: undefined }));
-            expect(res.status).toBe(400);
-            expect((await res.json()).error).toContain('scannedAt');
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
-        });
-
-        it('rejects replay:true with an unparseable scannedAt', async () => {
-            const res = await POST(replayReq({ scannedAt: 'not-a-date' }));
-            expect(res.status).toBe(400);
-            expect((await res.json()).error).toContain('scannedAt');
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        it.each([
+            ['an over-int4 id', { participantId: 99999999999 }],
+            ['an id that matches no one', { participantId: 424242 }],
+        ])('parks a replay of %s as unresolvable instead of refusing it', async (_label, overrides) => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.personMerge.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq(overrides));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, clientEventId: 'evt-1', reviewReason: 'client_dead:unresolvable' }),
+            });
         });
 
         it('toggles a fresh replay using scannedAt as the visit time', async () => {
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const scannedAt = new Date(Date.now() - 60_000).toISOString();
             const res = await POST(replayReq({ scannedAt }));
@@ -418,7 +565,7 @@ describe('POST /api/scan', () => {
 
         it('a same-body legacy scan (no clientEventId) is unaffected — no dedup pre-read, no park branch', async () => {
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(replayReq({ clientEventId: undefined, scannedAt: undefined, replay: undefined }));
             expect(res.status).toBe(200);
@@ -429,7 +576,7 @@ describe('POST /api/scan', () => {
 
         it('an empty-string clientEventId normalizes to null and is treated as a live scan, not a replay', async () => {
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(replayReq({ clientEventId: '', replay: undefined }));
             expect(res.status).toBe(200);
@@ -456,6 +603,54 @@ describe('POST /api/scan', () => {
             (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+        });
+
+        // A corrupt read can never resolve to a person; it must still land in the
+        // review queue (and 200, so the kiosk stops retrying it).
+        it.each([
+            ['an over-int4 id', 99999999999, '99999999999'],
+            ['a non-numeric value', '12a', '12a'],
+        ])('parks %s with no person, keeping the raw value', async (_label, participantId, scannedValue) => {
+            const scannedAt = new Date(Date.now() - 60_000).toISOString();
+            const res = await POST(deadReq({ participantId, scannedAt }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: {
+                    personId: null,
+                    scannedValue,
+                    location: 'Main Entrance',
+                    clientEventId: 'evt-dead',
+                    timestamp: new Date(scannedAt),
+                    reviewReason: 'client_dead:unresolvable',
+                },
+            });
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
+
+        it('parks a dead-lettered id that matches no one instead of 404ing forever', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(deadReq({ participantId: 424242 }));
+            expect(res.status).toBe(200);
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, scannedValue: '424242', reviewReason: 'client_dead:unresolvable' }),
+            });
+        });
+
+        it('acks a redelivered unresolvable row as already recorded', async () => {
+            (prisma.rawBadgeLog.create as jest.Mock).mockRejectedValueOnce(
+                Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { target: ['clientEventId'] } })
+            );
+            const res = await POST(deadReq({ participantId: 99999999999 }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('duplicate_ignored');
+        });
+
+        it('still 400s a corrupt id on a live scan -- only the dead-letter path parks it', async () => {
+            const res = await POST(deadReq({ participantId: 99999999999, dead: undefined }));
+            expect(res.status).toBe(400);
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
         });
 
         it('parks a dead-lettered event with a client_dead:<status> reviewReason and never toggles a visit', async () => {
@@ -547,7 +742,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         it('records the dedup key but stamps server-now, never the kiosk scannedAt', async () => {
@@ -572,12 +767,11 @@ describe('POST /api/scan', () => {
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({
                 _max: { arrivedAt: new Date(), departedAt: new Date() },
             });
-            (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
 
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
-            // Last arg null => processCheckout takes the live warn/confirm path.
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), expect.any(Date), false, false, { shownEmpty: null, clientEventId: 'evt-live' });
         });
 
         it('still dedups a clientEventId already recorded server-side', async () => {
@@ -589,7 +783,7 @@ describe('POST /api/scan', () => {
         });
     });
 
-    describe('force-close confirm token', () => {
+    describe('web close-choice token', () => {
         const scanReq = (body: Record<string, unknown>) => new Request('http://localhost/api/scan', {
             method: 'POST',
             body: JSON.stringify(body),
@@ -602,7 +796,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
             (processCheckout as jest.Mock).mockResolvedValue(
-                new Response(JSON.stringify({ type: 'checkout', facilityClosed: true }), { status: 200 }));
+                checkedOut(true));
         });
 
         it('lets a scan matching a live token through the debounce and forwards it', async () => {
@@ -611,7 +805,35 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
 
             expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, false, null);
+            expect(processCloseRequest).not.toHaveBeenCalled();
+        });
+
+        it('returns the shared close choice to a web checkout and runs no checkout', async () => {
+            (prisma.visit.count as jest.Mock).mockResolvedValue(1);
+            const warning = { type: 'close_choice', othersInside: 2, choices: ['leave', 'cancel'], forceCloseToken: 't', confirmSeconds: 15, error: 'No other keyholder is checked in.' };
+            (lastKeyholderGuard as jest.Mock).mockResolvedValueOnce({ action: 'warn', warning });
+
+            const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
+
+            expect(res.status).toBe(400);
+            expect(await res.json()).toEqual(warning);
+            expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it('passes the caller\'s choice to the guard and finishes a web close through it, not the kiosk finalizer', async () => {
+            (prisma.visit.count as jest.Mock).mockResolvedValue(1);
+            const guard = { action: 'proceed', facilityClosed: true, choice: { choice: 'close', handoverToId: null, othersInside: 1 } };
+            (lastKeyholderGuard as jest.Mock).mockResolvedValueOnce(guard);
+
+            await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1', closeChoice: 'close' }));
+
+            expect(lastKeyholderGuard).toHaveBeenCalledWith(7, { id: 1, mergedIntoId: null }, expect.objectContaining({ id: 1 }),
+                { token: 'tok-1', choice: 'close', handoverToId: undefined }, {}, expect.anything());
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, true, null);
+            // Recorded in the scan transaction, with the checkout; the finisher only carries it out.
+            expect(recordWebClose).toHaveBeenCalledWith(expect.anything(), guard, { actorId: 1, subjectId: 1, via: 'WEB_CHECKOUT' });
+            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT', recorded: true });
         });
 
         it('debounces a spent or unknown token, so a stray second read cannot re-toggle', async () => {
@@ -631,43 +853,139 @@ describe('POST /api/scan', () => {
             expect(processCheckout).not.toHaveBeenCalled();
         });
 
-        // §5.23a: the outbox persists the token with the queued event, so a
-        // confirm given before the outage arrives on the replay and closes.
-        it('forwards a replayed scan\'s token so a pre-outage confirm still closes', async () => {
+    });
+
+    describe('kiosk close request', () => {
+        const kioskReq = (body: Record<string, unknown>) => new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1, ...body }),
+        }) as unknown as import('next/server').NextRequest;
+        const closed = () => checkedOut(true);
+
+        beforeEach(() => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
-            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: true });
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
-            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
-
-            const scannedAt = new Date(Date.now() - 60_000).toISOString();
-            const res = await POST(scanReq({
-                participantId: 1, clientEventId: 'evt-q', scannedAt, replay: true, forceCloseToken: 'tok-q',
-            }));
-
-            expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith(
-                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false);
+            // Inside the 3s debounce window: a close must get through anyway.
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
+            (processCloseRequest as jest.Mock).mockImplementation(async () => closed());
         });
 
-        // Precedence, pinned deliberately: §2's freshness window W runs BEFORE
-        // the token is ever looked at, so a confirm queued through an outage
-        // longer than W parks for review rather than closing hours late. The
-        // token exempts a replay from the park in processCheckout, not from W.
-        it('still parks a token-carrying replay that is older than the freshness window', async () => {
-            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
-            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
-            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+        it('records a live close at server now, past the debounce, and re-drives after commit', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-c' }));
 
-            const res = await POST(scanReq({
-                participantId: 1,
-                clientEventId: 'evt-old',
-                scannedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
-                replay: true,
-                forceCloseToken: 'tok-q',
-            }));
-
-            expect((await res.json()).type).toBe('parked');
+            expect((await res.json()).facilityClosed).toBe(true);
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), expect.anything(), expect.any(Date), 'evt-c', false, 'alone', null);
             expect(processCheckout).not.toHaveBeenCalled();
+            expect(executePendingCloses).toHaveBeenCalled();
+        });
+
+        it('applies a replayed close at its scan time however old, never parked', async () => {
+            const scannedAt = new Date(Date.now() - 5 * 60 * 60_000).toISOString();
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-q', scannedAt, replay: true }));
+
+            expect((await res.json()).type).toBe('checkout');
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), new Date(scannedAt), 'evt-q', true, 'confirmed', null);
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.not.objectContaining({ reviewReason: expect.anything() }) });
+        });
+
+        it('reads an older kiosk\'s shownEmpty: true as a one-badge close', async () => {
+            await POST(kioskReq({ intent: 'OUT', shownEmpty: true, clientEventId: 'evt-se', protocolVersion: 5 }));
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.any(Date), 'evt-se', false, 'alone', null);
+        });
+
+        it.each([
+            ['an older kiosk\'s offline confirm flag', { forceCloseConfirmed: true }],
+            ['an older kiosk\'s echoed token', { forceCloseToken: 'tok-q' }],
+        ])('reads %s as a confirmed close', async (_label, extra) => {
+            await POST(kioskReq({ clientEventId: 'evt-l', scannedAt: new Date().toISOString(), replay: true, ...extra }));
+            expect(processCloseRequest).toHaveBeenCalled();
+        });
+
+        it('applies a late close from someone no longer a keyholder, flagged for review', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
+
+            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-r', scannedAt: new Date().toISOString(), replay: true }));
+
+            expect(processCloseRequest).toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reviewReason: 'close_not_keyholder' }) });
+        });
+
+        it('refuses a live close from someone who is not a keyholder: an ordinary checkout, with a message', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-nk', protocolVersion: 6 }));
+            const body = await res.json();
+
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(processCheckout).toHaveBeenCalled();
+            expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true, message: 'Only a keyholder can close the building.' });
+        });
+
+        it('re-drives recorded closes when a resend is deduped', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-c' });
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-c' }));
+
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(executePendingCloses).toHaveBeenCalled();
+        });
+
+        it('refuses a close that is not a checkout', async () => {
+            const res = await POST(kioskReq({ intent: 'IN', close: 'alone' }));
+            expect(res.status).toBe(400);
+        });
+
+        it('passes the kiosk\'s roster time to the close', async () => {
+            const rosterAsOf = new Date(Date.now() - 90_000).toISOString();
+            await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-r2', rosterAsOf }));
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.any(Date), 'evt-r2', false, 'alone', new Date(rosterAsOf));
+        });
+
+        it('refuses a rosterAsOf that is not a timestamp', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', rosterAsOf: 'yesterday-ish' }));
+            expect(res.status).toBe(400);
+            expect(processCloseRequest).not.toHaveBeenCalled();
+        });
+
+        it('refuses an unknown close kind', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'maybe' }));
+            expect(res.status).toBe(400);
+        });
+
+        describe('a plain keyholder OUT', () => {
+            beforeEach(() => {
+                (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+                (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+                (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
+            });
+            const legacyArg = () => (processCheckout as jest.Mock).mock.calls[0][7];
+
+            it('from a protocol-6 kiosk is only a checkout: the server never decides a close', async () => {
+                await POST(kioskReq({ protocolVersion: 6, shownEmpty: false }));
+                expect(processCloseRequest).not.toHaveBeenCalled();
+                expect(legacyArg()).toBeNull();
+            });
+
+            it('from an older kiosk lets the checkout decide, carrying what the kiosk showed', async () => {
+                await POST(kioskReq({ protocolVersion: 5, shownEmpty: false }));
+                expect(processCloseRequest).not.toHaveBeenCalled();
+                expect(legacyArg()).toEqual({ shownEmpty: false, clientEventId: null });
+            });
+
+            it('from a kiosk that declares no protocol is an older kiosk', async () => {
+                await POST(kioskReq({}));
+                expect(legacyArg()).toEqual({ shownEmpty: null, clientEventId: null });
+            });
+
+            it('refuses a non-boolean shownEmpty', async () => {
+                const res = await POST(kioskReq({ shownEmpty: 'yes' }));
+                expect(res.status).toBe(400);
+            });
         });
     });
 
@@ -687,7 +1005,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
             (processCheckout as jest.Mock).mockResolvedValue(
-                new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+                checkedOut());
         });
 
         // Simulates a REAL supervisionWarnedAt of the given age against
@@ -714,7 +1032,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1 }));
 
             expect((await res.json()).type).toBe('checkout');
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, false, null);
             expect(prisma.visit.count).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     personId: 1,
@@ -761,6 +1079,9 @@ describe('POST /api/scan', () => {
             ['deadStatus', { deadStatus: 404 }],
             ['scannedAt', { scannedAt: '2026-01-01T00:00:00Z' }],
             ['forceCloseConfirmed', { forceCloseConfirmed: true }],
+            ['close', { close: 'alone' }],
+            ['shownEmpty', { shownEmpty: true }],
+            ['rosterAsOf', { rosterAsOf: '2026-10-12T20:58:00Z' }],
             ['clockSuspect', { clockSuspect: false }],
         ])('rejects %s even from a sysadmin session, before touching the DB', async (field, extra) => {
             (authenticateRequest as jest.Mock).mockResolvedValue(adminSession);
@@ -779,7 +1100,7 @@ describe('POST /api/scan', () => {
             (authenticateRequest as jest.Mock).mockResolvedValue(adminSession);
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(new Request('http://localhost/api/scan', {
                 method: 'POST',
@@ -805,7 +1126,7 @@ describe('POST /api/scan', () => {
             });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         afterEach(() => isProd.mockRestore());
@@ -856,20 +1177,22 @@ describe('POST /api/scan', () => {
             }) as unknown as import('next/server').NextRequest);
         }
 
-        it('parks a replay stamped beyond the future tolerance as clock_suspect', async () => {
+        it('holds an intent-less replay stamped beyond the future tolerance as clock_suspect, at server now', async () => {
             const scannedAt = new Date(Date.now() + 60 * 60_000);
             const res = await replay(scannedAt);
             expect((await res.json()).type).toBe('parked');
             expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
-                data: { personId: 1, location: 'Main Entrance', clientEventId: 'evt-f', timestamp: scannedAt, reviewReason: 'clock_suspect' },
+                data: { personId: 1, location: 'Main Entrance', clientEventId: 'evt-f', timestamp: expect.any(Date), reviewReason: 'clock_suspect' },
             });
+            const stamped = (prisma.rawBadgeLog.create as jest.Mock).mock.calls[0][0].data.timestamp as Date;
+            expect(stamped.getTime()).toBeLessThanOrEqual(Date.now());
             expect(processCheckin).not.toHaveBeenCalled();
         });
 
         it('toggles a replay only slightly ahead of server now (small skew)', async () => {
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await replay(new Date(Date.now() + 30_000));
             expect(res.status).toBe(200);

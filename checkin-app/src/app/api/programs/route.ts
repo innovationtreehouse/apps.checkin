@@ -2,15 +2,18 @@ import { NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
-import { createShopifySingleVariantProgram } from "@/lib/shopify";
+import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { logBackendError, logger } from "@/lib/logger";
-import { isDuesSettled } from "@/lib/orgMembership";
+import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
-import { dollarsToCentsOrNull } from "@inventory/money";
+import { dollarsToCentsOrNull } from "@checkin/money";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { resolveProgramYear } from "@/lib/programs/update";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -25,8 +28,10 @@ const PUBLIC_PROGRAM_SELECT = {
     leadMentorId: true,
     startAt: true,
     endAt: true,
+    appliesToYear: true,
     phase: true,
     enrollmentStatus: true,
+    offSaleAt: true,
     orgMemberOnly: true,
     publiclyVisible: true,
     announceOnOpen: true,
@@ -37,6 +42,8 @@ const PUBLIC_PROGRAM_SELECT = {
     nonOrgMemberPriceCents: true,
     shopifyProductId: true,
     shopifyVariantId: true,
+    claimantShopifyProductId: true,
+    claimantShopifyVariantId: true,
 } as const;
 
 // GET is the PUBLIC program catalog — anonymous callers legitimately get the
@@ -45,7 +52,7 @@ const PUBLIC_PROGRAM_SELECT = {
 // anonymous). getOptionalSessionUser applies the shared denied-household gate: a
 // denied member is locked out of the whole app, so it collapses to undefined
 // (anonymous) — they see only the public list and never the hidden members-only
-// programs isDuesSettled would otherwise reveal.
+// programs isMembershipFeeSettled would otherwise reveal.
 export async function GET(req: Request) {
     const user = await getOptionalSessionUser(req);
 
@@ -73,9 +80,9 @@ export async function GET(req: Request) {
             if (user.isSysadmin || user.isBoardMember) {
                 canSeeMembersOnly = true;
             } else {
-                // Dues settled, not "is a member": a paid household awaiting
+                // The membership fee is settled, not "is a member": a paid household awaiting
                 // background clearance sees members-only programs too.
-                canSeeMembersOnly = await isDuesSettled(user.id);
+                canSeeMembersOnly = await isMembershipFeeSettled(user.id);
             }
         }
 
@@ -120,7 +127,7 @@ export async function GET(req: Request) {
                 ...PUBLIC_PROGRAM_SELECT,
                 _count: {
                     select: {
-                        participants: { where: { person: LIVE_PERSON } },
+                        participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } },
                         volunteers: { where: { person: LIVE_PERSON } },
                         events: true
                     }
@@ -150,7 +157,7 @@ export async function GET(req: Request) {
             const counts = await Promise.race([
                 prisma.program.findMany({
                     where: { id: { in: staticRows.map((prg) => prg.id) } },
-                    select: { id: true, _count: { select: { participants: { where: { person: LIVE_PERSON } }, volunteers: { where: { person: LIVE_PERSON } }, events: true } } },
+                    select: { id: true, _count: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } }, volunteers: { where: { person: LIVE_PERSON } }, events: true } } },
                 }).catch(() => null),
                 new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), 2_500); t.unref?.(); }),
             ]);
@@ -169,10 +176,11 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     // Hoisted so the catch can name an orphaned Shopify product (created, but DB write failed) for manual cleanup.
     let shopifyData: { shopifyProductId: string, shopifyVariantId: string } | null = null;
+    let claimantData: { claimantShopifyProductId: string, claimantShopifyVariantId: string } | null = null;
 
     try {
         const body = await req.json();
-        const { name, leadMentorId, startAt, endAt, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
+        const { name, leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
 
         if (!name) {
             return apiError("Program name is required", 400);
@@ -182,15 +190,20 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             return apiError("Lead Mentor is required", 400);
         }
 
+        const mentorId = parseInt(leadMentorId, 10);
         const mentor = await prisma.person.findUnique({
-            where: { id: parseInt(leadMentorId, 10) },
-            select: { dateOfBirth: true, isDeclaredAdult: true },
+            where: { id: mentorId },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!mentor) {
             return apiError("Lead mentor not found", 400);
         }
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Lead mentor must be at least 23 years old", 400);
+        }
+        // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
+        if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
+            return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
         }
 
         if (!startAt) {
@@ -199,6 +212,22 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (!endAt) {
             return apiError("End date is required", 400);
         }
+        const startDate = new Date(startAt);
+        const endDate = new Date(endAt);
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            return apiError("Invalid start or end date", 400);
+        }
+        if (startDate > endDate) {
+            return apiError("Start date must be on or before the end date", 400);
+        }
+        const year = await resolveProgramYear({
+            startAt: startDate,
+            endAt: endDate,
+            supplied: appliesToYear,
+            current: null,
+            isBoardMember: auth.user.isBoardMember,
+        });
+        if (!year.ok) return apiError(year.message, year.refusal === "forbidden" ? 403 : 400);
 
         const maxPart = maxParticipants != null ? parseInt(maxParticipants, 10) : null;
         if (maxPart == null || isNaN(maxPart) || maxPart < 1) {
@@ -216,21 +245,22 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         // Single-pool model: ONE Shopify variant, priced at the base/non-member
         // rate; member pricing is a checkout-time discount code, not a second
-        // variant. ponytail: falls back to the member
-        // price only when no non-member price is set (e.g. a members-only-priced
-        // program with no listed non-member tier) — normally sells at the
-        // non-member/base rate per the design.
-        const basePriceCents = nmPrice ?? mPrice ?? null;
+        // variant. The member price is never sent to the store: with no full
+        // price there is no store product (sync-shopify mints it once one is set).
+        const basePriceCents = nmPrice;
         if (basePriceCents && basePriceCents > 0) {
             shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart);
+            // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
+            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
         }
 
         const newProgram = await prisma.program.create({
             data: {
                 name,
-                leadMentorId: parseInt(leadMentorId, 10),
-                startAt: new Date(startAt),
-                endAt: new Date(endAt),
+                leadMentorId: mentorId,
+                startAt: startDate,
+                endAt: endDate,
+                appliesToYear: year.appliesToYear,
                 orgMemberOnly: orgMemberOnly || false,
                 // publiclyVisible only has meaning for a members-only program; a
                 // public one is already visible. Clamp so the nonsense state
@@ -243,6 +273,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 maxParticipants: maxPart,
                 shopifyProductId: shopifyData?.shopifyProductId || null,
                 shopifyVariantId: shopifyData?.shopifyVariantId || null,
+                claimantShopifyProductId: claimantData?.claimantShopifyProductId || null,
+                claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
             }
         });
 
@@ -260,15 +292,23 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             await sendNotification(newProgram.leadMentorId, 'PROGRAM_ASSIGNMENT', { programName: newProgram.name, programId: newProgram.id });
         }
 
+        // A new capped variant starts sold out (0 available); lift it to capacity.
+        const stockOk = !shopifyData || await adjustProgramInventory(newProgram, maxPart, "initial-stock", { inRequest: true });
+
         const responseObj: Record<string, unknown> = { success: true, program: newProgram };
         if (((mPrice && mPrice > 0) || (nmPrice && nmPrice > 0)) && !shopifyData) {
             responseObj.warning = "Program created, but Shopify integration failed or is not configured. Payment links will not work.";
+        } else if (!stockOk) {
+            responseObj.warning = "Program created, but setting its Shopify stock failed, so it may show as sold out. Check System Status > Link Status.";
         }
 
         return NextResponse.json(responseObj);
     } catch (error: unknown) {
         if (shopifyData?.shopifyProductId) {
             logger.error("[Shopify] Orphaned product after program DB write failed, manual cleanup needed:", shopifyData.shopifyProductId);
+        }
+        if (claimantData?.claimantShopifyProductId) {
+            logger.error("[Shopify] Orphaned claimant product after program DB write failed, manual cleanup needed:", claimantData.claimantShopifyProductId);
         }
         await logBackendError(error, "POST /api/programs");
         return apiError("Failed to create program", 500);

@@ -116,11 +116,8 @@ Prisma's recursive typing means integration tests are the real net for stale
 
 If you are running inside `.claude/worktrees/`: worktrees have no `node_modules` —
 run a real `npm install` in `checkin-app/` first (do not symlink), or jest/prisma
-won't resolve. Also, the default jest config ignores `/.claude/worktrees/`, so a plain
-`test:ci` run from a worktree finds **0 tests** and looks falsely green. The
-`test:integration` script overrides `testPathIgnorePatterns`, so integration tests DO
-run from the worktree — but if you invoke jest by hand, confirm it collected a nonzero
-test count before trusting the result. No output for 60s+ usually means wrong scope,
+won't resolve. If you invoke jest by hand, confirm it collected a nonzero test count
+before trusting the result. No output for 60s+ usually means wrong scope,
 not success.
 
 ## Done criteria

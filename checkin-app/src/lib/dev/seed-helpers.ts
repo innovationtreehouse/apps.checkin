@@ -3,6 +3,7 @@ import { addHouseholdLead } from "@/lib/household/leads";
 import { setRoleFlag, type RoleFlag } from "@/lib/roles";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
+import { programYearsTouched } from "@/lib/programYear";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -30,10 +31,10 @@ function yearsAgo(years: number): Date {
 }
 
 // System bypass: dev seed fixtures are the trusted source of their own grants — there is
-// no requesting user's authority to check, so this always passes actor "system" (the
+// no requesting user's authority to check, so this always passes a system actor (the
 // last-board-member guard still applies inside setRoleFlag; only the matrix is skipped).
 async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<void> {
-    await setRoleFlag(prisma, personId, flag, true, "system");
+    await setRoleFlag(prisma, personId, flag, true, { system: "system:dev-seed" });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -43,6 +44,15 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 // ──────────────────────────────────────────────────────────────────────────
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
+
+    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // stamped as org_id on catalog rows and is the row configure.ts resolves,
+    // so dev/test/prod all resolve the same org identity.
+    await prisma.org.upsert({
+        where: { id: "treehouse" },
+        update: { name: "Treehouse" },
+        create: { id: "treehouse", name: "Treehouse" },
+    });
 
     // 1. Households (participants require one, so these come first)
     let household1 = await prisma.household.findFirst({ where: { name: "Family" } });
@@ -179,6 +189,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Certified Adult Household" } },
         },
     });
+    // A solo adult is their own household's lead, as sign-up makes every new adult.
+    await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted
@@ -224,6 +236,20 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     await seedRole(prisma, inventoryManager.id, "isInventoryManager");
 
+    // Finance staff (FINANCE role): the finance libraries' screens and writes.
+    const financeStaff = await prisma.person.upsert({
+        where: { email: "finance@example.com" },
+        update: { name: "Finance Staff", phone: "555-555-0013", isDeclaredAdult: true },
+        create: {
+            email: "finance@example.com",
+            name: "Finance Staff",
+            phone: "555-555-0013",
+            isDeclaredAdult: true,
+            household: { create: { name: "Finance Staff Household" } },
+        },
+    });
+    await seedRole(prisma, financeStaff.id, "isFinance");
+
     // A member household lead used by program-pricing flow tests: an ACTIVE
     // OrgMembership so member pricing/discount-code paths have a claimable persona.
     const memberPricingLead = await prisma.person.upsert({
@@ -258,6 +284,34 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         create: { householdId: memberPricingLead.householdId, status: "ACTIVE" },
     });
 
+    // Two lead + non-lead adult households for flow tests: an ACTIVE member household
+    // the renewal journey drives, and one the household-lead journey manages.
+    for (const { name, lead, partner, active } of [
+        { name: "Renewal Family", lead: "renewal.lead", partner: "renewal.partner", active: true },
+        { name: "Lead Family", lead: "household.lead", partner: "household.partner", active: false },
+    ]) {
+        let household = await prisma.household.findFirst({ where: { name } });
+        if (!household) household = await prisma.household.create({ data: { name, line1: "1 Flow Test Road" } });
+        const leadPerson = await prisma.person.upsert({
+            where: { email: `${lead}@example.com` },
+            update: { householdId: household.id },
+            create: { email: `${lead}@example.com`, name: `${name} Lead`, isDeclaredAdult: true, householdId: household.id },
+        });
+        await prisma.person.upsert({
+            where: { email: `${partner}@example.com` },
+            update: { householdId: household.id },
+            create: { email: `${partner}@example.com`, name: `${name} Partner`, isDeclaredAdult: true, householdId: household.id },
+        });
+        await addHouseholdLead(prisma, household.id, leadPerson.id);
+        if (active) {
+            await prisma.orgMembership.upsert({
+                where: { householdId: household.id },
+                update: { status: "ACTIVE" },
+                create: { householdId: household.id, status: "ACTIVE" },
+            });
+        }
+    }
+
     // 4. Tools & certifications
     const tableSaw = await prisma.tool.upsert({
         where: { id: 1 },
@@ -285,15 +339,27 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         create: { personId: toolCertifier.id, toolId: tableSaw.id, level: "MAY_CERTIFY_OTHERS" },
     });
 
-    // 5. Sample program
+    // 5. The membership-year boundary at the policy value (1 September), unless one is set.
+    await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+    await prisma.boardSettings.updateMany({
+        where: { id: 1, orgMembershipYearBoundary: null },
+        data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
+    });
+
+    // 6. Sample program
     const program = await prisma.program.findFirst({ where: { name: "Woodworking 101" } });
     if (!program) {
+        const startAt = new Date();
+        const endAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
         await prisma.program.create({
             data: {
                 name: "Woodworking 101",
                 leadMentorId: isBoardMember.id,
-                startAt: new Date(),
-                endAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+                startAt,
+                endAt,
+                appliesToYear: await seedProgramYear(prisma, startAt, endAt),
+                // Stays on sale through its run so the seeded program accepts claims.
+                offSaleAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
                 phase: "UPCOMING",
                 enrollmentStatus: "OPEN",
                 orgMemberOnly: false,
@@ -303,7 +369,29 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
+    // 7. Budget-owner buckets: one org-level, and one named for the first program
+    //    with no approvers until the Board names them.
+    const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
+    const buckets = [
+        { name: "Facility", isOrgLevel: true },
+        ...(firstProgram ? [{ name: firstProgram.name, isOrgLevel: false }] : []),
+    ];
+    for (const bucket of buckets) {
+        if (!(await prisma.budgetOwner.findFirst({ where: { name: bucket.name } }))) {
+            await prisma.budgetOwner.create({ data: bucket });
+        }
+    }
+
     console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");
+}
+
+// A seeded program that crosses the boundary counts in its later year, which
+// prices it exactly as its end date would.
+async function seedProgramYear(prisma: Db, startAt: Date, endAt: Date): Promise<number> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    if (!boundary) throw new Error("Set the membership year boundary in Board settings before seeding programs.");
+    return programYearsTouched(boundary, startAt, endAt).at(-1)!;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -364,6 +452,8 @@ export async function createProgram(prisma: Db): Promise<string> {
             name: `Test Program ${tag}`,
             startAt,
             endAt,
+            appliesToYear: await seedProgramYear(prisma, startAt, endAt),
+            offSaleAt: endAt,
             phase: "UPCOMING",
             enrollmentStatus: "OPEN",
             minAge: 8,

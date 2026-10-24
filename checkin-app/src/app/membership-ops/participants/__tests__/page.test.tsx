@@ -6,6 +6,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
+import { ModalsProvider } from "@mantine/modals";
 
 beforeEach(() => {
     resetRtl();
@@ -61,11 +62,100 @@ describe("AdminParticipantsIndex", () => {
         expect(await screen.findByText("Edit Person")).toBeInTheDocument();
         expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
         const emailInput = screen.getByLabelText("Email Address");
+        expect(screen.queryByLabelText(/Reason for the email change/)).not.toBeInTheDocument();
         fireEvent.change(emailInput, { target: { value: "alice@new.com" } });
+        fireEvent.change(screen.getByLabelText(/Reason for the email change/), { target: { value: "Alice asked by phone" } });
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
 
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
         expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" }));
+        const put = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/membership-ops/participants/1"));
+        expect(JSON.parse(String(put?.[1]?.body))).toEqual(expect.objectContaining({ email: "alice@new.com", emailChangeReason: "Alice asked by phone" }));
+    });
+
+    it("a sysadmin who is not on the board cannot edit the email", async () => {
+        setSession({ id: 999, isSysadmin: true });
+        mockFetchJson({ "/api/people/search": { people: [alice] } });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+
+        expect(await screen.findByLabelText("Email Address")).toBeDisabled();
+        expect(screen.getByText("Only a board member can change a person's email.")).toBeInTheDocument();
+    });
+
+    it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {
+        const warning = "Alice A's background check covers the membership year starting 2027-08-01, and will not after this change.";
+        const puts: unknown[] = [];
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
+            const body = JSON.parse(String(init?.body));
+            puts.push(body);
+            return body.confirmBgStale
+                ? { ok: true, status: 200, json: async () => ({ participant: alice }) } as Response
+                : { ok: false, status: 409, json: async () => ({ error: warning, warning, requiresConfirmation: true }) } as Response;
+        }) as unknown as typeof fetch;
+        renderWithProviders(<ModalsProvider><AdminParticipantsIndex /></ModalsProvider>);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
+
+        expect(await screen.findByText(warning)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
+        expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
+    });
+
+    it("asks a board member why a later check date is current and sends the reason", async () => {
+        const fetchMock = mockFetchJson({
+            "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] },
+            "/api/membership-ops/participants/1": { participant: alice },
+        });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        const dateInput = await screen.findByLabelText("Last Background Check Review");
+
+        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
+        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
+
+        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
+        fireEvent.change(screen.getByLabelText(/Why is this check current/), { target: { value: "Vendor report reviewed" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/participants/1",
+                expect.objectContaining({ method: "PUT", body: expect.stringContaining('"bgCheckReason":"Vendor report reviewed"') }),
+            ),
+        );
+    });
+
+    it("tells a sysadmin off the board that only the board sets a later check date, and blocks the save", async () => {
+        setSession({ id: 999, isSysadmin: true });
+        mockFetchJson({ "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] } });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        const dateInput = await screen.findByLabelText("Last Background Check Review");
+
+        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
+        expect(screen.getByText("Only a Board member can set a later background check date.")).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save Details" })).toBeDisabled();
+
+        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
+        expect(screen.getByRole("button", { name: "Save Details" })).toBeEnabled();
     });
 
     it("assigns a new household to a participant with none", async () => {

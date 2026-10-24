@@ -17,6 +17,15 @@ import { POST as ManualHoldPost } from '@/app/api/finance-ops/payment-plans/manu
 import { POST as RequestPost } from '@/app/api/programs/[id]/request-payment-plan/route';
 import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import * as shopify from '@/lib/shopify/stock';
+
+// Wrap only changeProgramStockWith (call-through) so one test can force a −1 that
+// could not be recorded; SWC exports are non-configurable getters, so no spyOn.
+jest.mock('@/lib/shopify/stock', () => {
+    const actual = jest.requireActual('@/lib/shopify/stock');
+    return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
+});
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
 
 jest.mock('next-auth/next', () => ({
@@ -64,7 +73,7 @@ describe('Program payment-plan routes', () => {
         householdIds.push(mentor.householdId);
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
         });
         programId = program.id;
 
@@ -152,7 +161,9 @@ describe('Program payment-plan routes', () => {
         const held = (opts.held ?? opts.requested) ? new Date() : null;
         await prisma.programParticipant.upsert({
             where: { programId_personId: { programId, personId: participantId } },
-            update: { status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held, paymentPlanDeniedAt: null },
+            // scholarshipRequestKind resets too: the row is reused across cases, and a
+            // kind left over from a previous one would read as this request's own.
+            update: { status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held, paymentPlanDeniedAt: null, scholarshipRequestKind: null },
             create: { programId, personId: participantId, status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held },
         });
     }
@@ -263,63 +274,68 @@ describe('Program payment-plan routes', () => {
             expect(data.warning).toBeUndefined();
         });
 
-        // Hold-ledger (product decision 2026-07-06): the seat is decremented at
-        // APPLICATION time (request-payment-plan), NOT at approval — approval
-        // only stops billing the applicant and CONSUMES the hold (clears
-        // inventoryHeldAt with no +1), so a later removal of this now-ACTIVE
-        // comped participant must not release a seat that was never given back
-        // to Shopify. Proven here by NO fetch firing at either step even though
-        // the program has a variant configured.
-        it('does NOT touch Shopify on approval (hold consumed, not released), and a later removal fires no +1', async () => {
-            const fetchSpy = jest.spyOn(global, 'fetch');
+        // The seat is taken at APPLICATION time, so approval touches no Shopify
+        // stock: it consumes the hold and records the seat as taken without a
+        // sale. Removing the approved place later returns that seat (+1). A
+        // request whose hold failed is approved with no seat taken, records none,
+        // and returns none.
+        it.each([
+            ['held', true],
+            ['failed', false],
+        ])('approval with a %s hold touches no stock; a later removal returns +1 only when a seat was held', async (_label, held) => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local'; // arms the adjustProgramInventory mock (logs the delta)
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: `PP Shopify Program ${TAG}`,
                     leadMentorId: mentorId,
-                    enrollmentStatus: 'OPEN',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                     shopifyVariantId: 'dev-mock-variant-pp',
                 },
             });
+            const inventoryHeldAt = held ? new Date() : null;
             try {
                 await prisma.programParticipant.upsert({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: selfId } },
-                    update: { status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt: new Date() },
-                    create: { programId: shopifyProgram.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt: new Date() },
+                    update: { status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt },
+                    create: { programId: shopifyProgram.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt },
                 });
                 mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
                 const res = await PlansPost(nextReq('http://localhost', {
                     method: 'POST',
+                    headers: { cookie: 'session=test' },
                     body: JSON.stringify({ programId: shopifyProgram.id, participantId: selfId }),
                 }));
                 expect(res.status).toBe(200);
-                const data = await res.json();
-                expect(data.warning).toBeUndefined();
+                expect((await res.json()).warning).toBeUndefined();
 
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: selfId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
                 expect(row?.inventoryHeldAt).toBeNull(); // hold consumed
-                expect(fetchSpy).not.toHaveBeenCalled();
+                expect(row?.seatTakenWithoutSaleAt === null).toBe(!held);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
 
-                // Later removal of the now-ACTIVE comped participant: no hold left
-                // to release, so no +1 fires.
-                mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
                 const delRes = await ParticipantsDelete(
                     new Request(`http://localhost/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'DELETE',
-                        body: JSON.stringify({ participantId: selfId }),
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: selfId, reason: 'Family moved away' }),
                     }) as unknown as import('next/server').NextRequest,
                     { params: Promise.resolve({ id: String(shopifyProgram.id) }) },
                 );
                 expect(delRes.status).toBe(200);
                 expect((await delRes.json()).warning).toBeUndefined();
-                expect(fetchSpy).not.toHaveBeenCalled();
+                const plusOnes = logSpy.mock.calls.filter(([m]) => String(m).includes('Would adjust inventory by 1 ')).length;
+                expect(plusOnes).toBe(held ? 1 : 0);
             } finally {
-                fetchSpy.mockRestore();
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
                 await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
                 await prisma.program.delete({ where: { id: shopifyProgram.id } });
             }
@@ -450,6 +466,56 @@ describe('Program payment-plan routes', () => {
             expect(row?.isPaymentPlanRequested).toBe(true);
         });
 
+        it('records the kind the family stated', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId, kind: 'SCHOLARSHIP' }), params(programId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.scholarshipRequestKind).toBe('SCHOLARSHIP');
+        });
+
+        it('400 on a kind that is not one of the three', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId, kind: 'FREE_MONEY' }), params(programId));
+            expect(res.status).toBe(400);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.isPaymentPlanRequested).toBe(false);
+        });
+
+        it('a kind-less request still records (drain-window client), leaving the kind null', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId }), params(programId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.isPaymentPlanRequested).toBe(true);
+            expect(row?.scholarshipRequestKind).toBeNull();
+        });
+
+        it('a kind-less re-POST does NOT erase a kind the family already stated', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            await RequestPost(requestReq({ participantId: selfId, kind: 'PAYMENT_PLAN' }), params(programId));
+            // Same shape a stale tab mid-deploy sends: no kind at all.
+            await RequestPost(requestReq({ participantId: selfId }), params(programId));
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.scholarshipRequestKind).toBe('PAYMENT_PLAN');
+        });
+
         it('409 when the enrollment is not awaiting payment (already ACTIVE)', async () => {
             await prisma.programParticipant.upsert({
                 where: { programId_personId: { programId, personId: selfId } },
@@ -473,7 +539,7 @@ describe('Program payment-plan routes', () => {
 
             beforeAll(async () => {
                 const p = await prisma.program.create({
-                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-apply-pp' },
+                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-apply-pp' },
                 });
                 shopifyProgramId = p.id;
             });
@@ -588,7 +654,7 @@ describe('Program payment-plan routes', () => {
         it('denies a pending request: no Shopify op, hold persists, denial stamped', async () => {
             const fetchSpy = jest.spyOn(global, 'fetch');
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-refuse-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-refuse-pp' },
             });
             try {
                 // inventoryHeldAt set, as APPLICATION would have stamped it.
@@ -635,7 +701,7 @@ describe('Program payment-plan routes', () => {
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-reapply-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-reapply-pp' },
             });
             const reqParams = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
             try {
@@ -698,7 +764,7 @@ describe('Program payment-plan routes', () => {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: `PP Scholarship Program ${TAG}`,
-                    enrollmentStatus: 'OPEN',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                     maxParticipants: 1,
                     orgMemberPriceCents: 1000,
                     nonOrgMemberPriceCents: 1500,
@@ -808,11 +874,11 @@ describe('Program payment-plan routes', () => {
             expect(delBody.enrollment).toBeUndefined();
         });
 
-        it('a failed Shopify -1 leaves a clean PENDING_HOLD_FAILED row and reassures the applicant', async () => {
+        it('a Shopify -1 that fails to push still holds the seat: the -1 stays owed in the stock carry', async () => {
             // Default env: shopifyMockActive() is false and no credentials are
-            // configured, so adjustProgramInventory returns false without throwing.
+            // configured, so the push fails after the -1 is recorded.
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-rollback-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-rollback-pp' },
             });
             try {
                 await prisma.programParticipant.create({
@@ -828,27 +894,18 @@ describe('Program payment-plan routes', () => {
                     params(p.id),
                 );
                 expect(res.status).toBe(200);
-                // No "re-submit to retry": the request stands, the board finalizes it.
-                const body = await res.json();
-                expect(body.warning).toMatch(/board/i);
-                expect(body.warning).not.toMatch(/re-submit|retry|rolled back/i);
+                expect((await res.json()).warning).toBeUndefined(); // nothing for the applicant to do
 
-                // Shopify-failure branch: the ack still fires, carrying the warning
-                // copy instead of the normal ack body, and the review-team notify
-                // still fires (a request was still recorded, board still needs it).
-                const sent = __getSentEmails();
-                const ack = sent.find((e) => e.to === `self-${TAG}@example.com`);
-                expect(ack?.html).toContain(body.warning);
-                expect(sent.some((e) => e.subject.startsWith('New scholarship / payment-plan request'))).toBe(true);
-
-                // The exact PENDING_HOLD_FAILED tuple: PENDING, held=null, req=true, den=null.
+                // The hold stands (PENDING_HELD), and the program owes Shopify the -1.
                 const row = await prisma.programParticipant.findUniqueOrThrow({
                     where: { programId_personId: { programId: p.id, personId: selfId } },
                 });
                 expect(row.status).toBe('PENDING');
-                expect(row.inventoryHeldAt).toBeNull(); // no phantom hold
-                expect(row.isPaymentPlanRequested).toBe(true); // request still stands
-                expect(row.paymentPlanDeniedAt).toBeNull();
+                expect(row.inventoryHeldAt).not.toBeNull();
+                expect(row.isPaymentPlanRequested).toBe(true);
+                const program = await prisma.program.findUniqueOrThrow({ where: { id: p.id } });
+                expect(program.shopifyStockCarry).toBe(-1);
+                expect(program.shopifyStockPushNeededAt).not.toBeNull();
             } finally {
                 await prisma.programParticipant.deleteMany({ where: { programId: p.id } });
                 await prisma.program.delete({ where: { id: p.id } });
@@ -1003,22 +1060,21 @@ describe('Program payment-plan routes', () => {
             return { id: p.id, email };
         }
 
-        let prevNotify: string | null = null;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
             });
             emailProgramId = p.id;
             // Pin the review-team address list so the exact-recipients assertions are
             // hermetic: unset, the fallback emails EVERY isBoardMember row, and other
             // suites' board personas share the DB in a full CI run.
-            const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevNotify = settings.scholarshipNotifyEmail;
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') } });
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: { scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') }, create: { id: 1, scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') } });
         });
 
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: prevNotify } });
+            await restoreBoardSettings();
             await prisma.programParticipant.deleteMany({ where: { programId: emailProgramId } });
             await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
             await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
@@ -1041,6 +1097,27 @@ describe('Program payment-plan routes', () => {
             expect(review.map((e) => e.to).sort()).toEqual(REVIEW_TEAM_EMAILS);
             const ack = sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request');
             expect(ack).toEqual([expect.objectContaining({ to: participant.email })]);
+        });
+
+        it('a double-submitted request sends the review-team notify and the ack once', async () => {
+            const householdId = await makeHousehold('double');
+            const participant = await makePerson('double-participant', householdId);
+            await prisma.programParticipant.create({
+                data: { programId: emailProgramId, personId: participant.id, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },
+            });
+            mockSession.mockResolvedValue({ user: { id: participant.id } });
+
+            const [a, b] = await Promise.all([
+                RequestPost(requestReq({ participantId: participant.id }), params(emailProgramId)),
+                RequestPost(requestReq({ participantId: participant.id }), params(emailProgramId)),
+            ]);
+            expect([a.status, b.status]).toEqual([200, 200]);
+
+            const sent = __getSentEmails();
+            const review = sent.filter((e) => e.subject.startsWith('New scholarship / payment-plan request'));
+            expect(review.map((e) => e.to).sort()).toEqual(REVIEW_TEAM_EMAILS);
+            const ack = sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request');
+            expect(ack).toHaveLength(1);
         });
 
         it('a no-op re-POST (already PENDING_HELD) sends zero emails', async () => {
@@ -1119,14 +1196,14 @@ describe('Program payment-plan routes', () => {
     describe('scholarship ACK settings (subject + program body)', () => {
         const params = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
         const PROGRAM_NAME = `PP Program ${TAG}`; // == the name programId was created with, in beforeAll
-        let prevAck: { scholarshipAckSubject: string | null; scholarshipAckProgramBody: string | null } | null = null;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
 
         beforeAll(async () => {
-            const s = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevAck = { scholarshipAckSubject: s.scholarshipAckSubject, scholarshipAckProgramBody: s.scholarshipAckProgramBody };
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
         });
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: prevAck! });
+            await restoreBoardSettings();
         });
 
         it('a configured subject + body (with {{programName}}) are used for the program ACK', async () => {
@@ -1170,8 +1247,10 @@ describe('Program payment-plan routes', () => {
                 },
             });
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
+            // Only a −1 the stock writer could not even record takes the failure branch.
+            jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new shopify.StockNotRecordedError('stock carry could not be written'));
             try {
                 await prisma.programParticipant.create({
                     data: { programId: p.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },

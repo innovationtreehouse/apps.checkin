@@ -30,6 +30,12 @@ interface Status {
   receipts: Receipt[];
 }
 
+// The header value is stored as sent; show it raw when it is not a parseable date.
+function formatTriggeredAt(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 /**
  * Shopify Webhook settings tab — verifies the store's webhook wiring
  * end-to-end from the RECEIVING side. Shopify's Admin API cannot trigger its
@@ -49,19 +55,18 @@ export default function ShopifyWebhookSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setFailed(false);
-    try {
-      const res = await fetch("/api/settings/shopify-webhook");
+  const load = useCallback(() => fetch("/api/settings/shopify-webhook")
+    .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStatus((await res.json()) as Status);
-    } catch {
+    })
+    .catch(() => {
       setFailed(true);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) load();
@@ -123,31 +128,35 @@ export default function ShopifyWebhookSettingsPage() {
           <Card withBorder radius="md" padding="lg">
             <Group justify="space-between" mb="xs">
               <Title order={3}>Recent deliveries</Title>
-              <Button size="xs" variant="light" onClick={load} loading={loading}>
+              <Button size="xs" variant="light" onClick={() => { setLoading(true); setFailed(false); load(); }} loading={loading}>
                 Refresh
               </Button>
             </Group>
             <Text size="sm" c="dimmed" mb="md">
-              Every delivery this environment received on the endpoint above, newest first — including
-              deliveries whose signature failed verification.
+              Signature-verified deliveries this environment received on the endpoint above, newest first.
+              Deliveries that fail signature verification are not recorded here; they appear only as a
+              rate-limited warning in the server log.
             </Text>
 
             {badSignature && (
               <Alert color="red" variant="light" mb="md">
-                A delivery with signature ✗ reached this endpoint but failed verification: the secret the
-                store signs webhooks with and the webhook secret configured for this environment are not the
-                matching pair. Fix the configuration — until then, payments will not settle.
+                An older delivery with signature ✗ failed verification: at that time the secret the store
+                signs webhooks with and the webhook secret configured for this environment were not the
+                matching pair. If deliveries have stopped appearing since, check the configuration —
+                until it matches, payments will not settle.
               </Alert>
             )}
 
             {status.receipts.length === 0 ? (
               <Alert color="yellow" variant="light">
                 No deliveries recorded. If you pressed <strong>Send test notification</strong> and still see
-                nothing after refreshing, Shopify cannot reach the endpoint above — the webhook is not
-                registered, or it points at the wrong URL.
+                nothing after refreshing, either Shopify cannot reach the endpoint above (the webhook is not
+                registered, or it points at the wrong URL) or the store signs with a different secret than
+                this environment&apos;s. Signature failures are not recorded here — check the server log for
+                a &quot;Shopify webhook rejected&quot; warning.
               </Alert>
             ) : (
-              <Table.ScrollContainer minWidth={700}>
+              <Table.ScrollContainer minWidth={900}>
                 <Table striped highlightOnHover verticalSpacing="sm">
                   <Table.Thead>
                     <Table.Tr>
@@ -156,6 +165,7 @@ export default function ShopifyWebhookSettingsPage() {
                       <Table.Th>Test</Table.Th>
                       <Table.Th>Signature</Table.Th>
                       <Table.Th>Order</Table.Th>
+                      <Table.Th>Delivery</Table.Th>
                       <Table.Th>Outcome</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -169,6 +179,14 @@ export default function ShopifyWebhookSettingsPage() {
                           {r.hmacValid ? <Text c="green" component="span">✓</Text> : <Text c="red" component="span" fw={700}>✗</Text>}
                         </Table.Td>
                         <Table.Td>{r.orderId ?? <Text c="dimmed">—</Text>}</Table.Td>
+                        <Table.Td>
+                          {r.deliveryId ? (
+                            <Group gap={4} wrap="nowrap">
+                              <Code title={r.triggeredAt ? `Triggered at ${formatTriggeredAt(r.triggeredAt)}` : undefined}>{r.deliveryId}</Code>
+                              {r.retry && <Badge color="orange" variant="light">retry</Badge>}
+                            </Group>
+                          ) : <Text c="dimmed">—</Text>}
+                        </Table.Td>
                         <Table.Td>{r.outcome}</Table.Td>
                       </Table.Tr>
                     ))}

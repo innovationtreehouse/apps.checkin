@@ -24,15 +24,21 @@ jest.mock('next-auth/next', () => ({
 const TARGET_EMAIL = 'target-anchor-mergeroll-test@example.com';
 const SOURCE_EMAIL = 'source-member-mergeroll-test@example.com';
 
+// The CSV import module is optional and off by default.
+process.env.CSV_IMPORT_ENABLED = 'true';
+
 describe('Bulk import merge rollback', () => {
     let testAdminId: number;
     let targetHouseholdId: number;
+    let targetPersonId: number;
     let sourceHouseholdId: number;
     let sourceMemberId: number;
 
     const cleanup = async () => {
         try {
             await prisma.trustedAdult.deleteMany({ where: { trustedAdultName: 'Grandma Mergeroll' } });
+            const people = await prisma.person.findMany({ where: { email: { contains: 'mergeroll-test' } }, select: { id: true } });
+            await prisma.paymentException.deleteMany({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: { in: people.map((p) => p.id) } } });
             await prisma.orgMembership.deleteMany({});
             await prisma.person.deleteMany({ where: { email: { contains: 'mergeroll-test' } } });
             await prisma.household.deleteMany({ where: { householdMembers: { none: {} } } });
@@ -49,9 +55,10 @@ describe('Bulk import merge rollback', () => {
 
         const target = await prisma.person.create({
             data: { email: TARGET_EMAIL, name: 'Target Anchor Mergeroll Test', household: { create: { name: "Test HH" } } },
-            select: { householdId: true }
+            select: { id: true, householdId: true }
         });
         targetHouseholdId = target.householdId;
+        targetPersonId = target.id;
 
         const source = await prisma.person.create({
             data: { email: SOURCE_EMAIL, name: 'Source Member Mergeroll Test', household: { create: { name: "Test HH" } } },
@@ -120,5 +127,31 @@ describe('Bulk import merge rollback', () => {
         // ...and the source household still exists.
         const sourceHh = await prisma.household.findUnique({ where: { id: sourceHouseholdId } });
         expect(sourceHh).not.toBeNull();
+    });
+
+    it('refuses merging into a DENIED household, moves no one, and raises it to the board', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({
+            user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+        });
+        await prisma.orgMembership.create({ data: { householdId: targetHouseholdId, status: 'DENIED' } });
+
+        const formData = csvForm([
+            ['First Name', 'Last Name', 'Email', 'Same Household As'],
+            ['Source Member', 'Mergeroll Test', SOURCE_EMAIL, TARGET_EMAIL],
+        ]);
+        const req = new Request('http://localhost:4000/api/membership-ops/participants/import', {
+            method: 'POST',
+            body: formData
+        }) as unknown as Parameters<typeof POST>[0];
+        (req as unknown as { formData: () => Promise<FormData> }).formData = jest.fn().mockResolvedValue(formData);
+
+        const res = await POST(req);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.errors.join(' ')).toContain('has been denied membership');
+
+        const source = await prisma.person.findUnique({ where: { id: sourceMemberId }, select: { householdId: true } });
+        expect(source?.householdId).toBe(sourceHouseholdId);
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: targetPersonId } })).toBeGreaterThanOrEqual(1);
     });
 });

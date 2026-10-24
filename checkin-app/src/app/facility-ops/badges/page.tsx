@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FACILITY_RECORD_ROLES } from '@/lib/facilityNav';
+import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -35,21 +35,22 @@ export default function AdminBadgesPage() {
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchBadges = useCallback(async () => {
-    try {
-      const res = await fetch('/api/facility/badges');
+  const fetchBadges = useCallback(() => fetch('/api/facility/badges')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setBadges(data.badges);
       } else {
         setMessage({ text: "Failed to load badge events.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading badges.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchBadges();

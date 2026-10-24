@@ -137,19 +137,19 @@ describe("EventAdminPage", () => {
         await waitFor(() => expect(router.push).toHaveBeenCalledWith("/program-ops/programs/10"));
     });
 
-    it("fromMyPrograms: back button and confirm-attendance both return to My Programs", async () => {
+    it("fromProgramsILead: back button and confirm-attendance both return to Programs I Lead", async () => {
         setSession({ id: 1, isSysadmin: true });
-        setSearchParams("from=my-programs");
+        setSearchParams("from=programs-i-lead");
         mockFetchJson({ "/api/events/5": baseEvent() });
         renderPage(params);
 
-        expect(await screen.findByRole("button", { name: "← Back to My Programs" })).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "← Back to My Programs" }));
-        expect(router.push).toHaveBeenCalledWith("/my-programs");
+        expect(await screen.findByRole("button", { name: "← Back to Programs I Lead" })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "← Back to Programs I Lead" }));
+        expect(router.push).toHaveBeenCalledWith("/programs-i-lead");
 
         fireEvent.click(screen.getByRole("button", { name: "Confirm Attendance" }));
-        await waitFor(() => expect(router.push).toHaveBeenCalledWith("/my-programs"));
-        // The fromMyPrograms branch returns before setMessage/fetchEvent run.
+        await waitFor(() => expect(router.push).toHaveBeenCalledWith("/programs-i-lead"));
+        // The fromProgramsILead branch returns before setMessage/fetchEvent run.
         expect(screen.queryByText("Attendance confirmed successfully!")).not.toBeInTheDocument();
     });
 

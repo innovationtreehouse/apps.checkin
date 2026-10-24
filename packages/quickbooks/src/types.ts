@@ -24,6 +24,18 @@ export interface AccessTokenSource {
   current(): Promise<string>;
 }
 
+/**
+ * What the token refresher answers to `{ "action": "current" }`: the access token it last
+ * published, refreshed first when near expiry. `clientId` is the Intuit app's (public) id.
+ */
+export interface RefresherToken {
+  accessToken: string;
+  /** Epoch ms. */
+  expiresAt: number;
+  realmId: string;
+  clientId: string;
+}
+
 export interface QboRef {
   value: string;
   name?: string;
@@ -36,11 +48,25 @@ export interface QboPurchase {
   TotalAmt: number;
   EntityRef?: { value: string; name?: string }; // vendor on a Purchase
   VendorRef?: { value: string; name?: string }; // vendor on a Bill
+  AccountRef?: QboRef; // the card or bank account a Purchase was paid from
+  PaymentType?: "Cash" | "Check" | "CreditCard";
   CurrencyRef?: { value: string };
   TxnTaxDetail?: { TotalTax?: number };
   DocNumber?: string;
   PrivateNote?: string; // memo — real vendor often lives here on reimbursement bills
-  Line?: { Description?: string; Amount?: number }[]; // line detail — real vendor + allocated amounts
+  Line?: { Description?: string; Amount?: number; AccountBasedExpenseLineDetail?: { AccountRef?: QboRef } }[]; // line detail — real vendor + allocated amounts
+}
+
+/** A Bill. `Balance` 0 means paid; `LinkedTxn` names the BillPayments that paid it. */
+export interface QboBill extends QboPurchase {
+  Balance?: number;
+  DueDate?: string;
+  LinkedTxn?: QboLinkedTxn[];
+}
+
+export interface QboLinkedTxn {
+  TxnId: string;
+  TxnType: string;
 }
 
 export interface QboDeposit {
@@ -58,7 +84,12 @@ export interface QboBillPayment {
   TotalAmt: number;
   VendorRef?: QboRef;
   PayType?: string;
-  Line?: { Amount?: number; LinkedTxn?: { TxnId: string; TxnType: string }[] }[];
+  Line?: { Amount?: number; LinkedTxn?: QboLinkedTxn[] }[];
+}
+
+/** The company's Preferences; BookCloseDate is absent when no closing date is set. */
+export interface QboPreferences {
+  AccountingInfoPrefs?: { BookCloseDate?: string | null };
 }
 
 export interface QboAccount {
@@ -83,6 +114,11 @@ export interface QboVendor {
 }
 
 // What the vendor-join loop actually compares OCR output against.
+export interface QboCustomer {
+  Id: string;
+  DisplayName: string;
+}
+
 export interface GroundTruthRecord {
   qbId: string;
   entity: "Purchase" | "Bill";

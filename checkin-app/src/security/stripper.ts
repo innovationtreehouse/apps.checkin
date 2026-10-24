@@ -45,7 +45,12 @@ export function stripValue(
     if (Array.isArray(value)) {
         return value.map(item => stripValue(modelName, item, tokens, callerCtx));
     }
-    if (typeof value !== 'object') return value;
+    // A model position holds a row (or rows). A bare scalar there has no field
+    // name to classify, so it cannot be tier-checked: drop it (fail-closed).
+    if (typeof value !== 'object') {
+        console.warn(`[security] scalar value under model '${modelName}' — dropping`);
+        return null;
+    }
 
     const obj = value as Record<string, unknown>;
     const tiers = classifications[modelName as keyof typeof classifications] as

@@ -53,6 +53,8 @@ export interface AttendanceCounts {
  * Safety flags for the facility.
  */
 export interface SafetyFlags {
+    /** A keyholder is present. The only test for "open" — never `counts.total`. */
+    facilityOpen: boolean;
     isLastKeyholder: boolean;
     isTwoDeepViolation: boolean;
 }

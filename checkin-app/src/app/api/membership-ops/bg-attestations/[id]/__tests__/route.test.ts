@@ -3,7 +3,7 @@
  *
  * Unit tests (mocked prisma) for the two concurrency-safety details a real
  * Postgres transaction can't cheaply pin: that the delete takes the
- * OrgMembershipProcess FOR UPDATE lock (review.ts:513's contract) BEFORE
+ * OrgMembershipProcess FOR UPDATE lock (attest()'s contract) BEFORE
  * removing the attestation, and that a concurrent double-delete's P2025
  * maps to 404 rather than falling to the generic 500. 400/404/success/audit
  * and the merge-unblock scenario are covered against real Postgres in
@@ -32,7 +32,7 @@ jest.mock("@/lib/prisma", () => ({
 const mockSession = getServerSession as jest.Mock;
 const attestation = {
     id: 42, processId: 7, reviewerId: 1, subjectPersonId: null,
-    result: "APPROVE", note: null, isMarkedVolunteer: false, createdAt: new Date("2026-08-01T00:00:00Z"),
+    result: "APPROVE", note: null, isMarkedVolunteerFamily: false, createdAt: new Date("2026-08-01T00:00:00Z"),
 };
 
 function req(body?: unknown) {
@@ -45,7 +45,7 @@ const ctx = { params: Promise.resolve({ id: "42" }) };
 
 beforeEach(() => {
     jest.clearAllMocks();
-    mockSession.mockResolvedValue({ user: { id: 99, isSysadmin: true } });
+    mockSession.mockResolvedValue({ user: { id: 99, isBoardMember: true } });
     tx.backgroundCheckAttestation.findUnique.mockResolvedValue(attestation);
     tx.backgroundCheckAttestation.delete.mockResolvedValue(attestation);
     tx.auditLog.create.mockResolvedValue({});

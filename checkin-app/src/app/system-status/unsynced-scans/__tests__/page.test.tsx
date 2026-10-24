@@ -40,6 +40,20 @@ describe("SystemStatusUnsyncedScansPage", () => {
         expect(screen.queryByText(/Person #5,/)).not.toBeInTheDocument();
     });
 
+    it("shows an unresolvable read by its raw value, dismissible but not recordable", async () => {
+        mockFetchJson({
+            "/api/system-status/unsynced-scans": {
+                scans: [scan({ person: null, scannedValue: "1234512345", reviewReason: "client_dead:unresolvable" })],
+            },
+        });
+        renderWithProviders(<SystemStatusUnsyncedScansPage />);
+
+        expect(await screen.findByText(/Unreadable badge "1234512345", scanned /)).toBeInTheDocument();
+        expect(screen.getByText(/matches no one on record/)).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Record visit" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    });
+
     it("records a closed visit: departure entered, POSTed with the row id, row dropped", async () => {
         const fetchMock = mockFetchJson({
             "/api/system-status/unsynced-scans/5": {},

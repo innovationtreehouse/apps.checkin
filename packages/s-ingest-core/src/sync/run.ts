@@ -5,7 +5,8 @@
 import type { PrismaClient } from "../db/client.js";
 import { SyncKind, SyncStatus } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import { logger } from "../logger.js";
+import { logger } from "@checkin/telemetry";
+import { redactSecrets } from "@checkin/utils";
 import { withAdvisoryLock } from "./locks.js";
 
 /** Default staleness cutoff (~Lambda max timeout): older RUNNING runs must be dead. */
@@ -47,7 +48,7 @@ export interface RunHeartbeat {
 /**
  * A best-effort push of a run's terminal outcome to the dedicated monitoring DB (the F7
  * push model — the watchdog reads these instead of holding this DB's credentials). Injected
- * so s-ingest-core stays decoupled from @inventory/monitoring-db; the service wiring binds
+ * so s-ingest-core stays decoupled from @checkin/monitoring-db; the service wiring binds
  * it to a concrete sink. It MUST NOT throw in a way that fails the run — withSyncRun calls
  * it inside a swallow-and-log guard.
  */
@@ -114,7 +115,7 @@ export async function withSyncRun<T extends Record<string, unknown>>(
   // invocations — correctness no longer rests solely on reserved-concurrency = 1. A run that
   // can't take the lock throws ConcurrentRunError *before* any sync_run row is created, so a
   // skipped invocation leaves no FAILED row; the caller treats it as a benign skip.
-  return withAdvisoryLock(prisma, `sync_run:${storeId}`, async () => {
+  return withAdvisoryLock(`sync_run:${storeId}`, async () => {
     const run = await prisma.syncRun.create({
       data: {
         storeId,
@@ -150,7 +151,7 @@ export async function withSyncRun<T extends Record<string, unknown>>(
       return counts;
     } catch (err) {
       const finishedAt = new Date();
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactSecrets(err instanceof Error ? err.message : String(err));
       // If fn committed partial work before failing (e.g. a row-by-row replay), persist how far
       // it got so the FAILED run is honest about progress rather than reporting nothing.
       const partialCounts = partialCountsOf(err);

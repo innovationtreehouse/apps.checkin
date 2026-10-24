@@ -90,7 +90,7 @@ describe("membership-ops/review page", () => {
         "/api/membership/reviews",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ processId: 100, result: "APPROVE", isMarkedVolunteer: false, subjectPersonIds: [1] }),
+          body: JSON.stringify({ processId: 100, result: "APPROVE", isMarkedVolunteerFamily: false, subjectPersonIds: [1] }),
         }),
       ),
     );
@@ -125,7 +125,7 @@ describe("membership-ops/review page", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/membership/reviews",
-        expect.objectContaining({ body: JSON.stringify({ processId: 101, result: "APPROVE", isMarkedVolunteer: false, subjectPersonIds: [1] }) }),
+        expect.objectContaining({ body: JSON.stringify({ processId: 101, result: "APPROVE", isMarkedVolunteerFamily: false, subjectPersonIds: [1] }) }),
       ),
     );
   });
@@ -146,7 +146,7 @@ describe("membership-ops/review page", () => {
         "/api/membership/reviews",
         expect.objectContaining({
           // A rejection is whole-process: it blocks the household without naming anyone.
-          body: JSON.stringify({ processId: 101, result: "REJECT", isMarkedVolunteer: false, note: "Record is concerning.", subjectPersonIds: [] }),
+          body: JSON.stringify({ processId: 101, result: "REJECT", isMarkedVolunteerFamily: false, note: "Record is concerning.", subjectPersonIds: [] }),
         }),
       ),
     );
@@ -214,6 +214,32 @@ describe("membership-ops/review page", () => {
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([url]) => String(url).includes("review-override"));
       expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 300, action: "reset" });
+    });
+  });
+
+  it("lets a reviewer undo their own approval, with a reason", async () => {
+    setSession({ id: 1, isBackgroundCheckReviewer: true });
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews/undo": {},
+      "/api/membership/reviews?mine=1": { queue: [{ ...queue.queue[0], id: 302 }] },
+      "/api/membership/reviews": { queue: [] },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo my approval" }));
+    const dialog = await screen.findByRole("dialog");
+    // No reason: the dialog stays open and nothing is sent.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo my approval" }));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "A reason is required to undo an approval." }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/undo"))).toBe(false);
+
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "  wrong report  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo my approval" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/undo"));
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 302, reason: "wrong report" });
     });
   });
 

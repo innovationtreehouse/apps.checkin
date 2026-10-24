@@ -19,10 +19,12 @@ export default function CreateToolPage() {
   const [createMessage, setCreateMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   const [tools, setTools] = useState<ToolListItem[]>([]);
 
-  const loadTools = useCallback(async () => {
-    const res = await fetch("/api/shop/tools");
-    if (res.ok) setTools(await res.json());
-  }, []);
+  const loadTools = useCallback(
+    () => fetch("/api/shop/tools").then(async (res) => {
+      if (res.ok) setTools(await res.json());
+    }),
+    [],
+  );
 
   useEffect(() => {
     loadTools();

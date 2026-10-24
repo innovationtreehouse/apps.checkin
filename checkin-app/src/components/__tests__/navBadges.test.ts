@@ -1,10 +1,12 @@
-import { navBadgeFor, tabBadgeFor, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
+import { FINANCE_NAV_LINKS, SHOPIFY_NAV_LINKS } from '@/lib/nav/sections/revenueOps';
 
 const base: TodoCounts = {
   member: { household: [], programs: [], programsAwaitingFinance: 0 },
   building: 0,
   buildingHousehold: 0,
+  buildingReachable: true,
   activePrograms: 0,
 };
 
@@ -14,7 +16,7 @@ const item = (id: number) => ({ key: `attendance-${id}`, label: `Confirm attenda
 const prog = (id: number, name: string, pending: ReturnType<typeof item>[] = []) =>
   ({ id, name, pending, totalEnrolled: 0, upcoming: [] });
 
-describe('staff My Programs nav gate', () => {
+describe('Programs I Lead nav gate', () => {
   it('hidden when there is no lead bucket', () => {
     expect(leadsAnyProgram(null)).toBe(false);
     expect(leadsAnyProgram(base)).toBe(false);
@@ -30,7 +32,7 @@ describe('staff My Programs nav gate', () => {
   });
 });
 
-describe('My Programs badge count', () => {
+describe('Programs I Lead badge count', () => {
   it('sums pending attendance across all led programs', () => {
     const counts: TodoCounts = {
       ...base,
@@ -43,24 +45,24 @@ describe('My Programs badge count', () => {
       },
     };
     expect(leadPendingCount(counts)).toBe(3);
-    const badges = navBadgeFor('/my-programs', counts);
+    const badges = navBadgeFor('/programs-i-lead', counts);
     expect(badges).toEqual([{ count: 3, color: 'treehouseGreen', label: '3 attendance items to confirm' }]);
   });
 
   it('renders no badge when nothing is pending (green is action-only)', () => {
     const counts: TodoCounts = { ...base, lead: { programs: [prog(1, 'A')] } };
-    expect(navBadgeFor('/my-programs', counts)).toEqual([]);
+    expect(navBadgeFor('/programs-i-lead', counts)).toEqual([]);
   });
 
   it('singularizes the label for a single pending item', () => {
     const counts: TodoCounts = { ...base, lead: { programs: [prog(1, 'A', [item(10)])] } };
-    expect(navBadgeFor('/my-programs', counts)[0].label).toBe('1 attendance item to confirm');
+    expect(navBadgeFor('/programs-i-lead', counts)[0].label).toBe('1 attendance item to confirm');
   });
 
   it('shows a red conflict badge left of the green pending badge', () => {
     const counts: TodoCounts = { ...base, lead: { programs: [prog(1, 'A', [item(10)])], conflicts: 2 } };
     expect(leadConflictCount(counts)).toBe(2);
-    expect(navBadgeFor('/my-programs', counts)).toEqual([
+    expect(navBadgeFor('/programs-i-lead', counts)).toEqual([
       { count: 2, color: 'red', label: '2 attendance conflicts to resolve' },
       { count: 1, color: 'treehouseGreen', label: '1 attendance item to confirm' },
     ]);
@@ -68,7 +70,7 @@ describe('My Programs badge count', () => {
 
   it('shows only the red badge when there are conflicts but nothing pending', () => {
     const counts: TodoCounts = { ...base, lead: { programs: [prog(1, 'A')], conflicts: 1 } };
-    expect(navBadgeFor('/my-programs', counts)).toEqual([
+    expect(navBadgeFor('/programs-i-lead', counts)).toEqual([
       { count: 1, color: 'red', label: '1 attendance conflict to resolve' },
     ]);
   });
@@ -297,6 +299,43 @@ describe('finance-ops nav ↔ tab agreement', () => {
   });
 });
 
+describe('sectionTabBadge — grouped tabs', () => {
+  it('the Shopify tab carries its Payment problems sub-tab pill', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, counts)).toEqual(tabBadgeFor('/finance-ops/payments', counts));
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/payments', counts)?.count).toBe(4);
+    expect(sectionTabBadge(SHOPIFY_NAV_LINKS, '/finance-ops/shopify-holds', counts)).toBeNull();
+  });
+
+  it('a grouped tab prefers a red sub-tab pill over a green one, and folds same-color pills', () => {
+    const counts = admin({ openPaymentExceptions: 4 });
+    const red = (n: number) => ({ count: n, color: 'red', label: `${n} red` });
+    const group = (reds: number[]) => [{
+      name: 'Group',
+      href: '/finance-ops/payments',
+      subLinks: [
+        { name: 'Payments', href: '/finance-ops/payments' },
+        ...reds.map((n, i) => ({ name: `Red ${i}`, href: `/red/${i}`, badge: () => red(n) })),
+      ],
+    }];
+    expect(sectionTabBadge(group([2]), '/finance-ops/payments', counts)).toEqual(red(2));
+    expect(sectionTabBadge(group([2, 3]), '/finance-ops/payments', counts)?.count).toBe(5);
+    expect(sectionTabBadge(group([]), '/finance-ops/payments', counts)?.color).toBe('treehouseGreen');
+  });
+
+  it("folds a grouped tab's own badge with its sub-tabs' pills", () => {
+    const gray = { count: 2, color: 'gray', label: '2 own' };
+    const tabs = [{ name: 'Group', href: '/g', badge: () => gray, subLinks: [{ name: 'Quiet', href: '/g/quiet' }] }];
+    expect(sectionTabBadge(tabs, '/g', admin())).toEqual(gray);
+  });
+
+  it('no Shopify tab pill when its sub-tabs have none', () => {
+    const shopify = FINANCE_NAV_LINKS.find((l) => l.subLinks)!;
+    expect(sectionTabBadge(FINANCE_NAV_LINKS, shopify.href, admin())).toBeNull();
+  });
+});
+
 // The /membership-audit section badge is a roll-up of its tabs; keep them in lockstep.
 // Red section total == broken tab; gray section total == emergency + unclaimed tabs.
 describe('system-status infra-health badge', () => {
@@ -340,5 +379,17 @@ describe('membership-audit nav ↔ tab agreement', () => {
 
     expect(navRed).toBe(broken);
     expect(navGray).toBe(emergency + unclaimed);
+  });
+});
+
+describe('Attendance occupancy badges', () => {
+  const occupied: TodoCounts = { ...base, building: 5, buildingHousehold: 2 };
+
+  it('shows occupancy while the kiosk is reachable', () => {
+    expect(navBadgeFor('/attendance', occupied).map(b => b.count)).toEqual([2, 5]);
+  });
+
+  it('shows nothing when the kiosk is unreachable — the count is unconfirmed', () => {
+    expect(navBadgeFor('/attendance', { ...occupied, buildingReachable: false })).toEqual([]);
   });
 });

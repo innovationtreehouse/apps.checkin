@@ -45,6 +45,21 @@ class TestHealthMonitorTick(unittest.TestCase):
         self.assertIsNone(mon.tick(diagnose_fn=diagnose_fn, in_closed_fn=lambda: True))
         self.assertEqual(called["n"], 0)
 
+    def test_silent_while_the_kiosk_is_quiet(self):
+        """A probe every 30 s would keep prod's curfew from firing."""
+        state = Mock()
+        mon = health.HealthMonitor("http://x", state)
+        diagnose_fn = Mock(return_value=health.OK)
+        self.assertIsNone(mon.tick(diagnose_fn=diagnose_fn, in_closed_fn=lambda: False, quiet_fn=lambda: True))
+        diagnose_fn.assert_not_called()
+        state.push_event.assert_not_called()
+
+    def test_probes_when_not_quiet(self):
+        mon = health.HealthMonitor("http://x", Mock(last_browser_seen=None))
+        diagnose_fn = Mock(return_value=health.OK)
+        mon.tick(diagnose_fn=diagnose_fn, in_closed_fn=lambda: False, quiet_fn=lambda: False)
+        diagnose_fn.assert_called_once()
+
     def test_does_not_wifi_bounce_on_L4(self):
         state = Mock()
         mon = health.HealthMonitor("http://x", state, allow_wifi_bounce=True)

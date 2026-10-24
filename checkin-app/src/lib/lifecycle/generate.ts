@@ -15,7 +15,7 @@ import { renderMachineArtifact } from './artifacts';
 import { MACHINES } from './machineSpecs';
 
 /** Repo-relative output dir, resolved from this file (src/lib/lifecycle/). */
-export const OUTPUT_DIR = join(__dirname, '..', '..', '..', 'docs', 'generated', 'lifecycle');
+export const OUTPUT_DIR = join(__dirname, '..', '..', '..', '..', 'docs', 'generated', 'lifecycle');
 
 function main(): void {
     mkdirSync(OUTPUT_DIR, { recursive: true });

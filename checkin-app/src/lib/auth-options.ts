@@ -11,8 +11,6 @@ import { config, ORG_DOMAIN } from "@/lib/config";
 import { evaluateMint, type MintMode } from "@/lib/impersonation";
 import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
-import { isCatalogViewerClient } from "@/lib/catalogNav";
-import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
@@ -22,6 +20,9 @@ import { nameWrite } from "@/lib/person/name";
 
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
+
+// /signin?error= code for a first Google sign-in refused over an unverified email.
+export const UNVERIFIED_EMAIL_SIGNIN_ERROR = "EmailNotVerified";
 
 // ── NextAuth adapter: the Int ↔ string id boundary, in ONE place ─────────────
 //
@@ -158,31 +159,34 @@ const patchedAdapter = {
     },
 };
 
-// Bootstrap isSysadmin emails — comma-separated list from env.
-// Any account matching these emails will be auto-promoted to isSysadmin on login.
+// Bootstrap isSysadmin emails — comma-separated list from env. A listed account is
+// promoted to isSysadmin on sign-in only while the system has no sysadmin at all.
 const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
 /**
- * Stamp the catalog-viewer volunteer leg (#1286) onto an already-claimed token.
- * Designations are keyed by email (no Person FK), so this can't ride the person
- * load. Matching canonicalizes both sides (Gmail dot/plus-insensitive), the same
- * rule as the dues path and the server gate. The lookup runs only when the leg
- * decides admission: a DENIED token or one another leg already admits skips it.
+ * First-run bootstrap is open only while no sysadmin exists, and never for a person whose
+ * isSysadmin was revoked before (setRoleFlag audits every revocation), so a revoke sticks.
  */
-async function stampVolunteerDesignation(token: JWT, email: string | null | undefined): Promise<void> {
-    token.hasVolunteerDesignation = false;
-    if (!email || token.denied || isCatalogViewerClient(token)) return;
-    const key = canonicalizeEmail(email);
-    // ponytail: full scan of a small board-maintained table so legacy non-canonical
-    // rows still match; switch to findUnique on the key once every row is canonical.
-    const designations = await withAuroraResumeRetry(() =>
-        prisma.volunteerDesignation.findMany({ select: { email: true } }),
-    );
-    token.hasVolunteerDesignation = designations.some((d) => canonicalizeEmail(d.email) === key);
+async function isBootstrapOpen(personId: number): Promise<boolean> {
+    const [sysadmins, revocations] = await Promise.all([
+        prisma.personRole.count({ where: { role: "SYSADMIN" } }),
+        prisma.auditLog.count({
+            where: {
+                tableName: "PersonRole",
+                affectedEntityId: personId,
+                newData: { path: ["isSysadmin"], equals: false },
+            },
+        }),
+    ]);
+    return sysadmins === 0 && revocations === 0;
 }
+
+/** Absolute session lifetime from sign-in; the 15-minute refresh never extends past it. */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+export const SESSION_EXPIRED = "Session expired";
 
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
@@ -262,6 +266,8 @@ export const authOptions: NextAuthOptions = {
                             : null,
                     });
                     if (!decision.allowed) return null;
+                    // The minted session inherits the caller's sign-in time (see the jwt callback).
+                    const signedInAt = callerToken?.signedInAt ?? null;
 
                     // Logged-out preview: mint a synthetic guest session with NO participant. authz
                     // sees a logged-out visitor (no id/roles via the jwt callback's email guard); the
@@ -277,6 +283,7 @@ export const authOptions: NextAuthOptions = {
                             email: null,
                             name: "Logged out",
                             impersonatedBy: decision.impersonatedBy,
+                            signedInAt,
                         };
                     }
 
@@ -313,6 +320,7 @@ export const authOptions: NextAuthOptions = {
                         email: dbParticipant.email,
                         name: dbParticipant.name,
                         impersonatedBy: decision.impersonatedBy,
+                        signedInAt,
                     };
                 }
             })
@@ -328,11 +336,42 @@ export const authOptions: NextAuthOptions = {
         // Bound token lifetime so a stale or forgotten session cannot live for the
         // 30-day NextAuth default. The jwt callback below also re-syncs role flags
         // from the DB on every request so revocations take effect promptly.
-        maxAge: 60 * 60 * 8,   // 8 hours
+        maxAge: SESSION_MAX_AGE_SECONDS,
         updateAge: 60 * 15,    // 15 minutes
     },
     callbacks: {
+        // Runs before NextAuth links a Google account to the Person holding its email
+        // (allowDangerousEmailAccountLinking), so a new link requires Google to have
+        // verified that email. An account already linked keeps signing in as before.
+        async signIn({ account, profile }) {
+            if (account?.provider !== "google") return true;
+            const linked = await prisma.account.findUnique({
+                where: {
+                    provider_providerAccountId: {
+                        provider: account.provider,
+                        providerAccountId: account.providerAccountId,
+                    },
+                },
+                select: { id: true },
+            });
+            if (linked) return true;
+            if ((profile as { email_verified?: boolean } | undefined)?.email_verified === true) return true;
+            return `/signin?error=${UNVERIFIED_EMAIL_SIGNIN_ERROR}`;
+        },
         async jwt({ token, user, account, profile }) {
+            const now = Math.floor(Date.now() / 1000);
+            if (user) {
+                // A persona mint carries the caller's clock, so minting never extends a session.
+                token.signedInAt = user.signedInAt ?? now;
+            } else {
+                // A token from before this claim existed starts its clock now.
+                token.signedInAt ??= now;
+                if (now - token.signedInAt >= SESSION_MAX_AGE_SECONDS) {
+                    // NextAuth's session route catches a jwt-callback error and clears the session
+                    // cookie, so the person is signed out cleanly and lands on /signin.
+                    throw new Error(SESSION_EXPIRED);
+                }
+            }
             // Capture Google's hosted-domain + email_verified claims on sign-in so the dev-instance
             // middleware can gate on verified org membership (docs/ops/dev-instance.md,
             // "Running the cloud dev instance").
@@ -372,6 +411,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -382,12 +423,14 @@ export const authOptions: NextAuthOptions = {
                     if (
                         !dbParticipant.isSysadmin &&
                         dbParticipant.email &&
-                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase())
+                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase()) &&
+                        (await isBootstrapOpen(dbParticipant.id))
                     ) {
                         // System bypass: bootstrap self-promotion off an env-configured
                         // allowlist, not a user-initiated authority-matrix request — there is
                         // no actor to check against, only a trusted source deciding its own grant.
-                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, "system");
+                        // setRoleFlag writes the grant's AuditLog row under this system actor.
+                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, { system: "system:bootstrap-sysadmin" });
                         dbParticipant.isSysadmin = true;
                         // Claims derive from `roles`, not the mirror column — push the grant
                         // into the in-memory list so this same-request sign-in gets it too.
@@ -397,7 +440,6 @@ export const authOptions: NextAuthOptions = {
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
                     assignParticipantClaims(token, dbParticipant);
-                    await stampVolunteerDesignation(token, dbParticipant.email);
                 }
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
@@ -421,6 +463,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -434,11 +478,16 @@ export const authOptions: NextAuthOptions = {
                     return {} as JWT;
                 }
 
+                // A changed email unlinks the person's sign-ins, so a session minted under
+                // the old address ends too.
+                if (normalizeEmail(dbParticipant.email ?? "") !== normalizeEmail(token.email ?? "")) {
+                    return {} as JWT;
+                }
+
                 // Re-stamp claims on every request so a board "Deny Membership" takes effect
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
                 assignParticipantClaims(token, dbParticipant);
-                await stampVolunteerDesignation(token, dbParticipant.email);
             }
             return token;
         },
@@ -461,8 +510,10 @@ export const authOptions: NextAuthOptions = {
                 session.user.emailVerified = token.emailVerified ?? false;
                 // ops-stg access gate escape hatch — see lib/config.ts isStagingAccessAllowed.
                 session.user.canAccessStaging = token.canAccessStaging ?? false;
-                // Catalog-viewer volunteer leg (#1286) — completes the client gate.
-                session.user.hasVolunteerDesignation = token.hasVolunteerDesignation ?? false;
+                // Treehouse Volunteer inputs (lib/volunteer.ts).
+                session.user.isProgramVolunteer = token.isProgramVolunteer ?? false;
+                session.user.isVolunteerFamily = token.isVolunteerFamily ?? false;
+                session.user.isActiveOrgMember = token.isActiveOrgMember ?? false;
             }
             return session;
         }

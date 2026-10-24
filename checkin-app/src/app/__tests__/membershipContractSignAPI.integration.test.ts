@@ -26,10 +26,13 @@ jest.mock('@/lib/membership/contract/zohoClient', () => ({
     submitRequest: jest.fn().mockResolvedValue(undefined),
     getEmbeddedSignUrl: jest.fn().mockResolvedValue('https://sign.zoho.com/embed/xyz'),
     getRequestStatus: jest.fn().mockResolvedValue('in_progress'),
+    recallRequest: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Imported AFTER the mocks so the route picks up the mocked client.
 import { POST as SIGN } from '@/app/api/membership/contract/sign/route';
+import { POST as BOARD_EXTERNAL } from '@/app/api/membership-ops/applications/external/route';
+import { GET as HOUSEHOLD_GET } from '@/app/api/membership-ops/households/route';
 // loadAgreementPdf is the jest.fn from the mock above; AgreementUnavailableError is
 // the real class (requireActual spread) so `instanceof` in external.ts matches.
 import { loadAgreementPdf, AgreementUnavailableError } from '@/lib/membership/contract/agreementDocument';
@@ -131,22 +134,25 @@ describe('POST /api/membership/contract/sign', () => {
         expect(zoho.createRequest).toHaveBeenCalledTimes(1);
     });
 
-    it('survives two concurrent clicks: stores one request and embeds the same id for both', async () => {
+    it('survives two concurrent clicks: creates ONE Zoho request (claim first) and embeds only that id', async () => {
         // Distinct ids per create so a double-create would be detectable.
         let n = 0;
         (zoho.createRequest as jest.Mock).mockImplementation(async () => {
             n += 1;
             return { requestId: `REQ-C${n}`, actionId: `ACT-C${n}`, documentId: `DOC-C${n}` };
         });
-        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: null, zohoActionId: null } });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null } });
         asUser(leadId);
 
         const [r1, r2] = await Promise.all([SIGN(signReq()), SIGN(signReq())]);
-        expect(r1.status).toBe(200);
-        expect(r2.status).toBe(200);
+        // The claim's loser either reuses the stored request or is told to wait.
+        const statuses = [r1.status, r2.status].sort();
+        expect(statuses[0]).toBe(200);
+        expect([200, 409]).toContain(statuses[1]);
+        // Zoho bills per request: the claim lets only one click create.
+        expect(zoho.createRequest).toHaveBeenCalledTimes(1);
 
-        // Exactly one canonical request persisted, and every embed URL was minted
-        // against THAT id — no split brain even if both calls created at Zoho.
+        // Every embed URL was minted against the one stored request.
         const p = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(p?.zohoEnvelopeId).toBeTruthy();
         expect(p?.zohoActionId).toBeTruthy();
@@ -164,7 +170,7 @@ describe('POST /api/membership/contract/sign', () => {
         // setZohoEnvelope stores zohoEnvelopeId WITHOUT an action id — that pair
         // can't be embedded, so the in-app flow must re-create and overwrite it
         // rather than 409 forever on the incomplete pair.
-        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: 'LEGACY-ENV', zohoActionId: null } });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: 'LEGACY-ENV', zohoActionId: null, zohoSignerPersonId: null } });
         asUser(leadId);
         const res = await SIGN(signReq());
         expect(res.status).toBe(200);
@@ -255,5 +261,93 @@ describe('POST /api/membership/contract/sign', () => {
         expect(res.status).toBe(503);
         process.env.ZOHO_CLIENT_ID = 'cid';
         process.env.CHECKIN_ENV = prevEnv;
+    });
+
+    // Zoho is pay-as-you-go: a second lead never gets a request while the first
+    // lead's is open; only a board reset frees it, and the new request is theirs.
+    it('a second lead is refused while the first lead\'s request is open, until the board resets signing', async () => {
+        const hh = await prisma.household.create({ data: { name: `HH two-lead ${TAG}` } });
+        const leadA = await prisma.person.create({ data: { email: `lead-a-${TAG}@example.com`, name: 'Alex Lead', householdId: hh.id, isHouseholdLead: true } });
+        const leadB = await prisma.person.create({ data: { email: `lead-b-${TAG}@example.com`, name: 'Blair Lead', householdId: hh.id, isHouseholdLead: true } });
+        const boardHh = await prisma.household.create({ data: { name: `HH board ${TAG}` } });
+        const board = await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board Person', isBoardMember: true, householdId: boardHh.id } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+        const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION' } });
+        (zoho.createRequest as jest.Mock)
+            .mockResolvedValueOnce({ requestId: 'REQ-A', actionId: 'ACT-A', documentId: 'DOC-A' })
+            .mockResolvedValueOnce({ requestId: 'REQ-B', actionId: 'ACT-B', documentId: 'DOC-B' });
+
+        asUser(leadA.id);
+        expect((await SIGN(signReq())).status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.zohoSignerPersonId).toBe(leadA.id);
+
+        asUser(leadB.id);
+        const refused = await SIGN(signReq());
+        expect(refused.status).toBe(409);
+        expect(await refused.json()).toMatchObject({
+            code: 'signing_in_progress',
+            error: 'Alex Lead started signing. Ask Alex Lead to finish, or ask the board to reset the signing so you can sign.',
+        });
+        expect(zoho.createRequest).toHaveBeenCalledTimes(1);
+
+        // The board's household detail shows who the open request is addressed to.
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: board.id, isSysadmin: false, isBoardMember: true } });
+        const householdReq = new Request(`http://localhost:4000/api/membership-ops/households?id=${hh.id}`) as unknown as Parameters<typeof HOUSEHOLD_GET>[0];
+        expect((await (await HOUSEHOLD_GET(householdReq)).json()).signing).toMatchObject({
+            processId: proc.id, contractStarted: true, signerName: 'Alex Lead', contractSignedAt: null,
+        });
+        const boardReq = (body: object) => new Request('http://localhost:4000/api/membership-ops/applications/external', {
+            method: 'POST', body: JSON.stringify(body),
+        }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0];
+        expect((await BOARD_EXTERNAL(boardReq({ processId: proc.id, action: 'reset-signing' }))).status).toBe(400); // reason required
+        expect((await BOARD_EXTERNAL(boardReq({ processId: proc.id, action: 'reset-signing', reason: 'Alex is away' }))).status).toBe(200);
+        expect(zoho.recallRequest).toHaveBeenCalledWith('tok', 'REQ-A');
+        const reset = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
+        expect(reset).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+
+        asUser(leadB.id);
+        expect((await SIGN(signReq())).status).toBe(200);
+        expect(zoho.createRequest).toHaveBeenCalledTimes(2);
+        expect((zoho.submitRequest as jest.Mock).mock.calls.at(-1)[0].prefill).toEqual({ PrintedName: 'Blair Lead' });
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } })).toMatchObject({ zohoEnvelopeId: 'REQ-B', zohoSignerPersonId: leadB.id });
+        await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.id } });
+    });
+
+    // A lead opened the request but the board records the contract by hand: the
+    // record must not say that lead signed.
+    it('a board mark-contract clears the signer, so the household shows "Signed" with no name', async () => {
+        const hh = await prisma.household.create({ data: { name: `HH board-mark ${TAG}` } });
+        const lead = await prisma.person.create({ data: { email: `lead-mark-${TAG}@example.com`, name: 'Never Signed', householdId: hh.id, isHouseholdLead: true } });
+        const boardHh = await prisma.household.create({ data: { name: `HH board-mark board ${TAG}` } });
+        const board = await prisma.person.create({ data: { email: `board-mark-${TAG}@example.com`, name: 'Board Marker', isBoardMember: true, householdId: boardHh.id } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+        const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: 'REQ-M', zohoActionId: 'ACT-M', zohoSignerPersonId: lead.id } });
+
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: board.id, isSysadmin: false, isBoardMember: true } });
+        const res = await BOARD_EXTERNAL(new Request('http://localhost:4000/api/membership-ops/applications/external', {
+            method: 'POST', body: JSON.stringify({ processId: proc.id, action: 'mark-contract' }),
+        }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0]);
+        expect(res.status).toBe(200);
+
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
+        expect(after?.contractSignedAt).not.toBeNull();
+        expect(after?.zohoSignerPersonId).toBeNull();
+        const householdReq = new Request(`http://localhost:4000/api/membership-ops/households?id=${hh.id}`) as unknown as Parameters<typeof HOUSEHOLD_GET>[0];
+        expect((await (await HOUSEHOLD_GET(householdReq)).json()).signing).toMatchObject({ processId: proc.id, signerName: null });
+        await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.id } });
+    });
+
+    it('the board cannot reset signing on its own household', async () => {
+        const hh = await prisma.household.create({ data: { name: `HH own ${TAG}` } });
+        const lead = await prisma.person.create({ data: { email: `lead-own-${TAG}@example.com`, name: 'Own Lead', householdId: hh.id, isHouseholdLead: true, isBoardMember: true } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+        const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: 'REQ-OWN', zohoActionId: 'ACT-OWN' } });
+
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: lead.id, isSysadmin: false, isBoardMember: true } });
+        const res = await BOARD_EXTERNAL(new Request('http://localhost:4000/api/membership-ops/applications/external', {
+            method: 'POST', body: JSON.stringify({ processId: proc.id, action: 'reset-signing', reason: 'mine' }),
+        }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0]);
+        expect(res.status).toBe(403);
+        expect(zoho.recallRequest).not.toHaveBeenCalled();
     });
 });

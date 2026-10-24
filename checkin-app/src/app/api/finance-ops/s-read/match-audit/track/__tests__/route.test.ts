@@ -3,13 +3,14 @@
  */
 /**
  * Unit tests for POST /api/finance-ops/s-read/match-audit/track — the deny paths
- * (401 anon / 403 non-board through the REAL withAuth, asserting no exception is
+ * (401 anon / 403 non-board through the REAL handler(), asserting no exception is
  * ever raised) and the per-kind re-validation: each kind re-derives its gap
  * condition from raw Prisma columns / mirror presence, so a stale panel (a row
  * already resolved since the audit ran) is rejected with 409, not tracked. The
  * dedup behavior of raisePaymentException itself is reconcile.ts's tested
  * concern — here we only assert the route forwards to it (or doesn't).
  */
+import type { NextRequest } from 'next/server';
 import { POST } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -17,6 +18,7 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 const prismaMock = {
     orgMembershipProcess: { findFirst: jest.fn(), findUnique: jest.fn() },
     programParticipant: { findFirst: jest.fn(), findUnique: jest.fn() },
+    auditLog: { create: jest.fn() },
 };
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -29,6 +31,7 @@ jest.mock('@/lib/prisma', () => ({
             findFirst: (...a: unknown[]) => prismaMock.programParticipant.findFirst(...a),
             findUnique: (...a: unknown[]) => prismaMock.programParticipant.findUnique(...a),
         },
+        auditLog: { create: (...a: unknown[]) => prismaMock.auditLog.create(...a) },
     },
 }));
 
@@ -47,8 +50,8 @@ jest.mock('@/lib/shopifyRead/client', () => ({
 // raisePaymentException — the write path this route must never hit on a deny
 // or stale-row rejection.
 const raisePaymentExceptionMock = jest.fn();
-jest.mock('@/lib/finance/reconcile', () => ({
-    ...jest.requireActual('@/lib/finance/reconcile'),
+jest.mock('@/lib/finance/reconcile/exceptions', () => ({
+    ...jest.requireActual('@/lib/finance/reconcile/exceptions'),
     raisePaymentException: (...a: unknown[]) => raisePaymentExceptionMock(...a),
 }));
 
@@ -59,7 +62,7 @@ const req = (body: unknown) =>
     new Request('http://localhost/api/finance-ops/s-read/match-audit/track', {
         method: 'POST',
         body: JSON.stringify(body),
-    });
+    }) as unknown as NextRequest;
 
 const asBoard = () => mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
 
@@ -90,8 +93,15 @@ it('401 when unauthenticated, without raising anything', async () => {
     expect(prismaMock.orgMembershipProcess.findFirst).not.toHaveBeenCalled();
 });
 
-it('403 for a signed-in member without board or sysadmin role, without raising anything', async () => {
+it('403 for a signed-in member without the board role, without raising anything', async () => {
     mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: false, isBoardMember: false } });
+    const res = await POST(req({ kind: 'order', shopifyOrderId: '900' }));
+    expect(res.status).toBe(403);
+    expect(raisePaymentExceptionMock).not.toHaveBeenCalled();
+});
+
+it('403 for a sysadmin who is not on the board, without raising anything', async () => {
+    mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: true, isBoardMember: false } });
     const res = await POST(req({ kind: 'order', shopifyOrderId: '900' }));
     expect(res.status).toBe(403);
     expect(raisePaymentExceptionMock).not.toHaveBeenCalled();
@@ -130,6 +140,14 @@ describe('kind: order', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ tracked: true });
         expect(raisePaymentExceptionMock).toHaveBeenCalledWith('UNMATCHED_ORDER', { shopifyOrderId: '900' });
+        expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                actorId: 5,
+                actorSystem: null,
+                tableName: 'MATCH_AUDIT_TRACK',
+                newData: { kind: 'order', shopifyOrderId: '900' },
+            }),
+        });
     });
 
     it('409 when the order is no longer paid (refunded since the audit) — not raised', async () => {
@@ -137,6 +155,7 @@ describe('kind: order', () => {
         const res = await POST(req({ kind: 'order', shopifyOrderId: '901' }));
         expect(res.status).toBe(409);
         expect(raisePaymentExceptionMock).not.toHaveBeenCalled();
+        expect(prismaMock.auditLog.create).not.toHaveBeenCalled();
     });
 
     it('409 when a membership process has since claimed the order — not raised', async () => {

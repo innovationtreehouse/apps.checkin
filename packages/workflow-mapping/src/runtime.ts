@@ -1,3 +1,4 @@
+import { callerId, defineRuntime } from "@checkin/component-kit";
 import {
   inertCatalogEventSource,
   inertCatalogReader,
@@ -25,27 +26,13 @@ export interface WorkflowPorts {
   catalogEventSource: CatalogEventSource;
 }
 
-// ponytail: one runtime per process, on globalThis so HMR and split chunks share it.
-const globalForRuntime = globalThis as typeof globalThis & { __wmRuntime?: WorkflowRuntimeConfig };
+export const workflowRuntime = defineRuntime<WorkflowRuntimeConfig, WorkflowPrincipal>("workflow-mapping");
+const requireRuntime = workflowRuntime.require;
 
-export function configureWorkflowMapping(config: WorkflowRuntimeConfig): void {
-  globalForRuntime.__wmRuntime = config;
-}
+export const configureWorkflowMapping = workflowRuntime.configure;
 
-function requireRuntime(): WorkflowRuntimeConfig {
-  const runtime = globalForRuntime.__wmRuntime;
-  if (!runtime) {
-    throw new Error("workflow-mapping runtime not configured — the host must call configureWorkflowMapping()");
-  }
-  return runtime;
-}
-
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
-}
-
-export function httpError(status: number, message: string): Error {
-  return requireRuntime().httpError(status, message);
 }
 
 export function ports(): WorkflowPorts {
@@ -60,12 +47,7 @@ export function ports(): WorkflowPorts {
   };
 }
 
-/** The acting Person.id. Throws on anything but an integer. */
-export function callerId(principal: { id: unknown }): number {
-  const { id } = principal;
-  if (typeof id !== "number" || !Number.isInteger(id)) throw new Error("principal has no integer id");
-  return id;
-}
+export { callerId };
 
 export interface Actor {
   id: number;
@@ -74,7 +56,6 @@ export interface Actor {
 
 /** The authenticated actor, or a 401 when there is none or it has no integer id. */
 export async function requireActor(): Promise<Actor> {
-  const principal: WorkflowPrincipal | null = await requireRuntime().auth.getPrincipal();
-  if (!principal || !Number.isInteger(principal.id)) throw httpError(401, "Unauthorized");
-  return { id: callerId(principal), name: principal.name };
+  const { id, name } = await workflowRuntime.getPrincipal();
+  return { id, name };
 }

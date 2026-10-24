@@ -13,7 +13,7 @@
 import { setup, createActor } from "xstate";
 import type { MergeConflictStatus } from "../lib/db/schema";
 import type { MergeConflictEvent, MergeConflictEventType } from "./merge-conflict.events";
-import { WorkflowTransitionError } from '@inventory/workflows';
+import { WorkflowTransitionError } from '@checkin/workflows';
 
 export const mergeConflictMachine = setup({
   types: {

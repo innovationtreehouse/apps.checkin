@@ -19,7 +19,9 @@ import {
 } from "@/lib/programs/enrollmentState";
 import { validate as validateMembership } from "@/lib/membership/lifecycle";
 import { systemActor } from "@/lib/auditActor";
-import { adjustProgramInventory, reportShopifyFailure } from "@/lib/shopify";
+import { reportShopifyFailure } from "@/lib/shopify/client";
+import { changeProgramStockWith } from "@/lib/shopify/stock";
+import { isSaleEnded } from "@/lib/programs/saleState";
 
 export type LifecycleModel = "ProgramParticipant" | "OrgMembershipProcess";
 
@@ -113,7 +115,7 @@ export type ReconcileSummary = {
  * Auto-heal the enrollment I1 rows (`status=ACTIVE` with `inventoryHeldAt` set):
  * a `-1` the webhook took but never released. Per row, a guarded `updateMany`
  * clears the stranded hold (CAS — a concurrent release wins and this no-ops),
- * then `adjustProgramInventory(program, +1)` fires the missed release. §9 of the
+ * and the missed +1 release commit together (changeProgramStockWith). §9 of the
  * enrollment doc. Audit-logs each heal (actorId 0 = system). Returns the number
  * healed. Per-row isolated; the Shopify leg is non-fatal.
  */
@@ -125,7 +127,7 @@ async function healEnrollmentI1(): Promise<number> {
             programId: true,
             personId: true,
             inventoryHeldAt: true,
-            program: { select: { shopifyVariantId: true } },
+            program: { select: { shopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true } },
         },
     });
 
@@ -134,20 +136,25 @@ async function healEnrollmentI1(): Promise<number> {
         try {
             // Guarded CAS: only the caller that flips held→null gets count 1 and
             // owns the compensating +1; a racing release/withdrawal takes count 0.
-            const { count } = await prisma.programParticipant.updateMany({
-                where: {
-                    programId: row.programId,
-                    personId: row.personId,
-                    status: "ACTIVE",
-                    inventoryHeldAt: { not: null },
+            // The clear and its +1 commit together. Once the sale has ended the seat is not resold: no +1.
+            const saleEnded = isSaleEnded(row.program);
+            const { result: cleared, landed: shopifyOk } = await changeProgramStockWith(
+                { id: row.programId, shopifyVariantId: row.program.shopifyVariantId },
+                "reconcile-heal",
+                async (tx) => {
+                    const { count } = await tx.programParticipant.updateMany({
+                        where: {
+                            programId: row.programId,
+                            personId: row.personId,
+                            status: "ACTIVE",
+                            inventoryHeldAt: { not: null },
+                        },
+                        data: { inventoryHeldAt: null },
+                    });
+                    return { result: count === 1, delta: count === 1 && !saleEnded ? 1 : 0 };
                 },
-                data: { inventoryHeldAt: null },
-            });
-            if (count !== 1) continue; // already cleared under us — not ours to release.
-
-            // Fire the release the webhook missed. Non-fatal: adjustProgramInventory
-            // logs + emails on failure and returns false; the hold is already cleared.
-            const shopifyOk = await adjustProgramInventory(row.program, 1);
+            );
+            if (!cleared) continue; // already cleared under us — not ours to release.
             if (!shopifyOk) {
                 logger.error(
                     `[lifecycle-reconcile] I1 heal cleared hold for program ${row.programId} / person ${row.personId} but the +1 release failed (see Shopify error alert).`,
@@ -166,7 +173,7 @@ async function healEnrollmentI1(): Promise<number> {
                         inventoryHeldAt: row.inventoryHeldAt?.toISOString() ?? null,
                         reason: "lifecycle-reconcile: enrollment I1 (stranded hold on ACTIVE)",
                     },
-                    newData: { inventoryHeldAt: null, shopifyReleaseOk: shopifyOk },
+                    newData: { inventoryHeldAt: null, shopifyReleaseOk: shopifyOk, releaseSkippedSaleEnded: saleEnded },
                 },
             });
             healed++;
@@ -198,7 +205,7 @@ async function reportViolation(v: LifecycleViolation): Promise<void> {
 /**
  * The reconciler sweep: heal the one safe,
  * unambiguous case (enrollment I1), report every remaining violation, return a
- * summary. Complementary to the order-driven `lib/finance/reconcile.ts` — this
+ * summary. Complementary to the order-driven `lib/finance/reconcile/` — this
  * one is invariant-driven.
  */
 export async function runLifecycleReconcile(): Promise<ReconcileSummary> {

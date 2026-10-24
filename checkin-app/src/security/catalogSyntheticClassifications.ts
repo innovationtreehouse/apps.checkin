@@ -1,5 +1,5 @@
 /**
- * Non-Prisma response models the catalog ships through handler() (#1286 §7).
+ * Non-Prisma response models the catalog ships through handler().
  *
  * A count endpoint (GET /api/catalog/items/count) returns a scalar total that no
  * Prisma model carries, and handler()'s stripper drops any bag key that isn't a

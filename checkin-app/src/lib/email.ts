@@ -8,6 +8,22 @@ const resend = config.resendApiKey()
     ? new Resend(config.resendApiKey()!)
     : null;
 
+/**
+ * Recipient as stored in IntegrationErrorLog: first character and domain only
+ * (`j***@example.org`). Enough to spot a bad domain on System Status without
+ * keeping the address itself.
+ */
+export function maskRecipient(to: string): string {
+    return to
+        .split(',')
+        .map((addr) => addr.trim())
+        .map((addr) => {
+            const at = addr.lastIndexOf('@');
+            return at > 0 ? `${addr[0]}***${addr.slice(at)}` : '***';
+        })
+        .join(', ');
+}
+
 /** Stand-in shown on /dev/sent-mail when no sender is configured. */
 const UNCONFIGURED_FROM = '(no From configured)';
 
@@ -37,7 +53,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
             await logIntegrationError(
                 'email',
                 'No From address configured — set EMAIL_FROM or the From address in Settings → Email.',
-                { to, subject },
+                { to: maskRecipient(to), subject },
             );
         }
         return false;
@@ -56,7 +72,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
             console.error(`[Email Error] Failed to send to ${to}:`, error);
             // System Status > Link Status tab (see logIntegrationError). Deliberately no
             // `html` in context — log-hygiene contract asserted in email.test.ts.
-            await logIntegrationError('email', error.message, { to, subject });
+            await logIntegrationError('email', error.message, { to: maskRecipient(to), subject });
             return false;
         }
 
@@ -64,7 +80,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
         return true;
     } catch (err) {
         console.error(`[Email Exception] Failed to send to ${to}:`, err);
-        await logIntegrationError('email', err, { to, subject });
+        await logIntegrationError('email', err, { to: maskRecipient(to), subject });
         return false;
     }
 }

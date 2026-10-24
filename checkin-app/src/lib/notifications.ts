@@ -97,10 +97,10 @@ export async function sendNotification(userId: number, eventType: NotificationEv
  * has fired. Best-effort: fire-and-forget from the helper.
  */
 export async function notifyNewProgramAnnounced(
-    program: { name: string; endAt: Date },
+    program: { name: string; endAt: Date; appliesToYear: number | null },
 ): Promise<void> {
     try {
-        const coverageDate = programCoverageDate(program);
+        const coverageDate = await programCoverageDate(program);
 
         // Narrow to LIVE persons with an address in an ACTIVE-membership household
         // (canonical ACTIVE_ORG_MEMBER_PERSON_WHERE). Class-1 person.findMany with
@@ -141,7 +141,7 @@ export async function notifyNewProgramAnnounced(
  * - emailCheckinReceipts: send to the participant themselves
  * - emailDependentCheckins: send to household leads when a dependent checks in/out
  */
-export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null) {
+export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null, at: Date = new Date()) {
     try {
         const participant = await prisma.person.findUnique({
             where: { id: participantId },
@@ -156,17 +156,16 @@ export async function sendCheckinNotifications(participantId: number, type: 'che
 
         if (!participant) return;
 
-        const now = new Date();
         // Server-side render: the client TimezoneProvider never runs here, so the
         // configured zone is passed per call.
         const timeZone = await resolveDisplayTimezone();
-        const timeStr = formatTime(now, {
+        const timeStr = formatTime(at, {
             timeZone,
             hour: 'numeric',
             minute: '2-digit',
             hour12: true
         });
-        const dateStr = formatDate(now, {
+        const dateStr = formatDate(at, {
             timeZone,
             weekday: 'long',
             month: 'long',

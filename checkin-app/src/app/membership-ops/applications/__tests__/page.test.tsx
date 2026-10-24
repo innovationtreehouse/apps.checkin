@@ -18,7 +18,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { MantineProvider } from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
-import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import AdminMembershipPage from "../page";
 
@@ -32,7 +32,7 @@ const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPag
 // reconciling, losing the page's already-fetched rows state.
 const rewrapped = () => (
     <MantineProvider>
-        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false }}>
+        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false }}>
             <ModalsProvider>
                 <AdminMembershipPage />
             </ModalsProvider>
@@ -63,7 +63,7 @@ const archivedRows = [
         bgClearedAt: null,
         paidAt: null,
         attestations: [],
-        orgMembership: { householdId: 4, isVolunteer: false, household: household("Archived Family", 4) },
+        orgMembership: { householdId: 4, isVolunteerFamily: false, household: household("Archived Family", 4) },
     },
 ];
 
@@ -79,7 +79,7 @@ const rows = [
         bgClearedAt: null,
         paidAt: null,
         attestations: [],
-        orgMembership: { householdId: 1, isVolunteer: false, household: household("Awaiting Family", 1) },
+        orgMembership: { householdId: 1, isVolunteerFamily: false, household: household("Awaiting Family", 1) },
     },
     {
         id: 2,
@@ -91,8 +91,8 @@ const rows = [
         bgConsentAt: "2026-01-02T00:00:00.000Z",
         bgClearedAt: null,
         paidAt: null,
-        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteer: false }],
-        orgMembership: { householdId: 2, isVolunteer: true, household: household("Payment Family", 2) },
+        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteerFamily: false }],
+        orgMembership: { householdId: 2, isVolunteerFamily: true, household: household("Payment Family", 2) },
     },
     {
         id: 3,
@@ -105,7 +105,7 @@ const rows = [
         bgClearedAt: null,
         paidAt: "2026-01-03T00:00:00.000Z",
         attestations: [],
-        orgMembership: { householdId: 3, isVolunteer: false, household: household("Blocked Family", 3) },
+        orgMembership: { householdId: 3, isVolunteerFamily: false, household: household("Blocked Family", 3) },
     },
 ];
 
@@ -127,7 +127,27 @@ describe("AdminMembershipPage", () => {
         expect(await screen.findByText("No in-flight membership applications.")).toBeInTheDocument();
     });
 
+    it("offers certify-payment only to the board, not a sysadmin", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Payment Family");
+        expect(screen.queryByRole("button", { name: /Certify payment plan/ })).not.toBeInTheDocument();
+    });
+
+    it("offers no review reset or override to a sysadmin off the board", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.queryByRole("button", { name: "Discard approvals — start the review over" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Override →/ })).not.toBeInTheDocument();
+        expect(screen.getByText("A board member can reset or override this review.")).toBeInTheDocument();
+    });
+
     it("drives the external-action, certify, and override controls", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
             "/api/membership-ops/applications/external": { ok: true },
@@ -164,6 +184,7 @@ describe("AdminMembershipPage", () => {
     });
 
     it("clears a still-open review's approvals, behind a confirmation", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
             "/api/membership-ops/applications/review-override": { ok: true },
@@ -224,11 +245,11 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(replace).toHaveBeenCalledWith("/membership-ops/applications", { scroll: false }));
     });
 
-    it("shows archived applications behind the Show-archived toggle, with Unarchive as the only action", async () => {
+    it("shows closed applications behind the toggle, with Reopen as the only action", async () => {
         mockFetchJson({
             // More specific keys first: mockFetchJson matches by substring, and
-            // "/applications" is a substring of both the archived query and the
-            // unarchive action URL.
+            // "/applications" is a substring of both the closed-list query and the
+            // reopen action URL.
             "/api/membership-ops/applications/unarchive": { outcome: { status: "PENDING_PAYMENT" } },
             "/api/membership-ops/applications?archived=1": { processes: archivedRows },
             "/api/membership-ops/applications": { processes: rows },
@@ -236,16 +257,48 @@ describe("AdminMembershipPage", () => {
         renderPage();
         await screen.findByText("Awaiting Family");
 
-        fireEvent.click(screen.getByLabelText("Show archived"));
+        fireEvent.click(screen.getByLabelText("Show closed applications"));
         expect(await screen.findByText("Archived Family")).toBeInTheDocument();
         expect(screen.queryByText("Awaiting Family")).not.toBeInTheDocument();
 
-        // Status-filter badges don't apply to the archived view, and Unarchive
-        // is the only action offered — no Archive/certify/override controls.
+        // Status-filter badges don't apply to the closed view, and Reopen is the
+        // only action offered — no close/certify/override/refund controls.
         expect(screen.queryByRole("button", { name: /PENDING PAYMENT:/ })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Close application" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Record refund" })).not.toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Application unarchived." })));
+        fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Application reopened." })));
+    });
+
+    it("never shows the word archive for an application", async () => {
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        expect(document.body.textContent ?? "").not.toMatch(/archiv/i);
+    });
+
+    it("offers Close only on unpaid applications and Record refund only on paid ones", async () => {
+        mockFetchJson({
+            "/api/membership-ops/applications/refund": { process: { id: 3, status: "BLOCKED" } },
+            "/api/membership-ops/applications": { processes: rows },
+        });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+
+        // Awaiting + Payment are unpaid; the paid BLOCKED row can't be closed.
+        expect(screen.getAllByRole("button", { name: "Close application" })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: "Record refund" })).toHaveLength(1);
+
+        fireEvent.click(screen.getByRole("button", { name: "Record refund" }));
+        fireEvent.change(await screen.findByLabelText(/Reason/), { target: { value: "Refunded in Shopify" } });
+        const confirm = screen.getAllByRole("button", { name: "Record refund" }).at(-1)!;
+        fireEvent.click(confirm);
+
+        await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+            "/api/membership-ops/applications/refund",
+            expect.objectContaining({ method: "POST", body: JSON.stringify({ processId: 3, reason: "Refunded in Shopify" }) }),
+        ));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Refund recorded." })));
     });
 });

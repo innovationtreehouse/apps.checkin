@@ -10,7 +10,7 @@
  *
  * Uses the global `fetch` (Node 18+); no SDK dependency, so the bundle stays small.
  */
-import { type ShopifyConfig, logger } from "@inventory/s-ingest-core";
+import { type ShopifyConfig, logger } from "@checkin/s-ingest-core";
 import { getShopifyToken, invalidateShopifyToken } from "./token.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Group, SegmentedControl, Stack, Switch, Table, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { FACILITY_RECORD_ROLES } from "@/lib/facilityNav";
+import { FACILITY_RECORD_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_ROWS } from "@/lib/corrections";
@@ -51,7 +51,7 @@ const TYPE_LABEL: Record<string, string> = {
 // `newData.type` names the ROUTE, not the actor relationship — a household lead
 // correcting a member still writes "self_correction". It's a label here, never
 // the self/proxy axis; see actorClass below for that.
-// Governing design: docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md §4.
+// Governing rules: docs/rules/attendance-checkin.md, "The visit record".
 function kindLabel(row: AuditRow): string {
   if (row.newData.type && TYPE_LABEL[row.newData.type]) return TYPE_LABEL[row.newData.type];
   switch (row.action) {

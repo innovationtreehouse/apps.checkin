@@ -7,9 +7,11 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 
@@ -18,8 +20,9 @@ type HouseholdLead = { id: number; name: string | null; email: string | null };
 type MembershipPaymentPlanRequest = {
   id: number;
   stageEnteredAt: string | null;
+  scholarshipRequestKind: string | null;
   orgMembership: {
-    isVolunteer: boolean;
+    isVolunteerFamily: boolean;
     household: {
       id: number;
       name: string;
@@ -30,7 +33,7 @@ type MembershipPaymentPlanRequest = {
 
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
 
   const ownHousehold = (req: MembershipPaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.orgMembership.household.id);
@@ -45,21 +48,22 @@ export default function MembershipPaymentPlansPage() {
   const [pendingDenial, setPendingDenial] = useState<number | null>(null);
   const [denying, setDenying] = useState(false);
 
-  const fetchRequests = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/membership-payment-plans');
+  const fetchRequests = useCallback(() => fetch('/api/finance-ops/membership-payment-plans')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRequests(data);
       } else {
         setMessage("Failed to load requests. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRequests();
@@ -165,7 +169,7 @@ export default function MembershipPaymentPlansPage() {
       render: (req) => (
         <>
           <Text fw={500}>{req.orgMembership.household.name}</Text>
-          <Text size="sm" c="dimmed">{req.orgMembership.isVolunteer ? 'Volunteer household' : 'Standard household'}</Text>
+          <Text size="sm" c="dimmed">{req.orgMembership.isVolunteerFamily ? 'Volunteer household' : 'Standard household'}</Text>
         </>
       ),
     },
@@ -177,6 +181,15 @@ export default function MembershipPaymentPlansPage() {
           ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
           : <Text size="sm" c="dimmed">—</Text>;
       },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
+      ),
     },
     {
       header: 'Requested On',

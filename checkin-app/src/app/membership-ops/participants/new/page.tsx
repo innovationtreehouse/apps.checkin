@@ -6,7 +6,7 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
-import { Button, Card, Checkbox, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
 
@@ -42,7 +42,6 @@ function NewParticipantForm() {
 
   const isYouthSelected = isYouth(dob);
 
-  const [alreadyMember, setAlreadyMember] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({});
@@ -92,8 +91,7 @@ function NewParticipantForm() {
           parentEmail: isYouthSelected ? parentEmail : null,
           parentName: isYouthSelected && parentEmail ? parentName : null,
           dob: dob || null,
-          householdId: householdId ? parseInt(householdId) : null,
-          alreadyMember: !householdId && alreadyMember
+          householdId: householdId ? parseInt(householdId) : null
         })
       });
 
@@ -108,7 +106,6 @@ function NewParticipantForm() {
         setDob("");
         setHouseholdId("");
         setHouseholdSearch("");
-        setAlreadyMember(false);
       } else if (data.fields?.includes("email")) {
         setFieldErrors({ email: "This email is already registered." });
       } else {
@@ -216,15 +213,6 @@ function NewParticipantForm() {
                 onClear={() => { setHouseholdId(""); setHouseholdSearch(""); }}
               />
             </Paper>
-
-            {!householdId && (
-              <Checkbox
-                checked={alreadyMember}
-                onChange={(e) => setAlreadyMember(e.currentTarget.checked)}
-                label="Confirm this household is already a paid member"
-                description="Leave unchecked for new visitors. Membership is normally earned through the application process."
-              />
-            )}
 
             <Button type="submit" disabled={submitDisabled} loading={saving} mt="sm">
               Create Participant

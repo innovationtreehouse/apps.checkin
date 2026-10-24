@@ -1,1 +1,1 @@
-export { isProvisionalGtin13, parseProvisionalSequence, formatGtinDisplay } from "@inventory/gtin";
+export { isProvisionalGtin13, parseProvisionalSequence, formatGtinDisplay } from "@checkin/gtin";

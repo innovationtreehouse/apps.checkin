@@ -68,12 +68,16 @@ import * as workflowGenerated from './generated/workflow-classifications';
 import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
+import * as programSynthetic from './programSyntheticClassifications';
+import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
+import * as shopifyReadGenerated from './generated/shopify-read-classifications';
+import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
 // Every classification source: checkin's schema, each vendored library's schema
-// (#1286 §5, its own `generator security` map), and hand-authored synthetic
-// response models (e.g. CatalogItemCount — #1286 §7). The flat merge below is
+// (its own `generator security` map), and hand-authored synthetic response
+// models (e.g. CatalogItemCount). The flat merge below is
 // the whole-system map every boundary consumer (stripper, outbound, registry)
 // reads through — import `classifications` / `relations` from here, not from a
 // source file. Model keys must be disjoint across sources, or a later source
@@ -95,6 +99,10 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
     { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
     { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
+    { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
+    { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations },
+    { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations },
+    { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations },
 ] as const;
 
 type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
@@ -151,9 +159,12 @@ export type Role =
     | 'isKeyholder'
     | 'isBackgroundCheckReviewer'
     | 'isOperations'
-    // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
+    // Curates the global catalog. A Person role boolean, stamped on
     // the session like the others; grants the manager view on catalog routes.
     | 'isInventoryManager'
+    // Finance staff. A Person role boolean, stamped on the session
+    // like the others; grants the finance view on finance-library routes.
+    | 'isFinance'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
     // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     | 'certifier'
@@ -172,8 +183,8 @@ const VALID_SCOPES = new Set<Scope>([
     'all_current_visitors',
 ]);
 const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
-// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES —
-// the gap that let #1104 add isOperations to BusinessRole without adding it here.
+// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES:
+// a role added to BusinessRole must be added here too.
 export const VALID_ROLES = new Set<Role>([
     'anyone',
     'unauthenticated',
@@ -185,6 +196,7 @@ export const VALID_ROLES = new Set<Role>([
     'isBackgroundCheckReviewer',
     'isOperations',
     'isInventoryManager',
+    'isFinance',
     'certifier',
     'householdLead',
     'programLeadMentor',
@@ -205,6 +217,9 @@ export function parseToken(
     return { scope: scope as Scope, tier: tier as SensitiveTier };
 }
 
+/** Roles backed by a Person role flag on the session — what `anyRole` checks. */
+export type SessionFlagRole = BusinessRole | 'isInventoryManager' | 'isFinance';
+
 /**
  * Admission gate — who is allowed to *call* the endpoint. Distinct from
  * `orderedView`, which controls *what* they see once admitted.
@@ -213,17 +228,35 @@ export type Authorize =
     | 'public'
     | 'authenticated'
     | 'self'
-    | { anyRole: BusinessRole[] }
-    // Catalog read admission (#1286 §6): the single chokepoint for reading the
-    // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
-    // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
-    // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
+    // Admits a caller holding any listed role flag. No sysadmin/board auto-admit.
+    | { anyRole: SessionFlagRole[] }
+    // Catalog read admission: the single chokepoint for reading the global
+    // catalog — the catalog audience (canSeeCatalog, lib/volunteer.ts), decided
+    // from session claims (docs/rules/inventory.md, Access). Broader than the ops
+    // roles, deliberately: the catalog is non-pii reference data (writes stay
+    // INVENTORY_MANAGER-only).
     | 'catalog-viewer'
-    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only. A dedicated
-    // variant rather than `{ anyRole: ['isInventoryManager'] }` so the boundary
-    // does not depend on isInventoryManager being in BusinessRole (types/auth.ts)
-    // — keeping this a session-flag check resolved entirely inside resolveAccess.
+    // Receipt submission: an adult whose household membership is
+    // ACTIVE, or a Treehouse Volunteer (role holder or staff account) whatever
+    // their age or membership. No background check (docs/rules/expenses.md).
+    | 'receipt-submitter'
+    // Catalog write admission: INVENTORY_MANAGER only.
     | 'inventory-manager'
+    // FINANCE only. No sysadmin auto-admit: Finance Ops excludes
+    // sysadmins (docs/rules/revenue.md).
+    | 'finance'
+    // FINANCE or BOARD: the board acts as finance's
+    // superuser. No sysadmin auto-admit, as above.
+    | 'finance-or-board'
+    // A budget-bucket approver: FINANCE, BOARD, or anyone who approves
+    // some bucket. No sysadmin auto-admit. Rows stay handler-filtered to the
+    // buckets the caller approves.
+    | 'expense-approver'
+    // Expense sign-off admission: `receipt-submitter` (an adult member or
+    // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
+    // approver, Treasurer, Board seats). Far wider than the seat holders; the
+    // library refuses a caller who holds no seat on the line.
+    | 'expense-signer'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -232,7 +265,19 @@ export type Authorize =
     | 'program-core-volunteer'
     | 'household-lead'
     | 'household-member'
-    | 'kiosk';
+    | 'kiosk'
+    // A scheduled job holding the named machine secret (CRON_SECRET_ENV). Only
+    // `Authorization: Bearer <secret>` admits; a session never does.
+    | { cronSecret: CronSecretName };
+
+/**
+ * Machine secrets a cron route may name in `authorize: { cronSecret }`, each
+ * read from its own env var so holding one never admits another job's route.
+ */
+export const CRON_SECRET_ENV = {
+    'qbo-posting': 'QBO_POSTING_CRON_SECRET',
+} as const;
+export type CronSecretName = keyof typeof CRON_SECRET_ENV;
 
 /**
  * Response envelope:
@@ -257,7 +302,7 @@ export interface RouteSpec {
     /**
      * The models this route's handler is declared to return (top-level bag keys
      * + the models reached through their relations). Optional documentation of
-     * the response surface; consumed by the §8 seam validator to check the
+     * the response surface; consumed by the seam validator (validateRouteGrants) to check the
      * declared set against what the handler actually ships. Not enforced by the
      * runtime stripper (that gates per-field regardless of this list).
      */
@@ -346,6 +391,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'isBackgroundCheckReviewer':
         case 'isOperations':
         case 'isInventoryManager':
+        case 'isFinance':
         case 'certifier':
         case 'householdLead':
             // callerHoldsRole answers these from the session alone.
@@ -359,13 +405,18 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
 }
 
 function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
-    if (typeof authorize !== 'string') return {}; // anyRole — session flags only
+    if (typeof authorize !== 'string') return {}; // anyRole reads session flags; cronSecret reads a header
     switch (authorize) {
         case 'public':
         case 'authenticated':
         case 'self':
         case 'catalog-viewer':
+        case 'receipt-submitter':
         case 'inventory-manager':
+        case 'finance':
+        case 'finance-or-board':
+        case 'expense-approver':
+        case 'expense-signer':
         case 'certifier':
         case 'household-lead':
         case 'household-member':

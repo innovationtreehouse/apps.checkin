@@ -56,7 +56,7 @@ and fail on their next reconnect).
 | `resend-api-key` | Resend dashboard (prod sending domain verified) |
 | `kiosk-public-key` | kiosk client keypair |
 | `shopify-client-id` / `shopify-client-secret` | the REAL store's app (Dev Dashboard) |
-| `shopify-webhook-secret` | ⚠ store Settings→Notifications signing secret — prod uses the store-secret path, NOT the app client secret (see SHOPIFY_DEV_STORE_WEBHOOK.md §2/§4) |
+| `shopify-webhook-secret` | ⚠ store Settings→Notifications signing secret — prod uses the store-secret path, NOT the app client secret (see docs/ops/shopify-dev-store.md §2/§4) |
 | `database-url` (+ `-ddl` after #119) | written automatically by step 3 — do NOT set by hand |
 
 ECS refuses to launch a task referencing a valueless secret — every shell above

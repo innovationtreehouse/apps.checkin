@@ -8,7 +8,7 @@ import {
   isLegalTransition,
   isTerminalState,
 } from '../../workflows/disbursement.invariants';
-import { WorkflowTransitionError } from '@inventory/workflows';
+import { WorkflowTransitionError } from '@checkin/workflows';
 import { NEUTRAL_CONTEXT } from '../../workflows/disbursement.guards';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
