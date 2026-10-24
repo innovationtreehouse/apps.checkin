@@ -78,6 +78,7 @@ export async function seedLineItem(
     isCapital?: boolean;
     isDelayed?: boolean;
     manualQbAccount?: string | null;
+    nonInventory?: boolean;
   },
 ): Promise<number> {
   const row = await db.expenseLineItem.create({
@@ -94,6 +95,7 @@ export async function seedLineItem(
       isCapital: opts?.isCapital ?? false,
       isDelayed: opts?.isDelayed ?? false,
       manualQbAccount: opts?.manualQbAccount ?? null,
+      nonInventory: opts?.nonInventory ?? false,
     },
   });
   return row.id;

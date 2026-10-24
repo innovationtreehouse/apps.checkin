@@ -29,6 +29,9 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/reimbursement', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/in-kind', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+// The people an uploader may name as reimbursee on upload, matching ?q=: each one's id
+// and name, both `public` on Person, and nothing else.
+defineRoute({ endpoint: 'GET /api/receipts/reimbursee-options', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptReimburseeOption'], orderedView: [['authenticated', ['public']]] });
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
@@ -43,6 +46,7 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-
 
 // FINANCE reads (BOARD too).
 defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 

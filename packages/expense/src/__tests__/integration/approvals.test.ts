@@ -85,6 +85,21 @@ describeDb("assignOwner", () => {
     expect(await state(b.id)).toBe("owner_approval");
   });
 
+  it("a permanent assignment neither maps a non-inventory line's GTIN nor assigns non-inventory siblings", async () => {
+    const part = await lineInApproval(null);
+    const pizzaId = await seedExpense({ state: "assign_ownership" });
+    const pizza = await seedLineItem(pizzaId, { gtin13: "0000000000017", nonInventory: true });
+    const pizzaApproval = await seedApproval(pizzaId, pizza, { ownerId: null, status: "pending" });
+
+    await assignOwner(FINANCE, part.id, part.approvalId, 100, true);
+    expect(await approval(pizzaApproval)).toMatchObject({ ownerId: null });
+
+    await db.partOwnerMap.deleteMany({ where: { orgId: ORG } });
+    await assignOwner(FINANCE, pizzaId, pizzaApproval, 100, true);
+    expect(await db.partOwnerMap.count({ where: { orgId: ORG } })).toBe(0);
+    expect(await approval(pizzaApproval)).toMatchObject({ ownerId: 100 });
+  });
+
   it("assigning an org-level bucket is the approval", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7] }) });
     const { id, approvalId } = await lineInApproval(null);

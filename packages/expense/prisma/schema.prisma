@@ -192,9 +192,30 @@ model Expense {
   holds              ExpenseHold[]
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
+  receiptReview      ExpenseReceiptReview?
 
   @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
+}
+
+// Finance's approval of the receipt in receipt finance review, from CompletedReceipt.financeReview.
+// Absent when the receipt never waited on finance review.
+model ExpenseReceiptReview {
+  /// @sensitivity:internal
+  expenseId        String   @id @map("expense_id")
+  // The receipt's FinancialReviewReason values: tax | old_date | future_date | submitter_correction.
+  /// @sensitivity:internal
+  reasons          String[]
+  /// @sensitivity:pii
+  approvedByUserId Int      @map("approved_by_user_id")
+  /// @sensitivity:personal
+  note             String?
+  /// @sensitivity:internal
+  approvedAt       DateTime @map("approved_at")
+
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@map("expense_receipt_reviews")
 }
 
 model ExpenseLineItem {
@@ -222,6 +243,9 @@ model ExpenseLineItem {
   gtin13            String?
   /// @sensitivity:internal
   isDelayed         Boolean  @default(false) @map("is_delayed")
+  // Receiving marked the line non-inventory: finance picks its owner and account by hand each time.
+  /// @sensitivity:internal
+  nonInventory      Boolean  @default(false) @map("non_inventory")
   /// @sensitivity:internal
   isCapital         Boolean  @default(false) @map("is_capital")
   /// @sensitivity:pii

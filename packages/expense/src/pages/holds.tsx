@@ -5,13 +5,14 @@ import { formatCents } from "@checkin/money";
 import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
+import NonInventoryBadge from "../components/NonInventoryBadge";
 
 interface Hold {
   id: number;
   expenseId: string;
   lineItemId: number;
   reason: string;
-  lineItem: { description: string; partNumber: string | null; totalPriceCents: number; manualQbAccount: string | null } | null;
+  lineItem: { description: string; partNumber: string | null; totalPriceCents: number; manualQbAccount: string | null; nonInventory?: boolean } | null;
   expense: { vendorName: string | null; receiptDate: string | null; currency: string } | null;
 }
 interface QbAccount {
@@ -54,7 +55,10 @@ export default function HoldsPage() {
               <Table.Tbody>
                 {rows.map((h) => (
                   <Table.Tr key={h.id}>
-                    <Table.Td>{h.lineItem?.description}{h.lineItem?.partNumber && <Text size="xs" c="dimmed">{h.lineItem.partNumber}</Text>}</Table.Td>
+                    <Table.Td>
+                      {h.lineItem?.description}{h.lineItem?.nonInventory && <NonInventoryBadge />}
+                      {h.lineItem?.partNumber && <Text size="xs" c="dimmed">{h.lineItem.partNumber}</Text>}
+                    </Table.Td>
                     <Table.Td>{formatCents(h.lineItem?.totalPriceCents ?? 0, h.expense?.currency)}</Table.Td>
                     <Table.Td><Badge variant="light" color="orange">{h.reason}</Badge></Table.Td>
                     <Table.Td>

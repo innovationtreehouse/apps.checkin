@@ -4,7 +4,7 @@ import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptPrincipal } from "../../contract";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 const taxed = () => manualDetails({ tax: "1.00", receiptTotal: "21.00" });
 
@@ -33,6 +33,41 @@ describeDb("financial review", () => {
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
   });
 
+  it("an approval is kept on the receipt and carried in the pushed CompletedReceipt", async () => {
+    const ports = recordingPorts();
+    configure({ receiptSink: ports.receiptSink });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    actAs(FINANCE);
+    await receiptService.approveFinancial(r.id);
+    const review = await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } });
+    expect(review).toMatchObject({
+      outcome: "approved",
+      reasons: ["tax"],
+      decidedByUserId: FINANCE.id,
+      note: null,
+    });
+    expect(ports.calls.pushes).toHaveLength(1);
+    expect(ports.calls.pushes[0].financeReview).toEqual({
+      outcome: "approved",
+      reasons: ["tax"],
+      decidedByPersonId: FINANCE.id,
+      note: null,
+      decidedAt: review!.decidedAt.toISOString(),
+    });
+  });
+
+  it("a receipt that never waited on finance pushes no financeReview", async () => {
+    actAs(FINANCE);
+    await orgSettingsService.update({ taxExempt: false });
+    actAs(ALICE);
+    const ports = recordingPorts();
+    configure({ receiptSink: ports.receiptSink });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    expect(r.state).toBe("receipt_finalized");
+    expect(ports.calls.pushes[0].financeReview).toBeUndefined();
+    expect(await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } })).toBeNull();
+  });
+
   it("a non-tax exception (future date) approves without a note", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(r.state).toBe("financial_review");
@@ -54,6 +89,12 @@ describeDb("financial review", () => {
     actAs(FINANCE);
     await receiptService.rejectFinancial(r.id, "  personal purchase ");
     expect(await stateOf(r.id)).toBe("rejected");
+    expect(await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } })).toMatchObject({
+      outcome: "rejected",
+      reasons: ["tax"],
+      decidedByUserId: FINANCE.id,
+      note: "personal purchase",
+    });
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: "personal purchase" });
   });
@@ -65,6 +106,17 @@ describeDb("financial review", () => {
     expect(await stateOf(r.id)).toBe("rejected");
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
+  });
+
+  it("a submitter's tax correction drops the earlier finance decision", async () => {
+    configure({ ocr: okOcr() });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(r.state).toBe("submitter_review");
+    await db.receiptFinanceReview.create({
+      data: { receiptId: r.id, outcome: "approved", reasons: ["tax"], decidedByUserId: FINANCE.id, note: "ok" },
+    });
+    await receiptService.edit(r.id, "submitter", { tax: 1 });
+    expect(await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } })).toBeNull();
   });
 
   it("the tax check does not apply to an in-kind receipt", async () => {
