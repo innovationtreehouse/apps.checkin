@@ -190,7 +190,7 @@ describe("expense — approver sign-off journey", () => {
     expect(approved.status).toBe(200);
     expect((approved.json as Approval).status).toBe("approved");
 
-    // Not the submitter, so not the submitter seat; not FINANCE, so not the Treasurer seat.
+    // A card charge takes no submitter seat; not FINANCE, so not the Treasurer seat.
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "SUBMITTER" })).status).toBe(403);
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(403);
     const signed = await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" });
@@ -199,11 +199,11 @@ describe("expense — approver sign-off journey", () => {
     // A filled seat cannot be signed again.
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" })).status).toBe(403);
 
-    // FINANCE fills the Treasurer seat; the submitter's seat is still open.
+    // FINANCE fills the Treasurer seat; a card charge takes no submitter seat, so nothing is missing.
     const finance = await loginAs(FINANCE);
     expect((await send(finance, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(200);
     const status = await api<SignoffStatus[]>(approver, `${E}/signoffs`);
-    expect(status.json[0]).toMatchObject({ filled: expect.arrayContaining(["PROGRAM_APPROVER", "TREASURER"]), missing: ["SUBMITTER"] });
+    expect(status.json[0]).toMatchObject({ filled: expect.arrayContaining(["PROGRAM_APPROVER", "TREASURER"]), missing: [] });
     expect((await api(approver, "/programs-i-lead/expense-approvals")).status).toBe(200);
   });
 });

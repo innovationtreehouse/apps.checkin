@@ -115,7 +115,7 @@ describeDb("sign-off seats", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 7, status: "approved" });
 
-    await signLine(principal(1), li, "SUBMITTER");
+    await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(5), li, "PROGRAM_APPROVER");
     await expect(signLine(principal(6), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
 
@@ -219,11 +219,11 @@ describeDb("sign-off seats", () => {
       }
     });
 
-    it("a line without reimburseePersonId has no reimbursee conflict", async () => {
+    it("a card charge has no reimbursee conflict and takes no submitter seat", async () => {
       const { id, li } = await reimburseeLine({ approvers: [9], finance: [3] });
       await signLine(principal(9), li, "PROGRAM_APPROVER");
       await signLine(principal(3), li, "TREASURER");
-      expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER"]);
+      expect((await signoffStatus(id))[0].missing).toEqual([]);
     });
 
     // A reimbursement whose reimbursee is unknown: the expense id and its line, with REIMBURSEE_UNKNOWN raised.
@@ -264,12 +264,15 @@ describeDb("sign-off seats", () => {
       expect(await events(id)).toBe(1);
     });
 
-    it("setting the reimbursee voids seats signed before it, so they are signed again for the payee", async () => {
+    it("setting the reimbursee voids the submitter's confirmation and every seat after it, audited, so they are signed again for the payee", async () => {
       const { id, li } = await unknownReimbursee();
       await signAll(id, li);
       await setReimbursee(ORG, id, 1, FINANCE);
       expect(await events(id)).toBe(0);
-      expect((await signoffStatus(id))[0].missing).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
+      expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"]);
+      const voided = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff_voided" }, orderBy: { id: "asc" } });
+      expect(voided.map((a) => [a.userId, a.valueBefore])).toEqual([[3, "SUBMITTER"], [3, "PROGRAM_APPROVER"], [3, "TREASURER"]]);
+      expect(await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "submitter_confirmation_voided" } })).toMatchObject({ userId: 3, fieldChanged: "reimbursee" });
     });
 
     it("only FINANCE sets the reimbursee, never to themself or their own household", async () => {

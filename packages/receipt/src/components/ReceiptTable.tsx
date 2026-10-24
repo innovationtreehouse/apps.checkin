@@ -42,7 +42,7 @@ export default function ReceiptTable({
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
                 {STATE_LABELS[r.state] ?? r.state}
-                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && (
+                {flagMine && (SUBMITTER_ACTION_STATES.includes(r.state) || r.submitterReconfirm) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}
               </Table.Td>

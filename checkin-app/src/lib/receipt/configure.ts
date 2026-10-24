@@ -10,7 +10,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
 import { z } from "zod";
-import { reimbursementStatus } from "@checkin/expense";
+import { reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
   createAnthropicOcr,
@@ -169,6 +169,7 @@ export function configureRuntime(): void {
     alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,
+    submitterConfirmations,
     receiptSink: { ingestReceipt },
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance

@@ -1,0 +1,112 @@
+/**
+ * The reimbursement submitter's seat (#2432): recorded at intake from their confirmation of the
+ * receipt, absent on a card charge, and given again through the receipt once finance clears it.
+ */
+import { it, expect } from "vitest";
+import { fixture } from "@checkin/receipt-contract-fixtures";
+import { describeDb } from "../helpers/db";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { db } from "../../db";
+import { receiveCompletedReceipt } from "../../services/intakeService";
+import { signoffStatus } from "../../services/signoffService";
+import { approveLine } from "../../services/approvalService";
+import { auditConfirmationVoided, submitterConfirmations } from "../../services/submitterSeatService";
+
+type Receipt = { receiptId: string; orgId: string; submitterId: number; needsReimbursement: boolean; lineItems: unknown[] };
+
+const base = fixture<Receipt>("S2-expense-receipt/all-recognized-gtin");
+const CONFIRMED_AT = "2026-06-01T11:00:00.000Z";
+const confirmation = (personId: number) => ({ confirmedByPersonId: personId, confirmedAt: CONFIRMED_AT });
+const reimbursement = (over: Record<string, unknown> = {}) => ({
+  ...base,
+  receiptId: `R-seat-${Math.random().toString(36).slice(2)}`,
+  needsReimbursement: true,
+  reimburseePersonId: base.submitterId,
+  submitterConfirmation: confirmation(base.submitterId),
+  ...over,
+});
+const submitterSeats = (expenseId: string) =>
+  db.expenseLineSignoff.findMany({ where: { expenseId, seat: "SUBMITTER" }, orderBy: { lineItemId: "asc" } });
+
+describeDb("the submitter seat at intake", () => {
+  it("a confirmed reimbursement records the seat on every line, signed by the submitter and citing the confirmation", async () => {
+    const r = reimbursement();
+    await receiveCompletedReceipt(r);
+    const seats = await submitterSeats(r.receiptId);
+    expect(seats).toHaveLength(r.lineItems.length);
+    expect(seats.every((s) => s.signerUserId === r.submitterId)).toBe(true);
+    const audit = await db.expenseAuditLog.findMany({ where: { expenseId: r.receiptId, action: "signoff", valueAfter: "SUBMITTER" } });
+    expect(audit).toHaveLength(r.lineItems.length);
+    expect(audit[0]).toMatchObject({ userId: r.submitterId, notes: `confirmed the receipt as read at ${CONFIRMED_AT}` });
+  });
+
+  it("a reimbursement without the submitter's confirmation records no seat", async () => {
+    const unconfirmed = reimbursement({ submitterConfirmation: undefined });
+    const byOther = reimbursement({ submitterConfirmation: confirmation(base.submitterId + 1) });
+    await receiveCompletedReceipt(unconfirmed);
+    await receiveCompletedReceipt(byOther);
+    expect(await submitterSeats(unconfirmed.receiptId)).toEqual([]);
+    expect(await submitterSeats(byOther.receiptId)).toEqual([]);
+  });
+
+  it("a card charge records no seat even when its uploader confirmed the receipt, and takes none", async () => {
+    const card = reimbursement({ needsReimbursement: false, reimburseePersonId: undefined });
+    await receiveCompletedReceipt(card);
+    expect(await submitterSeats(card.receiptId)).toEqual([]);
+    for (const line of await signoffStatus(card.receiptId)) expect(line.missing).not.toContain("SUBMITTER");
+  });
+
+  it("a backfill records no seat", async () => {
+    const backfill = reimbursement({ backfill: true });
+    await receiveCompletedReceipt(backfill);
+    expect(await submitterSeats(backfill.receiptId)).toEqual([]);
+  });
+});
+
+describeDb("confirming again through the receipt", () => {
+  async function openReimbursement() {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
+    const lines = [await seedLineItem(id), await seedLineItem(id)];
+    const approvals = [];
+    for (const li of lines) approvals.push(await seedApproval(id, li, { ownerId: 100 }));
+    return { id, lines, approvals };
+  }
+
+  it("a reimbursement's line is approved only after the submitter's confirmation", async () => {
+    const { id, approvals } = await openReimbursement();
+    await expect(approveLine(principal(2), id, approvals[0])).rejects.toMatchObject({ status: 409 });
+    expect((await db.lineItemOwnerApproval.findUniqueOrThrow({ where: { id: approvals[0] } })).status).toBe("pending");
+    await submitterConfirmations.confirm(id, { id: 1, name: "person-1" });
+    await approveLine(principal(2), id, approvals[0]);
+    expect((await db.lineItemOwnerApproval.findUniqueOrThrow({ where: { id: approvals[0] } })).status).toBe("approved");
+  });
+
+  it("lists the submitter's reimbursements missing their seat, with the fields of the latest void", async () => {
+    const { id } = await openReimbursement();
+    expect(await submitterConfirmations.awaiting(1)).toEqual(new Map([[id, []]]));
+    await db.$transaction((tx) => auditConfirmationVoided(tx, { userId: 3, username: "finance" }, id, ["reimbursee"]));
+    expect(await submitterConfirmations.awaiting(1)).toEqual(new Map([[id, ["reimbursee"]]]));
+    expect(await submitterConfirmations.awaiting(2)).toEqual(new Map());
+  });
+
+  it("the confirmation signs the seat on every line, and then nothing waits", async () => {
+    const { id, lines } = await openReimbursement();
+    expect(await submitterConfirmations.confirm(id, { id: 1, name: "person-1" })).toBe(true);
+    expect((await submitterSeats(id)).map((s) => [s.lineItemId, s.signerUserId])).toEqual(lines.map((li) => [li, 1]));
+    expect(await submitterConfirmations.awaiting(1)).toEqual(new Map());
+    expect(await submitterConfirmations.confirm(id, { id: 1, name: "person-1" })).toBe(false);
+  });
+
+  it("only the submitter confirms, and only an open reimbursement", async () => {
+    const { id } = await openReimbursement();
+    expect(await submitterConfirmations.confirm(id, { id: 2, name: "person-2" })).toBe(false);
+    const card = await seedExpense({ state: "owner_approval" });
+    await seedLineItem(card);
+    expect(await submitterConfirmations.confirm(card, { id: 1, name: "person-1" })).toBe(false);
+    const closed = await seedExpense({ state: "qb_complete", needsReimbursement: true, reimburseePersonId: 1 });
+    await seedLineItem(closed);
+    expect(await submitterConfirmations.confirm(closed, { id: 1, name: "person-1" })).toBe(false);
+    expect(await submitterSeats(id)).toEqual([]);
+  });
+});

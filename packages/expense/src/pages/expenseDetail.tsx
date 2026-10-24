@@ -315,7 +315,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   {s ? (
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
-                      {s.missing.filter((seat) => seat !== "BOARD_APPROVAL").map((seat) => (
+                      {s.missing.includes("SUBMITTER") && <Text size="xs" c="dimmed">Awaiting Submitter</Text>}
+                      {s.missing.filter((seat) => seat !== "BOARD_APPROVAL" && seat !== "SUBMITTER").map((seat) => (
                         <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>

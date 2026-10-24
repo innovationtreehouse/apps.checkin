@@ -149,10 +149,10 @@ function maxBoardSubstitutions(facts: SignoffFacts): number {
   return facts.kind === "card_charge" ? 1 : 2;
 }
 
-/** The line's unfilled seats; the Board seat counts only on a line that takes it. */
+/** The line's unfilled seats. A card charge takes no submitter seat; the Board seat counts only on a line that takes it. */
 export function missingSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const done = new Set(filled.map((f) => f.seat));
-  return SEATS.filter((s) => !done.has(s) && (s !== "BOARD" || facts.boardSeat));
+  return SEATS.filter((s) => !done.has(s) && (s !== "SUBMITTER" || facts.kind === "reimbursement") && (s !== "BOARD" || facts.boardSeat));
 }
 
 /**
@@ -179,6 +179,7 @@ export function signoffRefusal(
   if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
 
   if (seat === "SUBMITTER") {
+    if (facts.kind === "card_charge") return "a card charge takes no submitter seat";
     return signerUserId === facts.submitterId ? null : "only the submitter fills the submitter seat";
   }
   if (seat === "BOARD" && !facts.boardSeat) return "this line takes no Board seat";

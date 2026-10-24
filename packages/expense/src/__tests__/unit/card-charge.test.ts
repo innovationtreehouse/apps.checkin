@@ -128,8 +128,8 @@ describe("the Treasurer seat on a card charge", () => {
 
 describe("the Board seat on a card charge", () => {
   it("is missing on a line that takes it, and absent otherwise", () => {
-    expect(missingSeats(card, [])).toEqual(["SUBMITTER", "PROGRAM_APPROVER", "TREASURER", "BOARD"]);
-    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"]);
+    expect(missingSeats(card, [])).toEqual(["PROGRAM_APPROVER", "TREASURER", "BOARD"]);
+    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
   });
 
   it("a Board member without a conflict with the purchaser signs it, alongside the Treasurer", () => {

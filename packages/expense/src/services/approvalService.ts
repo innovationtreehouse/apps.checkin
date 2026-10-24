@@ -72,6 +72,14 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
 }
 
 /** An approver approves; FINANCE may approve any line with an override comment (distinct audit action). */
+/** A reimbursement's line is approved only after its submitter's confirmation fills the submitter seat. */
+async function refuseBeforeSubmitter(tx: Prisma.TransactionClient, expenseId: string, lineItemId: number): Promise<void> {
+  const expense = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { needsReimbursement: true, backfill: true } });
+  if (!expense.needsReimbursement || expense.backfill) return;
+  if (await tx.expenseLineSignoff.count({ where: { lineItemId, seat: "SUBMITTER" } })) return;
+  throw new ServiceError(409, "The submitter has not confirmed the receipt yet; the line is approved after their confirmation");
+}
+
 export async function approveLine(
   principal: ExpensePrincipal,
   expenseId: string,
@@ -91,6 +99,8 @@ export async function approveLine(
   }
 
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    await refuseBeforeSubmitter(tx, expenseId, approval.lineItemId);
     await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
     await writeAudit(tx, actor, {
       expenseId,

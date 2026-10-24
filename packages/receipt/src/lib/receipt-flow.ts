@@ -145,6 +145,9 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
       // QB-linked ⇒ historical backfill: downstream skips the QB re-post.
       backfill: !!row.qbTxnId,
       isInKind: row.isInKind,
+      submitterConfirmation: row.reviewedAt
+        ? { confirmedByPersonId: row.uploadedByUserId, confirmedAt: row.reviewedAt.toISOString() }
+        : undefined,
       financeReview:
         review?.outcome === "approved"
           ? {

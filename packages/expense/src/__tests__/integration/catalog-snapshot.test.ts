@@ -61,7 +61,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("a catalog edit after sign-off does not move the line's account", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
     expect(await snapshot(li)).toEqual({ signedGtin13: GTIN, signedCategory: "Hardware", signedSubcategory: "Cables" });
@@ -73,7 +72,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("before sign-off completes, the live catalog is used", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     expect((await snapshot(li)).signedCategory).toBeNull();
 
@@ -85,7 +83,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("a catalog failure at sign-off leaves the snapshot to the first successful posting lookup", async () => {
     const { id, li } = await seedLine();
     inv.lookupItems.mockRejectedValue(new Error("catalog down"));
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
     expect((await snapshot(li)).signedCategory).toBeNull();
@@ -98,7 +95,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("voiding the line's sign-offs clears its snapshot", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
 

@@ -27,6 +27,15 @@ const base: SignoffFacts = {
 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 
+describe("the submitter seat", () => {
+  it("a reimbursement takes it; a card charge does not, and refuses it", () => {
+    expect(missingSeats(base, [])).toContain("SUBMITTER");
+    const card = { ...base, kind: "card_charge" as const };
+    expect(missingSeats(card, [])).not.toContain("SUBMITTER");
+    expect(signoffRefusal(card, [], "SUBMITTER", 1)).toMatch(/card charge takes no submitter seat/);
+  });
+});
+
 describe("independence", () => {
   it("one person cannot fill two seats on a line", () => {
     expect(signoffRefusal({ ...base, finance: [2] }, seats(["PROGRAM_APPROVER", 2]), "TREASURER", 2)).toMatch(/another seat/);

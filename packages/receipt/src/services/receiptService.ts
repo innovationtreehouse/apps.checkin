@@ -157,6 +157,29 @@ async function writeAccess(row: ReceiptRow, access: Access, actor: ReceiptPrinci
   return "finance";
 }
 
+/** Receipt fields that hold what a reimbursement's submitter claimed or is paid. */
+const CLAIM_FIELDS: ReadonlySet<string> = new Set(["receiptDate", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"]);
+
+/**
+ * Clears the submitter's confirmation of a reimbursement when finance changes what they claimed
+ * or are paid, so the pipeline sends it back to their review. Audited naming the fields.
+ */
+async function voidConfirmation(
+  tx: Prisma.TransactionClient,
+  row: ReceiptRow,
+  asSubmitter: boolean,
+  actor: ReceiptPrincipal,
+  fields: string[],
+): Promise<void> {
+  if (asSubmitter || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
+  await tx.receiptDetail.update({ where: { id: row.id }, data: { reviewedAt: null } });
+  await audit(tx, row.id, actor, {
+    action: "submitter_confirmation_voided",
+    fieldChanged: fields.join(","),
+    valueBefore: row.reviewedAt.toISOString(),
+  });
+}
+
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
   return "self" in donor
     ? { donorFirstName: actor.firstName, donorLastName: actor.lastName, donorCompanyName: null }
@@ -328,6 +351,13 @@ async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undef
 /** At most this many people answer one reimbursee search. */
 const REIMBURSEE_SEARCH_LIMIT = 20;
 
+/** What finance changed on a reimbursement whose expense waits for its submitter to confirm it again, else null. */
+async function reconfirmOf(row: ReceiptRow): Promise<{ changedFields: string[] } | null> {
+  if (!row.pushedAt || !row.needsReimbursement) return null;
+  const changedFields = (await ports().submitterConfirmations.awaiting(row.uploadedByUserId)).get(row.id);
+  return changedFields ? { changedFields } : null;
+}
+
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);
@@ -415,6 +445,7 @@ export const receiptService = {
     await db.$transaction(async (tx) => {
       await tx.receiptDetail.update({ where: { id }, data: reopensReview ? { ...next, approvedAt: null } : next });
       if (reopensReview) await tx.receiptFinanceReview.deleteMany({ where: { receiptId: id } });
+      await voidConfirmation(tx, row, asSubmitter, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
       for (const [field, after] of changed) {
         await audit(tx, id, actor, {
           action: "field_edit",
@@ -434,7 +465,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only add lines in validation_failed or submitter_review state");
     }
-    await writeAccess(row, access, actor, "add line");
+    const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
     return db.$transaction(async (tx) => {
       const count = await tx.receiptLineItem.count({ where: { receiptId: id } });
       if (count >= 200) throw new ServiceError(400, "At most 200 line items");
@@ -442,6 +473,7 @@ export const receiptService = {
       const [data] = toLineRows([{ ...toLine(line), lineNumber: (last._max.lineNumber ?? 0) + 1 }]);
       const created = await tx.receiptLineItem.create({ data: { ...data, receiptId: id } });
       await audit(tx, id, actor, { action: "line_added", lineItemId: created.id });
+      await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
       return created;
     });
   },
@@ -453,7 +485,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Line items can only be edited in validation_failed or submitter_review state");
     }
-    await writeAccess(row, access, actor, "edit line");
+    const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
     const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
     if (!li) throw new ServiceError(404, "Line item not found");
 
@@ -468,6 +500,8 @@ export const receiptService = {
       { field: "isDelayed", before: li.isDelayed, after: edit.isDelayed },
     ];
 
+    const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
+
     return db.$transaction(async (tx) => {
       const updated = await tx.receiptLineItem.update({
         where: { id: lineItemId },
@@ -481,17 +515,16 @@ export const receiptService = {
           isDelayed: edit.isDelayed ?? li.isDelayed,
         },
       });
-      for (const f of fields) {
-        if (f.after !== undefined && String(f.before) !== String(f.after)) {
-          await audit(tx, id, actor, {
-            action: "field_edit",
-            fieldChanged: f.field,
-            valueBefore: f.before === null ? null : String(f.before),
-            valueAfter: f.after === null ? null : String(f.after),
-            lineItemId,
-          });
-        }
+      for (const f of edited) {
+        await audit(tx, id, actor, {
+          action: "field_edit",
+          fieldChanged: f.field,
+          valueBefore: f.before === null ? null : String(f.before),
+          valueAfter: f.after === null ? null : String(f.after),
+          lineItemId,
+        });
       }
+      if (edited.length > 0) await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
       return updated;
     });
   },
@@ -502,12 +535,13 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only delete lines in validation_failed or submitter_review state");
     }
-    await writeAccess(row, access, actor, "delete line");
+    const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
     const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
     if (!li) throw new ServiceError(404, "Line item not found");
     await db.$transaction(async (tx) => {
       await audit(tx, id, actor, { action: "line_deleted", lineItemId });
       await tx.receiptLineItem.delete({ where: { id: lineItemId } });
+      await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
     });
   },
 
@@ -594,8 +628,20 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
+  /**
+   * The uploader confirms the receipt as read. On a reimbursement already sent to expense, whose
+   * confirmation finance's change cleared there, it records the confirmation on the expense.
+   */
   async submitterConfirm(id: string) {
     const actor = await requireActor();
+    const sent = await load(id, "submitter", actor);
+    if (sent.pushedAt) {
+      if (!sent.needsReimbursement || !(await ports().submitterConfirmations.confirm(id, actor))) {
+        throw new ServiceError(409, "This receipt is not waiting for your confirmation");
+      }
+      await audit(db, id, actor, { action: "submitter_reconfirmed" });
+      return { ...toSubmitterView(sent), submitterReconfirm: null };
+    }
     const row = await loadForChange(id, "submitter", actor);
     if (row.needsReimbursement && !row.reimbursementFor?.trim()) {
       throw new ServiceError(400, "reimbursementFor is required when needsReimbursement is set");
@@ -693,7 +739,7 @@ export const receiptService = {
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const receipt = access === "finance" ? row : toSubmitterView(row);
-    return { ...receipt, lineItems, financialReviewReasons: reasons };
+    return { ...receipt, lineItems, financialReviewReasons: reasons, submitterReconfirm: await reconfirmOf(row) };
   },
 
   /**
@@ -717,6 +763,7 @@ export const receiptService = {
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
     const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
+    const awaiting = owed.length ? await ports().submitterConfirmations.awaiting(actor.id) : new Map<string, string[]>();
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid.get(r.id)?.paidOn ?? null) : null;
@@ -724,7 +771,9 @@ export const receiptService = {
         r.state === "discarded" ||
         r.state === "rejected" ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      return { ...toSubmitterView(r), reimbursement: r.needsReimbursement ? { paidOn } : null, complete };
+      const changedFields = awaiting.get(r.id);
+      const submitterReconfirm = changedFields ? { changedFields } : null;
+      return { ...toSubmitterView(r), reimbursement: r.needsReimbursement ? { paidOn } : null, complete, submitterReconfirm };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
   },
@@ -778,11 +827,15 @@ export const receiptService = {
 
   /** How many of this person's receipts wait on them, for the host's nav pill. */
   async countAwaitingSubmitter(personId: number): Promise<number> {
-    return receiptRepo.count({
-      orgId: (await getOrg()).id,
-      uploadedByUserId: personId,
-      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-    });
+    const [inReview, awaiting] = await Promise.all([
+      receiptRepo.count({
+        orgId: (await getOrg()).id,
+        uploadedByUserId: personId,
+        details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+      }),
+      ports().submitterConfirmations.awaiting(personId),
+    ]);
+    return inReview + awaiting.size;
   },
 
   async listAuditLogs(id: string) {

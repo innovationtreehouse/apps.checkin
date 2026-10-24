@@ -19,6 +19,16 @@ const REVIEW_REASON_LABELS: Record<string, string> = {
   submitter_correction: "the submitter changed the tax or date",
 };
 
+const CHANGED_FIELD_LABELS: Record<string, string> = {
+  lineItems: "line items",
+  receiptDate: "receipt date",
+  shippingCents: "shipping",
+  taxCents: "tax",
+  discountCents: "discount",
+  receiptTotalCents: "total",
+  reimbursee: "reimbursee",
+};
+
 /** Marks a value that is a reason the receipt is in finance review. */
 function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
   return on ? <Mark color="red">{children}</Mark> : <>{children}</>;
@@ -48,6 +58,9 @@ interface AuditRow {
   valueAfter: string | null;
   changedAt: string;
 }
+
+/** A reimbursement's confirm is the submitter's signature on its lines and amounts. */
+const CONFIRM_AS_READ = "These lines and amounts are right";
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
@@ -179,6 +192,13 @@ export default function ReceiptDetailPage() {
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
       )}
+      {own && r.submitterReconfirm && (
+        <Alert color="orange">
+          Finance changed this receipt; confirm it again.
+          {r.submitterReconfirm.changedFields.length > 0 &&
+            ` Changed: ${r.submitterReconfirm.changedFields.map((f) => CHANGED_FIELD_LABELS[f] ?? f).join(", ")}.`}
+        </Alert>
+      )}
       {comparing && (
         <DuplicateCompare
           receipt={r}
@@ -236,9 +256,14 @@ export default function ReceiptDetailPage() {
           )}
 
           <Group gap="xs">
+            {own && r.submitterReconfirm && (
+              <Button size="xs" onClick={() => void act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt")}>{CONFIRM_AS_READ}</Button>
+            )}
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>Confirm</Button>
+                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>
+                  {r.needsReimbursement ? CONFIRM_AS_READ : "Confirm"}
+                </Button>
                 {isAdult && !r.isInKind && (
                   <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}

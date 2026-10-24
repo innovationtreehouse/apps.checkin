@@ -107,6 +107,8 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
+  /** A reimbursement whose expense waits for its submitter to confirm it again, with the fields finance changed. */
+  submitterReconfirm?: { changedFields: string[] } | null;
 }
 
 export { STATE_LABELS } from "../lib/stateLabels";

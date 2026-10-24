@@ -273,6 +273,15 @@ export interface ReimbursementStatus {
   forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
 }
 
+/**
+ * Receipt callee: the reimbursement submitter's signature, recorded on the expense from their
+ * confirmation of the receipt, and given again after a finance change clears it.
+ */
+export interface SubmitterConfirmations {
+  awaiting(personId: number): Promise<Map<string, string[]>>;
+  confirm(receiptId: string, person: { id: number; name: string | null }): Promise<boolean>;
+}
+
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;

@@ -71,6 +71,19 @@ export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
+// ── Submitter confirmations ← expense ──────────────────────────────────────
+
+/**
+ * The submitter's signature on a reimbursement whose expense exists. Finance changing what the
+ * submitter claimed or is paid clears it there, and the submitter confirms the receipt again.
+ */
+export interface SubmitterConfirmations {
+  /** This person's receipts whose expense waits for their confirmation, each with the fields finance changed. */
+  awaiting(personId: number): Promise<Map<string, string[]>>;
+  /** Records the confirmation on every line of the receipt's expense still waiting for it; false when none waits. */
+  confirm(receiptId: string, person: { id: number; name: string | null }): Promise<boolean>;
+}
+
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
 export interface ReceiptHouseholds {
   /** Everyone in the given people's households. */
@@ -190,6 +203,7 @@ export interface ReceiptConfig {
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
+  submitterConfirmations?: SubmitterConfirmations;
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;

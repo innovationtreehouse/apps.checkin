@@ -170,7 +170,6 @@ describeDb("racing decisions", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
     const { id, li, approvalId } = await lineInApproval(100);
     await db.expense.update({ where: { id }, data: { state: "assign_ownership" } });
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
 
     const [same, moved] = await race(
@@ -183,7 +182,7 @@ describeDb("racing decisions", () => {
     expect(moved.status).toBe("fulfilled");
     if (same.status === "rejected") expect(same.reason).toMatchObject({ status: 409 });
     expect((await approval(approvalId))!.ownerId).toBe(101);
-    expect((await db.expenseLineSignoff.findMany({ where: { lineItemId: li } })).map((s) => s.seat)).toEqual(["SUBMITTER"]);
+    expect(await db.expenseLineSignoff.count({ where: { lineItemId: li } })).toBe(0);
   });
 });
 

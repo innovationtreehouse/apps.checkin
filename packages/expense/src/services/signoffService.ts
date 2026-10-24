@@ -7,11 +7,12 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
+import { voidSubmitterConfirmation } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -123,8 +124,8 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
       valueBefore: null,
       valueAfter: String(personId),
     });
-    // Any seat signed while the payee was unknown is signed again for the payee.
-    await voidSignoffs(tx, actor, expenseId, null, "the reimbursee was set");
+    // Naming the payee changes who is paid, so the submitter confirms again and every seat after is signed again.
+    await voidSubmitterConfirmation(tx, actor, expenseId, ["reimbursee"]);
     await tx.expenseFlag.updateMany({
       where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
       data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },

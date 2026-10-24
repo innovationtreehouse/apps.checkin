@@ -32,7 +32,7 @@ describeDb("seats follow the line's bucket", () => {
 
   it("moving a line to another bucket voids its sign-offs, except the submitter's", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3], board: [5] }) });
-    const id = await seedExpense({ state: "owner_approval" });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100 });
     await signLine(principal(1), li, "SUBMITTER");
