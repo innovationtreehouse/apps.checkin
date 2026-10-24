@@ -85,15 +85,22 @@ describe("a receipt opened from the review queue", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks the date when its age sent the receipt to finance review", () => {
-    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["old_date"] };
-    const { container } = wrap(<ReceiptDetailPage />);
-    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["2026-10-01"]);
+  it("shows a reason it has no words for as its code", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["tax", "new_reason"] };
+    wrap(<ReceiptDetailPage />);
+    expect(screen.getByText("Finance review: tax was charged; new_reason")).toBeInTheDocument();
   });
 
-  it("marks the tax when tax sent the receipt to finance review", () => {
+  it.each([
+    [["old_date"], ["2026-10-01"]],
+    [["future_date"], ["2026-10-01"]],
+    [["tax"], ["tax $0.00"]],
+    [["tax", "old_date"], ["2026-10-01", "tax $0.00"]],
+    [["submitter_correction"], []],
+  ])("for reasons %j marks %j", (reasons, marked) => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: reasons };
     const { container } = wrap(<ReceiptDetailPage />);
-    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["tax $0.00"]);
+    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(marked);
   });
 
   it("without ?queue= returns to the queue the receipt's state is in", () => {
