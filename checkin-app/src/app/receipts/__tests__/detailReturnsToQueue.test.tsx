@@ -77,6 +77,32 @@ describe("a receipt opened from the review queue", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("names the finance review reasons in plain words", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["old_date", "submitter_correction"] };
+    wrap(<ReceiptDetailPage />);
+    expect(
+      screen.getByText("Finance review: the receipt is older than the age limit; the submitter changed the tax or date"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a reason it has no words for as its code", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["tax", "new_reason"] };
+    wrap(<ReceiptDetailPage />);
+    expect(screen.getByText("Finance review: tax was charged; new_reason")).toBeInTheDocument();
+  });
+
+  it.each([
+    [["old_date"], ["2026-10-01"]],
+    [["future_date"], ["2026-10-01"]],
+    [["tax"], ["tax $0.00"]],
+    [["tax", "old_date"], ["2026-10-01", "tax $0.00"]],
+    [["submitter_correction"], []],
+  ])("for reasons %j marks %j", (reasons, marked) => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: reasons };
+    const { container } = wrap(<ReceiptDetailPage />);
+    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(marked);
+  });
+
   it("without ?queue= returns to the queue the receipt's state is in", () => {
     mockSearch = new URLSearchParams();
     mockLoads["/r1"] = { ...receipt, state: "ocr_failed" };

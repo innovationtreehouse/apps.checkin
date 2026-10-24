@@ -148,8 +148,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
-    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/payouts') },
-    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
+    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
+    { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
+    { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
     { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {
@@ -162,6 +164,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
     { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
     { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
+    { name: 'counts:receipt', client: counts('receipt'), token: 'receipt-submitter' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
     { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: 'finance-or-board' },

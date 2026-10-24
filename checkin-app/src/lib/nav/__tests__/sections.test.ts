@@ -18,6 +18,7 @@ import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 import { SETTINGS } from "@/lib/nav/sections/settings";
 import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
+import { tabBadgeFor } from "@/components/navBadges";
 
 const SECTIONS: NavSection[] = [
   SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
@@ -84,6 +85,16 @@ describe("the Receipts split", () => {
     expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload"]);
   });
 
+  it("My receipts carries a green pill for the receipts that wait on their uploader", () => {
+    const list = MY_RECEIPTS.links.find((l) => l.href === "/receipts");
+    expect(list?.badge?.({ ...counts, libraries: { receipt: { awaitingMe: 2 } } })).toEqual({
+      count: 2,
+      color: "treehouseGreen",
+      label: "2 receipts need you",
+    });
+    expect(list?.badge?.(counts)).toBeNull();
+  });
+
   it("Receipt Review holds review, settings and mail, for FINANCE or BOARD; mail for FINANCE alone", () => {
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
       "/receipts/review",
@@ -98,6 +109,16 @@ describe("the Receipts split", () => {
       expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);
     }
   });
+
+  it("Receipts review carries a green pill for the receipts that wait on FINANCE", () => {
+    const review = RECEIPT_REVIEW.links.find((l) => l.href === "/receipts/review");
+    expect(review?.badge?.({ ...counts, libraries: { receipt: { awaitingFinance: 1 } } })).toEqual({
+      count: 1,
+      color: "treehouseGreen",
+      label: "1 receipt needs review",
+    });
+    expect(review?.badge?.(counts)).toBeNull();
+  });
 });
 
 describe("Membership Ops", () => {
@@ -105,3 +126,27 @@ describe("Membership Ops", () => {
     expect(MEMBERSHIP_OPS.links.find((l) => l.href === "/membership-ops/review")?.name).toBe("Background-check Review");
   });
 });
+
+// The sidebar reads a tab's badge function and the tab row reads tabBadgeFor first,
+// so a tab with both would show different pills in the two places.
+describe("tab badge sources", () => {
+  const counts: TodoCounts = {
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    admin: {
+      membership: 1, applicationsTotal: 1, paymentPlanPending: 1, membershipPaymentPlanPending: 1, trustedAdults: 1, householdsMissingContact: 1,
+      unclaimedHouseholds: 1, brokenHouseholds: 1, brokenEmails: 1, settingsMisconfig: 1, programsMisconfig: 1, openPaymentExceptions: 1,
+    },
+  };
+
+  it("no tab or sub-tab has both a tabBadgeFor case and its own badge function", () => {
+    const both = SECTIONS.flatMap((s) => s.links.flatMap((l) => [l, ...(l.subLinks ?? [])]))
+      .filter((l) => l.badge && tabBadgeFor(l.href, counts))
+      .map((l) => l.href);
+    expect(both).toEqual([]);
+  });
+});
+

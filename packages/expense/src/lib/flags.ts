@@ -44,12 +44,8 @@ export function detectIntakeFlags(
 ): FlagKind[] {
   const flags: FlagKind[] = [];
   if (expense.taxCents > 0) flags.push("TAX_ATTACHED");
-  if (
-    expense.receiptTotalCents >= settings.boardReviewTotalCents ||
-    expense.lineItems.some((li) => li.totalPriceCents >= settings.boardReviewTotalCents)
-  ) {
-    flags.push("THRESHOLD_CROSSED");
-  }
+  // The Board-review total is the receipt's total, never a single line's.
+  if (expense.receiptTotalCents >= settings.boardReviewTotalCents) flags.push("THRESHOLD_CROSSED");
   if (expense.lineItems.some((li) => li.unitPriceCents >= settings.capitalEquipmentUnitCents)) flags.push("CAPITAL_EQUIPMENT");
   if (reimburseeUnknown({ needsReimbursement: expense.needsReimbursement ?? false, backfill: expense.backfill ?? false, reimburseePersonId: expense.reimburseePersonId ?? null })) {
     flags.push("REIMBURSEE_UNKNOWN");

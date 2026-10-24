@@ -16,11 +16,7 @@ describe('expense card-charge registry', () => {
         expect(route?.orderedView.map(([role]) => role)).toEqual(['isFinance', 'isBoardMember']);
     });
 
-    it('admits finance only to mark a charge not Everyday', () => {
-        const route = getRoute('POST /api/expense/expenses/[id]/not-everyday');
-        expect(route?.authorize).toBe('finance');
-        expect(route?.envelope).toBeNull();
-        expect(route?.returns).toEqual(['ExpenseLineSignoffStatus']);
-        expect(route?.orderedView.map(([role]) => role)).toEqual(['isFinance']);
+    it('has no route to mark a charge not Everyday: the amounts alone decide it', () => {
+        expect(getRoute('POST /api/expense/expenses/[id]/not-everyday')).toBeUndefined();
     });
 });

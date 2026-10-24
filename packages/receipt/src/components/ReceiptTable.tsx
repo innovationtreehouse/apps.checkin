@@ -2,15 +2,21 @@
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
 import { dollars, STATE_LABELS, type ReceiptListRow } from "./api";
+import { SUBMITTER_ACTION_STATES } from "../nav";
 
-/** One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement column. */
+/**
+ * One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement
+ * column; `flagMine` marks the rows that wait on their uploader.
+ */
 export default function ReceiptTable({
   rows,
   paid = false,
+  flagMine = false,
   detailHref = (id) => `/receipts/${id}`,
 }: {
   rows: ReceiptListRow[];
   paid?: boolean;
+  flagMine?: boolean;
   detailHref?: (id: string) => string;
 }) {
   if (rows.length === 0) return <Text c="dimmed">No receipts.</Text>;
@@ -34,7 +40,12 @@ export default function ReceiptTable({
               </Table.Td>
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
-              <Table.Td>{STATE_LABELS[r.state] ?? r.state}</Table.Td>
+              <Table.Td>
+                {STATE_LABELS[r.state] ?? r.state}
+                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && (
+                  <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
+                )}
+              </Table.Td>
               {paid && (
                 <Table.Td>
                   {r.reimbursement ? (r.reimbursement.paidOn ? `Paid on ${r.reimbursement.paidOn}` : "Not yet paid") : "—"}

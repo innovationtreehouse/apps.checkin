@@ -36,19 +36,18 @@ function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 60000, currency: "USD", state: "qb_pending",
-      needsReimbursement: false, reimburseePersonId: null, backfill: false, singleSource: false, financeNotEveryday: false,
+      needsReimbursement: false, reimburseePersonId: null, backfill: false,
       lineItems: [{ id: 1, lineNumber: 1, description: "Laser tube", partNumber: null, quantity: 1, totalPriceCents: 60000, isCapital: false, depreciationYears: null, capitalOwnerId: null }],
       approvals: [],
       ...opts.expense,
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "approved" }],
-    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"], missing: opts.missing ?? ["BOARD_AUTHORIZATION"], blocked: [] }],
+    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"], missing: opts.missing ?? ["BOARD"], blocked: [] }],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
 
 const RECORD = { name: "Record Board authorization" };
-const MARK = { name: "Single-source purchase" };
 
 describe("Board authorization control", () => {
   it.each([["FINANCE", { isFinance: true }], ["Board", { isBoard: true }]])("%s records it, and the text is required", async (_who, roles) => {
@@ -73,25 +72,10 @@ describe("Board authorization control", () => {
   });
 });
 
-describe("not Everyday control", () => {
-  it.each([["Single-source purchase", "single_source"], ["Finance's call", "finance_override"]])("FINANCE marks it: %s", async (name, reason) => {
+describe("Everyday", () => {
+  it("FINANCE has no control to mark a card charge not Everyday: the amounts alone decide it", () => {
     load({ isFinance: true }, { missing: [] });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name })); });
-    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/not-everyday", "POST", { reason }, "Marked not Everyday");
-  });
-
-  it("is not shown to the Board", () => {
-    load({ isBoard: true }, { missing: [] });
-    expect(screen.queryByRole("button", MARK)).not.toBeInTheDocument();
-  });
-
-  it.each([
-    ["already marked single-source", { singleSource: true }],
-    ["already marked by FINANCE", { financeNotEveryday: true }],
-    ["a reimbursement", { needsReimbursement: true }],
-    ["closed", { state: "qb_complete" }],
-  ])("is not shown when the expense is %s", (_why, expense) => {
-    load({ isFinance: true }, { missing: [], expense });
-    expect(screen.queryByRole("button", MARK)).not.toBeInTheDocument();
+    expect(screen.queryByText("Not Everyday")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Single-source purchase" })).not.toBeInTheDocument();
   });
 });

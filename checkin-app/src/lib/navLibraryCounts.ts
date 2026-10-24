@@ -8,6 +8,7 @@ import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
 import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
+import { canSubmitReceipts } from "@/lib/volunteer";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
@@ -23,7 +24,7 @@ export type LibraryCountProvider = {
 export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   {
     library: "expense",
-    // Any signed-in person: a program treasurer holds no session flag, so the provider decides.
+    // Any signed-in person: a bucket approver holds no session flag, so the provider decides.
     visible: (u) => typeof u.id === "number",
     // An unconfigured library contributes no counts; lazy so the expense library loads only when used.
     count: async (u) =>
@@ -52,6 +53,24 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
       process.env.INCOME_DATABASE_URL
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }
         : {},
+  },
+  {
+    library: "receipt",
+    // An uploader counts their own receipts; FINANCE counts its queues. BOARD reads the queues
+    // but cannot act on them, so it gets no queue count.
+    visible: (u) => canSubmitReceipts(u) || u.isFinance === true,
+    count: async (u): Promise<Record<string, number>> => {
+      if (!process.env.RECEIPT_DATABASE_URL) return {};
+      const { receiptService } = await import("@checkin/receipt");
+      const [awaitingMe, awaitingFinance] = await Promise.all([
+        canSubmitReceipts(u) && typeof u.id === "number" ? receiptService.countAwaitingSubmitter(u.id) : null,
+        u.isFinance === true ? receiptService.countAwaitingFinance() : null,
+      ]);
+      return {
+        ...(awaitingMe === null ? {} : { awaitingMe }),
+        ...(awaitingFinance === null ? {} : { awaitingFinance }),
+      };
+    },
   },
 ];
 

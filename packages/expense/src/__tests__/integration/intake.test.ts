@@ -109,7 +109,7 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
   });
 
   it("freezes the Everyday amount check with the limits in force at intake", async () => {
-    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 1 }, principal(3, { isFinance: true }));
+    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 1 }, principal(5, { isBoard: true }));
     await receiveCompletedReceipt(allRecognized);
 
     const row = await db.expense.findUniqueOrThrow({ where: { id: allRecognized.receiptId } });

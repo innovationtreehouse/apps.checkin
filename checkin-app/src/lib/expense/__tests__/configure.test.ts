@@ -59,29 +59,35 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     }
   });
 
-  it("a bucket's lead mentor and treasurers", async () => {
+  it("a bucket's owner and treasurers", async () => {
     budgetOwnerFindUnique.mockResolvedValue({
-      programId: 1,
-      program: {
-        leadMentor: { id: 7, mergedIntoId: null, household: { orgMembership: { status: "DENIED" } } },
-        volunteers: [{ personId: 8 }],
-      },
+      isOrgLevel: false,
+      owner: { id: 7, mergedIntoId: null, household: { orgMembership: { status: "DENIED" } } },
+      treasurers: [{ personId: 8 }],
     });
     const dir = await signoff();
 
-    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], leader: 7 });
-    expect(budgetOwnerFindUnique.mock.calls[0][0].select.program.select.volunteers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], owner: 7 });
+    expect(budgetOwnerFindUnique.mock.calls[0][0].select.treasurers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
   });
 
-  it("the buckets a person approves", async () => {
+  it("an org-level bucket has no approvers and no owner", async () => {
+    budgetOwnerFindUnique.mockResolvedValue({ isOrgLevel: true, owner: { id: 7, mergedIntoId: null, household: null }, treasurers: [{ personId: 8 }] });
+    await expect((await signoff()).bucketApprovers(100)).resolves.toEqual({ orgLevel: true, approvers: [], owner: null });
+  });
+
+  it("the non-org-level buckets a person owns or treasures, archived ones included", async () => {
     budgetOwnerFindMany.mockResolvedValue([]);
     const dir = await signoff();
 
     await dir.bucketsApprovedBy(7);
 
-    const [lead, treasurer] = budgetOwnerFindMany.mock.calls[0][0].where.program.OR;
-    expect(lead.leadMentor).toEqual({ mergedIntoId: null, ...NOT_DENIED });
-    expect(treasurer.volunteers.some.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+    const { where } = budgetOwnerFindMany.mock.calls[0][0];
+    expect(where).toMatchObject({ isOrgLevel: false });
+    expect(where).not.toHaveProperty("archivedAt");
+    const [owner, treasurer] = where.OR;
+    expect(owner).toEqual({ ownerId: 7, owner: { mergedIntoId: null, ...NOT_DENIED } });
+    expect(treasurer.treasurers.some).toEqual({ personId: 7, person: { mergedIntoId: null, ...NOT_DENIED } });
   });
 });
 

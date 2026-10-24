@@ -62,7 +62,7 @@ export default function ItemsPage() {
         Assign each item to a bucket or to general income. A payout with a sale of an undecided item, or of an item whose bucket has a problem, waits until finance fixes it.
       </Text>
       {items.error && <LoadError what="items" message={items.error} onRetry={items.reload} />}
-      {buckets.error && <Text size="sm" c="red" mb="sm">Couldn&apos;t load budget-owner buckets: {buckets.error}</Text>}
+      {buckets.error && <Text size="sm" c="red" mb="sm">Couldn&apos;t load buckets: {buckets.error}</Text>}
       {items.data === null ? <Text c="dimmed">Loading…</Text>
         : items.data.length === 0 ? <Text c="dimmed">No items in the store mirror.</Text>
         : (

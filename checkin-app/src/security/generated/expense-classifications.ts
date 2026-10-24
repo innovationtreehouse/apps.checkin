@@ -61,8 +61,6 @@ export const classifications = {
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
         isTestData: 'internal',
-        singleSource: 'internal',
-        financeNotEveryday: 'internal',
         boardAuthorization: 'internal',
         boardAuthorizedByUserId: 'pii',
         boardAuthorizedByUsername: 'pii',

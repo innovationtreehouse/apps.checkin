@@ -52,6 +52,20 @@ describeDb("submitter scope", () => {
   });
 });
 
+describeDb("receipts awaiting their uploader", () => {
+  it("counts only the caller's own receipts that wait on them", async () => {
+    const upload = (retailer: string, over: Record<string, unknown> = {}, needsReimbursement = false) =>
+      receiptService.upload(textFile(retailer), "text/plain", { details: manualDetails({ retailer, ...over }), needsReimbursement });
+    expect((await upload("A", { receiptTotal: "1" })).state).toBe("validation_failed");
+    expect((await upload("B", {}, true)).state).toBe("submitter_review");
+    expect((await upload("C")).state).toBe("receipt_finalized");
+    actAs(BOB);
+    await upload("D", { receiptTotal: "1" });
+    expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(2);
+    expect(await receiptService.countAwaitingSubmitter(BOB.id)).toBe(1);
+  });
+});
+
 describeDb("submitter review", () => {
   it("confirming an owed receipt finalizes it", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });

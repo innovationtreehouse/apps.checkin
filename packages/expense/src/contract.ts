@@ -47,12 +47,12 @@ export interface OwnerDirectory {
 
 export const inertOwnerDirectory: OwnerDirectory = { list: async () => [] };
 
-/** A bucket's derived approvers: the program's leader and treasurers; none for an org-level bucket. */
+/** A bucket's approvers: its owner and treasurers; none for an org-level bucket. */
 export interface BucketApprovers {
   orgLevel: boolean;
   approvers: number[];
-  /** The program's leader, eligible to sign or not; null for an org-level bucket or a program without one. */
-  leader: number | null;
+  /** The bucket's owner, eligible to sign or not; null for an org-level bucket or one without an owner. */
+  owner: number | null;
 }
 
 /**
@@ -61,7 +61,7 @@ export interface BucketApprovers {
  */
 export interface SignoffDirectory {
   bucketApprovers(bucketId: number): Promise<BucketApprovers>;
-  /** The buckets whose derived approvers include this person (programs led or treasured). */
+  /** The buckets whose approvers (owner or treasurer) include this person. */
   bucketsApprovedBy(personId: number): Promise<number[]>;
   financeHolders(): Promise<number[]>;
   boardMembers(): Promise<number[]>;
@@ -77,7 +77,7 @@ export interface SignoffDirectory {
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
 export const inertSignoffDirectory: SignoffDirectory = {
-  bucketApprovers: async () => ({ orgLevel: false, approvers: [], leader: null }),
+  bucketApprovers: async () => ({ orgLevel: false, approvers: [], owner: null }),
   bucketsApprovedBy: async () => [],
   financeHolders: async () => [],
   boardMembers: async () => [],

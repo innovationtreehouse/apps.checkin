@@ -19,7 +19,7 @@ export function requireFinance(principal: ExpensePrincipal): void {
   if (!principal.isFinance) throw new ServiceError(403, "Only finance users can do this");
 }
 
-/** True when the caller is a derived approver of the bucket (program leader or treasurer). */
+/** True when the caller is a derived approver of the bucket (bucket owner or treasurer). */
 export async function isBucketApprover(principal: ExpensePrincipal, bucketId: number | null): Promise<boolean> {
   if (bucketId === null) return false;
   const { approvers } = await getExpenseRuntime().signoff.bucketApprovers(bucketId);

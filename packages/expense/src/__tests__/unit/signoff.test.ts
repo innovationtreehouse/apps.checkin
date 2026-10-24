@@ -9,7 +9,7 @@ import {
   type SignoffFacts,
 } from "../../lib/signoff";
 
-// 1 submitter · 2 program leader · 3 the FINANCE holder · 5,6 Board · 8 submitter's spouse
+// 1 submitter · 2 bucket owner · 3 the FINANCE holder · 5,6 Board · 8 submitter's spouse
 // seatedHouseholds: household members of people already seated on the expense
 const base: SignoffFacts = {
   kind: "reimbursement",
@@ -20,10 +20,10 @@ const base: SignoffFacts = {
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
-  leaderHousehold: [],
+  ownerHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
-  needsBoardAuthorization: false,
+  boardSeat: false,
 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 
@@ -50,7 +50,7 @@ describe("independence", () => {
 });
 
 describe("one seat per household on an expense", () => {
-  // 3 holds FINANCE; 2, the program leader, is 3's spouse.
+  // 3 holds FINANCE; 2, the bucket owner, is 3's spouse.
   const spouses = { ...base, seatedHouseholds: [2] };
 
   it("a FINANCE holder's spouse cannot take the program-approver seat after the FINANCE holder signed", () => {
@@ -89,7 +89,7 @@ describe("Board substitution (F2-COI)", () => {
     expect(signoffRefusal(facts, [], "TREASURER", 4)).toBeNull();
   });
 
-  it("the only FINANCE holder approved as the program leader: a Board member takes the Treasurer seat", () => {
+  it("the only FINANCE holder approved as the bucket owner: a Board member takes the Treasurer seat", () => {
     const facts = { ...base, approvers: [3] };
     const filled = seats(["PROGRAM_APPROVER", 3]);
     expect(signoffRefusal(facts, filled, "TREASURER", 5)).toBeNull();
@@ -122,34 +122,34 @@ describe("Board substitution (F2-COI)", () => {
   });
 });
 
-describe("the Program Leader's household and the Treasurer seat", () => {
+describe("the bucket owner's household and the Treasurer seat", () => {
   // 2 leads the program; 4 is 2's spouse and holds FINANCE alongside 3.
-  const led = { ...base, finance: [3, 4], leaderHousehold: [2, 4] };
+  const led = { ...base, finance: [3, 4], ownerHousehold: [2, 4] };
 
-  it("a FINANCE holder in the leader's household cannot fill the Treasurer seat; another FINANCE holder can", () => {
-    expect(signoffRefusal(led, [], "TREASURER", 4)).toMatch(/Program Leader/);
+  it("a FINANCE holder in the owner's household cannot fill the Treasurer seat; another FINANCE holder can", () => {
+    expect(signoffRefusal(led, [], "TREASURER", 4)).toMatch(/bucket owner/);
     expect(signoffRefusal(led, [], "TREASURER", 3)).toBeNull();
   });
 
-  it("the leader holding FINANCE cannot fill the Treasurer seat even when a treasurer approved the line", () => {
-    const facts = { ...base, approvers: [2, 7], finance: [2], board: [5, 6], leaderHousehold: [2] };
+  it("the owner holding FINANCE cannot fill the Treasurer seat even when a treasurer approved the line", () => {
+    const facts = { ...base, approvers: [2, 7], finance: [2], board: [5, 6], ownerHousehold: [2] };
     const filled = seats(["PROGRAM_APPROVER", 7]);
-    expect(signoffRefusal(facts, filled, "TREASURER", 2)).toMatch(/Program Leader/);
+    expect(signoffRefusal(facts, filled, "TREASURER", 2)).toMatch(/bucket owner/);
     expect(signoffRefusal(facts, filled, "TREASURER", 5)).toBeNull();
   });
 
-  it("every FINANCE holder in the leader's household: a non-conflicted Board member replaces them", () => {
+  it("every FINANCE holder in the owner's household: a non-conflicted Board member replaces them", () => {
     const facts = { ...led, finance: [4] };
     expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
   });
 
-  it("a Board member in the leader's household cannot replace the Treasurer", () => {
+  it("a Board member in the owner's household cannot replace the Treasurer", () => {
     const facts = { ...led, finance: [4], board: [4, 5] };
-    expect(signoffRefusal(facts, [], "TREASURER", 4)).toMatch(/Program Leader/);
+    expect(signoffRefusal(facts, [], "TREASURER", 4)).toMatch(/bucket owner/);
     expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
   });
 
-  it("the leader's household still fills the program-approver seat", () => {
+  it("the owner's household still fills the program-approver seat", () => {
     expect(signoffRefusal(led, [], "PROGRAM_APPROVER", 2)).toBeNull();
   });
 

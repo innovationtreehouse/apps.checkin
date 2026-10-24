@@ -66,6 +66,7 @@ describe("Merge Participants API", () => {
     let createdToolId: number | undefined;
     let createdEventId: number | undefined;
     let createdCorporationId: number | undefined;
+    let createdBucketIds: number[];
     let createdProcessIds: number[];
 
     beforeEach(async () => {
@@ -75,6 +76,7 @@ describe("Merge Participants API", () => {
         createdToolId = undefined;
         createdEventId = undefined;
         createdCorporationId = undefined;
+        createdBucketIds = [];
         createdProcessIds = [];
 
         const hh = await prisma.household.create({ data: { name: "Merge Test Household" } });
@@ -119,6 +121,8 @@ describe("Merge Participants API", () => {
         // RESTRICT-FK children must go before their Person rows.
         await prisma.backgroundCheckAttestation.deleteMany({ where: { OR: [{ reviewerId: { in: personIds } }, { subjectPersonId: { in: personIds } }] } });
         await prisma.rawBadgeLog.deleteMany({ where: { personId: { in: personIds } } });
+        await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwnerId: { in: createdBucketIds } } });
+        await prisma.budgetOwner.deleteMany({ where: { id: { in: createdBucketIds } } });
         await prisma.corporationLead.deleteMany({ where: { personId: { in: personIds } } });
         await prisma.corporationMember.deleteMany({ where: { personId: { in: personIds } } });
         await prisma.trustedAdultReview.deleteMany({ where: { householdId } });
@@ -526,6 +530,28 @@ describe("Merge Participants API", () => {
         expect(newData.moved.programVolunteers).toEqual({ migrated: 0, deduped: 1 });
         expect(newData.moved.corporationLeads).toEqual({ migrated: 0, deduped: 1 });
         expect(newData.moved.corporationMembers).toEqual({ migrated: 0, deduped: 1 });
+    });
+
+    it("repoints a bucket owner and moves or dedupes bucket treasurer rows", async () => {
+        const owned = await prisma.budgetOwner.create({ data: { name: "Merge Owned Bucket", ownerId: pMergeId } });
+        const shared = await prisma.budgetOwner.create({ data: { name: "Merge Shared Bucket" } });
+        const solo = await prisma.budgetOwner.create({ data: { name: "Merge Solo Bucket" } });
+        createdBucketIds.push(owned.id, shared.id, solo.id);
+        await prisma.budgetOwnerTreasurer.create({ data: { budgetOwnerId: shared.id, personId: pKeepId } });
+        await prisma.budgetOwnerTreasurer.create({ data: { budgetOwnerId: shared.id, personId: pMergeId } });
+        await prisma.budgetOwnerTreasurer.create({ data: { budgetOwnerId: solo.id, personId: pMergeId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect((await prisma.budgetOwner.findUnique({ where: { id: owned.id } }))?.ownerId).toBe(pKeepId);
+        expect(await prisma.budgetOwnerTreasurer.findMany({ where: { budgetOwnerId: { in: [shared.id, solo.id] } }, orderBy: { budgetOwnerId: 'asc' } }))
+            .toEqual([{ budgetOwnerId: shared.id, personId: pKeepId }, { budgetOwnerId: solo.id, personId: pKeepId }]);
+
+        const log = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+        const newData = log?.newData as { moved: { bucketOwners: number; bucketTreasurers: { migrated: number; deduped: number } } };
+        expect(newData.moved.bucketOwners).toBe(1);
+        expect(newData.moved.bucketTreasurers).toEqual({ migrated: 1, deduped: 1 });
     });
 
     // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.

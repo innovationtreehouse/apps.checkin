@@ -20,7 +20,7 @@ export default function InKindByBucketPage() {
   return (
     <>
       <Title order={3} mb="md">In-kind gifts to your programs</Title>
-      <Text size="sm" c="dimmed" mb="md">Goods given to the programs you lead or are treasurer for, once finance has accepted them. You see them; you do not approve them.</Text>
+      <Text size="sm" c="dimmed" mb="md">Goods given to the buckets you own or are treasurer for, once finance has accepted them. You see them; you do not approve them.</Text>
       {gifts.error && <LoadError what="in-kind gifts" message={gifts.error} onRetry={gifts.reload} />}
       {gifts.data?.length === 0 && <Text c="dimmed">No in-kind gifts in your buckets.</Text>}
       {!!gifts.data?.length && (

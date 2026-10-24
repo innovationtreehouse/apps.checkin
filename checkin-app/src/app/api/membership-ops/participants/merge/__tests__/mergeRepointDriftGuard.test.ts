@@ -96,6 +96,7 @@ const DISPOSITIONS: Record<string, string> = {
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would pin the very Person that #1456 2b-3 exists to delete. Deliberately the opposite call from Person.mergedIntoId below, which keeps its chain for provenance — the archive already has mergedAt and the AuditLog for that.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
+    'BudgetOwner.ownerId': 'repointed (RESTRICT) — step 5 updateMany. The bucket owner approves its lines; the same human keeps approving as the survivor.',
     'Program.leadMentorId': 'repointed (SET NULL) — step 5 updateMany.',
     'ProgramInstance.leadMentorId': 'repointed (SET NULL) — step 5 updateMany, same as Program.leadMentorId (the offering-tier lead of a run follows the survivor).',
     'RawBadgeLog.personId': 'repointed (RESTRICT) — the FK that makes a later Person delete possible at all. Plain updateMany; no unique constraint.',
@@ -108,6 +109,7 @@ const DISPOSITIONS: Record<string, string> = {
     'CorporationLead.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'CorporationMember.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Each tombstone role, read in the transaction, moves through setRoleFlag: granted to the survivor (a no-op when it already holds it), then revoked from the tombstone, so the role guards run and every change writes an audit row. Never left on the tombstone, because CASCADE would later destroy a security grant. Person\'s legacy role mirrors are then rewritten from an in-transaction read of the survivor\'s final rows.',
+    'BudgetOwnerTreasurer.personId': 'deduped (RESTRICT) — bare join on (budgetOwnerId, personId); moved, or deleted when the survivor already treasures that bucket.',
     'ProgramVolunteer.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'RSVP.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a past-event duplicate is deleted; a FUTURE-event duplicate is pre-refused, because which answer is real is a human call.',
 

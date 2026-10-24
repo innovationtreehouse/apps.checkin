@@ -27,7 +27,7 @@ export const EXPENSE_OPS_TABS: readonly ExpenseNavLink[] = [
   { name: "Holds", href: "/expense/holds", icon: "⛔", badge: "holds" },
   { name: "Flags", href: "/expense/flags", icon: "🚩", badge: "openFlags" },
   { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️" },
-  { name: "QB Accounts", href: "/expense/qb-accounts", icon: "📒" },
-  { name: "Ownership Map", href: "/expense/ownership-map", icon: "🪣" },
+  { name: "QuickBooks Accounts", href: "/expense/qb-accounts", icon: "📒" },
+  { name: "Part Buckets", href: "/expense/ownership-map", icon: "🪣" },
   { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️" },
 ];
