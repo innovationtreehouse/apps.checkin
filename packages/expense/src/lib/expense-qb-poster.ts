@@ -253,18 +253,18 @@ export async function postExpenseToQb(
 
 type Claimed = { claim: Claim; write: TxnWrite; lineAccounts: Map<number, string> };
 
-/** Line approvals that let an expense post. */
-const POSTABLE_APPROVALS = ["approved", "finance_assigned"];
-
-/** Why an expense may not post: an unknown reimbursee, an unfilled seat or Board approval, or a line not approved. */
+/**
+ * Why an expense may not post: an unknown reimbursee, an unfilled seat or Board approval, or a
+ * line not approved. The approval is the program approver's sign-off.
+ */
 async function postingHold(tx: Db, e: Expense): Promise<string | null> {
   if (reimburseeUnknown(e)) return "the reimbursee is unknown";
   const holds = new Set([...(await unsignedLines(tx, e)).values()].flat());
   const approval = holds.delete("BOARD_APPROVAL");
   const reasons = [...(holds.size > 0 ? ["a line is missing a sign-off seat"] : []), ...(approval ? ["the Board's approval of a purchase at or over the Board-review total is not recorded"] : [])];
   if (reasons.length > 0) return reasons.join(", and ");
-  const unapproved = await tx.lineItemOwnerApproval.count({ where: { expenseId: e.id, status: { notIn: POSTABLE_APPROVALS } } });
-  return unapproved > 0 ? "a line is not approved: it is pending, under exception, or rejected" : null;
+  const unapproved = await tx.lineItemOwnerApproval.count({ where: { expenseId: e.id, status: { not: "approved" } } });
+  return unapproved > 0 ? "a line is not approved: it is pending, under exception, waiting for its new bucket's approver, or rejected" : null;
 }
 
 /**

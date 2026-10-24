@@ -5,7 +5,7 @@ import type { BucketApprovers } from "../contract";
 import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
-import type { Actor } from "./workflow-engine";
+import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 
 type SignoffExpense = Pick<
   Expense,
@@ -32,13 +32,17 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 }
 
 /**
- * Household members of everyone seated on the expense outside the submitter seat, minus the
- * seated people themselves: one household holds at most one seat on an expense.
+ * Household members of everyone seated on the expense outside the submitter seat, the approvers
+ * of its lines included, minus the seated people themselves: one household holds at most one
+ * seat on an expense.
  */
 export async function seatedHouseholds(db: Db, expenseId: string): Promise<number[]> {
   const dir = getExpenseRuntime().signoff;
-  const rows = await db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { signerUserId: true } });
-  const signers = [...new Set(rows.map((r) => r.signerUserId))];
+  const [rows, approvals] = await Promise.all([
+    db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { signerUserId: true } }),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
+  ]);
+  const signers = [...new Set([...rows.map((r) => r.signerUserId), ...approvals.map((a) => a.decidedByUserId!)])];
   const mates = await Promise.all(signers.map(async (s) => (await dir.householdOf([s])).filter((id) => id !== s)));
   return [...new Set(mates.flat())];
 }
@@ -63,7 +67,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
   const dir = getExpenseRuntime().signoff;
   const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
-    db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true, status: true, decidedByUserId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
     conflictedParties(expense),
@@ -72,6 +76,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
   const bucketsById = new Map<number, BucketApprovers>();
   const ownerHouseholds = new Map<number, number[]>();
   for (const bucket of new Set(approvals.map((a) => a.ownerId))) {
@@ -87,6 +92,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     lines.map((l) => {
       const bucket = bucketOf.get(l.id) ?? null;
       const b = bucket === null ? undefined : bucketsById.get(bucket);
+      const approved = approvalOf.get(l.id)?.status === "approved";
       const facts: SignoffFacts = {
         kind,
         submitterId: expense.submitterId,
@@ -100,6 +106,8 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         reimburseeSetter: setterRow?.userId ?? (expense.reimburseePersonId === null ? null : expense.submitterId),
         seatedHouseholds: seated,
         boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),
+        approved,
+        approver: approved ? (approvalOf.get(l.id)?.decidedByUserId ?? null) : null,
       };
       return [l.id, facts];
     }),
@@ -148,26 +156,53 @@ export async function lockExpense(tx: Prisma.TransactionClient, expenseId: strin
   await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
 }
 
+/** A step on a line, in the order of its signatures: the submitter seat, the approval, the Treasurer seat. */
+export type ClearedStep = "SUBMITTER" | "APPROVAL" | "TREASURER";
+
+/** Open states past owner approval; an expense in one returns to owner approval when an approval reopens. */
+const PAST_OWNER_APPROVAL = new Set(["capital_review", "set_depreciation_cycle", "qb_pending", "qb_on_hold", "qb_error"]);
+
 /**
- * Deletes the non-submitter sign-offs on the given lines (every line when `lineItemIds` is
- * null), clears those lines' catalog snapshots, and audits each as `signoff_voided`, so those
- * seats are signed again and the re-signed line takes a fresh snapshot.
+ * Clears `from` and every later step on the given lines (every line when `lineItemIds` is null):
+ * deletes the seats, reopens an approved approval to pending, and clears those lines' catalog
+ * snapshots, so each step is given again in order. Each cleared seat is audited as
+ * `signoff_voided` and each reopened approval as `approval_cleared`, naming `reason`. An expense
+ * past owner approval whose approval reopens returns to owner approval.
  */
-export async function voidSignoffs(
+export async function clearFrom(
   tx: Prisma.TransactionClient,
   actor: Actor,
   expenseId: string,
   lineItemIds: number[] | null,
+  from: ClearedStep,
   reason: string,
 ): Promise<void> {
-  const where = { expenseId, seat: { not: "SUBMITTER" }, ...(lineItemIds ? { lineItemId: { in: lineItemIds } } : {}) };
-  const voided = await tx.expenseLineSignoff.findMany({ where });
-  if (voided.length === 0) return;
+  const lines = lineItemIds ? { lineItemId: { in: lineItemIds } } : {};
+  const seats: Seat[] = from === "SUBMITTER" ? ["SUBMITTER", "TREASURER", "BOARD"] : ["TREASURER", "BOARD"];
+  const voided = await tx.expenseLineSignoff.findMany({ where: { expenseId, seat: { in: seats }, ...lines }, orderBy: { id: "asc" } });
+  const reopened = from === "TREASURER" ? [] : await tx.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", ...lines }, orderBy: { id: "asc" } });
+  if (voided.length === 0 && reopened.length === 0) return;
+
   await tx.expenseLineSignoff.deleteMany({ where: { id: { in: voided.map((v) => v.id) } } });
+  await tx.lineItemOwnerApproval.updateMany({
+    where: { id: { in: reopened.map((a) => a.id) } },
+    data: { status: "pending", decidedAt: null, decidedByUserId: null, notes: null },
+  });
   await tx.expenseLineItem.updateMany({
-    where: { id: { in: [...new Set(voided.map((v) => v.lineItemId))] } },
+    where: { id: { in: [...new Set([...voided, ...reopened].map((v) => v.lineItemId))] } },
     data: { signedGtin13: null, signedCategory: null, signedSubcategory: null },
   });
+  for (const a of reopened) {
+    await writeAudit(tx, actor, {
+      expenseId,
+      action: "approval_cleared",
+      lineItemId: a.lineItemId,
+      fieldChanged: "status",
+      valueBefore: "approved",
+      valueAfter: "pending",
+      notes: `approver ${a.decidedByUserId ?? "none"}: ${reason}`,
+    });
+  }
   for (const v of voided) {
     await writeAudit(tx, actor, {
       expenseId,
@@ -177,5 +212,10 @@ export async function voidSignoffs(
       valueBefore: v.seat,
       notes: `signer ${v.signerUserId}: ${reason}`,
     });
+  }
+
+  const { state } = (await tx.expense.findUnique({ where: { id: expenseId }, select: { state: true } }))!;
+  if (reopened.length > 0 && PAST_OWNER_APPROVAL.has(state)) {
+    await advanceWorkflowInTx(tx, { expenseId, currentState: state, event: { type: "APPROVAL_REOPENED" }, actor, action: "state_transition", auditNotes: reason });
   }
 }

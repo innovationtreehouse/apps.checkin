@@ -1,5 +1,6 @@
-// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI). The signer is always the
-// principal; a line with an unfilled seat holds its expense out of the QB outbox.
+// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI), signed in order around the
+// line's approval. The signer is always the principal; a line with an unfilled seat holds its
+// expense out of the QB outbox.
 import type { Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
@@ -7,7 +8,7 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
+import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
@@ -32,10 +33,6 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
       if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
       if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
       if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
-      if (seat === "PROGRAM_APPROVER") {
-        const approval = await tx.lineItemOwnerApproval.findFirst({ where: { lineItemId }, select: { ownerId: true } });
-        if (approval?.ownerId == null) throw new ServiceError(409, "The line has no budget bucket yet; FINANCE assigns one before the program approver signs");
-      }
 
       const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
       const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
@@ -124,8 +121,12 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
       valueBefore: null,
       valueAfter: String(personId),
     });
-    // Naming the payee changes who is paid, so the submitter confirms again and every seat after is signed again.
-    await voidSubmitterConfirmation(tx, actor, expenseId, ["reimbursee"]);
+    // Naming the payee changes who is paid: a confirmation already given is given again, and so is every step after it.
+    if (await tx.expenseLineSignoff.count({ where: { expenseId, seat: "SUBMITTER" } })) {
+      await voidSubmitterConfirmation(tx, actor, expenseId, ["reimbursee"]);
+    } else {
+      await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
+    }
     await tx.expenseFlag.updateMany({
       where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
       data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },

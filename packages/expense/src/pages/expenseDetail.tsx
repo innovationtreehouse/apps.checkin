@@ -88,11 +88,12 @@ const ACTION_LABEL: Record<Action, string> = {
   "assign-owner": "Assign bucket",
   "resolve-unknown": "Resolve bucket",
 };
-const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer", BOARD: "Board" };
+const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", TREASURER: "Treasurer", BOARD: "Board" };
 
 /** Which approval actions the caller may take on a row; the routes check again. */
 function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   if (a.status === "pending" && state === "owner_approval") return ["approve", "raise-exception"];
+  if (a.status === "finance_assigned" && state === "owner_approval") return ["approve"];
   if (!isFinance) return [];
   if (a.status === "exception_raised") return ["reject", "finance-assign"];
   if (a.status === "unknown") return ["resolve-unknown"];
@@ -196,7 +197,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
     if (!dialog) return;
     const { action, approval } = dialog;
     const body =
-      action === "approve" ? { overrideComment: text || null }
+      action === "approve" ? { reason: text || null }
       : action === "raise-exception" || action === "reject" ? { notes: text }
       : { ownerId: Number(bucket), ...(action === "assign-owner" ? { permanent } : {}) };
     if (await send(`${base}/line-item-approvals/${approval.id}/${action}`, "POST", body, `${ACTION_LABEL[action]} done`)) {
@@ -281,7 +282,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {e.lineItems.map((l) => {
             const a = approvalRows.find((r) => r.lineItemId === l.id);
             const s = statusOf.get(l.id);
-            const noBucket = a?.ownerId == null;
             return (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.lineNumber}</Table.Td>
@@ -317,12 +317,11 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
                       {s.missing.includes("SUBMITTER") && <Text size="xs" c="dimmed">Awaiting Submitter</Text>}
                       {s.missing.filter((seat) => seat !== "BOARD_APPROVAL" && seat !== "SUBMITTER").map((seat) => (
-                        <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
+                        <Button key={seat} size="compact-xs" variant="outline" disabled={held} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>
                       ))}
                       {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
-                      {noBucket && s.missing.includes("PROGRAM_APPROVER") && <Text size="xs" c="dimmed">Waiting for Finance to assign a budget bucket</Text>}
                       {s.missing.includes("BOARD_APPROVAL") && <Text size="xs" c="dimmed">Held until the Board approval of this purchase is recorded</Text>}
                       {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
                     </Stack>
@@ -435,7 +434,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             </>
           ) : (
             <Textarea
-              label={dialog?.action === "approve" ? "Comment (required when FINANCE approves outside its own buckets)" : "Notes"}
+              label={dialog?.action === "approve" ? "Reason (required when a Board member approves in place of the bucket's approvers)" : "Notes"}
               value={text}
               onChange={(ev) => setText(ev.currentTarget.value)}
             />

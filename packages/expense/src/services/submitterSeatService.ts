@@ -5,7 +5,7 @@ import { db } from "../db";
 import type { SubmitterConfirmations } from "../contract";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { lockExpense, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { clearFrom, lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES } from "../lib/signoff";
 import type { Actor } from "../lib/workflow-engine";
 import { getOrgId } from "../runtime";
@@ -54,17 +54,11 @@ export async function auditConfirmationVoided(tx: Prisma.TransactionClient, acto
 
 /**
  * A finance change to what a reimbursement's submitter claimed or is paid: clears the submitter
- * seat on every line and every signature after it, each audited, so the submitter confirms again.
+ * seat on every line and every step after it, each audited, so the submitter confirms again.
  */
 export async function voidSubmitterConfirmation(tx: Prisma.TransactionClient, actor: Actor, expenseId: string, fields: string[]): Promise<void> {
-  const reason = `finance changed ${fields.join(", ")}`;
   await auditConfirmationVoided(tx, actor, expenseId, fields);
-  const seats = await tx.expenseLineSignoff.findMany({ where: { expenseId, seat: "SUBMITTER" } });
-  await tx.expenseLineSignoff.deleteMany({ where: { id: { in: seats.map((s) => s.id) } } });
-  for (const s of seats) {
-    await writeAudit(tx, actor, { expenseId, action: "signoff_voided", lineItemId: s.lineItemId, fieldChanged: "seat", valueBefore: "SUBMITTER", notes: `signer ${s.signerUserId}: ${reason}` });
-  }
-  await voidSignoffs(tx, actor, expenseId, null, reason);
+  await clearFrom(tx, actor, expenseId, null, "SUBMITTER", `finance changed ${fields.join(", ")}`);
 }
 
 export const submitterConfirmations: SubmitterConfirmations = {

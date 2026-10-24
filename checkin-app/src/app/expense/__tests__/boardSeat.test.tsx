@@ -36,7 +36,7 @@ function load(missing: string[]) {
       approvals: [],
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "approved" }],
-    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: ["SUBMITTER", "PROGRAM_APPROVER"], missing, blocked: [] }],
+    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: ["SUBMITTER"], missing, blocked: [] }],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
