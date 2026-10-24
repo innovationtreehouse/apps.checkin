@@ -28,6 +28,10 @@
  * Counts only, no record field. Receiving and the time are `public`, matching
  * WorkflowReceiptCount; receipts and expenses are `internal`.
  *
+ * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
+ * Person's `id` and `name`, both `public` on Person, so any receipt submitter
+ * reads them.
+ *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -102,6 +106,10 @@ export const classifications = {
     receipt: "internal",
     receiving: "public",
     expense: "internal",
+  },
+  ReceiptReimburseeOption: {
+    id: "public",
+    name: "public",
   },
   ReceiptIgnoredFileView: {
     id: "internal",
