@@ -28,7 +28,7 @@ const WRITES: Array<[string, unknown?]> = [
   ["/api/workflow-mapping/receipts/1/retry-apply"],
   ["/api/workflow-mapping/receipts/1/lines/1/associate", { gtin13: "0022222222220" }],
   ["/api/workflow-mapping/receipts/1/lines/1/propose", {
-    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
+    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable",
   }],
   ["/api/workflow-mapping/receipts/1/lines/1/non-inventory"],
 ];
@@ -155,7 +155,7 @@ describe("workflow mapping — manager journey", () => {
 
     // Catalog submissions are not bound yet, so propose fails loudly.
     expect((await post(m, `${line}/propose`, {
-      proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
+      proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable",
     })).status).toBe(502);
     expect((await post(m, `${line}/associate`, { gtin13: "" })).status).toBe(400);
 
