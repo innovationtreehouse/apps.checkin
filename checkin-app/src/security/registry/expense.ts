@@ -32,7 +32,7 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['authenticated', ['everyones:internal']],
 ];
 
-const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag'] as const;
+const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'FinanceQueueReasons'] as const;
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
@@ -64,7 +64,10 @@ defineRoute({ endpoint: 'GET /api/expense/org-settings', authorize: 'finance-or-
 defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Donated gift lines at or over the capital thresholds, in or past capital review.
 defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/flags', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
+// The finance queue's expense tabs: a tab's rows, and every tab's counts.
+defineRoute({ endpoint: 'GET /api/expense/finance-queue', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueRow'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/finance-queue/counts', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/flags',authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Records what the Board authorized. The record clears the BOARD seat on a
 // non-Everyday card charge's org-level lines, and the hold on any purchase (card

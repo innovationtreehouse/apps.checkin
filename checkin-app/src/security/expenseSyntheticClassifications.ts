@@ -88,6 +88,29 @@ export const classifications = {
     reviewedByUserId: "pii",
     reviewedAt: "internal",
   },
+  // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
+  // The finance queue's shapes hold reason codes, money, dates and counts, never a person.
+  FinanceQueueRow: {
+    expenseId: "internal",
+    vendorName: "internal",
+    date: "internal",
+    amountCents: "internal",
+    currency: "internal",
+    reasons: "internal",
+    waitingSince: "internal",
+  },
+  // GET /api/expense/finance-queue/counts: per tab, `{ actionable, total, byReason }`.
+  FinanceQueueCounts: {
+    expenses: "internal",
+    toSign: "internal",
+    accountHolds: "internal",
+    quickbooks: "internal",
+    board: "internal",
+  },
+  // GET /api/expense/expenses/[id]: the expense's open queue reasons, as codes.
+  FinanceQueueReasons: {
+    reasons: "internal",
+  },
 } as const;
 
 export const relations = {
