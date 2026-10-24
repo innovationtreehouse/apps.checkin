@@ -95,8 +95,8 @@ every screen, and are decided on the expense page with a note.
 | `TAX_ATTACHED` | At intake, any tax above zero; #2479 narrows it to tax the receipt's settings hold for review that no receipt approval covers | Goes away where receipt finance review decided it. The remainder, after #2479, becomes a derived reason | Expenses: "Tax $12.40 not reviewed on the receipt" | Expense page; tax marked in the money block (theme 3 restores the field, 3.11) | Approve tax, note optional, matching receipt approval after #2465 |
 | `THRESHOLD_CROSSED` | At intake, total at or over the Board-review total | Goes away; repeats the Board-approval hold (3.6) | Board: "Board approval of a $2,340.00 purchase not recorded" (derived from `needsBoardApproval`) | Expense page, Board authorization panel | Record Board authorization (text required, as today) |
 | `CAPITAL_EQUIPMENT` | At intake, a unit price at or over `capitalEquipmentUnitCents` | **Decided: removed** (3.7). Capital review, where finance designates each line, is the only capital check, using `classifyCapital`'s two thresholds. The `capitalEquipmentUnitCents` setting goes with it | Expenses: "Capital review" | Expense page, Capital review panel | Submit capital review |
-| `MISSING_RECEIPT` | Never (no caller) | Goes away. Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
-| `NON_EVERYDAY` | Never (no caller) | Goes away. The amounts decide Everyday (#2437), and a non-Everyday card charge already takes a Board seat | none | none | none |
+| `MISSING_RECEIPT` | Never (no caller) | **Decided: removed** (3.8). Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
+| `NON_EVERYDAY` | Never (no caller) | **Decided: removed** (3.8). It is left over from the retired "not Everyday" mark (#2437, #2440, #2441). The amounts decide Everyday, and a non-Everyday card charge already takes a Board seat | none | none | none |
 | `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 4 |
 | `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
@@ -277,7 +277,12 @@ Each PR is based on `main`. None is stacked on another's branch.
    Intake stops raising `THRESHOLD_CROSSED`, `CAPITAL_EQUIPMENT` and
    `REIMBURSEE_UNKNOWN`, and the drain stops raising `QB_NO_CLASS`, exhausted
    `QB_POST_FAILED` and `QB_OVER_CAP`. `TAX_ATTACHED` becomes a derived reason
-   built on #2479's `taxNeedsFinance`.
+   built on #2479's `taxNeedsFinance`. `MISSING_RECEIPT` and `NON_EVERYDAY`
+   (3.8) leave `FLAG_KINDS` and `FLAG_AUDIENCE` in
+   `packages/expense/src/lib/flags.ts`, with the "raised by hand" sentence in
+   `detectIntakeFlags`'s comment and the kind list in the `ExpenseFlag` comment
+   in `packages/expense/prisma/schema.prisma`. Neither kind has a label to
+   remove, and no row of either exists, because nothing ever raised one.
 4. **Account holds PR** (3.20, 3.21, 3.22): the panel on the expense page, the
    processor honouring a manual account on every hold reason, and the Resubmit
    gate.
@@ -348,6 +353,7 @@ session correcting #2224 should know.
 | 3.5 | Raw kind code and expense id | Rows show date, vendor, amount, plain reason (§3) | step 5 |
 | 3.6 | Board decision in two places | `THRESHOLD_CROSSED` goes; the Board-approval hold is the one Board tab item, recorded on the expense (§2) | steps 3, 5 |
 | 3.7 | `CAPITAL_EQUIPMENT` and capital review use different thresholds and don't interact | Decided: the flag and `capitalEquipmentUnitCents` go; capital review is the only capital check (§2) | steps 3, 8 |
+| 3.8 | `MISSING_RECEIPT` and `NON_EVERYDAY` are described as raised by hand, but nothing raises them | Decided: both kinds are removed (§2) | step 3 |
 | 3.9 | QB flag and its fix apart; retry doesn't close it | Exhausted posts are derived from `qbMatchState`; Retry clears it (§2, §4) | step 3 |
 | 3.10 | `REIMBURSEE_UNKNOWN` can't be checked off; fix elsewhere | Derived reason; Set reimbursee clears it in place (§2) | step 3 |
 | 3.12 | Page reloads in place after the last decision | Returns to the queue tab it came from (§4) | step 3 |
