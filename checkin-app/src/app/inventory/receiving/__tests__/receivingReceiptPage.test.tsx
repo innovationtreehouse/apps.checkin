@@ -55,12 +55,13 @@ const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
 /** The Mapping cell of the line whose row matches `name`. */
 const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).getAllByRole("cell")[6];
 
-/** The value printed under a header field's label. */
-const field = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+/** The value printed under a header field's label; the selector skips the table's same-named column header. */
+const field = (label: string) => screen.getByText(label, { selector: "p" }).nextElementSibling?.textContent;
 
 describe("the receiving page for one receipt", () => {
   it("shows the receipt's money and identity in the header", () => {
     wrap();
+    expect(field("Total")).toBe("$54.32");
     expect(field("Tax")).toBe("$3.21");
     expect(field("Shipping")).toBe("$8.99");
     expect(field("Discount")).toBe("−$2.50");
@@ -105,6 +106,16 @@ describe("the receiving page for one receipt", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() =>
       expect(mockShow).toHaveBeenCalledWith({ title: "Apply failed", message: "Expense: QuickBooks timed out", color: "red", autoClose: false }),
+    );
+  });
+
+  it("titles an apply that left the receipt applying as unfinished", async () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying" } };
+    mockApi.mockResolvedValue({ id: 7, state: "applying", validationNotes: "Inventory: stamp write failed" });
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(mockShow).toHaveBeenCalledWith({ title: "Apply didn't finish", message: "Inventory: stamp write failed", color: "red", autoClose: false }),
     );
   });
 
