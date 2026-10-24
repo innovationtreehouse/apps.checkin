@@ -94,6 +94,14 @@ describeDb("lines waiting on the caller's approval", () => {
     expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
   });
 
+  it("counts for a Board member a line whose only approver is conflicted", async () => {
+    const ownReceipt = await seedLines({ submitterId: 6 }, [{ ownerId: 200 }]);
+    as(BOARD);
+    expect(await viewIds(BOARD)).toEqual([orgLevel, ownReceipt].sort());
+    expect(await signoffsAwaitingCount(BOARD)).toBe(2);
+    expect(await viewIds(OTHER_APPROVER)).toEqual([both]);
+  });
+
   it("counts only the lines in the approver's own bucket", async () => {
     as(OTHER_APPROVER);
     expect(await viewIds(OTHER_APPROVER)).toEqual([both]);
