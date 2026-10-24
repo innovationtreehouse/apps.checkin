@@ -29,3 +29,6 @@ export const RECEIPT_MAIL_NAV: readonly ReceiptNavLink[] = [{ name: "Incoming re
 
 /** States only FINANCE can move a receipt out of: it approves, clears a duplicate, or restarts the flow. */
 export const FINANCE_ACTION_STATES: readonly string[] = ["financial_review", "duplicate_flagged", "flow_error"];
+
+/** The host's nav counts key for one FINANCE queue, e.g. `awaitingFinance:flow_error`. */
+export const financeQueueCountKey = (state: string): string => `awaitingFinance:${state}`;

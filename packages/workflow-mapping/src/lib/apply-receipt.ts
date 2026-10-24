@@ -86,34 +86,80 @@ export async function executePushAndSettle(
 /** Most stuck receipts one sweep pushes; the rest wait for the next run. */
 export const STUCK_APPLY_SWEEP_CAP = 50;
 
+/** Sweep attempts in a row that may leave a receipt applying before the sweep moves it to apply_failed. */
+export const MAX_SWEEP_APPLY_ATTEMPTS = 3;
+
+const unclaimedSince = (now: number) => ({
+  OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(now - APPLY_CLAIM_TTL_MS) } }],
+});
+
 /**
  * Cron backstop for receipts left `applying` with no live push: a request that died before or
  * during its push, or an inventory stamp that was lost. Pushes each unclaimed or stale-claimed
- * receipt oldest first, up to the cap, through the same lease as every other caller. Leaves
+ * receipt oldest first, up to the cap, through the same lease as every other caller. An attempt
+ * that leaves the receipt applying (it threw, or the stamp failed again) counts toward
+ * MAX_SWEEP_APPLY_ATTEMPTS; at the cap the receipt moves to `apply_failed`. Leaves
  * `apply_failed` alone; that needs a person. Returns counts only.
  */
-export async function sweepStuckApplying(): Promise<{ resolved: number; failed: number; applying: number; skipped: number; errored: number }> {
+export async function sweepStuckApplying(): Promise<{
+  resolved: number;
+  failed: number;
+  applying: number;
+  skipped: number;
+  errored: number;
+  gaveUp: number;
+}> {
   const rows = await db.receivedReceipt.findMany({
     where: {
       orgId: (await getOrg()).id,
       state: "applying",
-      OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(Date.now() - APPLY_CLAIM_TTL_MS) } }],
+      ...unclaimedSince(Date.now()),
     },
     select: { id: true, orgId: true, receiptJson: true },
     orderBy: { id: "asc" },
     take: STUCK_APPLY_SWEEP_CAP,
   });
-  const counts = { resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0 };
+  const counts = { resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0, gaveUp: 0 };
   for (const row of rows) {
     // One receipt's database error must not stop the rest of the sweep.
-    const result = await executePushAndSettle(row.id, row).catch(() => "errored" as const);
-    if (result === "errored") counts.errored++;
-    else if (!result) counts.skipped++;
+    const result = await executePushAndSettle(row.id, row).catch((err: unknown) => ({
+      state: "errored" as const,
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    if (!result) counts.skipped++;
     else if (result.state === "resolved") counts.resolved++;
     else if (result.state === "apply_failed") counts.failed++;
-    else counts.applying++;
+    else {
+      counts[result.state === "errored" ? "errored" : "applying"]++;
+      if (await countSweepAttempt(row, result.error).catch(() => false)) counts.gaveUp++;
+    }
   }
   return counts;
+}
+
+/** Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved. */
+async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, error: string): Promise<boolean> {
+  await db.receivedReceipt.updateMany({
+    where: { id: row.id, state: "applying" },
+    data: { applySweepAttempts: { increment: 1 } },
+  });
+  const validationNotes = `Stopped retrying after ${MAX_SWEEP_APPLY_ATTEMPTS} attempts. Last error: ${error}`;
+  const { count } = await db.receivedReceipt.updateMany({
+    where: { id: row.id, state: "applying", applySweepAttempts: { gte: MAX_SWEEP_APPLY_ATTEMPTS }, ...unclaimedSince(Date.now()) },
+    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0 },
+  });
+  if (count !== 1) return false;
+  await insertAuditEvent(db, {
+    orgId: row.orgId,
+    actorUserId: null,
+    actorUsername: null,
+    eventType: "receipt_apply_failed",
+    receivedReceiptId: row.id,
+    fromState: "applying",
+    toState: "apply_failed",
+    details: JSON.stringify({ error, sweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS, gaveUp: true }),
+  });
+  return true;
 }
 
 async function pushAndSettle(
@@ -231,7 +277,7 @@ async function pushAndSettle(
 
   await db.receivedReceipt.update({
     where: { id: receiptId },
-    data: { state: "resolved", validationNotes: null },
+    data: { state: "resolved", validationNotes: null, applySweepAttempts: 0 },
   });
   await insertAuditEvent(db, {
     orgId: received.orgId,
@@ -271,7 +317,7 @@ async function settleFailed(
 ): Promise<ApplyResult> {
   await db.receivedReceipt.update({
     where: { id: receiptId },
-    data: { state: "apply_failed", validationNotes: error },
+    data: { state: "apply_failed", validationNotes: error, applySweepAttempts: 0 },
   });
   await insertAuditEvent(db, {
     orgId,

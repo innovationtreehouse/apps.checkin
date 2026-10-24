@@ -23,8 +23,8 @@ export const EDITABLE_RECEIPT_WHERE = {
   state: { in: EDITABLE_RECEIPT_STATES },
 };
 
-/** The apply-failed queue also lists `applying`, so a receipt whose push never landed is visible. */
-export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed", "applying"];
+/** The apply-failed queue: receipts that need a person. `applying` is listed apart, as in progress. */
+export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed"];
 
 export const receivedReceiptLineStatusEnum = [
   "unrecognized",
@@ -51,6 +51,32 @@ export const workflowAuditEventTypeEnum = [
   "auto_proceed_triggered",
 ] as const;
 export type WorkflowAuditEventType = (typeof workflowAuditEventTypeEnum)[number];
+
+export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
+  receipt_created: "Receipt received",
+  receipt_proceeded: "Sent to apply",
+  receipt_apply_started: "Apply started",
+  receipt_apply_succeeded: "Apply succeeded",
+  receipt_apply_failed: "Apply failed",
+  receipt_retry_started: "Apply retried",
+  line_associated: "Line associated with catalog item",
+  line_marked_non_inventory: "Line marked non-inventory",
+  line_proposed: "New catalog item proposed for line",
+  line_remapped: "Line moved to approved catalog item",
+  line_edited_late: "Line edited after apply",
+  provisional_rejected: "Proposed catalog item rejected",
+  org_event_rejected: "Catalog event from another org skipped",
+  auto_proceed_triggered: "Sent to apply automatically (every line mapped)",
+};
+
+function isAuditEventType(eventType: string): eventType is WorkflowAuditEventType {
+  return (workflowAuditEventTypeEnum as readonly string[]).includes(eventType);
+}
+
+/** The plain-word label for an audit event, or the raw code for one this library doesn't know. */
+export function auditEventLabel(eventType: string): string {
+  return isAuditEventType(eventType) ? AUDIT_EVENT_LABEL[eventType] : eventType;
+}
 
 export type NewWorkflowAuditEvent = {
   orgId: string;
