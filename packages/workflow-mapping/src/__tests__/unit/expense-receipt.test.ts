@@ -35,4 +35,13 @@ describe("buildExpenseReceipt", () => {
     expect(built.lineItems.map((li) => li.nonInventory)).toEqual([true, undefined]);
     expect(built.lineItems[0].gtin13 ?? null).toBeNull();
   });
+
+  it("drops a GTIN the line arrived with once receiving marks it non-inventory", () => {
+    const receipt = CompletedReceiptSchema.parse(buildReceiptPayload());
+    const arrived = { ...receipt, lineItems: [{ ...receipt.lineItems[0], gtin13: "0000000000017", isProvisional: true, provisionalName: "Pizza" }] };
+    const [line] = CompletedReceiptSchema.parse(JSON.parse(JSON.stringify(buildExpenseReceipt(arrived, () => ({ nonInventory: true }))))).lineItems;
+    expect(line).toMatchObject({ nonInventory: true, gtin13: null });
+    expect(line.isProvisional).toBeUndefined();
+    expect(line.provisionalName).toBeUndefined();
+  });
 });

@@ -43,7 +43,8 @@ export function buildExpenseReceipt(
     lineItems: receipt.lineItems.map((li) => {
       const resolved = resolve(li);
       if (!resolved) return li;
-      if ("nonInventory" in resolved) return { ...li, nonInventory: true };
+      // A non-inventory line is no catalog part, so any GTIN the receipt arrived with is dropped.
+      if ("nonInventory" in resolved) return { ...li, gtin13: null, isProvisional: undefined, provisionalName: undefined, nonInventory: true };
       return resolved.isProvisional
         ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: li.description }
         : { ...li, gtin13: resolved.gtin13 };
