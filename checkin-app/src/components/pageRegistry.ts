@@ -100,9 +100,9 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/manage') },
 
   // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
-  // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
+  // to the Global Catalog. Write controls within each screen are INVENTORY_MANAGER-gated.
   { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
-  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: CATALOG },
+  { href: '/catalog/items', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
