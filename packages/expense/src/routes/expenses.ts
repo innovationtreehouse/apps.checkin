@@ -21,8 +21,9 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
+import { expensesAwaitingMyApproval } from "../services/badgeCounts";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
@@ -44,6 +45,7 @@ const SUMMARY = {
 
 export const QUEUE_VIEWS = [
   "all",
+  "awaiting_me",
   "assign_ownership",
   "resolve_ownership",
   "owner_approval",
@@ -54,7 +56,10 @@ export const QUEUE_VIEWS = [
 ] as const;
 type QueueView = (typeof QUEUE_VIEWS)[number];
 
-function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInput {
+/** The views whose rows are a fixed set of expenses, counted in the database. */
+type StateView = Exclude<QueueView, "awaiting_me">;
+
+function viewWhere(view: StateView, scope: ViewerScope): Prisma.ExpenseWhereInput {
   switch (view) {
     case "all":
       return {};
@@ -81,9 +86,14 @@ function parseView(raw: string | null, fallback?: QueueView): QueueView {
   return view as QueueView;
 }
 
+/** "Waiting on you" lists exactly the expenses the approver pill counts lines on. */
 async function listWhere(principal: ExpensePrincipal, view: QueueView): Promise<Prisma.ExpenseWhereInput> {
   const scope = await viewerScope(principal);
-  return { AND: [scopedExpenses(await getOrgId(), scope), viewWhere(view, scope)] };
+  const where =
+    view === "awaiting_me"
+      ? { id: { in: (await expensesAwaitingMyApproval(principal)).map((e) => e.expenseId) } }
+      : viewWhere(view, scope);
+  return { AND: [scopedExpenses(await getOrgId(), scope), where] };
 }
 
 /** The expense, or 404 when it is not in this org or not in the caller's scope. */
@@ -116,7 +126,7 @@ export const counts: ExpenseRouteHandler = async () => {
   const scope = await viewerScope(principal);
   const base = scopedExpenses(await getOrgId(), scope);
   const n = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { AND: [base, where] } });
-  const views = QUEUE_VIEWS.filter((v) => v !== "all");
+  const views = QUEUE_VIEWS.filter((v): v is Exclude<StateView, "all"> => v !== "all" && v !== "awaiting_me");
   const [values, holds] = await Promise.all([
     Promise.all(views.map((v) => n(viewWhere(v, scope)))),
     n({ holds: { some: { status: "PENDING" } } }),
@@ -177,8 +187,8 @@ const notesSchema = z.object({ notes: z.string().trim().min(1, "notes are requir
 const ownerSchema = z.object({ ownerId: z.number().int().positive() });
 
 export const approve = approvalAction(
-  z.object({ overrideComment: z.string().nullish() }),
-  (p, e, a, b) => approveLine(p, e, a, b.overrideComment),
+  z.object({ reason: z.string().nullish() }),
+  (p, e, a, b) => approveLine(p, e, a, b.reason),
 );
 export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
@@ -190,8 +200,8 @@ export const assign = approvalAction(
 export const resolve = approvalAction(ownerSchema, (p, e, a, b) => resolveUnknown(p, e, a, b.ownerId));
 
 /** Sign-off status as seat names only: who signed is pii and lives on ExpenseLineSignoff. */
-function seatsOnly(status: Awaited<ReturnType<typeof signoffStatus>>) {
-  return status.map((s) => ({ ...s, filled: s.filled.map((f: FilledSeat) => f.seat) }));
+function seatsOnly<T extends { filled: FilledSeat[] }>(status: T[]) {
+  return status.map((s) => ({ ...s, filled: s.filled.map((f) => f.seat) }));
 }
 
 export const signoffs: ExpenseRouteHandler = async ({ params }) => {
@@ -200,7 +210,7 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
   const visible = new Set(
     (await db.expenseLineItem.findMany({ where: { expenseId: params.id, ...scopedLines(scope) }, select: { id: true } })).map((l) => l.id),
   );
-  const status = await mapServiceErrors(() => signoffStatus(params.id));
+  const status = await mapServiceErrors(() => signoffStatusFor(principal, params.id));
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 
