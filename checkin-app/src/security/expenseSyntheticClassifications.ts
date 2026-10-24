@@ -22,7 +22,6 @@ export const classifications = {
     capital_review: "internal",
     set_depreciation_cycle: "internal",
     qb_pending: "internal",
-    expense_holds: "internal",
   },
   // `total` for a list's .../count endpoint (numbered pagination).
   ExpenseListCount: {
