@@ -101,6 +101,10 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
+  /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */
+  pushGivenUp?: boolean;
+  lastPushFailedAt?: string | null;
+  lastPushFailure?: string | null;
 }
 
 export const STATE_LABELS: Record<string, string> = {

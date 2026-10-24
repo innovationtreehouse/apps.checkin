@@ -16,6 +16,7 @@ import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
+import { givenUp, pushRecords } from "./catchUp";
 import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
@@ -678,10 +679,33 @@ export const receiptService = {
     return receiptRepo.list({ orgId: (await getOrg()).id });
   },
 
-  /** The org's receipts narrowed by `filter`; an unknown state matches no rows. */
+  /**
+   * The org's receipts narrowed by `filter`; an unknown state matches no rows. A finalized
+   * receipt not yet delivered to receiving carries its push record.
+   */
   async list(filter: ReceiptListFilter) {
     await requireActor();
-    return receiptRepo.list(listFilterWhere((await getOrg()).id, filter));
+    const orgId = (await getOrg()).id;
+    const rows = await receiptRepo.list(listFilterWhere(orgId, filter));
+    const undelivered = rows.filter((r) => r.state === "receipt_finalized" && !r.pushedAt).map((r) => r.id);
+    const records = await pushRecords(orgId, undelivered);
+    return rows.map((r) => ({ ...r, ...records.get(r.id) }));
+  },
+
+  /** How many of the org's receipts each review queue holds, for the review screen's tabs. */
+  async queueCounts(): Promise<{ byState: Record<string, number>; notPushed: number; pushGivenUp: number }> {
+    await requireActor();
+    const orgId = (await getOrg()).id;
+    const [groups, undelivered] = await Promise.all([
+      db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
+      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { id: true } }),
+    ]);
+    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    return {
+      byState: Object.fromEntries(groups.map((g) => [g.state, g._count._all])),
+      notPushed: undelivered.length,
+      pushGivenUp: stopped.size,
+    };
   },
 
   /** How many of the org's receipts wait on FINANCE, for the host's nav pill. */

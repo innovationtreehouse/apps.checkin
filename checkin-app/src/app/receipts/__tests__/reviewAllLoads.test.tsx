@@ -8,6 +8,7 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearch,
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 2, isFinance: true } } }) }));
 
 beforeAll(() => {
   window.matchMedia ||= ((query: string) =>
@@ -27,7 +28,10 @@ const row = {
 describe("the review screen's fetches", () => {
   let fetchSpy: jest.SpyInstance;
   beforeEach(() => {
-    fetchSpy = jest.spyOn(globalThis, "fetch").mockImplementation(async () => ({ ok: true, status: 200, text: async () => JSON.stringify([row]) }) as Response);
+    fetchSpy = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const body = url === "/api/receipts/queue-counts" ? { byState: { discarded: 1 }, notPushed: 0, pushGivenUp: 0 } : [row];
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) } as Response;
+    });
   });
   afterEach(() => fetchSpy.mockRestore());
 
@@ -40,5 +44,6 @@ describe("the review screen's fetches", () => {
     render(<MantineProvider><ReceiptsReviewPage /></MantineProvider>);
     expect(await screen.findByText("Acme")).toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledWith(url, expect.anything());
+    expect(fetchSpy).toHaveBeenCalledWith("/api/receipts/queue-counts", expect.anything());
   });
 });

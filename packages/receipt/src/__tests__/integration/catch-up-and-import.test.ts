@@ -63,6 +63,34 @@ describeDb("catch-up steps", () => {
     expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).not.toBeNull();
   });
 
+  it("lists an undelivered receipt with its latest failure, marked once catch-up gives up", async () => {
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    const undelivered = () => receiptService.list({ state: "receipt_finalized", pushed: false });
+
+    expect(await undelivered()).toEqual([
+      expect.objectContaining({ id: r.id, pushGivenUp: false, lastPushFailure: "workflow-mapping down", lastPushFailedAt: expect.any(Date) }),
+    ]);
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    expect(await undelivered()).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true })]);
+
+    ports.fail.push = false;
+    await receiptService.push(r.id);
+    expect(await undelivered()).toEqual([]);
+    expect((await receiptService.list({ state: "receipt_finalized" }))[0]).not.toHaveProperty("pushGivenUp");
+  });
+
+  it("counts each state, the undelivered receipts, and the ones catch-up gave up on", async () => {
+    ports.fail.push = true;
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    actAs(FINANCE);
+    expect(await receiptService.queueCounts()).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 0 });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    expect(await receiptService.queueCounts()).toMatchObject({ notPushed: 2, pushGivenUp: 2 });
+  });
+
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {
     const stuck = await receiptService.upload(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });

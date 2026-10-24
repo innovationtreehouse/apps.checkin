@@ -8,7 +8,8 @@ export const QUEUES = [
   { value: "", label: "All" },
 ];
 
-const NOT_PUSHED = "not_pushed";
+/** Finalized receipts not yet delivered to receiving. */
+export const NOT_PUSHED = "not_pushed";
 
 /** The states FINANCE does not work, listed so finance and the Board can still find every receipt. */
 export const OTHER_QUEUES = [
@@ -16,7 +17,7 @@ export const OTHER_QUEUES = [
   { value: "uploaded", label: "Uploaded" },
   { value: "submitter_review", label: "Submitter review" },
   { value: "receipt_finalized", label: "Finalized" },
-  { value: NOT_PUSHED, label: "Finalized, not sent to receiving" },
+  { value: NOT_PUSHED, label: "Not delivered to receiving" },
   { value: "discarded", label: "Discarded" },
   { value: "rejected", label: "Rejected" },
 ];
