@@ -178,8 +178,8 @@ const notesSchema = z.object({ notes: z.string().trim().min(1, "notes are requir
 const ownerSchema = z.object({ ownerId: z.number().int().positive() });
 
 export const approve = approvalAction(
-  z.object({ overrideComment: z.string().nullish() }),
-  (p, e, a, b) => approveLine(p, e, a, b.overrideComment),
+  z.object({ reason: z.string().nullish() }),
+  (p, e, a, b) => approveLine(p, e, a, b.reason),
 );
 /** Approve All: every listed line the caller approves, or none; the response is those approval rows. */
 export const approveAll: ExpenseRouteHandler = async ({ req, params }) => {

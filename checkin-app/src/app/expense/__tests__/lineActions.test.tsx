@@ -48,7 +48,7 @@ function load(specs: LineSpec[]) {
     },
     "/expenses/e1/line-item-approvals": specs.map((s, i) => ({ id: 10 + i, lineItemId: i + 1, ownerId: 3, status: s.status ?? "pending" })),
     "/expenses/e1/signoffs": specs.map((s, i) => ({
-      lineItemId: i + 1, filled: [], missing: ["PROGRAM_APPROVER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
+      lineItemId: i + 1, filled: [], missing: ["SUBMITTER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
       mayRecordBoardAuthorization: false,
     })),
   };
@@ -57,12 +57,12 @@ function load(specs: LineSpec[]) {
 
 const APPROVE: Act = { act: "approve", primary: true, noteRequired: false };
 const RAISE: Act = { act: "raise-exception", primary: false, noteRequired: true };
-const SIGN_PA: Act = { act: "sign", seat: "PROGRAM_APPROVER", primary: false, noteRequired: false };
+const SIGN_T: Act = { act: "sign", seat: "TREASURER", primary: false, noteRequired: false };
 const rowOf = (n: number) => screen.getAllByRole("row")[n];
 
 describe("only the acts the server returns are drawn (3.15, #2433)", () => {
   it("draws no act and no Sign-as button on a line with none, only its status", () => {
-    load([{ actions: [], awaiting: ["Awaiting approval", "Awaiting Program approver", "Awaiting Treasurer"] }]);
+    load([{ actions: [], awaiting: ["Awaiting approval", "Awaiting Treasurer"] }]);
     expect(screen.queryByRole("button", { name: /^Sign as/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
@@ -71,15 +71,21 @@ describe("only the acts the server returns are drawn (3.15, #2433)", () => {
   });
 
   it("draws one main act on the line and the rest under More", async () => {
-    load([{ actions: [APPROVE, RAISE, SIGN_PA] }]);
+    load([{ actions: [APPROVE, RAISE] }]);
     const row = within(rowOf(1));
-    expect(row.getByRole("button", { name: "Approve as bucket approver" })).toBeInTheDocument();
+    expect(row.getByRole("button", { name: "Approve as Program approver" })).toBeInTheDocument();
     expect(row.queryByRole("button", { name: "Raise exception" })).not.toBeInTheDocument();
-    expect(row.queryByRole("button", { name: "Sign as Program approver" })).not.toBeInTheDocument();
     await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
     expect(await screen.findByRole("menuitem", { name: "Raise exception" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Sign as Program approver" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Sign as Treasurer" })).not.toBeInTheDocument();
+  });
+
+  it("a Board stand-in's approval goes under More while a bucket approver can approve", async () => {
+    load([{ actions: [{ ...SIGN_T, primary: true }, { act: "approve", primary: false, noteRequired: true }] }]);
+    const row = within(rowOf(1));
+    expect(row.getByRole("button", { name: "Sign as Treasurer" })).toBeInTheDocument();
+    await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
+    expect(await screen.findByRole("menuitem", { name: "Approve as Board (program approver)" })).toBeInTheDocument();
   });
 
   it("a main sign act signs its seat", async () => {
@@ -129,20 +135,25 @@ describe("required notes (3.16)", () => {
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/raise-exception", "POST", { notes: "Wrong bucket" }, "Raise exception done");
   });
 
-  it("marks the FINANCE override comment required when the server requires it", async () => {
+  it("marks a Board stand-in's reason required and sends it", async () => {
     load([{ actions: [{ act: "approve", primary: true, noteRequired: true }] }]);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as FINANCE (override)" })); });
-    expect(await screen.findByRole("textbox", { name: /Comment/ })).toBeRequired();
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as Board (program approver)" })); });
+    const reason = await screen.findByRole("textbox", { name: /Reason/ });
+    expect(reason).toBeRequired();
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "Leader away all month" } });
+    await act(async () => { fireEvent.click(confirm); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: "Leader away all month" }, "Approve as Board (program approver) done");
   });
 
   it("asks no note of an approval the server takes without one", async () => {
     load([{ actions: [APPROVE] }]);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as bucket approver" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as Program approver" })); });
     const confirm = await screen.findByRole("button", { name: "Confirm" });
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(confirm).toBeEnabled();
     await act(async () => { fireEvent.click(confirm); });
-    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { overrideComment: null }, "Approve as bucket approver done");
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: null }, "Approve as Program approver done");
   });
 });
