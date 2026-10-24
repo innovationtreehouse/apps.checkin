@@ -43,7 +43,6 @@ const ROUTES: Route[] = [
   ["POST", `${E}/line-items/0/signoffs`, "signoff", {}],
   ["GET", "/api/expense/queue?view=all", "approver"],
   ["GET", "/api/expense/counts", "approver"],
-  ["GET", "/api/expense/expense-holds", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping/catalog", "financeOrBoard"],
   ["GET", "/api/expense/qb-accounts", "financeOrBoard"],
@@ -56,7 +55,8 @@ const ROUTES: Route[] = [
   ["GET", "/api/expense/qb-exclusions", "financeOrBoard"],
   ["GET", "/api/expense/org-settings", "financeOrBoard"],
   ["PUT", "/api/expense/org-settings", "financeOrBoard", { unknownField: 1 }],
-  ["GET", "/api/expense/flags", "financeOrBoard"],
+  ["GET", "/api/expense/finance-queue?tab=expenses", "financeOrBoard"],
+  ["GET", "/api/expense/finance-queue/counts", "financeOrBoard"],
   ["POST", "/api/expense/flags/0/check-off", "financeOrBoard", {}],
   ["POST", `${E}/line-item-approvals/0/reject`, "finance", {}],
   ["POST", `${E}/line-item-approvals/0/assign-owner`, "finance", {}],
@@ -245,22 +245,23 @@ describe("expense — FINANCE journey", () => {
     expect(assigned.status).toBe(200);
     expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "approved" });
 
+    // Finance queue: the unknown reimbursee and the unreviewed tax are reasons read from the expense.
+    type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
+    const reasonsOf = async (id: string) =>
+      ((await api<QueueRow[]>(f, "/api/expense/finance-queue?tab=expenses")).json.find((r) => r.expenseId === id)?.reasons ?? []).map((x) => x.code);
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).toContain("reimbursee_to_name");
+    expect(await reasonsOf(HELD_EXPENSE)).toContain("tax_not_reviewed");
+    expect((await api<{ expenses: { total: number } }>(f, "/api/expense/finance-queue/counts")).json.expenses.total).toBeGreaterThan(0);
+
     // Holds: set an account on the held line, then resubmit.
-    const holds = await api<{ expenseId: string; lineItemId: number }[]>(f, "/api/expense/expense-holds");
-    const hold = holds.json.find((h) => h.expenseId === HELD_EXPENSE)!;
+    const held = await api<{ Expense: { holds: { lineItemId: number }[] } }>(f, `/api/expense/expenses/${HELD_EXPENSE}`);
+    const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
     expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
-    // Flags: the reimbursee flag stays open while the hold applies; the tax flag checks off.
-    const flags = await api<{ id: number; kind: string; expenseId: string }[]>(f, "/api/expense/flags");
-    const unknown = flags.json.find((x) => x.kind === "REIMBURSEE_UNKNOWN")!;
-    const tax = flags.json.find((x) => x.kind === "TAX_ATTACHED")!;
-    expect((await send(f, "POST", `/api/expense/flags/${unknown.id}/check-off`, {})).status).toBe(409);
-    expect((await send(f, "POST", `/api/expense/flags/${tax.id}/check-off`, { notes: "seen" })).status).toBe(200);
-
-    // Reimbursee: FINANCE names the uploader, the only person it may name, which clears the hold's flag.
+    // Reimbursee: FINANCE names the uploader, the only person it may name, which clears the queue reason.
     const reimbursee = (await loginAs(SUBMITTER)).personaId;
     const other = (await loginAs(OTHER_ADULT)).personaId;
     const R = `/api/expense/expenses/${REIMBURSEMENT_EXPENSE}/reimbursee`;
@@ -270,15 +271,14 @@ describe("expense — FINANCE journey", () => {
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });
     expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
-    const open = await api<{ kind: string }[]>(f, "/api/expense/flags");
-    expect(open.json.some((x) => x.kind === "REIMBURSEE_UNKNOWN")).toBe(false);
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).not.toContain("reimbursee_to_name");
 
     // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
-    const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
+    const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
     expect(candidates.status).toBe(200);
     expect(candidates.json).toEqual([]);
   });
