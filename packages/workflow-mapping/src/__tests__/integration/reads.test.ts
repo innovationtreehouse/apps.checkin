@@ -11,7 +11,7 @@ beforeEach(async () => {
 });
 
 describeDb("queues", () => {
-  it("lists the org's receipts by state; the apply-failed queue includes applying", async () => {
+  it("lists the org's receipts by state; applying is listed apart from the apply-failed queue", async () => {
     await makeReceipt({ state: "pending_review" });
     const failed = await makeReceipt({ state: "apply_failed" });
     const stuck = await makeReceipt({ state: "applying" });
@@ -19,7 +19,8 @@ describeDb("queues", () => {
     await makeReceipt({ state: "apply_failed", orgId: OTHER_ORG_ID });
 
     const queue = await receiptService.list(APPLY_FAILED_QUEUE_STATES);
-    expect(queue.map((q) => q.id).sort()).toEqual([failed.id, stuck.id].sort());
+    expect(queue.map((q) => q.id)).toEqual([failed.id]);
+    expect((await receiptService.list(["applying"])).map((q) => q.id)).toEqual([stuck.id]);
     expect(queue[0]).toMatchObject({ vendorName: "Acme Hardware", lineItemCount: 1, receiptTotalCents: 10 });
     expect(queue[0]).not.toHaveProperty("receiptJson");
     expect(await receiptService.list()).toHaveLength(4);
@@ -29,12 +30,13 @@ describeDb("queues", () => {
     await expect(receiptService.list(["bogus"])).rejects.toMatchObject({ status: 400 });
   });
 
-  it("counts both queues, for this org only", async () => {
+  it("counts each queue apart, for this org only", async () => {
     await makeReceipt({ state: "pending_review" });
     await makeReceipt({ state: "pending_review" });
+    await makeReceipt({ state: "apply_failed" });
     await makeReceipt({ state: "applying" });
     await makeReceipt({ state: "pending_review", orgId: OTHER_ORG_ID });
-    expect(await receiptService.counts()).toEqual({ pending_review: 2, apply_failed: 0, applying: 1 });
+    expect(await receiptService.counts()).toEqual({ pending_review: 2, apply_failed: 1, applying: 1 });
   });
 });
 

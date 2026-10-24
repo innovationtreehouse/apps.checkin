@@ -30,6 +30,20 @@ export const CompletedReceiptLineItemSchema = z.object({
   nonInventory: z.boolean().optional(),
 });
 
+/** Why a receipt waited on finance review. */
+export const FINANCIAL_REVIEW_REASONS = ["tax", "old_date", "future_date", "submitter_correction"] as const;
+export type FinancialReviewReason = (typeof FINANCIAL_REVIEW_REASONS)[number];
+
+// Finance's approval of a receipt that waited on finance review.
+export const CompletedReceiptFinanceReviewSchema = z.object({
+  outcome: z.literal("approved"),
+  reasons: z.array(z.enum(FINANCIAL_REVIEW_REASONS)),
+  // The approving checkin Person.id.
+  decidedByPersonId: z.number().int().positive(),
+  note: z.string().nullable().optional(),
+  decidedAt: z.string().datetime(),
+});
+
 export const CompletedReceiptSchema = z.object({
   receiptId: z.string(),
   orgId: z.string(),
@@ -56,8 +70,11 @@ export const CompletedReceiptSchema = z.object({
   // In-kind donation paperwork: the money side goes to donations instead of expense; the goods
   // load into inventory like any other receipt. Defaults false (a purchase).
   isInKind: z.boolean().optional().default(false),
+  // Absent when the receipt never waited on finance review.
+  financeReview: CompletedReceiptFinanceReviewSchema.optional(),
   lineItems: z.array(CompletedReceiptLineItemSchema).min(1),
 });
 
 export type CompletedReceiptLineItem = z.infer<typeof CompletedReceiptLineItemSchema>;
 export type CompletedReceipt = z.infer<typeof CompletedReceiptSchema>;
+export type CompletedReceiptFinanceReview = z.infer<typeof CompletedReceiptFinanceReviewSchema>;

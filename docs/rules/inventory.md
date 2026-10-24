@@ -119,10 +119,9 @@ How the pieces are built is described in
 - Once a receipt is being counted or is done, its lines can't be edited.
   `[Decision]`
 
-- When part of a receipt was applied and the rest failed, an inventory manager
-  can still edit its lines so the final record is accurate. Each such edit is
-  logged as late, and inventory managers, finance and the board are warned that
-  the part already applied needs fixing by hand. `[Decision]`
+- Once any part of a receipt has been applied, its lines can't be edited. A
+  part that failed is retried with the same lines. A mistake found after that
+  is corrected outside receiving (issue #2267). `[Decision]`
 
 ### Access
 
