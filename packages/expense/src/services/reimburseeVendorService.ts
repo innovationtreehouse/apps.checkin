@@ -2,7 +2,7 @@
 // person and one person per Vendor (both unique in reimbursee_vendor); a link is never changed.
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpenseReimburseeVendor } from "../generated/prisma/client";
-import type { ExpensePrincipal, QbVendorClient, QbVendorOption, ReimburseeView } from "../contract";
+import type { ExpensePrincipal, QbVendorClient, QbVendorOption } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
@@ -12,6 +12,12 @@ import { ServiceError } from "@checkin/component-kit";
 
 /** A Vendor QuickBooks already has, by id, or one found or created under the reimbursee's own name. */
 export type VendorChoice = { qbVendorId: string } | { createForReimbursee: true };
+
+/** The reimbursee shown on an expense: their person id and name. */
+export interface ReimburseeView {
+  personId: number;
+  name: string | null;
+}
 
 /** On a FINANCE-visible expense: the reimbursee, when known, and their linked Vendor, when any. */
 export async function reimburseeVendorFor(

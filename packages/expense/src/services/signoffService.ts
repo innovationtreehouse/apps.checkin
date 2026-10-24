@@ -2,7 +2,7 @@
 // principal; a line with an unfilled seat holds its expense out of the QB outbox.
 import type { Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
-import type { ExpensePrincipal, ReimburseeView, SetReimbursee } from "../contract";
+import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
@@ -82,21 +82,6 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
   } catch (err) {
     logError("catalog_snapshot_failed", { expenseId, lineItemId }, err);
   }
-}
-
-/**
- * The people FINANCE may name as reimbursee: the uploader's live record while the reimbursee is
- * unknown, else nobody. The same eligibility setReimbursee enforces.
- */
-export async function reimburseeOptions(orgId: string, expenseId: string, principal: ExpensePrincipal): Promise<ReimburseeView[]> {
-  await assertOrg(orgId);
-  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
-  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
-  if (!expense) throw new ServiceError(404, "Expense not found");
-  if (CLOSED_STATES.has(expense.state) || !reimburseeUnknown(expense)) return [];
-  const personId = await getExpenseRuntime().signoff.livePersonFor(expense.submitterId);
-  if (personId === null) return [];
-  return [{ personId, name: await getExpenseRuntime().people.nameOf(personId) }];
 }
 
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
