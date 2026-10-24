@@ -65,7 +65,7 @@ const LEADING_ABBREVIATIONS = new Set(["md", "mohd", "muhd", "mst"]);
 // Titles written before a name: "Dr.", and "Syed", "Sheikh", "Haji", "Datuk", "Chief", "Alhaji".
 const HONORIFICS = new Set([
     "mr", "mrs", "ms", "mx", "miss", "dr", "prof", "rev",
-    "syed", "sayed", "sayyid", "seyed", "sheikh", "shaikh", "mir", "haj", "haji", "hajji", "hajah", "hajjah",
+    "syed", "sayed", "sayyid", "seyed", "sheikh", "shaikh", "haji", "hajji", "hajah", "hajjah",
     "hj", "hjh", "mashhadi", "tun", "datuk", "dato", "dato'", "datin", "seri", "ustaz", "ustazah",
     "chief", "alhaji", "alhaja",
 ]);
@@ -166,12 +166,13 @@ function vietnameseOrder(ws: string[]): string[] {
     return [ws[ws.length - 1], ...ws.slice(1, -1), ws[0]];
 }
 
-// A family name written first in capitals, as passports and conference badges do: "WANG Wei".
-// Two capitals are a given name ("JJ Smith"), not a family name.
+// A family name written first in capitals, as passports and conference badges do: "VAN DER
+// BERG Anna". One capitalised word is a given name typed in caps ("JANE Doe") as often as a
+// family name ("WANG Wei"), so it stays where it stands.
 function familyFirst(ws: string[]): string[] {
     let count = 0;
     while (count < ws.length && isAllCaps(ws[count])) count++;
-    if (count === 0 || count === ws.length || letterCount(ws.slice(0, count).join("")) < 3) return ws;
+    if (count < 2 || count === ws.length || letterCount(ws.slice(0, count).join("")) < 3) return ws;
     return [...ws.slice(count), ...ws.slice(0, count)];
 }
 
@@ -297,10 +298,17 @@ function leadingLetters(word: string, count: number): { text: string; whole: boo
     return { text, whole: true };
 }
 
+/** The letter a surname is shortened to its first of. */
+const coreInitial = ({ core }: Surname): string => [...core].find((ch) => BASE_LETTER.test(ch)) ?? "";
+
+/** True when the surname's script writes initials, so it can be cut at all. */
+const canShorten = (surname: Surname): boolean => INITIAL_SCRIPT.test(coreInitial(surname));
+
 /** `surname` cut to `count` letters of its core, particles kept: "van der S.", "O'B.", "Li". */
-function shorten({ particles, core }: Surname, count: number): { text: string; whole: boolean } {
-    const initial = [...core].find((ch) => BASE_LETTER.test(ch)) ?? "";
-    const { text, whole } = INITIAL_SCRIPT.test(initial) ? leadingLetters(core, count) : { text: core, whole: true };
+function shorten(surname: Surname, count: number): { text: string; whole: boolean } {
+    const { particles, core } = surname;
+    const initial = coreInitial(surname);
+    const { text, whole } = canShorten(surname) ? leadingLetters(core, count) : { text: core, whole: true };
     const mark = whole ? "" : HEBREW.test(initial) ? "׳" : ".";
     return { text: particles + text.replace(BASE_LETTER, (ch) => ch.toUpperCase()) + mark, whole };
 }
@@ -311,8 +319,12 @@ const matchKey = (label: string): string =>
 
 type Rival = { surname: Surname; suffix: string };
 
-/** The shortest cut of `entry`'s surname that no rival's cut of the same length matches. */
+/** The shortest cut of `entry`'s surname that no rival's cut of the same length matches, or ""
+ *  where a surface that caps the cut cannot shorten the surname at all. */
 function tellApart(entry: Rival, rivals: Rival[], maxLetters: number): string {
+    // A surname in a script with no initials can only print whole. A capped surface — the
+    // kiosk, a public screen — shows no surname at all rather than the whole of one.
+    if (maxLetters < Infinity && !canShorten(entry.surname)) return "";
     const whole = (r: Rival) => matchKey(r.surname.particles + r.surname.core);
     for (let count = 1; ; count++) {
         const { text, whole: complete } = shorten(entry.surname, count);
@@ -329,8 +341,10 @@ function tellApart(entry: Rival, rivals: Rival[], maxLetters: number): string {
 /**
  * Labels for people shown together: the name each goes by and, only where two share it, the
  * shortest part of the surname that tells them apart ("Sarah M.", "Sarah Mo.", "Vincent van
- * G."), using at most `maxLetters` letters of it. A suffix is added where only it differs
- * ("John S. Jr."). `fallback` names someone with neither name nor nickname.
+ * G."), using at most `maxLetters` letters of it. A finite `maxLetters` binds every script, so
+ * a surname that cannot be cut to an initial is left off rather than printed whole. A suffix is
+ * added where only it differs ("John S. Jr."). `fallback` names someone with neither name nor
+ * nickname.
  */
 export function displayNames<P extends { id: number; name: string | null; nickname?: string | null }>(
     people: readonly P[],
@@ -354,7 +368,8 @@ export function displayNames<P extends { id: number; name: string | null; nickna
                 continue;
             }
             const rivals = group.flatMap((other) => (other !== entry && other.surname ? [{ surname: other.surname, suffix: other.suffix }] : []));
-            labels.set(entry.id, `${entry.first} ${tellApart({ surname, suffix }, rivals, maxLetters)}`);
+            const tail = tellApart({ surname, suffix }, rivals, maxLetters);
+            labels.set(entry.id, tail ? `${entry.first} ${tail}` : entry.first);
         }
     }
     return labels;

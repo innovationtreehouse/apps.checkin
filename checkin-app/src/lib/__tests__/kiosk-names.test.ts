@@ -125,6 +125,15 @@ describe("getKioskDisplayNames", () => {
         expect(map.get(2)).toBe("Sarah Mo.");
     });
 
+    it("tells a father from his son by the suffix, under the two-letter cap", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "John Smith", email: "j1@example.com" },
+            { id: 2, name: "John Smith Jr.", email: "j2@example.com" },
+        ]);
+        expect(map.get(1)).toBe("John S.");
+        expect(map.get(2)).toBe("John S. Jr.");
+    });
+
     it("handles three-way collision with mixed last initials", () => {
         const map = getKioskDisplayNames([
             { id: 1, name: "Sarah Morris", email: "s1@example.com" },

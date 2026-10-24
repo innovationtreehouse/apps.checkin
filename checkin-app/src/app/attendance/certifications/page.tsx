@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, Suspense, useCallback, useMemo, useSyncExternalStore } from "react";
+import { useState, Suspense, useCallback, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useAutoCycle } from "../../../hooks/useAutoCycle";
 import { usePolling } from "@/hooks/usePolling";
-import { getKioskDisplayNames } from "@/lib/kiosk-names";
 import { goesBy } from "@/lib/person/name";
 import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLevelBadge";
 
@@ -15,10 +14,9 @@ type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTI
 
 type Person = {
   id: number;
-  // Display name resolved server-side (real name, else email-prefix); never the raw email (#329).
+  // The kiosk label, resolved server-side: the name the person goes by, a shortened surname
+  // where two share it, else the email prefix; never the raw email (#329).
   name: string;
-  // The name this person goes by; stands in for the first name in the grid.
-  nickname?: string | null;
   toolStatuses: {
     toolId: number;
     level: ToolStatusLevel;
@@ -131,8 +129,6 @@ function KioskCertificationsInner() {
 
   const sortedParticipants = [...participants].sort(sortAlphabetically);
 
-  const displayNames = useMemo(() => getKioskDisplayNames(sortedParticipants), [sortedParticipants]);
-
   const { containerRef, visibleItems, currentPage, totalPages, isTransitioning } = useAutoCycle({
     items: sortedParticipants,
     intervalMs: 8000,
@@ -146,7 +142,7 @@ function KioskCertificationsInner() {
     <tr key={participant.id} style={{ borderBottom: index % 2 === 1 ? '3px solid var(--mantine-color-default-border)' : cellBorder }}>
       <td style={{ padding: isKioskMode ? '0.5rem 0.75rem' : '0.75rem 1rem', position: 'sticky', left: 0, background: 'var(--mantine-color-body)', zIndex: 5, borderRight: cellBorder }}>
         <Text fw={isKioskMode ? 700 : 500} fz={isKioskMode ? '1.1rem' : undefined} truncate>
-          {displayNames.get(participant.id) || participant.name}
+          {participant.name}
         </Text>
       </td>
       {tools.map((tool) => {

@@ -172,8 +172,16 @@ describe("parsePersonName", () => {
     });
 
     it("reads a leading run of capitals as a family name written first", () => {
-        expect(parts("WANG Wei")).toEqual(["Wei", "", "WANG", ""]);
         expect(parts("VAN DER BERG Anna")).toEqual(["Anna", "VAN DER ", "BERG", ""]);
+    });
+
+    it("leaves one capitalised word where it stands, given name or family name", () => {
+        expect(parts("JANE Doe")).toEqual(["JANE", "", "Doe", ""]);
+        expect(parts("WANG Wei")).toEqual(["WANG", "", "Wei", ""]);
+    });
+
+    it("reads a leading title that is also a given name as the given name", () => {
+        expect(parts("Mir Ali Khan")).toEqual(["Mir", "", "Khan", ""]);
     });
 
     it("keeps a Chinese, Japanese or Korean name whole", () => {
@@ -217,6 +225,8 @@ describe("goesBy", () => {
 describe("familyName", () => {
     it("is the surname with its particles, capitalised as it stands alone", () => {
         expect(familyName("Vincent van Gogh")).toBe("Van Gogh");
+        // A particle-shaped middle name joins the surname; nothing in the words says it is one.
+        expect(familyName("John Ben Smith")).toBe("Ben Smith");
         expect(familyName("Ahmed al-Farsi")).toBe("Al-Farsi");
         expect(familyName("Martin Luther King Jr.")).toBe("King");
     });
@@ -272,6 +282,11 @@ describe("displayNames", () => {
 
     it("shows the whole surname in a script that has no initials", () => {
         expect(label(["محمد الأحمد", "محمد السيد"])).toEqual(["محمد الأحمد", "محمد السيد"]);
+    });
+
+    it("leaves off a surname it cannot shorten once the cut is capped", () => {
+        expect(label(["محمد الأحمد", "محمد السيد"], 2)).toEqual(["محمد", "محمد"]);
+        expect(label(["Ali محمد", "Ali Smith"], 2)).toEqual(["Ali", "Ali S."]);
     });
 
     it("shortens a Hebrew surname with a geresh", () => {
