@@ -53,10 +53,10 @@ buttons come from the same rule the server enforces.
   approvals list after the viewer's last action (3.12).
 - **The approver pill and its page agree**: both count lines with an action for
   the viewer, and the pill opens a "Waiting on you" view (3.25).
-- **The FINANCE override gets a rule** (3.17). Under C′ an override is an
-  approval, so it meets the program-approver requirement. The proposal keeps
-  it with the written reason it already needs, and bars the finance holder who
-  gives it from the Treasurer seat on that line.
+- **The FINANCE override goes** (decided, 3.17). Only a line's bucket
+  approvers approve it, or a Board member standing in when every approver is
+  conflicted or unavailable. A finance holder who is also a bucket approver
+  approves that bucket's lines as an approver.
 - **What doesn't change**: each signer is a different person from a different
   household; the conflict rules; the Board stand-in limits; the Board's
   authorization and the $2,000 hold; the approval row's statuses and finance's
@@ -75,7 +75,7 @@ adds are marked as proposed.
 | A conflicted person may not approve a line, raise an exception, sign any seat, or record Board authorization | Procedure, `[Decision — Policy: Ethics Policy Art. III §III.5]` | Text unchanged. Approving also takes the seat's refusals, so it gets stricter (C′.2) |
 | Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. The line splits in two: reimbursements keep the §IX.3 citation, which covers reimbursements only, and card charges become `[Decision — owner]` |
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says the approval is the program approver's sign-off |
-| A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. A FINANCE override is an approval, so it counts (open question 3, decided by C′) |
+| A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. There is no FINANCE override, so no other approval needs reading (open question 3, decided) |
 | When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes in wording**: the Board member approves the line. Reworded below |
 | Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes** (decided): the program approver is chosen as for any line, and the reimbursement also takes a later Board member's approval, in a Board seat signed after the line is approved. The §IX.2 citation stays. This changes the app's reading of the policy, not the policy: §IX.2 requires Board approval and doesn't stop the program approver approving too |
 | The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the submitter's confirmation of a reimbursement's receipt, and a card charge has no submitter seat. Reworded below |
@@ -182,8 +182,9 @@ by moving the line to another bucket, the approval closes as finance-assigned,
 and nobody in the new bucket approves it. Under C′ that line would have no
 program approver. So a finance-assigned line waits for an approver of its new
 bucket, who approves it as they would a pending one. The status keeps its name
-and stays in the audit trail, but it stops counting as a finished approval
-(open question 7).
+and stays in the audit trail, but it stops counting as a finished approval.
+You decided this (open question 7): finance's assignment never counts as the
+approval.
 
 **C′.6 Non-member reimbursement.** You decided that the Board's approval is
 added, not substituted, and comes after. The bucket approver approves the line
@@ -199,8 +200,8 @@ approval, as today. The early program-approver signature during bucket
 assignment goes with the seat, so the approve and bucket-assignment services
 need no change for timing.
 
-**C′.8 The FINANCE override** is an approval, so it meets the program-approver
-requirement. See §7.
+**C′.8 No FINANCE override.** You decided to remove it: finance has no approve
+act on a line outside its own buckets. See §7.
 
 ### What is deleted, and what moves
 
@@ -231,7 +232,7 @@ simpler than migrating them.
 
 The earlier draft recommended **B**: one click writing both the approval and a
 seat signature. It kept two records of one judgment, and they could still drift
-apart wherever one was written without the other (an override, a reassignment).
+apart wherever one was written without the other, such as a reassignment.
 **C** retired the approval's "approved" status and had the state machine wait
 on the seat. It needed a schema change and a state-machine change for no
 visible gain. C′ keeps the record the state machine already uses and drops the
@@ -246,9 +247,8 @@ caller may take there:
 
 | Field | Meaning |
 | --- | --- |
-| `actions[]` | Each act the caller may take now: `approve` (the program approver's sign-off, by a bucket approver or a Board stand-in), `sign` (Treasurer or Board), `raise-exception`, `override`, `reject-exception`, `assign-bucket`, `resolve-bucket` |
+| `actions[]` | Each act the caller may take now: `approve` (the program approver's sign-off, by a bucket approver or a Board stand-in), `sign` (Treasurer or Board), `raise-exception`, `reject-exception`, `assign-bucket`, `resolve-bucket` |
 | `actions[].primary` | True on at most one act per line |
-| `actions[].commentRequired` | The server refuses this act without a comment |
 | `awaiting[]` | Open seats and holds the caller can't act on, as plain status: "Awaiting Submitter", "Awaiting approval", "Awaiting Treasurer", "Awaiting a Board stand-in", "Board approval after the line is approved", "Held: no one without a conflict can sign", "Held until finance names the reimbursee", "Held until the Board's approval is recorded" |
 
 The expense gains `mayRecordBoardAuthorization`, from the same check the
@@ -271,7 +271,7 @@ see it filled (§3).
 The main act is the button on the line, named for the role: "Approve as
 Program approver", "Sign as Treasurer", "Sign as Board", "Approve as Board
 (program approver)". Other acts go in a "More" menu on the same line: Raise
-exception, Override, and any other part the caller could take instead.
+exception, and any other part the caller could take instead.
 
 When the caller could take more than one part on a line (a bucket owner who
 holds FINANCE, or a Board member eligible for the Board seat and as a stand-in),
@@ -364,7 +364,6 @@ with the same function under the expense lock and approves all of them or none.
 If any line is refused, nothing changes and the error names the line. A partial
 batch would leave the approver unsure which lines still wait.
 
-Approve All never includes an override; each override needs its own comment.
 
 ### 5. Lines waiting on you (3.14)
 
@@ -374,41 +373,29 @@ order stays by line number, which matches the receipt.
 
 ### 6. Required comments (3.16)
 
-Wherever `commentRequired` is true, the comment field is marked required and
-Confirm stays disabled while it is blank. The server's refusal stays as the
-backstop. For approvers and signers that covers Raise exception and Override;
-approving and signing take no comment. #2482 §4 sets the same rule for
-finance's notes and plans an `overrideRequired` field for it. `commentRequired`
-on the override act is that field, so the two designs should use one field
-(open question 6).
+3.16 was about the override comment, which is moot now that the override is
+gone (§7). Raise exception and Reject exception still require notes. Their
+fields are marked required, and Confirm stays disabled while they are blank, as
+#2482 §4 sets for finance's notes. The server's refusal stays as the backstop.
+Approving and signing take no comment.
 
-### 7. The FINANCE override (3.17)
+### 7. No FINANCE override (3.17)
 
 The prototype had an org-manager role that approved without a comment. FINANCE
-replaced that role, and now approves outside its own buckets only with a
-comment. No rule says so. Under C′ an override is an approval, so it meets the
-program-approver requirement: the finance holder who gives it becomes the line's
-program approver. Today an override never posts anything by itself, because the
-seat still holds the money; under C′ it releases the line as any approval does.
+replaced that role, and approves outside its own buckets only with a comment.
+No rule covers that. You decided to remove the override: "board yes finance no".
 
-**Proposed rule (keep, with a reason):**
+Only a line's bucket approvers approve it. When every approver is conflicted
+or unavailable, a Board member without a conflict stands in (C′.3). A finance
+holder who is also a bucket's owner or treasurer approves that bucket's lines
+as an approver, under the normal approval refusals. Finance keeps its
+exception tools: it can move a line to another bucket, which then waits for the
+new bucket's approver (C′.5), or reject the exception. Neither counts as an
+approval.
 
-> Finance may approve a line in place of its bucket's approvers, with a written
-> reason. That approval is the line's program-approver sign-off, so the finance
-> holder who gives it doesn't sign the Treasurer seat on that line, and nobody
-> in their household holds another seat on the expense. A finance holder
-> conflicted on the expense may not override.
-> `[Decision — owner]`
-
-**Alternative (retire it):** "Only a line's bucket approvers, or a Board member
-standing in for them, approve it." Finance would move a stuck line by raising an
-exception and reassigning or rejecting it. That's simpler. But it leaves no way
-forward when the approvers are eligible and don't act, because the Board stands
-in only for approvers who are conflicted or unavailable (open question 5).
-
-I recommend keeping the override with the wording above. It lets finance stand
-in for the program approver, which today only a Board member does, so check it
-against Financial Policy Art. IX §IX.3 before accepting it.
+The approve service loses its finance branch, and the page loses the override
+dialog. An approver who is eligible but silent is unblocked only by a Board
+stand-in, which needs the approver to be unavailable (open question 5).
 
 ### 8. The pill and its page agree (3.25)
 
@@ -503,7 +490,8 @@ from your decisions; the last two wait on open questions 2 and 5:
 - *(audience line)* replace "since that seat is filled from the receipt" with
   "since that seat is filled by their confirmation of a reimbursement's
   receipt". *(same tag)*
-- The override rule in §7.
+- Only a bucket approver, or a Board member standing in when every approver is
+  conflicted or unavailable, approves a line. *(new line)* `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -519,9 +507,8 @@ from your decisions; the last two wait on open questions 2 and 5:
 The new fields on `ExpenseLineSignoffStatus` change a synthetic
 classification, and the new route needs a registry entry. Both ship in one
 boundary-only PR on `main` before any feature PR, under the boundary isolation
-rule. #2482's registry PR A adds `overrideRequired` to the approvals response.
-Agree with that work whether one boundary PR carries both or `actions` replaces
-`overrideRequired`, so the registry doesn't gain two fields for one fact.
+rule. With no override, #2482's planned `overrideRequired` field isn't
+needed either; #2482 is being told.
 
 ## Rollout
 
@@ -550,24 +537,24 @@ Each PR is based on `main`, not stacked.
    submitter seat on card-charge lines; voiding the seat on a finance change to
    a confirmed reimbursement, with the My receipts pill counting it; the rule
    edits.
-8. **Override rule** (3.17): the rule text, in step 3's PR or on its own. Code
-   changes beyond step 3's Treasurer refusal only if you retire it instead.
+8. **Override removal** (3.17): the approve service's finance branch and the
+   override dialog go, with the rule line. It can ship in step 3's PR.
 
 ## How each item is resolved
 
 | # | Finding | Resolution | Step |
 | --- | --- | --- | --- |
 | 3.12 | Page reloads in place after the last decision | Returns to the approvals list when the caller has no act left, per #2482's rule (§9) | 6 |
-| 3.13 | Approve All gone | One all-or-nothing request over the caller's approvals; never overrides (§4) | 4 |
+| 3.13 | Approve All gone | One all-or-nothing request over the caller's approvals (§4) | 4 |
 | 3.14 | Own pending lines not bold | Lines with a main act for the caller are bold with an arrow, with a count in the heading (§5) | 2 |
 | 3.15 | Approve and Raise exception shown to everyone | Only acts the server computes for the caller are drawn (§1) | 2 |
-| 3.16 | Override comment required only on the server | `commentRequired` marks the field and disables Confirm (§6) | 2 |
-| 3.17 | Only FINANCE overrides; no rule | Proposed rule: keep, with a reason; the override is the program-approver sign-off (§7) | 3 or own |
+| 3.16 | Override comment required only on the server | Moot: no override. Raise and reject exception notes are marked required, with Confirm disabled while blank (§6) | 2 |
+| 3.17 | Only FINANCE overrides; no rule | No override: only bucket approvers, or a Board stand-in, approve (§7) | 8 |
 | 3.25 | Pill counts seats, page opens on approval | Approval is the sign-off, so one count, and a "Waiting on you" view (§8) | 3, 5 |
 | 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.8) | 2, 3 |
 | #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a card charge takes no submitter seat (§3) | 7 |
 | #2433 | Sign-as shown to people who can't sign | Same as 3.15; other seats show as status (§1) | 2 |
-| #1272 | No rule for the override | As 3.17 | 3 or own |
+| #1272 | No rule for the override | As 3.17 | 8 |
 
 ## Open questions
 
@@ -580,10 +567,8 @@ Each PR is based on `main`, not stacked.
    so it allows the card-charge case; that rule is your decision. A finance
    change to a confirmed reimbursement voids the submitter's signature, and they
    confirm again (§3).
-3. **The override and the Treasurer seat.** *Settled by C′:* an override is an
-   approval, so the finance holder who gives it is barred from the Treasurer
-   seat on that line, as any approver is. Do you accept that finance may stand
-   in for the program approver this way (§7)?
+3. **The override and the Treasurer seat.** *Decided:* there is no FINANCE
+   override (§7). Only bucket approvers, or a Board stand-in, approve a line.
 4. **Where Treasurer and Board seats are counted.** This design counts the
    program-approver act on the approver pill. #2500's QB-pending count already
    counts expenses with a Treasurer, Board or Board-substituted seat the viewer
@@ -592,14 +577,15 @@ Each PR is based on `main`, not stacked.
 5. **A silent approver.** The rules let the Board stand in when approvers are
    "conflicted or unavailable". The app reads "unavailable" as an owner who is
    merged away or whose membership blocks sign-in. An approver who is eligible
-   but doesn't act holds the line until finance overrides (§7). Is that
-   intended, or should finance be able to mark approvers unavailable?
-6. **One field with #2482.** `commentRequired` on the override act and #2482's
-   planned `overrideRequired` describe the same fact. Which design owns it?
-7. **A finance-assigned line.** Under C′ a line finance moves to another bucket
-   on an exception waits for an approver of the new bucket (C′.5), where today
-   finance's assignment finishes it. Is that right, or should finance's
-   assignment count as the approval, as an override does?
+   but doesn't act holds the line, and with no override only a Board stand-in
+   can unblock it. Should finance, or the Board, be able to mark an approver
+   unavailable so a Board member can step in?
+6. **One field with #2482.** *Closed:* with no override, neither
+   `commentRequired` nor #2482's `overrideRequired` is needed. #2482 is being
+   told.
+7. **A finance-assigned line.** *Decided:* finance can still move a line to
+   another bucket, but the line then waits for the new bucket's approver
+   (C′.5). Finance's assignment never counts as the approval.
 8. **The Treasurer seat after a bucket move.** With seat voiding gone, a
    Treasurer who signed before finance moved the line keeps their seat, even
    if the new bucket's owner shares their household, which the Treasurer
