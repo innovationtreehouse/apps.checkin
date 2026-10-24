@@ -185,6 +185,13 @@ The Receipts tabs are #2466's, unchanged. The Expenses and Board groups hold:
 | QuickBooks | Posting failed after retries; duplicate to void; changed in QuickBooks; closed but not posted; bucket has no Class | FINANCE |
 | Board | Board approval not recorded; held, no conflict-free signer; Board member stood in, to review | Board, and FINANCE for recording the authorization |
 
+Recording the Board's approval is finance's job (decided): FINANCE records what
+the Board decided. "Board approval not recorded" counts green only for a
+FINANCE holder without a conflict. Board members see the item in the Board tab
+but get no action count for it. The rules still let a Board member record it
+when no FINANCE holder without a conflict can, and the Record Board
+authorization panel stays open to them in that case, without a count.
+
 The receipt library can't import the expense library (library boundary rule,
 `scripts/check-library-boundaries.mjs`), so the host owns the screen. Each
 library exports its tabs: a value, a label, a count and a body component. The
@@ -318,8 +325,9 @@ question 7.
   `{ actionable, total, byReason }`, where `byReason` holds the actionable
   count per reason for the chips. "Actionable" leaves out records the viewer is
   conflicted on, using the same `conflictedParties` predicate the refusals use.
-  For the Board tab it counts only items this viewer may act on: a COI review
-  they didn't sign, or a Board authorization they may record. The tab badges use
+  For the Board tab it counts only items this viewer may act on: for a Board
+  member, a COI review they didn't sign; for FINANCE, a Board authorization
+  they may record. The tab badges use
   #2466's `queueBadge`: green for actionable, gray for the rest. The same
   counts pick the landing tab and the "Next" tab (§3), and give each reason
   chip its number.
@@ -523,7 +531,6 @@ Numbers are fixed; decided questions are dropped from this table.
 
 | # | Question | Design's default |
 | --- | --- | --- |
-| 4 | Recording the Board's approval: green in the Board tab for FINANCE only, or for Board members too? | FINANCE only |
 | 5 | Expense held because every Board member is conflicted: leave it with no action, or let finance close it with a note? | No action |
 | 6 | Require a note on the four kept reviews? | Yes |
 | 7 | Bring back the Expense events or Provisional items screens (3.27)? | No |
