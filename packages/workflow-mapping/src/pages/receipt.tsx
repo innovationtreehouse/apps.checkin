@@ -124,7 +124,14 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       {canManage && (
         <Group mb="md">
           {receipt.state === "pending_review" && (
-            <Button loading={busy} onClick={() => act(`${base}/proceed`, undefined, "Proceeded")}>Proceed</Button>
+            <Button
+              loading={busy}
+              onClick={async () => {
+                if (await act(`${base}/proceed`, undefined, "Proceeded")) await act(`${base}/apply`, undefined, "Applied");
+              }}
+            >
+              Proceed
+            </Button>
           )}
           {receipt.state === "apply_failed" && (
             <Button

@@ -127,6 +127,22 @@ describe("the receiving page for one receipt", () => {
     expect(screen.getByText("Applying — the system retries this automatically.")).toBeInTheDocument();
   });
 
+  it("pushes the receipt straight after a manual proceed", async () => {
+    mockApi.mockResolvedValueOnce({ id: 7, state: "applying" }).mockResolvedValueOnce({ id: 7, state: "resolved" });
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Proceed" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledTimes(2));
+    expect(mockApi.mock.calls.map(([path]) => path)).toEqual(["/receipts/7/proceed", "/receipts/7/apply"]);
+  });
+
+  it("doesn't push when the proceed is refused", async () => {
+    mockApi.mockRejectedValueOnce(new Error("1 line item(s) still unrecognized"));
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Proceed" }));
+    await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "1 line item(s) still unrecognized" })));
+    expect(mockApi).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a failed save open as a red notification", async () => {
     mockApi.mockRejectedValue(new Error("Receipt is already being applied"));
     wrap();
