@@ -76,7 +76,7 @@ describeDb("receipts awaiting finance", () => {
   it("counts the org's receipts in the queues only FINANCE can clear, across uploaders", async () => {
     expect((await receiptService.upload(textFile("A"), "text/plain", { details: taxed() })).state).toBe("financial_review");
     actAs(BOB);
-    expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("financial_review");
+    expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("duplicate_flagged");
     const off = await receiptService.upload(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     expect(off.state).toBe("validation_failed");
     expect(await receiptService.countAwaitingFinance()).toBe(2);
