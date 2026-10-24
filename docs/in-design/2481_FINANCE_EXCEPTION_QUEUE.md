@@ -6,7 +6,8 @@ each finding it resolves.
 
 ## Summary
 
-Finance gets one queue: the receipt review screen at `/receipts/review`. Today's
+Finance gets one queue, a new host screen at `/finance/review` that replaces
+the receipt review screen at `/receipts/review`. Today's
 expense flags table (`/expense/flags`) and Account holds screen
 (`/expense/holds`) go away. Every row in the queue is a record waiting on
 finance, shown with its vendor, amount and a plain-word reason. Opening the row
@@ -97,7 +98,7 @@ every screen, and are decided on the expense page with a note.
 | `CAPITAL_EQUIPMENT` | At intake, a unit price at or over `capitalEquipmentUnitCents` | **Decided: removed** (3.7). Capital review, where finance designates each line, is the only capital check, using `classifyCapital`'s two thresholds. The `capitalEquipmentUnitCents` setting goes with it | Expenses: "Capital review" | Expense page, Capital review panel | Submit capital review |
 | `MISSING_RECEIPT` | Never (no caller) | **Decided: removed** (3.8). Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
 | `NON_EVERYDAY` | Never (no caller) | **Decided: removed** (3.8). It is left over from the retired "not Everyday" mark (#2437, #2440, #2441). The amounts decide Everyday, and a non-Everyday card charge already takes a Board seat | none | none | none |
-| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 4 |
+| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 3 |
 | `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
@@ -114,9 +115,9 @@ retired kinds' old rows stay in the table as history and are no longer listed.
 
 ### 3. The queue
 
-`/receipts/review` stays the URL. The nav label becomes "Finance review", and
-the screen keeps #2466's receipt tabs, its "Other states" picker and its counts.
-Four expense tabs follow the receipt tabs:
+The queue moves to `/finance/review`, labelled "Finance review" in the nav
+(decided). It keeps #2466's receipt tabs, its "Other states" picker and its
+counts. Four expense tabs follow the receipt tabs:
 
 | Tab | Reasons | Who acts |
 | --- | --- | --- |
@@ -126,11 +127,20 @@ Four expense tabs follow the receipt tabs:
 | Board | Board approval not recorded; held, no conflict-free signer; Board member stood in, to review | Board, and FINANCE for recording the authorization |
 
 The receipt library can't import the expense library (library boundary rule,
-`scripts/check-library-boundaries.mjs`), so the host composes the screen. The
-receipt review page takes a list of extra tabs from the host. Each tab has a
-value, a label, a count and a body, and the host fills them from the expense
-library's queue component. The receipt page keeps owning `?queue=`, so an
-expense row opened from the QuickBooks tab returns to `?queue=qb`.
+`scripts/check-library-boundaries.mjs`), so the host owns the screen. Each
+library exports its tabs: a value, a label, a count and a body component. The
+host page lays them out and owns `?queue=`, so an expense row opened from the
+QuickBooks tab returns to `/finance/review?queue=qb`.
+
+The old paths are renamed outright, with no redirects. `/receipts/review`,
+`/expense/flags` and `/expense/holds` are deleted, along with their
+`pageRegistry` entries, and every link to them points at the new screen.
+`/receipts/review/[id]` folds into `/receipts/[id]`. A detail page opened from
+the queue carries `?queue=`, and that, not the path, is what makes it return to
+the queue after a decision. The expense page at `/expense/expenses/[id]` works
+the same way. In the receipt library, #2466's `reviewHref` and
+`reviewDetailHref` take the queue's base path from the host instead of
+hardcoding `/receipts/review`.
 
 Every expense row shows the same columns: date, vendor, amount, the reason in
 plain words, and how long it has waited. No row shows a kind code, a state
@@ -231,8 +241,9 @@ question 7.
 
 | Item | Change |
 | --- | --- |
-| `/expense/flags` page, `pages/flags.tsx`, `pageRegistry` entry | Removed; the path redirects to `/receipts/review?queue=expenses` |
-| `/expense/holds` page, `pages/holds.tsx`, `pageRegistry` entry | Removed; redirects to `?queue=holds` |
+| `/receipts/review`, `/receipts/review/[id]` pages and `pageRegistry` entry | Removed; replaced by `/finance/review` and `/receipts/[id]?queue=…`. No redirect |
+| `/expense/flags` page, `pages/flags.tsx`, `pageRegistry` entry | Removed; no redirect |
+| `/expense/holds` page, `pages/holds.tsx`, `pageRegistry` entry | Removed; no redirect |
 | `GET /api/expense/flags` | Removed, in a later release than the page, so open tabs running old code keep working through the deploy |
 | `POST /api/expense/flags/[id]/check-off` | Kept; called from the expense page's Reviews panel. The service refuses the retired kinds and a blank note |
 | `GET /api/expense/expense-holds` | Removed with the holds page. Set account and Resubmit stay and are called from the expense page |
@@ -287,9 +298,9 @@ Each PR is based on `main`. None is stacked on another's branch.
    processor honouring a manual account on every hold reason, and the Resubmit
    gate.
 5. **Queue PR** (1.7, 3.3, 3.5, 3.6, 3.27, 2.9 link): the finance-queue routes,
-   the host composition of `/receipts/review`, the four expense tabs, failed
-   intake, the Apply failed link, counts and the nav pill. The Flags and Holds
-   pages become redirects.
+   the host page at `/finance/review` with the receipt and expense tabs, failed
+   intake, the Apply failed link, counts and the nav pill. The old review,
+   Flags and Holds pages are deleted and their links repointed.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
    of the rest and can go any time.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
@@ -361,38 +372,35 @@ session correcting #2224 should know.
 | 3.20 | Set account on no-match lines does nothing | Processor honours a manual account on every hold reason (§5) | step 4 |
 | 3.21 | Holds lost lookup context and rule list; raw reason | Plain reasons, lookup context, matched rules listed (§5) | step 4 |
 | 3.22 | Resubmit not disabled while a line lacks an account | Disabled with the reason shown (§5) | step 4 |
-| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 6 (§6) | step 5 |
+| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 5 (§6) | step 5 |
 
 ## Open questions
 
-1. **The URL and name.** The design keeps `/receipts/review` and renames the nav
-   link "Finance review", so #2466's links and bookmarks hold. Would you rather
-   have a host-level `/finance/review`, with `/receipts/review` redirecting?
-2. **Expense finance views in the queue.** The design folds assign ownership,
+1. **Expense finance views in the queue.** The design folds assign ownership,
    resolve ownership, exceptions, capital review and depreciation into the
    Expenses tab, because otherwise finance still works from two places. Your
    decision named only the flags. Do you want these folded too?
-3. **Who records the Board's approval, and whose tab counts it.** The rules have
+2. **Who records the Board's approval, and whose tab counts it.** The rules have
    a FINANCE holder without a conflict record it, and a Board member only when
    there is none. The design shows it in the Board tab to both, counted green
    for FINANCE and gray for the Board unless no FINANCE holder can record it.
    Is that right, or should Board members see it green as a prompt to take it to
    a meeting?
-4. **A held expense no one can sign.** When every Board member is conflicted, the
+3. **A held expense no one can sign.** When every Board member is conflicted, the
    expense is held with no in-app way forward. The design shows it in the Board
    tab and offers no action. Is that what the Board wants, or should finance be
    able to close it with a note, as with a closed expense that never posted?
-5. **Required notes on reviews.** Today a check-off note is optional on the
+4. **Required notes on reviews.** Today a check-off note is optional on the
    server. The design makes it required for the four kept kinds, since the note
    is the record of the judgment. Agreed?
-6. **Expense events and Provisional items (3.27).** The design restores failed
+5. **Expense events and Provisional items (3.27).** The design restores failed
    intake only. Expense events shows the QuickBooks outbox, which the QuickBooks
    tab now covers. Provisional items belongs with the line (theme 3). Do you want
    either screen back as it was?
-7. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
+6. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
    over-cap expense alone. Should finance still see each one in the QuickBooks
    tab, for awareness, until someone marks it seen?
-8. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
+7. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
    waits in `AMBIGUOUS` for a manual match (`qb-candidates`, `qb-match`), and no
    screen calls those routes. That sits outside the twelve kinds, but it is
    finance's work. Should the QuickBooks tab list it, with a match picker on the
