@@ -115,6 +115,14 @@ describeDb("per-leg applied state", () => {
     expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).validationNotes).toBe(result.state === "resolved" ? null : result.error);
   });
 
+  it("names the donation leg when an in-kind receipt fails", async () => {
+    const r = await makeReceipt({ state: "applying", isInKind: true });
+    await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
+    sinks.fail.donation = true;
+    sinks.fail.inventory = true;
+    expect(await receiptService.apply(r.id)).toMatchObject({ state: "apply_failed", error: expect.stringMatching(/^Donation: donations down; Inventory: .+$/) });
+  });
+
   it("retry re-pushes only the legs that have not applied", async () => {
     const { r } = await failedAfterPartialApply("expense");
     await receiptService.retryApply(r.id);
