@@ -47,7 +47,7 @@ function load(acts: Act[][]) {
       lineItems: lines, approvals: [],
     },
     "/expenses/e1/line-item-approvals": lines.map((l) => ({ id: 10 + l.id, lineItemId: l.id, ownerId: 100, status: "pending" })),
-    "/expenses/e1/signoffs": lines.map((l, i) => ({ lineItemId: l.id, filled: [], missing: [], blocked: [], actions: acts[i] })),
+    "/expenses/e1/signoffs": lines.map((l, i) => ({ lineItemId: l.id, filled: [], missing: [], blocked: [], actions: acts[i], awaiting: [], mayRecordBoardAuthorization: false })),
   };
 }
 
