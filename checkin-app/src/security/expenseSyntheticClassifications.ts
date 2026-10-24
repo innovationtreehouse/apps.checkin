@@ -95,6 +95,36 @@ export const classifications = {
     reviewedByUserId: "pii",
     reviewedAt: "internal",
   },
+  // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
+  // The queue's row and counts hold reason codes, money, dates and counts, never a person.
+  FinanceQueueRow: {
+    expenseId: "internal",
+    vendorName: "internal",
+    date: "internal",
+    amountCents: "internal",
+    currency: "internal",
+    reasons: "internal",
+    waitingSince: "internal",
+  },
+  // GET /api/expense/finance-queue/counts: per tab, `{ actionable, total, byReason }`.
+  FinanceQueueCounts: {
+    expenses: "internal",
+    toSign: "internal",
+    accountHolds: "internal",
+    quickbooks: "internal",
+    board: "internal",
+  },
+  // GET /api/expense/expenses/[id]: one open queue reason on the expense, for the
+  // viewer. `detail` can carry QuickBooks' last error text, so it is `personal`,
+  // matching the flag detail it comes from.
+  ExpenseQueueReason: {
+    code: "internal",
+    tab: "internal",
+    actionable: "internal",
+    amountCents: "internal",
+    count: "internal",
+    detail: "personal",
+  },
 } as const;
 
 export const relations = {
