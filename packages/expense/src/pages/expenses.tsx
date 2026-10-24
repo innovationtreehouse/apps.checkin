@@ -20,6 +20,7 @@ interface ExpenseRow {
 
 const VIEWS = [
   { value: "all", label: "All" },
+  { value: "awaiting_me", label: "Waiting on you" },
   { value: "assign_ownership", label: "Assign ownership" },
   { value: "resolve_ownership", label: "Resolve ownership" },
   { value: "owner_approval", label: "Owner approval" },

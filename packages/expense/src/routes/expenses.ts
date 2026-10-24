@@ -23,6 +23,7 @@ import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, 
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
+import { expensesAwaitingMyApproval } from "../services/badgeCounts";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
@@ -44,6 +45,7 @@ const SUMMARY = {
 
 export const QUEUE_VIEWS = [
   "all",
+  "awaiting_me",
   "assign_ownership",
   "resolve_ownership",
   "owner_approval",
@@ -54,7 +56,10 @@ export const QUEUE_VIEWS = [
 ] as const;
 type QueueView = (typeof QUEUE_VIEWS)[number];
 
-function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInput {
+/** The views whose rows are a fixed set of expenses, counted in the database. */
+type StateView = Exclude<QueueView, "awaiting_me">;
+
+function viewWhere(view: StateView, scope: ViewerScope): Prisma.ExpenseWhereInput {
   switch (view) {
     case "all":
       return {};
@@ -81,9 +86,14 @@ function parseView(raw: string | null, fallback?: QueueView): QueueView {
   return view as QueueView;
 }
 
+/** "Waiting on you" lists exactly the expenses the approver pill counts lines on. */
 async function listWhere(principal: ExpensePrincipal, view: QueueView): Promise<Prisma.ExpenseWhereInput> {
   const scope = await viewerScope(principal);
-  return { AND: [scopedExpenses(await getOrgId(), scope), viewWhere(view, scope)] };
+  const where =
+    view === "awaiting_me"
+      ? { id: { in: (await expensesAwaitingMyApproval(principal)).map((e) => e.expenseId) } }
+      : viewWhere(view, scope);
+  return { AND: [scopedExpenses(await getOrgId(), scope), where] };
 }
 
 /** The expense, or 404 when it is not in this org or not in the caller's scope. */
@@ -116,7 +126,7 @@ export const counts: ExpenseRouteHandler = async () => {
   const scope = await viewerScope(principal);
   const base = scopedExpenses(await getOrgId(), scope);
   const n = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { AND: [base, where] } });
-  const views = QUEUE_VIEWS.filter((v) => v !== "all");
+  const views = QUEUE_VIEWS.filter((v): v is Exclude<StateView, "all"> => v !== "all" && v !== "awaiting_me");
   const [values, holds] = await Promise.all([
     Promise.all(views.map((v) => n(viewWhere(v, scope)))),
     n({ holds: { some: { status: "PENDING" } } }),

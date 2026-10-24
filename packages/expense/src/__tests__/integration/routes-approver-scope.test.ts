@@ -113,16 +113,16 @@ describeDb("nav badge counts", () => {
     approvalId = await seedApproval(expenseId, lineItemId, { ownerId: OWN_BUCKET });
   });
 
-  it("counts a line awaiting the bucket approver's sign-off, and nothing for an outsider", async () => {
+  it("counts a line awaiting the bucket approver's approval, and nothing for an outsider", async () => {
     as(APPROVER);
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
     expect(await signoffsAwaitingCount(principal(OUTSIDER))).toBe(0);
   });
 
-  it("skips closed expenses and reimbursements with no reimbursee, and examines a capped number of expenses", async () => {
+  it("skips expenses past owner approval, and examines a capped number of expenses", async () => {
     as(APPROVER);
-    for (const opts of [{ state: "rejected" }, { state: "owner_approval", needsReimbursement: true }]) {
-      const id = await seedExpense({ ...opts, submitterId: 1 });
+    for (const state of ["rejected", "qb_pending"]) {
+      const id = await seedExpense({ state, submitterId: 1 });
       await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET });
     }
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);

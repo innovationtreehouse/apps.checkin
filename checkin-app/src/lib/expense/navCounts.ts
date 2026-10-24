@@ -1,6 +1,6 @@
 /**
  * Expense's nav pill counts (#1272): Expense Ops (holds, open flags), the Programs I Lead
- * "Expense approvals" tab (lines awaiting the viewer's sign-off), `approver` (1 when the viewer
+ * "Expense approvals" tab (lines waiting on the viewer's approval), `approver` (1 when the viewer
  * approves any bucket: its owner or a treasurer), and per expense list view the expenses the
  * viewer can act on, with their sum as `actionable`. A failing count is left out. Server only.
  */
