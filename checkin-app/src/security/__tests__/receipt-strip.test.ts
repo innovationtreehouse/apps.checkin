@@ -150,7 +150,7 @@ describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob');
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'submitterReconfirm', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
