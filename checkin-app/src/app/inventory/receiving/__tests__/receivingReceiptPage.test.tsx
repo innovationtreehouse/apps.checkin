@@ -100,23 +100,31 @@ describe("the receiving page for one receipt", () => {
   });
 
   it("keeps an apply failure open as a red notification naming the leg and the reason", async () => {
-    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying" } };
-    mockApi.mockResolvedValue({ id: 7, state: "apply_failed", validationNotes: "Expense: QuickBooks timed out" });
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "apply_failed" } };
+    mockApi.mockResolvedValueOnce({ id: 7, state: "applying" }).mockResolvedValueOnce({ id: 7, state: "apply_failed", validationNotes: "Expense: QuickBooks timed out" });
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
     await waitFor(() =>
       expect(mockShow).toHaveBeenCalledWith({ title: "Apply failed", message: "Expense: QuickBooks timed out", color: "red", autoClose: false }),
     );
   });
 
   it("titles an apply that left the receipt applying as unfinished", async () => {
-    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying" } };
-    mockApi.mockResolvedValue({ id: 7, state: "applying", validationNotes: "Inventory: stamp write failed" });
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "apply_failed" } };
+    mockApi.mockResolvedValueOnce({ id: 7, state: "applying" }).mockResolvedValueOnce({ id: 7, state: "applying", validationNotes: "Inventory: stamp write failed" });
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
     await waitFor(() =>
       expect(mockShow).toHaveBeenCalledWith({ title: "Apply didn't finish", message: "Inventory: stamp write failed", color: "red", autoClose: false }),
     );
+  });
+
+  it("offers no apply or retry while the system is applying the receipt", () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying" } };
+    wrap();
+    expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry apply" })).not.toBeInTheDocument();
+    expect(screen.getByText("Applying — the system retries this automatically.")).toBeInTheDocument();
   });
 
   it("keeps a failed save open as a red notification", async () => {

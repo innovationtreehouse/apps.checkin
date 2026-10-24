@@ -156,6 +156,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
+      {receipt.state === "applying" && (
+        <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>
+      )}
       {canManage && lockReason === APPLIED_LINES_LOCKED && (
         <Alert color="gray" mb="md" title="Lines locked">
           {lockReason} Retry sends the part that failed with the same lines.
@@ -166,10 +169,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           {receipt.state === "pending_review" && (
             <Button loading={busy} onClick={() => act(`${base}/proceed`, undefined, "Proceeded")}>Proceed</Button>
           )}
-          {receipt.state === "applying" && (
-            <Button loading={busy} onClick={() => act(`${base}/apply`, undefined, "Applied")}>Apply</Button>
-          )}
-          {(receipt.state === "apply_failed" || receipt.state === "applying") && (
+          {receipt.state === "apply_failed" && (
             <Button
               variant="light"
               loading={busy}
