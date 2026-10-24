@@ -29,13 +29,16 @@ import { getOrg, limits, ports, requireActor } from "../runtime";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
-import { FINANCE_ACTION_STATES } from "../nav";
+import { FINANCE_ACTION_STATES, SUBMITTER_ACTION_STATES } from "../nav";
 
 /**
  * Who the route admitted. `submitter` sees and acts on only the caller's own receipts;
  * `finance` acts org-wide. Authorization itself is the host route's; this narrows the rows.
  */
 export type Access = "submitter" | "finance";
+
+/** Receipts waiting on one FINANCE viewer: all of them, and per FINANCE_ACTION_STATES state. */
+export type FinanceCounts = { total: number; byState: Record<string, number> };
 
 const EDITABLE: ReadonlySet<string> = new Set(["validation_failed", "submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
@@ -117,8 +120,10 @@ async function refuse(row: ReceiptRow, actor: ReceiptPrincipal, attempted: strin
   throw new ServiceError(403, message);
 }
 
+type Parties = Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId">;
+
 /** The uploader, the reimbursee, and everyone in either one's household. */
-async function conflictedParties(row: ReceiptRow): Promise<number[]> {
+async function conflictedParties(row: Parties): Promise<number[]> {
   const parties = [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
   return [...parties, ...(await ports().households.householdOf(parties))];
 }
@@ -683,9 +688,30 @@ export const receiptService = {
     return receiptRepo.list({ orgId: (await getOrg()).id, details: { state } });
   },
 
-  /** How many of the org's receipts wait on FINANCE, for the host's nav pill. */
-  async countAwaitingFinance(): Promise<number> {
-    return receiptRepo.count({ orgId: (await getOrg()).id, details: { state: { in: [...FINANCE_ACTION_STATES] } } });
+  /**
+   * How many of the org's receipts wait on this FINANCE viewer, in all and per state, for the
+   * host's nav pill and the review queues. A receipt the viewer is conflicted on is left out.
+   */
+  async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
+    const rows = await receiptRepo.listParties({ orgId: (await getOrg()).id, details: { state: { in: [...FINANCE_ACTION_STATES] } } });
+    const lookups = new Map<string, Promise<number[]>>();
+    const partiesOf = (r: Parties): Promise<number[]> => {
+      const key = `${r.uploadedByUserId}:${r.reimburseePersonId}`;
+      const known = lookups.get(key);
+      if (known) return known;
+      const lookup = conflictedParties(r);
+      lookups.set(key, lookup);
+      return lookup;
+    };
+    const conflicted = await Promise.all(rows.map(async (r) => (await partiesOf(r)).includes(viewerId)));
+    const byState: Record<string, number> = Object.fromEntries(FINANCE_ACTION_STATES.map((s) => [s, 0]));
+    let total = 0;
+    rows.forEach((r, i) => {
+      if (conflicted[i]) return;
+      byState[r.state] += 1;
+      total += 1;
+    });
+    return { total, byState };
   },
 
   async listNeedsAttention(access: Access) {
@@ -696,6 +722,15 @@ export const receiptService = {
       details: { state: { in: NEEDS_ATTENTION } },
     });
     return access === "finance" ? rows : rows.map(toSubmitterView);
+  },
+
+  /** How many of this person's receipts wait on them, for the host's nav pill. */
+  async countAwaitingSubmitter(personId: number): Promise<number> {
+    return receiptRepo.count({
+      orgId: (await getOrg()).id,
+      uploadedByUserId: personId,
+      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+    });
   },
 
   async listAuditLogs(id: string) {

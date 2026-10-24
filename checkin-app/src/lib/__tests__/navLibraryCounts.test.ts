@@ -1,6 +1,16 @@
 import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
 
-jest.mock("@checkin/receipt", () => ({ receiptService: { countAwaitingFinance: async () => 5 } }));
+const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
+  total: viewerId,
+  byState: { financial_review: viewerId - 1, duplicate_flagged: 1, flow_error: 0 },
+}));
+
+jest.mock("@checkin/receipt", () => ({
+  receiptService: {
+    countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
+    countAwaitingSubmitter: async (id: number) => id * 10,
+  },
+}));
 
 describe("the receipt provider", () => {
   const receipt = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "receipt");
@@ -8,11 +18,55 @@ describe("the receipt provider", () => {
   beforeEach(() => { process.env.RECEIPT_DATABASE_URL = "postgres://receipt"; });
   afterEach(() => { delete process.env.RECEIPT_DATABASE_URL; });
 
-  it("reports the review count to FINANCE and not to BOARD, which cannot act on the queues", async () => {
-    expect(await collectLibraryCounts({ id: 1, isFinance: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingFinance: 5 },
+  it("reports the review counts to FINANCE and not to BOARD, which cannot act on the queues", async () => {
+    // FINANCE and BOARD may submit receipts too, so each also gets its own count.
+    expect(await collectLibraryCounts({ id: 5, isFinance: true }, ["receipt"], receipt)).toEqual({
+      receipt: {
+        awaitingMe: 50,
+        awaitingFinance: 5,
+        "awaitingFinance:financial_review": 4,
+        "awaitingFinance:duplicate_flagged": 1,
+        "awaitingFinance:flow_error": 0,
+      },
     });
-    expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toBeUndefined();
+    expect(mockCountAwaitingFinance).toHaveBeenCalledWith(5);
+    expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
+      receipt: { awaitingMe: 10 },
+    });
+    expect(mockCountAwaitingFinance).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an uploader only their own count", async () => {
+    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
+  });
+});
+
+jest.mock("@checkin/local-inventory", () => ({ getNavCounts: async () => ({ openBackorders: 4 }) }));
+
+describe("the local-inventory provider", () => {
+  const inventory = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "local-inventory");
+
+  beforeEach(() => { process.env.LOCAL_INVENTORY_DATABASE_URL = "postgres://inventory"; });
+  afterEach(() => { delete process.env.LOCAL_INVENTORY_DATABASE_URL; });
+
+  it("reports open backorders to an inventory manager", async () => {
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": { openBackorders: 4 },
+    });
+  });
+
+  it("reports nothing to FINANCE or BOARD, which read the queue but cannot receive", async () => {
+    for (const u of [{ id: 2, isFinance: true }, { id: 3, isBoardMember: true }, { id: 4 }]) {
+      expect(await collectLibraryCounts(u, ["local-inventory"], inventory)).toBeUndefined();
+    }
+  });
+
+  it("reports no count when the library has no database", async () => {
+    delete process.env.LOCAL_INVENTORY_DATABASE_URL;
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": {},
+    });
   });
 });
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";
