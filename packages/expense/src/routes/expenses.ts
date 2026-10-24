@@ -21,7 +21,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { recordBoardAuthorization, reimburseeOptions, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
@@ -264,6 +264,12 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
   const orgId = await getOrgId();
   await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+};
+
+export const reimburseeOptionList: ExpenseRouteHandler = async ({ params }) => {
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  return { ExpenseReimburseeView: await mapServiceErrors(() => reimburseeOptions(orgId, params.id, principal)) };
 };
 
 const vendorChoiceSchema = z.union([

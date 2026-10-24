@@ -12,6 +12,7 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, r
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
+import type { ReimburseeView } from "./reimburseeVendorService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -82,6 +83,21 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
   } catch (err) {
     logError("catalog_snapshot_failed", { expenseId, lineItemId }, err);
   }
+}
+
+/**
+ * The people FINANCE may name as reimbursee: the uploader's live record while the reimbursee is
+ * unknown, else nobody. The same eligibility setReimbursee enforces.
+ */
+export async function reimburseeOptions(orgId: string, expenseId: string, principal: ExpensePrincipal): Promise<ReimburseeView[]> {
+  await assertOrg(orgId);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  if (CLOSED_STATES.has(expense.state) || !reimburseeUnknown(expense)) return [];
+  const personId = await getExpenseRuntime().signoff.livePersonFor(expense.submitterId);
+  if (personId === null) return [];
+  return [{ personId, name: await getExpenseRuntime().people.nameOf(personId) }];
 }
 
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";

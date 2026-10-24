@@ -7,7 +7,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
-import { setReimbursee, signLine } from "../../services/signoffService";
+import { reimburseeOptions, setReimbursee, signLine } from "../../services/signoffService";
 import { assignOwner, financeAssign, raiseException, resolveUnknown } from "../../services/approvalService";
 import { checkOffFlag, raiseFlag } from "../../services/flagService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
@@ -172,5 +172,36 @@ describeDb("threshold changes", () => {
     await updateExpenseSettings(ORG, { everydayTotalLimitCents: 50_000, boardReviewTotalCents: 100_000 }, FINANCE);
     await updateExpenseSettings(ORG, { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 }, BOARD);
     expect(await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } })).toBe(2);
+  });
+});
+
+describeDb("reimbursee options", () => {
+  const names = { nameOf: async (id: number) => ({ 1: "Pat Lee", 20: "Pat Lee-Ray" } as Record<number, string>)[id] ?? null };
+
+  it("offers only the uploader while the reimbursee is unknown, and that pick is accepted", async () => {
+    bindPorts({ signoff: directory({ finance: [3] }), people: names });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+
+    const options = await reimburseeOptions(ORG, id, FINANCE);
+    expect(options).toEqual([{ personId: 1, name: "Pat Lee" }]);
+    await setReimbursee(ORG, id, options[0].personId, FINANCE);
+    expect(await reimburseeOptions(ORG, id, FINANCE)).toEqual([]);
+  });
+
+  it("offers the record a merged-away uploader resolves to, and nobody when none is live", async () => {
+    bindPorts({ signoff: directory({ finance: [3], merged: { 1: 20 } }), people: names });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+    expect(await reimburseeOptions(ORG, id, FINANCE)).toEqual([{ personId: 20, name: "Pat Lee-Ray" }]);
+
+    bindPorts({ signoff: directory({ finance: [3], unknownPeople: [1] }), people: names });
+    expect(await reimburseeOptions(ORG, id, FINANCE)).toEqual([]);
+  });
+
+  it("offers nobody on a card charge or a backfill, and refuses anyone without FINANCE", async () => {
+    bindPorts({ signoff: directory({ finance: [3] }), people: names });
+    expect(await reimburseeOptions(ORG, await seedExpense({ state: "owner_approval" }), FINANCE)).toEqual([]);
+    expect(await reimburseeOptions(ORG, await seedExpense({ state: "owner_approval", needsReimbursement: true, backfill: true }), FINANCE)).toEqual([]);
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+    await expect(reimburseeOptions(ORG, id, BOARD)).rejects.toMatchObject({ status: 403 });
   });
 });

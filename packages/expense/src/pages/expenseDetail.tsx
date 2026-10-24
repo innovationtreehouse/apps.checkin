@@ -90,9 +90,13 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   return [];
 }
 
+interface ReimburseeView {
+  personId: number;
+  name: string | null;
+}
 interface VendorLink {
   ExpenseReimburseeVendor: { qbVendorId: string } | null;
-  ExpenseReimburseeView: { personId: number; name: string | null } | null;
+  ExpenseReimburseeView: ReimburseeView | null;
 }
 interface VendorOption {
   id: string;
@@ -145,6 +149,27 @@ function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee
   );
 }
 
+/** Finance names the reimbursee from the people the server accepts: the uploader's live record. */
+function ReimburseePicker({ base, onSet }: { base: string; onSet: () => void }) {
+  const options = useLoad<ReimburseeView[]>(`${base}/reimbursee/options`);
+  if (options.error) return <Text size="sm" c="red">{options.error}</Text>;
+  if (!options.data) return <Text size="sm" c="dimmed">Loading…</Text>;
+  if (options.data.length === 0) return <Text size="sm" c="dimmed">No eligible reimbursee: the uploader has no live record</Text>;
+  return (
+    <Stack gap="xs">
+      {options.data.map((p) => (
+        <Group key={p.personId}>
+          <Text size="sm">{p.name ?? `Person #${p.personId}`}</Text>
+          <Button
+            size="xs"
+            onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: p.personId }, "Reimbursee set")) onSet(); }}
+          >Reimburse {p.name ?? `person #${p.personId}`}</Button>
+        </Group>
+      ))}
+    </Stack>
+  );
+}
+
 /**
  * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
  * `listHref` is the page it was opened from, which the back link returns to.
@@ -162,7 +187,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [text, setText] = useState("");
   const [bucket, setBucket] = useState<string | null>(null);
   const [permanent, setPermanent] = useState(false);
-  const [reimbursee, setReimbursee] = useState("");
   const [authorization, setAuthorization] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
 
@@ -324,15 +348,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           <Text fw={600} mb="xs">
             Reimbursee {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
           </Text>
-          {!e.reimburseePersonId && (
-            <Group>
-              <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
-              <Button
-                disabled={!/^\d+$/.test(reimbursee)}
-                onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) reloadAll(); }}
-              >Set reimbursee</Button>
-            </Group>
-          )}
+          {!e.reimburseePersonId && <ReimburseePicker base={base} onSet={reloadAll} />}
           {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
             ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
             : <VendorPicker base={base} reimbursee={vendor.data.ExpenseReimburseeView?.name ?? null} onLinked={reloadAll} />)}
