@@ -13,7 +13,7 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, r
 import { lineActions, mayRecordBoardAuthorization } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
-import { raiseFlag } from "./flagService";
+import { closeAnsweredFlag, raiseFlag } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
@@ -128,10 +128,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
     });
     // Any seat signed while the payee was unknown is signed again for the payee.
     await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
-    await tx.expenseFlag.updateMany({
-      where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
-      data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },
-    });
+    await closeAnsweredFlag(tx, expenseId, "REIMBURSEE_UNKNOWN", actor, "reimbursee set");
     return current.state;
   });
 
@@ -153,7 +150,8 @@ async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
  * clears the hold on a purchase at or over the Board-review total; an expense needing neither
  * takes none. It is not an approval. The text is required, a conflicted caller is refused (a
- * FINANCE holder records it, else a Board member), and once recorded it is not changed.
+ * FINANCE holder records it, else a Board member), and once recorded it is not changed. It closes
+ * THRESHOLD_CROSSED, which asks the same question.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);
@@ -174,6 +172,7 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
       data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
     });
     await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
+    await closeAnsweredFlag(tx, expenseId, "THRESHOLD_CROSSED", actor, "Board authorization recorded");
     return { state: expense.state, byFinance: facts[0].finance.includes(actor.userId) };
   });
   if (!byFinance) await raiseFlag(expenseId, "COI", "no FINANCE holder could record it; a Board member recorded the Board authorization");

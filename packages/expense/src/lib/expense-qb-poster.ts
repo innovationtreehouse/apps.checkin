@@ -14,6 +14,7 @@ import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { raiseFlag } from "../services/flagService";
+import { NEEDS_VOIDING } from "./flags";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
@@ -361,7 +362,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
         if (!(await claimQbTxn(tx, orgId, write.entity, result.id))) {
           const note = `QuickBooks ${write.entity} ${result.id} is already claimed by another expense or line`;
           // An entry the app posted for this expense is now a duplicate in QuickBooks.
-          if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense needs voiding`, tx);
+          if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense ${NEEDS_VOIDING}`, tx);
           return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, note);
         }
         if (byAmount) {
