@@ -54,8 +54,8 @@ buttons come from the same rule the server enforces.
 - **The approver pill and its page agree**: both count lines with an action for
   the viewer, and the pill opens a "Waiting on you" view (3.25).
 - **The FINANCE override goes** (decided, 3.17). Only a line's bucket
-  approvers approve it, or a Board member standing in when every approver is
-  conflicted or unavailable. A finance holder who is also a bucket approver
+  approvers approve it, or a Board member without a conflict, who may step in
+  on any line at any time. A finance holder who is also a bucket approver
   approves that bucket's lines as an approver.
 - **What doesn't change**: each signer is a different person from a different
   household; the conflict rules; the Board stand-in limits; the Board's
@@ -76,7 +76,7 @@ adds are marked as proposed.
 | Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. The line splits in two: reimbursements keep the §IX.3 citation, which covers reimbursements only, and card charges become `[Decision — owner]` |
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says the approval is the program approver's sign-off |
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. There is no FINANCE override, so no other approval needs reading (open question 3, decided) |
-| When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes in wording**: the Board member approves the line. Reworded below |
+| When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes** (decided): a Board member without a conflict may approve any line in place of its bucket approvers, whether or not they can act. Replaced below; open question 10 asks you to confirm it against §IX.3 |
 | Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes** (decided): the program approver is chosen as for any line, and the reimbursement also takes a later Board member's approval, in a Board seat signed after the line is approved. The §IX.2 citation stays. This changes the app's reading of the policy, not the policy: §IX.2 requires Board approval and doesn't stop the program approver approving too |
 | The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the submitter's confirmation of a reimbursement's receipt, and a card charge has no submitter seat. Reworded below |
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
@@ -162,12 +162,17 @@ in today's code: a bucket treasurer who is also FINANCE can approve a line and
 then sign it as Treasurer. The approver counts as seated on the expense, so
 their household holds no other seat on it.
 
-**C′.3 A Board stand-in approves.** When every approver of the bucket is
-conflicted or unavailable, a Board member without a conflict approves the line.
-Today that line needs a FINANCE override to leave owner approval and a Board
-member to sign the seat. Under C′ one act by one person does both. The stand-in
-limits are unchanged, and a Board member's approval counts as a substitution
-exactly as their seat signature does today.
+**C′.3 A Board member may always step in.** You decided that a Board member
+without a conflict may approve any line at any time, in place of its bucket
+approvers, not only when every approver is conflicted or unavailable. There is
+no step to mark an approver unavailable. The bucket approvers keep their act,
+and the line counts as approved by whichever eligible person approves first.
+Every approval refusal applies to the Board member too: their household, other
+seats on the line, and the Treasurer bar. A Board approval of a line in a
+Board-approved program budget is recorded as a Board stand-in, so the audit
+shows who approved in place of the bucket's approvers. It counts as a
+substitution under the existing stand-in limits, as a Board member's seat
+signature does today.
 
 **C′.4 Org-level bucket.** Today the approval is pre-approved at intake, because
 the bucket has no approvers, and a Board member signs the seat. Under C′ a
@@ -207,7 +212,7 @@ act on a line outside its own buckets. See §7.
 
 | Today | Under C′ |
 | --- | --- |
-| The `PROGRAM_APPROVER` seat in the seat list, its sign-off rows, and its share of the seat refusal and the stand-in rule | Deleted. The stand-in rule moves to the approval: who may approve is computed from the bucket's approvers, falling back to a Board member without a conflict within the substitution limit |
+| The `PROGRAM_APPROVER` seat in the seat list, its sign-off rows, and its share of the seat refusal and the stand-in rule | Deleted. The stand-in rule moves to the approval: who may approve is the bucket's approvers or any Board member without a conflict, a Board approval counting within the substitution limit (C′.3) |
 | The rule that sends the program-approver seat to the Board for an org-level bucket or a non-member | Deleted. Org-level lines take a Board member's approval (C′.4); non-member lines take a Board seat after approval (C′.6) |
 | Sign as Program approver, and its "Waiting for Finance to assign a budget bucket" note | Deleted from the page |
 | The approver pill's count of open program-approver seats | Replaced by a count of lines the caller may approve (§8) |
@@ -385,8 +390,8 @@ The prototype had an org-manager role that approved without a comment. FINANCE
 replaced that role, and approves outside its own buckets only with a comment.
 No rule covers that. You decided to remove the override: "board yes finance no".
 
-Only a line's bucket approvers approve it. When every approver is conflicted
-or unavailable, a Board member without a conflict stands in (C′.3). A finance
+Only a line's bucket approvers approve it, or a Board member without a
+conflict, who may step in on any line at any time (C′.3). A finance
 holder who is also a bucket's owner or treasurer approves that bucket's lines
 as an approver, under the normal approval refusals. Finance keeps its
 exception tools: it can move a line to another bucket, which then waits for the
@@ -394,8 +399,8 @@ new bucket's approver (C′.5), or reject the exception. Neither counts as an
 approval.
 
 The approve service loses its finance branch, and the page loses the override
-dialog. An approver who is eligible but silent is unblocked only by a Board
-stand-in, which needs the approver to be unavailable (open question 5).
+dialog. A line whose approver is eligible but silent is unblocked by any Board
+member without a conflict (open question 5, decided).
 
 ### 8. The pill and its page agree (3.25)
 
@@ -422,6 +427,16 @@ fill; under C′ its program-approver part goes, because a Board stand-in approv
 in owner approval before the expense is QB pending, so FINANCE and the Board already have a count for seats. Open question 4
 asks only whether those signatures also get their own place to work in #2482's
 queue. Treasurer and Board seats stay off this pill.
+
+A Board member may approve any line (C′.3), but their counts don't include
+every pending line, or the Board would always see the whole queue. A Board
+member's pill counts a line only where the design already counts Board items:
+#2482's Board tab, as "Approval needs a Board member", for a line no bucket
+approver can approve (every approver conflicted or unavailable, or an
+org-level bucket). The line-actions function gives that condition. On the
+expense page a Board member still sees "Approve as Board (program approver)"
+in More on any line they may approve, and as the main act only on a line no
+bucket approver can approve.
 
 ### 9. Back to the queue (3.12)
 
@@ -456,9 +471,9 @@ from your decisions; the last two wait on open questions 2 and 5:
   seat on the expense may not approve the line, and whoever approved a line
   does not sign its Treasurer seat. *(new line, after the three-signatures line)*
   `[Decision — owner]`
-- When every owner and treasurer of a line's bucket is conflicted or
-  unavailable, a Board member without a conflict approves the line in their
-  place. *(rewords the existing line; same tag)*
+- A Board member without a conflict may approve any line in place of its
+  bucket approvers. *(replaces the existing line about every owner and
+  treasurer being conflicted or unavailable)* `[Decision — owner]`
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
   without a conflict signs a Board seat on each line once the line is approved.
@@ -490,8 +505,8 @@ from your decisions; the last two wait on open questions 2 and 5:
 - *(audience line)* replace "since that seat is filled from the receipt" with
   "since that seat is filled by their confirmation of a reimbursement's
   receipt". *(same tag)*
-- Only a bucket approver, or a Board member standing in when every approver is
-  conflicted or unavailable, approves a line. *(new line)* `[Decision — owner]`
+- Only a bucket approver, or a Board member without a conflict in their place,
+  approves a line. *(new line)* `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -574,12 +589,9 @@ Each PR is based on `main`, not stacked.
    counts expenses with a Treasurer, Board or Board-substituted seat the viewer
    can fill. Should those signatures also get a "To sign" tab in #2482's finance
    queue, with Approve All's equivalent for the Treasurer?
-5. **A silent approver.** The rules let the Board stand in when approvers are
-   "conflicted or unavailable". The app reads "unavailable" as an owner who is
-   merged away or whose membership blocks sign-in. An approver who is eligible
-   but doesn't act holds the line, and with no override only a Board stand-in
-   can unblock it. Should finance, or the Board, be able to mark an approver
-   unavailable so a Board member can step in?
+5. **A silent approver.** *Decided:* a Board member without a conflict may
+   always step in and approve any line (C′.3). No step marks an approver
+   unavailable.
 6. **One field with #2482.** *Closed:* with no override, neither
    `commentRequired` nor #2482's `overrideRequired` is needed. #2482 is being
    told.
@@ -595,6 +607,12 @@ Each PR is based on `main`, not stacked.
    what the submitter is paid. Should a bucket assignment, or finance's other
    bookkeeping (capital designation, depreciation, a mapping hold's account),
    also void the submitter's signature?
+10. **A Board member approving a program-budget line.** Financial Policy
+    Art. IX §IX.3's signature list names the Program Leader or Program
+    Treasurer for a reimbursement in a Board-approved program budget. Under
+    C′.3 a Board member may approve such a line in their place. Does that
+    satisfy §IX.3? (§IX.2's first paragraph lets the Board authorize any
+    reimbursement, which may bear on it.)
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
