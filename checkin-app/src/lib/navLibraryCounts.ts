@@ -8,6 +8,7 @@ import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
 import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
+import { canSubmitReceipts } from "@/lib/volunteer";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
@@ -44,6 +45,14 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     visible: (u) => hasAnyRole(u, RECEIVING_ROLES),
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
+  },
+  {
+    library: "receipt",
+    visible: (u) => typeof u.id === "number" && canSubmitReceipts(u),
+    count: async (u): Promise<Record<string, number>> =>
+      process.env.RECEIPT_DATABASE_URL && typeof u.id === "number"
+        ? { awaitingMe: await (await import("@checkin/receipt")).receiptService.countAwaitingSubmitter(u.id) }
+        : {},
   },
   {
     library: "income",
