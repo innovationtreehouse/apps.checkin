@@ -172,7 +172,7 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
             {!TERMINAL.has(receipt.state) && (
               <Button size="xs" variant="light" color="red" onClick={onDiscardReceipt}>Discard this receipt</Button>
             )}
-            {original && !TERMINAL.has(original.state) && !original.pushedAt && (
+            {original && !own && !TERMINAL.has(original.state) && !original.pushedAt && (
               <Button size="xs" variant="light" color="red" onClick={onDiscardOriginal}>Discard the original</Button>
             )}
             {own && <Text size="sm" c="dimmed">Someone else in finance decides whether your own receipt is a duplicate.</Text>}

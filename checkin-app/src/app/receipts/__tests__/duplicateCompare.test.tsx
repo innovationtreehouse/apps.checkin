@@ -138,10 +138,11 @@ describe("a suspected duplicate's detail page", () => {
     }
   });
 
-  it("does not offer the uploader in finance to clear their own receipt", () => {
+  it("does not offer the uploader in finance to clear their own receipt or discard its original", () => {
     mockUserId = 1;
     wrap();
     expect(screen.queryByRole("button", { name: "Not a duplicate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard the original" })).toBeNull();
     expect(screen.getByText("Someone else in finance decides whether your own receipt is a duplicate.")).toBeInTheDocument();
   });
 
