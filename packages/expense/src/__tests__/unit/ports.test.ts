@@ -5,7 +5,7 @@ import { assertOrg, getExpenseRuntime } from "../../runtime";
 import { inertOutbound, inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
-import { detectIntakeFlags, FLAG_AUDIENCE } from "../../lib/flags";
+import { detectIntakeFlags, FLAG_AUDIENCE, taxNeedsFinance } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
 describe("callerId", () => {
@@ -73,5 +73,37 @@ describe("flags", () => {
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
     expect(FLAG_AUDIENCE.COI).toBe("BOARD");
     expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
+  });
+});
+
+describe("tax waits on finance", () => {
+  const approved = (taxCents: number, reasons = ["tax"]) => ({ reasons, taxCents });
+
+  it("not when receipt finance review approved that tax", () => {
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: approved(125) })).toBe(false);
+  });
+
+  it("never when the receipt org's settings do not hold tax for review", () => {
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: false })).toBe(false);
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: false, financeReview: null })).toBe(false);
+  });
+
+  it("when the tax differs from the amount finance approved", () => {
+    expect(taxNeedsFinance({ taxCents: 150, taxReviewRequired: true, financeReview: approved(125) })).toBe(true);
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: { reasons: ["tax"] } })).toBe(true);
+  });
+
+  it("when review applies and no approval covers tax", () => {
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true })).toBe(true);
+    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: approved(125, ["old_date"]) })).toBe(true);
+  });
+
+  it("when the sender does not say whether review applies, unless finance approved that tax", () => {
+    expect(taxNeedsFinance({ taxCents: 125 })).toBe(true);
+    expect(taxNeedsFinance({ taxCents: 125, financeReview: approved(125) })).toBe(false);
+  });
+
+  it("never on a receipt with no tax", () => {
+    expect(taxNeedsFinance({ taxCents: 0, taxReviewRequired: true })).toBe(false);
   });
 });

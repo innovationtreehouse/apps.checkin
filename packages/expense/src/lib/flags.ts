@@ -27,13 +27,27 @@ export const HOLD_FLAGS: ReadonlyMap<string, string> = new Map<FlagKind, string>
   ["REIMBURSEE_UNKNOWN", "Set the reimbursee to clear this flag"],
 ]);
 
+interface TaxReviewInput {
+  taxCents: number;
+  taxReviewRequired?: boolean;
+  financeReview?: { reasons: readonly string[]; taxCents?: number } | null;
+}
+
+/**
+ * Tax waits on finance when the receipt org's settings hold it for review and no receipt finance
+ * approval covers that amount. A sender that does not say whether review applies is held.
+ */
+export function taxNeedsFinance({ taxCents, taxReviewRequired, financeReview }: TaxReviewInput): boolean {
+  if (taxCents <= 0 || taxReviewRequired === false) return false;
+  return !(financeReview?.reasons.includes("tax") && financeReview.taxCents === taxCents);
+}
+
 /**
  * Flags derivable from the expense and the org's thresholds, raised at intake. MISSING_RECEIPT
  * and NON_EVERYDAY are raised by hand.
  */
 export function detectIntakeFlags(
-  expense: {
-    taxCents: number;
+  expense: TaxReviewInput & {
     receiptTotalCents: number;
     lineItems: { unitPriceCents: number; totalPriceCents: number }[];
     needsReimbursement?: boolean;
@@ -43,7 +57,7 @@ export function detectIntakeFlags(
   settings: Pick<ExpenseSettings, "boardReviewTotalCents" | "capitalEquipmentUnitCents">,
 ): FlagKind[] {
   const flags: FlagKind[] = [];
-  if (expense.taxCents > 0) flags.push("TAX_ATTACHED");
+  if (taxNeedsFinance(expense)) flags.push("TAX_ATTACHED");
   // The Board-review total is the receipt's total, never a single line's.
   if (expense.receiptTotalCents >= settings.boardReviewTotalCents) flags.push("THRESHOLD_CROSSED");
   if (expense.lineItems.some((li) => li.unitPriceCents >= settings.capitalEquipmentUnitCents)) flags.push("CAPITAL_EQUIPMENT");

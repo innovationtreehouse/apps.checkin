@@ -126,12 +126,13 @@ async function conflictedParties(row: ReceiptRow): Promise<number[]> {
 /** The receipt write that records finance's decision, replacing any earlier one. */
 function recordFinanceReview(
   outcome: "approved" | "rejected",
+  row: ReceiptRow,
   reasons: string[],
   actor: ReceiptPrincipal,
   note: string | null,
   decidedAt: Date,
 ): Prisma.ReceiptUncheckedUpdateInput {
-  const review = { outcome, reasons, decidedByUserId: actor.id, note, decidedAt };
+  const review = { outcome, reasons, decidedByUserId: actor.id, note, taxCents: row.taxCents, decidedAt };
   return { financeReview: { upsert: { create: review, update: review } } };
 }
 
@@ -518,7 +519,7 @@ export const receiptService = {
     const trimmed = note?.trim() || null;
     if (reasons.includes("tax") && !trimmed) throw new ServiceError(400, "A note explaining the tax is required");
     const now = new Date();
-    const set = { core: recordFinanceReview("approved", reasons, actor, trimmed, now), detail: { approvedAt: now } };
+    const set = { core: recordFinanceReview("approved", row, reasons, actor, trimmed, now), detail: { approvedAt: now } };
     await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved", trimmed);
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -530,7 +531,7 @@ export const receiptService = {
     await refuseSelfDecision(row, actor, "reject");
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const note = reason?.trim() || null;
-    const set = { core: recordFinanceReview("rejected", reasons, actor, note, new Date()), detail: { validationNotes: note } };
+    const set = { core: recordFinanceReview("rejected", row, reasons, actor, note, new Date()), detail: { validationNotes: note } };
     await step(row, { type: "REJECT" }, "rejected", set, actor, "reject_financial", note);
     return load(id, "finance", actor);
   },

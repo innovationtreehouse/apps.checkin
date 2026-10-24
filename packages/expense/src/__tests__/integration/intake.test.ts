@@ -102,6 +102,22 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(s.payloads[0]).toMatchObject({ status: "applied", failureReason: null });
   });
 
+  it("raises no TAX_ATTACHED when receipt finance review approved that tax", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await db.expenseFlag.count({ where: { expenseId: financeApproved.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises no TAX_ATTACHED when the receipt org does not hold tax for review", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, taxReviewRequired: false });
+    expect(await db.expenseFlag.count({ where: { expenseId: allRecognized.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises TAX_ATTACHED when the tax differs from the amount finance approved", async () => {
+    await receiveCompletedReceipt({ ...financeApproved, taxCents: 90, receiptTotalCents: 3090 });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: financeApproved.receiptId } });
+    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
+  });
+
   it("raises a TAX_ATTACHED flag for finance when the receipt carries tax", async () => {
     await receiveCompletedReceipt({ ...allRecognized, taxCents: 125 });
 

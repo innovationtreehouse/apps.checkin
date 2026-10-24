@@ -121,6 +121,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     if (!row) throw new Error(`receipt ${receiptId} not found`);
     const lineItems = await receiptRepo.listLineItems(receiptId);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
+    const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);
     const payload = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
       message: "receipt orgId does not match this org",
       path: ["orgId"],
@@ -151,9 +152,11 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
               reasons: review.reasons,
               decidedByPersonId: review.decidedByUserId,
               note: review.note,
+              taxCents: review.taxCents ?? undefined,
               decidedAt: review.decidedAt.toISOString(),
             }
           : undefined,
+      taxReviewRequired: taxReview,
       lineItems: lineItems.map((li) => ({
         receiptLineItemId: li.id,
         lineNumber: li.lineNumber,

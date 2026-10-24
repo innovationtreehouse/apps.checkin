@@ -45,6 +45,7 @@ describeDb("financial review", () => {
       outcome: "approved",
       reasons: ["tax"],
       decidedByUserId: FINANCE.id,
+      taxCents: 100,
       note: "Vendor would not honor the exemption certificate",
     });
     expect(ports.calls.pushes).toHaveLength(1);
@@ -53,8 +54,10 @@ describeDb("financial review", () => {
       reasons: ["tax"],
       decidedByPersonId: FINANCE.id,
       note: "Vendor would not honor the exemption certificate",
+      taxCents: 100,
       decidedAt: review!.decidedAt.toISOString(),
     });
+    expect(ports.calls.pushes[0].taxReviewRequired).toBe(true);
   });
 
   it("a receipt that never waited on finance pushes no financeReview", async () => {
@@ -66,6 +69,7 @@ describeDb("financial review", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     expect(r.state).toBe("receipt_finalized");
     expect(ports.calls.pushes[0].financeReview).toBeUndefined();
+    expect(ports.calls.pushes[0].taxReviewRequired).toBe(false);
     expect(await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } })).toBeNull();
   });
 
