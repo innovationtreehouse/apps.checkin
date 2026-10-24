@@ -40,13 +40,13 @@ describeDb("finance queue — expenses tab", () => {
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }]);
   });
 
-  it("counts an item as actionable only for FINANCE not conflicted on the expense; the Board sees it without a count", async () => {
-    await seedExpense({ state: "capital_review", submitterId: 11 });
-    expect((await financeQueueCounts(FINANCE)).expenses).toEqual({ actionable: 1, total: 1, byReason: { CAPITAL_REVIEW: 1 } });
-    expect((await financeQueueCounts(BOARD)).expenses).toEqual({ actionable: 0, total: 1, byReason: {} });
+  it("counts a decision for FINANCE not conflicted on the expense, bookkeeping for any FINANCE, and nothing for the Board", async () => {
+    await seedExpense({ state: "capital_review", submitterId: 11, needsReimbursement: true });
+    expect((await financeQueueCounts(FINANCE)).expenses).toEqual({ actionable: 2, total: 2, byReason: { CAPITAL_REVIEW: 1, REIMBURSEE_TO_NAME: 1 } });
+    expect((await financeQueueCounts(BOARD)).expenses).toEqual({ actionable: 0, total: 2, byReason: {} });
 
     bindPorts({ signoff: directory({ finance: [3], households: [[3, 11]] }) });
-    expect((await financeQueueCounts(FINANCE)).expenses).toMatchObject({ actionable: 0, total: 1 });
+    expect((await financeQueueCounts(FINANCE)).expenses).toEqual({ actionable: 1, total: 2, byReason: { CAPITAL_REVIEW: 1 } });
   });
 
   it("gives a viewer with neither role nothing", async () => {
