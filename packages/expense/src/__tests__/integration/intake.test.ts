@@ -115,7 +115,7 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
       expenseId: financeApproved.receiptId,
       reasons: ["tax"],
       approvedByUserId: 12,
-      note: "Vendor would not honor the exemption certificate",
+      note: null,
       approvedAt: new Date("2026-06-02T09:30:00.000Z"),
     });
 
