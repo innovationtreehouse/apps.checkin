@@ -151,7 +151,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Total" value={formatCents(parsed.receiptTotalCents, parsed.currency)} money />
         <Field label="Tax" value={formatCents(parsed.taxCents, parsed.currency)} money />
         <Field label="Shipping" value={formatCents(parsed.shippingCents, parsed.currency)} money />
-        <Field label="Discount" value={`${parsed.discountCents ? "−" : ""}${formatCents(parsed.discountCents, parsed.currency)}`} money />
+        <Field label="Discount" value={formatCents(parsed.discountCents ? -parsed.discountCents : parsed.discountCents, parsed.currency)} money />
         <Field label="Receipt id" value={parsed.receiptId ?? "—"} mono />
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
