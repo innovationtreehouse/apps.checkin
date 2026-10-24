@@ -7,6 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { STATE_LABEL, api, catalogApi, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
+import { type LineFormKind, lineFormBody } from "../lib/line-form";
 import { APPLIED_LINES_LOCKED, lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -225,9 +226,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
 }
 
 function LineForm({ form, busy, onSubmit, onCancel }: {
-  form: "associate" | "propose";
+  form: LineFormKind;
   busy: boolean;
-  onSubmit: (body: Record<string, string | number>) => void;
+  onSubmit: (body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
 }) {
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
@@ -249,7 +250,7 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
     .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
-  const canSave = form === "associate" ? !!gtin13 :!!(name.trim() && categoryId && subcategoryId && usage);
+  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
 
   return (
     <Stack gap={4}>
@@ -300,20 +301,8 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
         <Button
           size="xs"
           loading={busy}
-          disabled={!canSave}
-          onClick={() =>
-            onSubmit(
-              form === "associate"
-                ? { gtin13: gtin13 ?? "", conversionFactor }
-                : {
-                    proposedName: name.trim(),
-                    proposedCategoryId: Number(categoryId),
-                    proposedSubcategoryId: Number(subcategoryId),
-                    proposedUsageBehavior: usage ?? "",
-                    conversionFactor,
-                  },
-            )
-          }
+          disabled={!body}
+          onClick={() => { if (body) onSubmit(body); }}
         >
           Save
         </Button>

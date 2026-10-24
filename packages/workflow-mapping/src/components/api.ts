@@ -59,12 +59,15 @@ export function useLoad<T>(path: string, load: (path: string) => Promise<T> = ap
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
+  // Held in a ref so a caller passing a new function each render doesn't refetch every render.
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; });
   useEffect(() => {
     const mine = ++seq.current;
-    load(path)
+    loadRef.current(path)
       .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
       .catch((e: unknown) => { if (mine === seq.current) setError(errorMessage(e)); });
-  }, [path, load, tick]);
+  }, [path, tick]);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { data, error, reload };
 }
