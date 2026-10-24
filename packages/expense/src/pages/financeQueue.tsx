@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Anchor, Badge, Chip, Group, Table, Text } from "@mantine/core";
 import { useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import SignAllButton from "../components/SignAllButton";
 import {
   FINANCE_QUEUE_REASONS,
   FINANCE_QUEUE_TABS,
@@ -99,6 +100,7 @@ export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: 
                   {row.reasons.map((x) => (
                     <Badge key={x.code} variant="light" color="gray" mr={4} style={{ textTransform: "none" }}>{x.text}</Badge>
                   ))}
+                  {tab === "toSign" && row.expenseId && <SignAllButton expenseId={row.expenseId} onSigned={rows.reload} />}
                 </Table.Td>
                 <Table.Td>{waited(row.waitingSince)}</Table.Td>
               </Table.Tr>

@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
-import { Button } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { api, errorMessage, send } from "./api";
+import { Button, Text } from "@mantine/core";
+import { send, useLoad } from "./api";
 
 interface LineStatus {
   lineItemId: number;
@@ -15,32 +14,28 @@ export function treasurerLines(lines: LineStatus[]): number[] {
 }
 
 /**
- * "Sign all N as Treasurer" on a To sign row: reads the expense's lines the viewer may sign as
- * Treasurer and signs them in one all-or-nothing request. A refusal names the line and signs none.
+ * "Sign all N as Treasurer" on a To sign row: N is the expense's lines the server offers the
+ * viewer a Treasurer signature on, and one all-or-nothing request signs them. A refusal names the
+ * line and signs none. Nothing to sign draws no button; a failed read says so in red.
  */
-export default function SignAllButton({ expenseId, count, onSigned }: { expenseId: string; count: number; onSigned: () => void }) {
-  const [busy, setBusy] = useState(false);
+export default function SignAllButton({ expenseId, onSigned }: { expenseId: string; onSigned: () => void }) {
   const base = `/expenses/${encodeURIComponent(expenseId)}`;
+  const lines = useLoad<LineStatus[]>(`${base}/signoffs`);
+  const [busy, setBusy] = useState(false);
+  const lineItemIds = treasurerLines(lines.data ?? []);
+  if (lines.error) return <Text size="xs" c="red">Couldn&apos;t read the lines to sign: {lines.error}</Text>;
+  if (lineItemIds.length === 0) return null;
 
   async function signAll() {
     setBusy(true);
-    try {
-      const lineItemIds = treasurerLines(await api<LineStatus[]>(`${base}/signoffs`));
-      if (lineItemIds.length === 0) {
-        notifications.show({ message: "Nothing left on this expense for you to sign as Treasurer; reload the list", color: "red", autoClose: false });
-        return;
-      }
-      if (await send(`${base}/sign-lines`, "POST", { lineItemIds }, `Signed ${lineItemIds.length} as Treasurer`)) onSigned();
-    } catch (err) {
-      notifications.show({ message: `Couldn't read the lines to sign: ${errorMessage(err)}`, color: "red", autoClose: false });
-    } finally {
-      setBusy(false);
-    }
+    const signed = await send(`${base}/sign-lines`, "POST", { lineItemIds }, `Signed ${lineItemIds.length} as Treasurer`);
+    setBusy(false);
+    if (signed) onSigned();
   }
 
   return (
     <Button size="compact-xs" variant="light" loading={busy} onClick={() => void signAll()}>
-      Sign all {count} as Treasurer
+      Sign all {lineItemIds.length} as Treasurer
     </Button>
   );
 }
