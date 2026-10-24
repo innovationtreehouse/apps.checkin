@@ -101,8 +101,8 @@ export const PAGES: PageEntry[] = [
 
   // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
   // to the Global Catalog. Write controls within each screen are INVENTORY_MANAGER-gated.
-  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
-  { href: '/catalog/items', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items gtin', visible: CATALOG },
+  { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
+  { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
