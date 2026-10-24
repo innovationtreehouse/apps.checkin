@@ -170,7 +170,8 @@ and the line counts as approved by whichever eligible person approves first.
 Every approval refusal applies to the Board member too: their household, other
 seats on the line, and the Treasurer bar. A Board approval of a line in a
 Board-approved program budget is recorded as a Board stand-in, so the audit
-shows who approved in place of the bucket's approvers. It counts as a
+shows who approved in place of the bucket's approvers, and the Board member
+gives a reason with it (§6). It counts as a
 substitution under the existing stand-in limits, as a Board member's seat
 signature does today.
 
@@ -382,7 +383,13 @@ order stays by line number, which matches the receipt.
 gone (§7). Raise exception and Reject exception still require notes. Their
 fields are marked required, and Confirm stays disabled while they are blank, as
 #2482 §4 sets for finance's notes. The server's refusal stays as the backstop.
-Approving and signing take no comment.
+
+A Board member approving a line in place of its bucket approvers (C′.3) must
+give a reason, as you decided. The field is marked required, the approve
+button stays disabled while it is blank, and the server refuses a blank one.
+The reason is stored on the approval and written to its audit row. A Board
+member who approves a line as an approver of its own bucket gives no reason,
+and neither does any other approval or signature.
 
 ### 7. No FINANCE override (3.17)
 
@@ -472,7 +479,7 @@ from your decisions; the last two wait on open questions 2 and 5:
   does not sign its Treasurer seat. *(new line, after the three-signatures line)*
   `[Decision — owner]`
 - A Board member without a conflict may approve any line in place of its
-  bucket approvers. *(replaces the existing line about every owner and
+  bucket approvers, giving the reason. *(replaces the existing line about every owner and
   treasurer being conflicted or unavailable)* `[Decision — owner]`
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
