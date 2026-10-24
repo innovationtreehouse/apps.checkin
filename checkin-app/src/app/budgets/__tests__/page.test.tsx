@@ -290,4 +290,63 @@ describe("budgets approvers owner", () => {
     expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner");
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled());
   });
+
+  const withOwner = async () => jsonResponse(200, [
+    { budgetOwnerId: 7, personId: 11, name: "Olive Owner", role: "OWNER" },
+    { budgetOwnerId: 7, personId: 9, name: "Tess Treasurer", role: "TREASURER" },
+  ]);
+
+  async function openApprovers() {
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("textbox", { name: "Owner" });
+    return dialog;
+  }
+
+  it("starts from the saved owner with Save disabled", async () => {
+    mockServer(ok, { approverOptions: people, approvers: withOwner });
+    const dialog = await openApprovers();
+
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner"));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("saves a cleared owner as no owner", async () => {
+    mockServer(async () => jsonResponse(200, [{ budgetOwnerId: 7, personId: 9, name: "Tess Treasurer", role: "TREASURER" }]), {
+      approverOptions: people,
+      approvers: withOwner,
+    });
+    const dialog = await openApprovers();
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner"));
+    fireEvent.click(within(dialog).getByLabelText("Clear owner"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7/owner",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ personId: null }) }),
+    ]]));
+  });
+
+  it("resets an unsaved pick to the saved owner when a treasurer change lands", async () => {
+    mockServer(async () => jsonResponse(200, []), { approverOptions: people });
+    const dialog = await pickOwner("Olive Owner");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue(""));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("locks the approver controls while a save is in flight", async () => {
+    let answer: (r: Response) => void = () => {};
+    mockServer(() => new Promise<Response>((resolve) => { answer = resolve; }), { approverOptions: people });
+    const dialog = await pickOwner("Olive Owner");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeDisabled();
+    answer(await withOwner());
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toBeEnabled());
+    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeEnabled();
+  });
 });

@@ -316,6 +316,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   const [newTreasurer, setNewTreasurer] = useState<string | null>(null);
   const [ownerPick, setOwnerPick] = useState<string | null>(null);
   const [savingOwner, setSavingOwner] = useState(false);
+  const [changing, setChanging] = useState(false);
 
   const applyApprovers = useCallback((data: Approver[]) => {
     setApprovers(data);
@@ -341,8 +342,10 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   }, [bucket.id, canEdit, applyApprovers]);
 
   const change = async (url: string, method: string, body?: unknown) => {
+    setChanging(true);
     clearError("Approvers not changed");
     const result = await request<Approver[]>(url, method, body);
+    setChanging(false);
     if (result.ok) applyApprovers(result.data); else showError("Approvers not changed", result.error);
   };
 
@@ -378,11 +381,13 @@ function ApproversModal({ bucket, canEdit, onClose }: {
                   clearable
                   searchable
                   data={options}
+                  clearButtonProps={{ "aria-label": "Clear owner" }}
                   value={ownerPick}
                   onChange={setOwnerPick}
+                  disabled={changing}
                   style={{ flex: 1 }}
                 />
-                <Button disabled={ownerPick === savedOwner} loading={savingOwner} onClick={() => void saveOwner()}>
+                <Button disabled={changing || ownerPick === savedOwner} loading={savingOwner} onClick={() => void saveOwner()}>
                   Save
                 </Button>
               </Group>
@@ -395,7 +400,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
               <Group key={t.personId} justify="space-between">
                 <Text size="sm">{t.name}</Text>
                 {canEdit && (
-                  <Button size="xs" variant="subtle" color="red" onClick={() => void change(`/api/budget-owners/${bucket.id}/treasurers/${t.personId}`, "DELETE")}>
+                  <Button size="xs" variant="subtle" color="red" disabled={changing} onClick={() => void change(`/api/budget-owners/${bucket.id}/treasurers/${t.personId}`, "DELETE")}>
                     Remove
                   </Button>
                 )}
@@ -412,7 +417,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
                   style={{ flex: 1 }}
                 />
                 <Button
-                  disabled={!newTreasurer}
+                  disabled={changing || !newTreasurer}
                   onClick={async () => {
                     await change(`/api/budget-owners/${bucket.id}/treasurers/${newTreasurer}`, "PUT");
                     setNewTreasurer(null);
