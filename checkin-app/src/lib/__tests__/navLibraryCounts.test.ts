@@ -1,6 +1,8 @@
 import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
 
-jest.mock("@checkin/receipt", () => ({ receiptService: { countAwaitingFinance: async () => 5 } }));
+jest.mock("@checkin/receipt", () => ({
+  receiptService: { countAwaitingFinance: async () => 5, countAwaitingSubmitter: async (id: number) => id * 10 },
+}));
 
 describe("the receipt provider", () => {
   const receipt = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "receipt");
@@ -9,10 +11,18 @@ describe("the receipt provider", () => {
   afterEach(() => { delete process.env.RECEIPT_DATABASE_URL; });
 
   it("reports the review count to FINANCE and not to BOARD, which cannot act on the queues", async () => {
+    // FINANCE and BOARD may submit receipts too, so each also gets its own count.
     expect(await collectLibraryCounts({ id: 1, isFinance: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingFinance: 5 },
+      receipt: { awaitingMe: 10, awaitingFinance: 5 },
     });
-    expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toBeUndefined();
+    expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
+      receipt: { awaitingMe: 10 },
+    });
+  });
+
+  it("reports an uploader only their own count", async () => {
+    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
   });
 });
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";

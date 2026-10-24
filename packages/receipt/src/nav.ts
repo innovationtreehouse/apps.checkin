@@ -12,6 +12,9 @@ export interface ReceiptNavLink {
   icon: string;
 }
 
+/** States only the uploader can move a receipt out of: they fix it, confirm it, or read it again. */
+export const SUBMITTER_ACTION_STATES: readonly string[] = ["validation_failed", "submitter_review", "ocr_failed"];
+
 export const RECEIPT_SUBMITTER_NAV: readonly ReceiptNavLink[] = [
   { name: "My receipts", href: "/receipts", icon: "🧾" },
   { name: "Upload", href: "/receipts/upload", icon: "📤" },
