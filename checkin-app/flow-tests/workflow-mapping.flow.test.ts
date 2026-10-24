@@ -153,9 +153,9 @@ describe("workflow mapping — manager journey", () => {
     const before = await stock(m);
     const line = `/api/workflow-mapping/receipts/${receipt.id}/lines/${open.id}`;
 
-    // Catalog submissions are not bound yet, so propose fails loudly.
+    // The catalog rejects a usage behavior outside its list; the failure surfaces as 502 and the line stays open.
     expect((await post(m, `${line}/propose`, {
-      proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable",
+      proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
     })).status).toBe(502);
     expect((await post(m, `${line}/associate`, { gtin13: "" })).status).toBe(400);
 
