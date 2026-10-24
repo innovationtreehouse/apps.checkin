@@ -72,6 +72,7 @@ export default function ReceiptDetailPage() {
     if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
   }, [original.error]);
   const [note, setNote] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   // A ref, not state: a second click in the same tick must see the first save already running.
@@ -98,6 +99,7 @@ export default function ReceiptDetailPage() {
         return;
       }
       setNote("");
+      setRejectReason("");
       setDraft(EMPTY_DRAFT);
       receipt.reload();
       audit.reload();
@@ -263,10 +265,10 @@ export default function ReceiptDetailPage() {
                 <Text fw={500} size="sm">Finance</Text>
                 {r.state === "financial_review" && !own && (
                   <>
-                    <Textarea label="Note (required when the reason is tax)" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
-                    <Group gap="xs">
-                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
+                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
+                    <Group align="end" gap="xs">
+                      <Textarea label="Reason (optional)" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
+                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
                     </Group>
                   </>
                 )}

@@ -28,6 +28,7 @@ export {
   getPrincipal,
   getOrg,
   getOrgId,
+  getNavCounts,
 } from "./runtime";
 export type {
   InventoryPrincipal,

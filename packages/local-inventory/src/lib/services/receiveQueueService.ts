@@ -24,6 +24,11 @@ export function createReceiveQueueService({
       return includeClosed ? rows : rows.filter((r) => r.fulfilledAt === null && r.cancelledAt === null);
     },
 
+    /** Open lines: neither fulfilled nor cancelled. */
+    async countOpen(orgId: string): Promise<number> {
+      return db.receiveQueue.count({ where: { orgId, fulfilledAt: null, cancelledAt: null } });
+    },
+
     /**
      * Receive a queued line into stock. The open→fulfilled claim and the stock add commit in one
      * transaction, and the claim is conditional, so two concurrent fulfils add the stock once.
