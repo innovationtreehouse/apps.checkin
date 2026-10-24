@@ -29,7 +29,9 @@ Board items get a Board tab on the same screen. The Board's approval of a large
 purchase is one decision recorded in one place, the Record Board authorization
 panel on the expense, and the `THRESHOLD_CROSSED` flag that duplicated it goes.
 
-One schema change: the `capital_equipment_unit_cents` setting column is dropped (3.7). The work ships as two boundary PRs and five
+Three schema changes, all small: the expense side stores the receipt's tax
+review and its own tax approval (§9), and the `capital_equipment_unit_cents`
+setting column is dropped (3.7). The work ships as two boundary PRs and five
 feature PRs, in the order under "Rollout".
 
 ## What finance works from today
@@ -99,19 +101,22 @@ every screen, and are decided on the expense page with a note.
 | `MISSING_RECEIPT` | Never (no caller) | **Decided: removed** (3.8). Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
 | `NON_EVERYDAY` | Never (no caller) | **Decided: removed** (3.8). It is left over from the retired "not Everyday" mark (#2437, #2440, #2441). The amounts decide Everyday, and a non-Everyday card charge already takes a Board seat | none | none | none |
 | `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 5 |
-| `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
+| `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review, under its own kind `COI_STAND_IN` (§9) | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
-| `QB_POST_FAILED`, duplicate to void | The app posted an entry another record already claims | Stays as a stored review | QuickBooks: "Duplicate entry in QuickBooks needs voiding" | Expense page, Reviews panel | "I voided it", note required (which entry, when) |
+| `QB_POST_FAILED`, duplicate to void | The app posted an entry another record already claims | Stays as a stored review, under its own kind `QB_DUPLICATE_TO_VOID` (§9) | QuickBooks: "Duplicate entry in QuickBooks needs voiding" | Expense page, Reviews panel | "I voided it", note required (which entry, when) |
 | `QB_OVER_CAP` | Over the per-expense or per-run posting cap ($25,000) | Becomes a read-only note: an audit row and a line in the QuickBooks panel. Nothing waits on finance; the drain posts it alone, and a purchase that size already needed the Board's approval | none | none | none |
 | `QB_DRIFT` | The daily check finds a posted entry changed in QuickBooks | Stays as a stored review; it is the one control that catches spending changed outside the app | QuickBooks: "Changed in QuickBooks after posting: amount, account" | Expense page, Reviews panel, with the stored and current values side by side | Accept the change, note required. A later change reopens it, as today |
 | `QB_NO_CLASS` | A line's bucket has no QuickBooks Class | Goes away as a row; derived while the expense is postable and stopped for a missing Class | QuickBooks: "Budget bucket Facility has no QuickBooks class" | Expense page links to the bucket's Class setting | Set the Class; the next drain posts and the reason clears |
 | `QB_POST_HELD` | A closed expense still held from posting | Stays as a stored review: a closed expense takes no further sign-off, so only a judgment can settle it | QuickBooks: "Closed but not posted: a line is missing a sign-off" | Expense page, Reviews panel | Mark handled, note required (for example, "entered by hand in QuickBooks") |
 
-After this, `FLAG_KINDS` holds four kinds: `COI`, `QB_POST_FAILED`,
-`QB_DRIFT` and `QB_POST_HELD`. Intake raises none. `COI` is raised only by
-the stand-in paths, and `QB_POST_FAILED` only by the duplicate path. The
-retired kinds' old rows stay in the table as history and are no longer listed.
+After this, `FLAG_KINDS` holds four kinds: `COI_STAND_IN`,
+`QB_DUPLICATE_TO_VOID`, `QB_DRIFT` and `QB_POST_HELD`. Intake raises none.
+The two kept variants get kinds of their own because `ExpenseFlag` is unique on
+(expense, kind): an open "held" `COI` row or an exhausted `QB_POST_FAILED` row
+would otherwise read as a stand-in or a duplicate to void. `COI` and
+`QB_POST_FAILED` join the retired kinds, and §9 says how their open rows are
+moved or closed.
 
 ### 3. The queue
 
@@ -251,7 +256,8 @@ goes. The queue's Account holds tab lists the held expenses.
   this is the rule working as written. A rule added later doesn't override an
   account finance set by hand on that line.
 - **3.21**: each held line shows its reason in words ("No account rule matches",
-  "Several account rules match", "No part number; pick an account"). A no-match
+  "Several account rules match", "No part number; pick an account", and for
+  #2484's `NON_INVENTORY`, "Not stock; pick an account"). A no-match
   line shows the category, subcategory and part number it was looked up by. A
   several-match line lists the matching rules by name and account, not as JSON.
 - **3.22**: Resubmit is disabled, with the reason shown beside it, while any held
@@ -308,7 +314,8 @@ question 7.
 | `GET /api/expense/finance-queue?tab=…`, `GET /api/expense/finance-queue/counts` | New; `finance-or-board`. Rows are a synthetic `FinanceQueueRow` (vendor, date, amount, currency, reason codes, waiting since, expense id for the link) |
 | `GET /api/expense/expenses/[id]/line-item-approvals` | Gains `overrideRequired` per row |
 | `GET /api/expense/expenses/[id]` | Gains `reasons` (the open queue reasons) and the four review kinds in place of `flags` |
-| `GET /api/expense/counts` | Drops `openFlags` and `holds` after the nav moves to the new counts |
+| Expense nav counts (`expenseOpsCounts`, served through `/api/nav/todo-counts`) | `holds` and `openFlags` go when the nav pill moves to the new counts, in step 5 |
+| `GET /api/expense/counts` (`ExpenseCounts`) | Its `expense_holds` field goes once nothing reads it. Removing one field is not a whole-entry removal, so it needs its own boundary PR (step 7) |
 
 Every registry change ships in its own PR, before the route PR, on `main` and
 not stacked (AGENTS.md, "Boundary isolation rule"). The new routes need a
@@ -320,12 +327,48 @@ under the decommission exception, once nothing calls them.
 
 ### 9. Data and migrations
 
-The only schema change is dropping `capital_equipment_unit_cents` from the expense settings (3.7). `ExpenseFlag` keeps its columns. The four kept kinds use
-them as they do today, and the retired kinds' rows stay as history. A query
-filters the list to the kept kinds, so old open rows of a retired kind drop out
-of every screen and count the moment that code ships, with nothing to migrate.
+**Flag rows.** `ExpenseFlag` keeps its columns. A query filters every list and
+count to the four kept kinds. Open rows of the retired kinds need a data
+migration, because two kept variants used to share a kind with retired ones:
 
-The derived reasons read columns that exist: `qbMatchState`,
+- An open `COI` row whose detail is a stand-in ("a Board member took the
+  Treasurer seat", "a Board member recorded the Board authorization") is
+  re-kinded to `COI_STAND_IN`.
+- An open `QB_POST_FAILED` row whose detail says the entry "needs voiding" is
+  re-kinded to `QB_DUPLICATE_TO_VOID`.
+- Every other open row of a retired kind (held `COI`, exhausted
+  `QB_POST_FAILED`, `TAX_ATTACHED`, `THRESHOLD_CROSSED`, `CAPITAL_EQUIPMENT`,
+  `REIMBURSEE_UNKNOWN`, `QB_NO_CLASS`, `QB_OVER_CAP`) is closed: checked off
+  by the system user with the note "retired: the queue now reads this from the
+  expense". The condition behind it, if it still holds, shows as a derived
+  reason.
+
+The re-kind is safe against the unique constraint, because no row of the new
+kinds exists before it runs. It ships in step 5's release. Old code still
+serving during that deploy's drain window can raise a row under an old kind, so
+the same SQL, written to be idempotent, runs again in step 7's release.
+
+**Tax review.** The derived tax reason needs three things expense doesn't store
+today:
+
+- the tax amount the receipt's finance approval covered, and
+- whether the receipt's settings held its tax for review (`taxReviewRequired`).
+  #2479 reads both from the intake payload; they need columns on
+  `expense_receipt_reviews` so the reason can be computed after intake. That
+  is #2479's change to make, and the reviewer has asked for it there.
+- Finance's tax approval on the expense itself. A new table,
+  `expense_tax_approvals` (expense, tax amount approved, approver, optional
+  note, time), keeps it beside the expense, following #2464's reason for
+  sibling tables: routes that return `Expense` rows don't start carrying the
+  note.
+
+Both are expand-only: added columns that are nullable, and a new table that old
+code never reads.
+
+**Capital setting.** `capital_equipment_unit_cents` is dropped from the expense
+settings in two releases (step 8).
+
+The other derived reasons read columns that exist: `qbMatchState`,
 `reimburseePersonId`, `boardAuthorization`, expense state, approvals, holds,
 `ReceivedExpensePayload.status`. The two open expense migrations (#2441, #2402)
 touch other columns and aren't affected.
@@ -336,17 +379,20 @@ Each PR is based on `main`. None is stacked on another's branch.
 
 1. **Prerequisites merge first**: #2466 and #2468 (receipt tabs and counts),
    #2462 (conflict-aware counts), #2464 and #2479 (tax approval carried to
-   expense), #2465.
+   expense, with #2479 storing the approved tax amount and
+   `taxReviewRequired`), #2465.
 2. **Registry PR A** (boundary only): `finance-queue` and `finance-queue/counts`
    entries, `FinanceQueueRow`, and the new `reasons` and `overrideRequired`
    fields.
 3. **Expense detail PR** (3.1, 3.4, 3.9, 3.10, 3.12, 3.16): the derived-reason
    service, the reasons alert and field marks, the Reviews panel, required notes,
    return to the queue, and Retry and Set reimbursee clearing their reasons.
-   Intake stops raising `THRESHOLD_CROSSED`, `CAPITAL_EQUIPMENT` and
-   `REIMBURSEE_UNKNOWN`, and the drain stops raising `QB_NO_CLASS`, exhausted
-   `QB_POST_FAILED` and `QB_OVER_CAP`. `TAX_ATTACHED` becomes a derived reason
-   built on #2479's `taxNeedsFinance`. `MISSING_RECEIPT` and `NON_EVERYDAY`
+   The `expense_tax_approvals` table and Approve tax ship here. Until step 5
+   gives finance the queue tabs, `/expense/flags` stays finance's list, so this
+   step keeps raising every kind. Its fixes close the matching row in the same
+   act: a successful retry closes `QB_POST_FAILED`, and recording the Board's
+   authorization closes `THRESHOLD_CROSSED`, as Set reimbursee already closes
+   `REIMBURSEE_UNKNOWN`. `MISSING_RECEIPT` and `NON_EVERYDAY`
    (3.8) leave `FLAG_KINDS` and `FLAG_AUDIENCE` in
    `packages/expense/src/lib/flags.ts`, with the "raised by hand" sentence in
    `detectIntakeFlags`'s comment and the kind list in the `ExpenseFlag` comment
@@ -358,12 +404,20 @@ Each PR is based on `main`. None is stacked on another's branch.
 5. **Queue PR** (1.7, 3.3, 3.5, 3.6, 3.27, 2.9 link): the finance-queue routes,
    the host page at `/finance/review` with the receipt and expense tabs, failed
    intake, the Apply failed link, counts and the nav pill. The old review,
-   Flags and Holds pages are deleted and their links repointed.
+   Flags and Holds pages are deleted and their links repointed. In the same
+   PR, intake stops raising `TAX_ATTACHED`, `THRESHOLD_CROSSED`,
+   `CAPITAL_EQUIPMENT` and `REIMBURSEE_UNKNOWN`; the drain stops raising
+   `QB_NO_CLASS`, exhausted `QB_POST_FAILED` and `QB_OVER_CAP`; the stand-in
+   and duplicate paths raise `COI_STAND_IN` and `QB_DUPLICATE_TO_VOID`; and the
+   §9 data migration runs. Finance is never without a list: the flags stop in
+   the release that brings the tabs.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
    of the rest and can go any time.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
    `GET /api/expense/flags` and `GET /api/expense/expense-holds` with their
-   route files, and drop `openFlags` and `holds` from `/api/expense/counts`.
+   route files. A separate boundary PR in the same release drops
+   `expense_holds` from `ExpenseCounts`. The §9 re-kind and close SQL runs
+   again here.
 8. **Capital setting removal** (3.7), in two releases. Expand-and-contract, as
    #2441 did for the "not Everyday" marks
    (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`):
