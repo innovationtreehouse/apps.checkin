@@ -8,7 +8,7 @@ import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
 import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
-import { backToQueue } from "../lib/backToQueue";
+import { backToQueue, lineWaitsOnViewer } from "../lib/backToQueue";
 import { lineCents } from "../qb-write";
 import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
@@ -363,7 +363,8 @@ function MatchPicker({ base, currency, onDecided }: { base: string; currency: st
 /**
  * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
  * `listHref` is the page it was opened from, which the back link returns to.
- * `queueHref` is the queue tab it was opened from, which a decision returns to once nothing is left for the viewer.
+ * `queueHref` is the queue it was opened from (a Finance review tab, or an approver's Expense approvals
+ * list), which a decision returns to once nothing is left for the viewer.
  * `testDataToggle` is the host's word that this is dev or local; the route 404s anywhere else.
  */
 export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", queueHref, testDataToggle = false }: { id: string; listHref?: string; queueHref?: string; testDataToggle?: boolean }) {
@@ -384,12 +385,12 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [taxNote, setTaxNote] = useState("");
 
   const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
-  // Finance's decisions go back to the queue once the refreshed reasons leave the viewer nothing to act on.
+  // A decision goes back to the queue once the refreshed reasons and line acts leave the viewer nothing to act on.
   const decided = async () => {
     if (queueHref) {
-      const fresh = await api<Detail>(base).catch(() => null);
+      const [fresh, lines] = await Promise.all([api<Detail>(base).catch(() => null), api<SignoffStatus[]>(`${base}/signoffs`).catch(() => null)]);
       const left = reasonsOf(fresh);
-      const target = backToQueue(queueHref, left === null || left.some((r) => r.actionable));
+      const target = backToQueue(queueHref, left === null || left.some((r) => r.actionable) || lines === null || lineWaitsOnViewer(lines));
       if (target) {
         goTo(target);
         return;
@@ -415,13 +416,12 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
     if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
       setDialog(null);
-      if (action.act === "approve" || action.act === "raise-exception") reloadAll();
-      else await decided();
+      await decided();
     }
   }
 
   async function sign(lineItemId: number, seat: string) {
-    if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) reloadAll();
+    if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) await decided();
   }
 
   /** A seat signs at once; every other act opens the dialog for its note or bucket. */

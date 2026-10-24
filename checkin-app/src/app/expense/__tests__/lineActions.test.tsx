@@ -79,7 +79,6 @@ describe("only the acts the server returns are drawn (3.15, #2433)", () => {
     await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
     expect(await screen.findByRole("menuitem", { name: "Raise exception" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Sign as Treasurer" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Sign as Treasurer" })).not.toBeInTheDocument();
   });
 
   it("a main sign act signs its seat", async () => {
