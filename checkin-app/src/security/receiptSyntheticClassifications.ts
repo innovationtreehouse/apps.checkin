@@ -22,6 +22,16 @@
  * finance's free-text reason, the adding person's id and when. All `internal`
  * (owner ruling 2026-10-16): a hash fingerprints a file without holding it.
  *
+ * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
+ * receipts (plus finalized ones not yet delivered), receiving records and
+ * expenses, each a list of `{ state, label, count }`, and when they were read.
+ * Counts only, no record field. Receiving and the time are `public`, matching
+ * WorkflowReceiptCount; receipts and expenses are `internal`.
+ *
+ * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
+ * Person's `id` and `name`, both `public` on Person, so any receipt submitter
+ * reads them.
+ *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -90,6 +100,16 @@ export const classifications = {
   },
   ReceiptPushResult: {
     pushed: "internal",
+  },
+  ReceiptFlowStatus: {
+    asOf: "public",
+    receipt: "internal",
+    receiving: "public",
+    expense: "internal",
+  },
+  ReceiptReimburseeOption: {
+    id: "public",
+    name: "public",
   },
   ReceiptIgnoredFileView: {
     id: "internal",

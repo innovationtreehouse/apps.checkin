@@ -36,8 +36,19 @@ export type UsageBehavior = (typeof USAGE_BEHAVIORS)[number];
 export { ResolvedInventoryDeltaSchema, ResolvedInventoryDeltaLineItemSchema } from "./resolved-inventory-delta";
 export type { ResolvedInventoryDelta, ResolvedInventoryDeltaLineItem } from "./resolved-inventory-delta";
 
-export { CompletedReceiptSchema, CompletedReceiptLineItemSchema, MAX_LINE_QUANTITY } from "./completed-receipt";
-export type { CompletedReceipt, CompletedReceiptLineItem } from "./completed-receipt";
+export {
+  CompletedReceiptSchema,
+  CompletedReceiptLineItemSchema,
+  CompletedReceiptFinanceReviewSchema,
+  FINANCIAL_REVIEW_REASONS,
+  MAX_LINE_QUANTITY,
+} from "./completed-receipt";
+export type {
+  CompletedReceipt,
+  CompletedReceiptLineItem,
+  CompletedReceiptFinanceReview,
+  FinancialReviewReason,
+} from "./completed-receipt";
 
 export {
   RECEIPT_CONTRACT_VERSION,

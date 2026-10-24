@@ -1,0 +1,35 @@
+import { render, screen, within } from "@testing-library/react";
+import { MantineProvider } from "@mantine/core";
+import MyReceiptsPage from "@checkin/receipt/pages/mine";
+
+const row = (id: string, retailer: string, state: string) => ({
+  id, uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer, receiptDate: "2026-10-01",
+  receiptTotalCents: 1000, state, needsReimbursement: false, isInKind: false,
+});
+const rows = [row("a", "Acme", "validation_failed"), row("b", "Bolt Co", "financial_review"), row("c", "Cogs", "submitter_review")];
+
+jest.mock("@checkin/receipt/components/api", () => ({
+  ...jest.requireActual("@checkin/receipt/components/api"),
+  useLoad: () => ({ data: rows, error: null, reload: jest.fn() }),
+}));
+
+beforeAll(() => {
+  window.matchMedia ||= ((query: string) =>
+    ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} }) as unknown as MediaQueryList);
+  globalThis.ResizeObserver ||= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
+
+const rowOf = (retailer: string) => screen.getByText(retailer).closest("tr") as HTMLElement;
+
+describe("My receipts", () => {
+  it("flags the rows that wait on their uploader", () => {
+    render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
+    expect(within(rowOf("Acme")).getByText("Needs you")).toBeInTheDocument();
+    expect(within(rowOf("Cogs")).getByText("Needs you")).toBeInTheDocument();
+    expect(within(rowOf("Bolt Co")).queryByText("Needs you")).not.toBeInTheDocument();
+  });
+});

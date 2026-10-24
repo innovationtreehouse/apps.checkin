@@ -7,13 +7,14 @@
  * viewer any tab admits is admitted to the section (FINANCE reaches Receiving).
  */
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@checkin/global-catalog/nav";
-import { INVENTORY_NAV_LINKS } from "@checkin/local-inventory/nav";
+import { INVENTORY_NAV_LINKS, type InventoryNavLink } from "@checkin/local-inventory/nav";
 import { RECEIVING_NAV } from "@checkin/workflow-mapping/nav";
 import { IN_KIND_TAB } from "@checkin/bulk-donation/nav";
 import type { RoleFlag } from "@/lib/roles";
-import type { NavGate, NavSection } from "@/lib/nav/types";
+import type { NavGate, NavSection, SubLink } from "@/lib/nav/types";
 import { anyRole, firstVisibleHref, signedIn } from "@/lib/nav/gates";
-import { libraryCount } from "@/components/navBadges";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
+import { libraryCount, type NavBadge } from "@/components/navBadges";
 import { canSeeCatalog } from "@/lib/volunteer";
 
 const catalogViewer: NavGate = (u) => canSeeCatalog(u);
@@ -24,17 +25,30 @@ export const RECEIVING_ROLES: readonly RoleFlag[] = ["isInventoryManager", "isFi
 /** The no-receipt in-kind list route admits FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER. */
 export const IN_KIND_ROLES: readonly RoleFlag[] = ["isFinance", "isBoardMember", "isOperations", "isInventoryManager"];
 
+/** Green pill: open backorders waiting to be received. Its count reaches an INVENTORY_MANAGER alone. */
+function openBackorders(c: TodoCounts | null): NavBadge | null {
+  const n = libraryCount(c, "local-inventory", "openBackorders");
+  return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} ${n === 1 ? "backorder waits" : "backorders wait"} to be received` } : null;
+}
+
+/** An org-inventory screen as a section link, gated by its manager-only or receiving flag. */
+function inventoryLink({ managerOnly, receiving, ...l }: Omit<InventoryNavLink, "subLinks">): SubLink {
+  return {
+    ...l,
+    library: "local-inventory",
+    visible: managerOnly ? inventoryManager : receiving ? anyRole(RECEIVING_ROLES) : catalogViewer,
+    ...(l.href === "/inventory/receive-queue" ? { badge: openBackorders } : {}),
+  };
+}
+
 export const INVENTORY: NavSection = {
   id: "inventory",
   label: CATALOG_TOP_NAV.label,
   href: CATALOG_TOP_NAV.href,
   links: [
     ...CATALOG_NAV_LINKS.map((l) => ({ ...l, library: "catalog" as const, visible: catalogViewer })),
-    ...INVENTORY_NAV_LINKS.map(({ managerOnly, receiving, ...l }) => ({
-      ...l,
-      library: "local-inventory" as const,
-      visible: managerOnly ? inventoryManager : receiving ? anyRole(RECEIVING_ROLES) : catalogViewer,
-    })),
+    ...INVENTORY_NAV_LINKS.map(({ subLinks, ...l }) =>
+      subLinks ? { ...inventoryLink(l), subLinks: subLinks.map(inventoryLink) } : inventoryLink(l)),
     {
       ...RECEIVING_NAV,
       library: "workflow-mapping",

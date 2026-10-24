@@ -132,6 +132,14 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         ),
         everydayTotalLimitCents: settings.everydayTotalLimitCents,
         everydayItemLimitCents: settings.everydayItemLimitCents,
+        receiptReview: receipt.financeReview && {
+          create: {
+            reasons: receipt.financeReview.reasons,
+            approvedByUserId: receipt.financeReview.decidedByPersonId,
+            note: receipt.financeReview.note,
+            approvedAt: new Date(receipt.financeReview.decidedAt),
+          },
+        },
       },
     });
 

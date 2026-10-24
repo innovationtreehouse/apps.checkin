@@ -22,8 +22,8 @@ JEV = os.environ.get("DECISION_MODEL", "typesafe/jev-1.14")
 LADDER = [
     # Fields: name, model, max tool rounds, max diff KB, description for the decision model, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
-    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
-     "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
+    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free,recursive/flint-v1.0:free", "50", "300",
+     "A cent or two a review (two lanes plus a judge). Routine changes: docs, tests, small refactors, config, renames.", "medium"),
     # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
     # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
     # risks. On glm's own token mix deepseek lists at ~45% of glm's price; judge it by fixed bugs.

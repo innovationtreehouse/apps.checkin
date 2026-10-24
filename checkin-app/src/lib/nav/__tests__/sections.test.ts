@@ -85,6 +85,16 @@ describe("the Receipts split", () => {
     expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload"]);
   });
 
+  it("My receipts carries a green pill for the receipts that wait on their uploader", () => {
+    const list = MY_RECEIPTS.links.find((l) => l.href === "/receipts");
+    expect(list?.badge?.({ ...counts, libraries: { receipt: { awaitingMe: 2 } } })).toEqual({
+      count: 2,
+      color: "treehouseGreen",
+      label: "2 receipts need you",
+    });
+    expect(list?.badge?.(counts)).toBeNull();
+  });
+
   it("Receipt Review holds review, settings and mail, for FINANCE or BOARD; mail for FINANCE alone", () => {
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
       "/receipts/review",

@@ -142,6 +142,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'tab /inventory/received-deltas', client: tab(INVENTORY, '/inventory/received-deltas'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/received-deltas', client: page('/inventory/received-deltas'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
+    { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
@@ -164,7 +165,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
     { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
     { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
-    { name: 'counts:receipt', client: counts('receipt'), token: 'finance' },
+    { name: 'counts:receipt', client: counts('receipt'), token: 'receipt-submitter' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
     { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: 'finance-or-board' },

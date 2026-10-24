@@ -29,19 +29,28 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return parse<T>(await fetch(`${BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...options }));
 }
 
-/** Multipart upload; the browser sets the boundary header. */
+/**
+ * Multipart upload; the browser sets the boundary header. A success tells the host nav to
+ * refetch its pills, since the new receipt may already wait on its uploader.
+ */
 export async function upload<T>(form: FormData): Promise<T> {
-  return parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  const receipt = await parse<T>(await fetch(`${BASE}/upload`, { method: "POST", body: form }));
+  window.dispatchEvent(new Event("nav-counts-mutated"));
+  return receipt;
 }
 
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Error";
 }
 
-/** Sends a write, toasts the outcome, and reports whether it succeeded. */
+/**
+ * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
+ * host nav to refetch its pills, since a write can move a receipt into or out of the caller's hands.
+ */
 export async function send(path: string, method: string, body: unknown, success: string): Promise<boolean> {
   try {
     await api(path, { method, body: JSON.stringify(body) });
+    window.dispatchEvent(new Event("nav-counts-mutated"));
     notifications.show({ message: success, color: "green" });
     return true;
   } catch (err) {

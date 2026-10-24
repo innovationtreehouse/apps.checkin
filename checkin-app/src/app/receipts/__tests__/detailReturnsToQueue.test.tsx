@@ -77,6 +77,32 @@ describe("a receipt opened from the review queue", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("names the finance review reasons in plain words", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["old_date", "submitter_correction"] };
+    wrap(<ReceiptDetailPage />);
+    expect(
+      screen.getByText("Finance review: the receipt is older than the age limit; the submitter changed the tax or date"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a reason it has no words for as its code", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["tax", "new_reason"] };
+    wrap(<ReceiptDetailPage />);
+    expect(screen.getByText("Finance review: tax was charged; new_reason")).toBeInTheDocument();
+  });
+
+  it.each([
+    [["old_date"], ["2026-10-01"]],
+    [["future_date"], ["2026-10-01"]],
+    [["tax"], ["tax $0.00"]],
+    [["tax", "old_date"], ["2026-10-01", "tax $0.00"]],
+    [["submitter_correction"], []],
+  ])("for reasons %j marks %j", (reasons, marked) => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: reasons };
+    const { container } = wrap(<ReceiptDetailPage />);
+    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(marked);
+  });
+
   it("without ?queue= returns to the queue the receipt's state is in", () => {
     mockSearch = new URLSearchParams();
     mockLoads["/r1"] = { ...receipt, state: "ocr_failed" };
@@ -97,6 +123,40 @@ describe("a receipt opened at /receipts/[id]", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(mockReload).toHaveBeenCalled());
     expect(mockPush).not.toHaveBeenCalled();
+  });
+});
+
+describe("the finance decision on a receipt in financial review", () => {
+  beforeEach(() => {
+    mockPathname = "/receipts/r1";
+    mockSearch = new URLSearchParams();
+  });
+
+  it("approves a tax-flagged receipt with no note", async () => {
+    wrap(<ReceiptDetailPage />);
+    expect(screen.queryAllByRole("textbox", { name: /note/i })).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved"));
+  });
+
+  it("does not send the reject reason with an approval", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "personal purchase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved"));
+  });
+
+  it("rejects with the reason typed in its own field", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "  personal purchase " } });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "personal purchase" }, "Rejected"));
+  });
+
+  it("rejects without a reason", async () => {
+    wrap(<ReceiptDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: null }, "Rejected"));
   });
 });
 
