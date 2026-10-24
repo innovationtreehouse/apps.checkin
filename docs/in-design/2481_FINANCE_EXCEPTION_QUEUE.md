@@ -1,7 +1,8 @@
 # One finance exception queue, decided on the record
 
-Design for #2481, theme 1 of the receipt-flow conversion audit. The audit's
-findings and their numbers are listed in #2481.
+Design for #2481, theme 1 of the receipt-flow conversion audit. Numbers such as
+3.6 are that audit's finding numbers; the table at the end of this doc quotes
+each finding it resolves.
 
 ## Summary
 
