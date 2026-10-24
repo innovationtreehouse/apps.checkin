@@ -46,6 +46,7 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-
 
 // FINANCE reads (BOARD too).
 defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 
