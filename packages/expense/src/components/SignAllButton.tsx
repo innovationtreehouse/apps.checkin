@@ -5,17 +5,17 @@ import { send, useLoad } from "./api";
 
 interface LineStatus {
   lineItemId: number;
-  actions: Array<{ act: string; seat?: string }>;
+  actions: Array<{ act: string; seat?: string; primary: boolean }>;
 }
 
-/** The lines the server offers this viewer a Treasurer signature on. */
+/** The lines whose main act for this viewer is the Treasurer signature. */
 export function treasurerLines(lines: LineStatus[]): number[] {
-  return lines.filter((l) => l.actions.some((a) => a.act === "sign" && a.seat === "TREASURER")).map((l) => l.lineItemId);
+  return lines.filter((l) => l.actions.some((a) => a.primary && a.act === "sign" && a.seat === "TREASURER")).map((l) => l.lineItemId);
 }
 
 /**
- * "Sign all N as Treasurer" on a To sign row: N is the expense's lines the server offers the
- * viewer a Treasurer signature on, and one all-or-nothing request signs them. A refusal names the
+ * "Sign all N as Treasurer" on a To sign row: N is the expense's lines whose main act for the
+ * viewer is the Treasurer signature, and one all-or-nothing request signs them. A refusal names the
  * line and signs none. Nothing to sign draws no button; a failed read says so in red.
  */
 export default function SignAllButton({ expenseId, onSigned }: { expenseId: string; onSigned: () => void }) {
