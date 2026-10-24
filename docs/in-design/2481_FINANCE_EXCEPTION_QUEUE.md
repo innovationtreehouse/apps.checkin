@@ -104,11 +104,11 @@ every screen, and are decided on the expense page with a note.
 | `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Goes away (decided). The audit log records the stand-in; there is no stored review and no note | none | none | none |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
-| `QB_POST_FAILED`, duplicate to void | The app posted an entry another record already claims | Stays as a stored review, under its own kind `QB_DUPLICATE_TO_VOID` (§9) | QuickBooks: "Duplicate entry in QuickBooks needs voiding" | Expense page, Reviews panel | "I voided it", note required (which entry, when) |
+| `QB_POST_FAILED`, duplicate to void | The app posted an entry another record already claims | Stays as a stored review, under its own kind `QB_DUPLICATE_TO_VOID` (§9) | QuickBooks: "Duplicate entry in QuickBooks needs voiding" | Expense page, Reviews panel | "I voided it", with a required note saying what finance did (which entry, when); the server refuses a blank one |
 | `QB_OVER_CAP` | Over the per-expense or per-run posting cap ($25,000) | Becomes a read-only note: an audit row and a line in the QuickBooks panel. Nothing waits on finance; the drain posts it alone, and a purchase that size already needed the Board's approval | none | none | none |
-| `QB_DRIFT` | The daily check finds a posted entry changed in QuickBooks | Stays as a stored review; it is the one control that catches spending changed outside the app | QuickBooks: "Changed in QuickBooks after posting: amount, account" | Expense page, Reviews panel, with the stored and current values side by side | Accept the change, note required. A later change reopens it, as today |
+| `QB_DRIFT` | The daily check finds a posted entry changed in QuickBooks | Stays as a stored review; it is the one control that catches spending changed outside the app | QuickBooks: "Changed in QuickBooks after posting: amount, account" | Expense page, Reviews panel, with the stored and current values side by side | Accept the change, with a required note saying what finance did; the server refuses a blank one. A later change reopens it, as today |
 | `QB_NO_CLASS` | A line's bucket has no QuickBooks Class | Goes away as a row; derived while the expense is postable and stopped for a missing Class | QuickBooks: "Budget bucket Facility has no QuickBooks class" | Expense page links to the bucket's Class setting | Set the Class; the next drain posts and the reason clears |
-| `QB_POST_HELD` | A closed expense still held from posting | Stays as a stored review: a closed expense takes no further sign-off, so only a judgment can settle it | QuickBooks: "Closed but not posted: a line is missing a sign-off" | Expense page, Reviews panel | Mark handled, note required (for example, "entered by hand in QuickBooks") |
+| `QB_POST_HELD` | A closed expense still held from posting | Stays as a stored review: a closed expense takes no further sign-off, so only a judgment can settle it | QuickBooks: "Closed but not posted: a line is missing a sign-off" | Expense page, Reviews panel | Mark handled, with a required note saying what finance did (for example, "entered by hand in QuickBooks"); the server refuses a blank one |
 
 After this, `FLAG_KINDS` holds three kinds: `QB_DUPLICATE_TO_VOID`,
 `QB_DRIFT` and `QB_POST_HELD`. Intake raises none, and nothing raises `COI`.
@@ -269,7 +269,7 @@ The expense detail page gains what the receipt detail page has had since #2447:
   | Approve a line outside one's own buckets (FINANCE override) | Required. The approvals response says per row whether the caller's approval is an override, so the page knows before Confirm |
   | Raise exception, reject exception | Required |
   | Record Board authorization | Required (it is the authorization text) |
-  | Mark a review reviewed or handled (the three kept kinds) | Required; the server starts refusing a blank one |
+  | Mark a review reviewed or handled (the three kept kinds) | Required (decided): each is a finance to-do, and the note says what finance did. The server refuses a blank one |
   | Approve tax on an expense | Optional |
   | Set account, Retry, Resubmit, Set reimbursee, capital review | None; the audit row records who and when |
 
@@ -527,7 +527,6 @@ Numbers are fixed; decided questions are dropped from this table.
 
 | # | Question | Design's default |
 | --- | --- | --- |
-| 6 | Require a note on the three kept reviews? | Yes |
 | 7 | Bring back the Expense events or Provisional items screens (3.27)? | No |
 | 8 | Show over-cap posts (`QB_OVER_CAP`) in the QuickBooks tab until marked seen? | No; audit note only |
 | 9 | List `AMBIGUOUS` posts in the QuickBooks tab with a match picker, now or in a follow-up? | Follow-up |
