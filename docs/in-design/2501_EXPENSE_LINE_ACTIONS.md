@@ -459,7 +459,10 @@ button stays disabled while it is blank, and the server refuses a blank one.
 The reason is stored on the approval and written to its audit row. A Board
 member who approves a line as an approver of its own bucket gives no reason,
 and neither does one who approves an org-level line, which has no bucket
-approvers to stand in for (C′.4). A Board member confirming a reimbursement
+approvers to stand in for (C′.4). Finance marking a bucket assignment final
+(§11) requires a note the same way: the field is marked required, the button
+stays disabled while it is blank, the server refuses a blank one, and the note
+is stored and audited with the assignment. A Board member confirming a reimbursement
 for someone with no account gives a reason the same way (§3). No other
 approval or signature takes one.
 
@@ -592,8 +595,7 @@ to say how the loop ends. You have said three things about it:
 The first two give finance a final say; the third says finance never
 approves. They agree if finance's final say is over the **bucket**, and they
 conflict if it is over the **approval**. You decided it is over the bucket
-(open question 13): option (a) below. Whether finance's final act needs a note
-is still open (question 14).
+(open question 13): option (a) below, with a required note (question 14).
 
 #### The loop, step by step
 
@@ -633,11 +635,12 @@ bucket's approver may raise "not mine" on a line moved to them, with no limit
 on the number of rounds. A final assignment is not an approval, so "board yes
 finance no" stands.
 
-- *What people see:* the Assign bucket dialog gains "Make this final". The
-  approver sees "Finance made this bucket final", and their only act on the
+- *What people see:* the Assign bucket dialog gains "Make this final", with a
+  required note. The approver sees "Finance made this bucket final: <note>",
+  and their only act on the
   line is Approve; Raise exception is gone.
-- *Audit:* the assignment row records that it was final and by whom, and the
-  note if question 14 makes one required.
+- *Audit:* the assignment row records that it was final, by whom, and the
+  note.
 - *Order and clearing:* unchanged. The approval still comes from the bucket's
   approver or a Board stand-in, before the Treasurer, and a move clears
   nothing later because nothing later exists yet.
@@ -655,9 +658,9 @@ program approver's place, which §IX.3 doesn't name. (c) Finance's say after a
 set number of rounds: you chose no round limit. (d) Escalation to the Board: it
 gave the final say to the Board, not finance.
 
-**Required note.** Making a bucket final overrides an owner's objection, so this
-design proposes a required note, stored and audited as the Board stand-in's
-reason is (§6). Open question 14 asks you to confirm.
+**Required note** (decided, question 14). Making a bucket final overrides an
+owner's objection, so it requires a note, stored and audited as the Board
+stand-in's reason is (§6).
 
 ## Proposed rule text
 
@@ -718,9 +721,9 @@ a decision you made:
 - A bucket's approver may raise an exception on a line finance moved into their
   bucket, until finance marks the line's bucket assignment final. After that,
   no exception is raised on the line, and it still waits for its bucket's
-  approver or a Board member in their place. A final assignment is not an
-  approval. *(new line; whether it takes a required reason waits on open
-  question 14)* `[Decision — owner]`
+  approver or a Board member in their place. Finance gives the reason when it
+  makes an assignment final. A final assignment is not an approval. *(new
+  line)* `[Decision — owner]`
 - A line's signatures are given in order: the confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
@@ -806,7 +809,7 @@ Each PR is based on `main`, not stacked.
 
 ## Open questions
 
-Questions 1 to 13 are decided or closed; 14 is open. The list keeps its
+All fourteen are decided or closed. The list keeps its
 numbers so review threads still match.
 
 1. **One act or two?** *Decided:* the line's approval is the program-approver
@@ -856,8 +859,9 @@ numbers so review threads still match.
     bucket. A new bucket's approver may raise "not mine" with no round limit
     until finance makes the bucket final; a final assignment is not an
     approval.
-14. **A note on a final bucket.** Should marking a bucket assignment final
-    require a note, stored and audited like a Board stand-in's reason?
+14. **A note on a final bucket.** *Decided:* yes. Marking a bucket assignment
+    final requires a note, stored and audited like a Board stand-in's reason
+    (§6, §11).
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
