@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Alert, Badge, Button, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
+import { Alert, Badge, Button, Paper, Stack, Table, Text, Textarea } from "@mantine/core";
 import { dollars, send, useLoad, type ReceiptConfirmation, type ReceiptListRow } from "./api";
 
 /** A reimbursement's confirm is the submitter's signature on its lines and amounts. */
@@ -25,20 +25,20 @@ export function confirmedByReimbursee(r: Pick<ReceiptListRow, "needsReimbursemen
 /**
  * Reimbursements waiting for the caller to confirm them as read: as the person reimbursed, or as a
  * Board member on behalf of someone with no account, which takes the Board member's reason.
- * Renders nothing when none waits.
+ * Renders `empty` when none waits.
  */
-export default function ConfirmationList() {
+export default function ConfirmationList({ empty = null }: { empty?: React.ReactNode }) {
   const list = useLoad<ReceiptConfirmation[]>("/confirmations");
   const [reasons, setReasons] = useState<Record<string, string>>({});
   if (list.error) return <Alert color="red" mb="md">{list.error}</Alert>;
-  if (!list.data?.length) return null;
+  if (!list.data) return null;
+  if (list.data.length === 0) return <>{empty}</>;
   const confirm = async (c: ReceiptConfirmation) => {
     const body = c.onBehalf ? { reason: reasons[c.id]?.trim() } : {};
     if (await send(`/${c.id}/confirmation`, "POST", body, "Confirmed", "Couldn't confirm this receipt")) list.reload();
   };
   return (
     <Stack mb="lg">
-      <Title order={4}>Receipts to confirm</Title>
       {list.data.map((c) => (
         <Paper key={c.id} withBorder p="sm">
           <Stack gap="xs">

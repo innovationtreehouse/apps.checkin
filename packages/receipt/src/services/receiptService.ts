@@ -928,22 +928,29 @@ export const receiptService = {
   },
 
   /**
-   * How many receipts wait on this person, for the host's nav pill: their own in a state that waits
-   * on the uploader, reimbursements waiting for their confirmation as the person reimbursed, and,
-   * for a Board member, those only the Board can confirm, for a reimbursee with no account.
+   * How many of this person's receipts wait on them, for the host's nav pill: those in a state that
+   * waits on the uploader, less a reimbursement for someone else, which its reimbursee confirms.
    */
-  async countAwaitingSubmitter(personId: number, isBoardMember = false): Promise<number> {
-    const [own, toConfirm, onBehalf] = await Promise.all([
-      receiptRepo.count({
-        orgId: (await getOrg()).id,
-        uploadedByUserId: personId,
-        details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-        NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
-      }),
+  async countAwaitingSubmitter(personId: number): Promise<number> {
+    return receiptRepo.count({
+      orgId: (await getOrg()).id,
+      uploadedByUserId: personId,
+      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+      NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+    });
+  },
+
+  /**
+   * How many reimbursements wait for this person's confirmation, for the host's nav pill: as the
+   * person reimbursed, and, for a Board member, those only the Board can confirm, for a reimbursee
+   * with no account.
+   */
+  async countToConfirm(personId: number, isBoardMember = false): Promise<number> {
+    const [mine, onBehalf] = await Promise.all([
       awaitingConfirmation(personId),
       onBehalfConfirmations({ id: personId, name: null, firstName: "", lastName: "", isAdult: true, isBoardMember }),
     ]);
-    return own + toConfirm.inReview.length + toConfirm.sent.size + onBehalf.rows.length;
+    return mine.inReview.length + mine.sent.size + onBehalf.rows.length;
   },
 
   async listAuditLogs(id: string) {

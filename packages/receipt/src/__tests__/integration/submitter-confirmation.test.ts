@@ -5,8 +5,9 @@ import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
-// 101 Alice uploads · 102 Bob is reimbursed · 300 has no account · 500 is on the Board
+// 101 Alice uploads · 102 Bob is reimbursed · 104 Lee's membership lapsed · 300 has no account · 500 is on the Board
 const NO_ACCOUNT = { id: 300, name: "Nora Noaccount" };
+const LAPSED = { id: 104, name: "lee", firstName: "Lee", lastName: "Lapsed", isAdult: true };
 const BOARD = { id: 500, name: "bea", firstName: "Bea", lastName: "Board", isAdult: true, isBoardMember: true };
 
 let ports: ReturnType<typeof recordingPorts>;
@@ -25,7 +26,8 @@ const confirmations: SubmitterConfirmations = {
 
 const reimbursees: ReceiptReimbursees = {
   search: async () => [],
-  byId: async (id) => (id === BOB.id ? { id: BOB.id, name: "Bob Baker" } : id === NO_ACCOUNT.id ? NO_ACCOUNT : null),
+  byId: async (id) =>
+    id === BOB.id ? { id: BOB.id, name: "Bob Baker" } : id === NO_ACCOUNT.id ? NO_ACCOUNT : id === LAPSED.id ? { id: LAPSED.id, name: "Lee Lapsed" } : null,
   hasAccount: async (id) => id !== NO_ACCOUNT.id,
 };
 
@@ -154,7 +156,8 @@ describeDb("the person reimbursed confirms, not the uploader", () => {
   it("the reimbursee sees it to confirm, and their pill counts it; the uploader's does not", async () => {
     const id = await uploadFor(BOB.id);
     expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(0);
-    expect(await receiptService.countAwaitingSubmitter(BOB.id)).toBe(1);
+    expect(await receiptService.countToConfirm(ALICE.id)).toBe(0);
+    expect(await receiptService.countToConfirm(BOB.id)).toBe(1);
     actAs(BOB);
     expect(await receiptService.listConfirmations()).toEqual([
       expect.objectContaining({ id, reimburseePersonId: BOB.id, onBehalf: false, changedFields: [], lineItems: [expect.objectContaining({ description: "Bolt", reimburseePersonId: BOB.id })] }),
@@ -177,6 +180,23 @@ describeDb("the person reimbursed confirms, not the uploader", () => {
     actAs(BOARD);
     await expect(receiptService.confirmAsReimbursee(id)).rejects.toMatchObject({ status: 403 });
     expect(await receiptService.listConfirmations()).toEqual([]);
+  });
+
+  it("a reimbursee whose membership lapsed confirms their own receipt; confirming grants nothing else", async () => {
+    const id = await uploadFor(LAPSED.id);
+    actAs(LAPSED);
+    expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id })]);
+    await receiptService.confirmAsReimbursee(id);
+    expect(ports.calls.pushes[0].submitterConfirmation).toMatchObject({ confirmedByPersonId: LAPSED.id });
+    await expect(receiptService.get(id, "submitter")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("an unrelated person neither lists nor confirms it", async () => {
+    const id = await uploadFor(BOB.id);
+    actAs(LAPSED);
+    expect(await receiptService.listConfirmations()).toEqual([]);
+    await expect(receiptService.confirmAsReimbursee(id)).rejects.toMatchObject({ status: 403 });
+    expect(await stateOf(id)).toBe("submitter_review");
   });
 
   it("an uploader reimbursing themself confirms in their own review, as before", async () => {
@@ -216,9 +236,9 @@ describeDb("a Board member confirms for a reimbursee with no account", () => {
   it("counts on a Board member's pill, and only theirs", async () => {
     await uploadFor(NO_ACCOUNT.id);
     await uploadFor(BOB.id);
-    expect(await receiptService.countAwaitingSubmitter(BOARD.id, true)).toBe(1);
-    expect(await receiptService.countAwaitingSubmitter(BOARD.id, false)).toBe(0);
-    expect(await receiptService.countAwaitingSubmitter(ALICE.id, true)).toBe(0);
+    expect(await receiptService.countToConfirm(BOARD.id, true)).toBe(1);
+    expect(await receiptService.countToConfirm(BOARD.id, false)).toBe(0);
+    expect(await receiptService.countToConfirm(ALICE.id, true)).toBe(0);
   });
 
   it("a Board member who is party to the receipt cannot", async () => {
@@ -246,7 +266,7 @@ describeDb("confirming again once the expense exists", () => {
 
   it("lists it for the reimbursee with the fields finance changed, and their pill counts it", async () => {
     const id = await sentFor(BOB.id);
-    expect(await receiptService.countAwaitingSubmitter(BOB.id)).toBe(1);
+    expect(await receiptService.countToConfirm(BOB.id)).toBe(1);
     actAs(BOB);
     expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, changedFields: ["reimbursee"] })]);
   });

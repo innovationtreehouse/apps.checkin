@@ -8,8 +8,9 @@ const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
 jest.mock("@checkin/receipt", () => ({
   receiptService: {
     countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
+    countAwaitingSubmitter: async (id: number) => id * 10,
     // A Board member's count adds the confirmations only the Board gives.
-    countAwaitingSubmitter: async (id: number, isBoardMember = false) => id * 10 + (isBoardMember ? 1 : 0),
+    countToConfirm: async (id: number, isBoardMember = false) => id + (isBoardMember ? 100 : 0),
   },
 }));
 
@@ -32,14 +33,19 @@ describe("the receipt provider", () => {
     });
     expect(mockCountAwaitingFinance).toHaveBeenCalledWith(5);
     expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingMe: 11 },
+      receipt: { awaitingMe: 10, toConfirm: 101 },
     });
     expect(mockCountAwaitingFinance).toHaveBeenCalledTimes(1);
   });
 
-  it("reports an uploader only their own count", async () => {
+  it("reports an uploader their own count and the confirmations waiting on them", async () => {
     const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
-    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20, toConfirm: 2 } });
+  });
+
+  it("reports an adult whose membership lapsed only the confirmations waiting on them", async () => {
+    const lapsed = { ageBand: "adult" as const, isActiveOrgMember: false };
+    expect(await collectLibraryCounts({ id: 3, ...lapsed }, ["receipt"], receipt)).toEqual({ receipt: { toConfirm: 3 } });
   });
 });
 

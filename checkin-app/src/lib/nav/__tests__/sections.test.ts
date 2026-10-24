@@ -81,8 +81,21 @@ describe("linkGate", () => {
 });
 
 describe("the Receipts split", () => {
-  it("My Receipts holds only a person's own receipts", () => {
-    expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload"]);
+  it("My Receipts holds a person's own receipts and the reimbursements waiting for their confirmation", () => {
+    expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload", "/receipts/confirm"]);
+  });
+
+  it("To confirm shows to any adult, a lapsed member included, and to the Board, with a green pill", () => {
+    const confirm = MY_RECEIPTS.links.find((l) => l.href === "/receipts/confirm")!;
+    expect(confirm.visible?.({ ageBand: "adult", isActiveOrgMember: false }, counts)).toBe(true);
+    expect(confirm.visible?.({ isBoardMember: true }, counts)).toBe(true);
+    expect(confirm.visible?.({ ageBand: "youth" }, counts)).toBe(false);
+    expect(confirm.badge?.({ ...counts, libraries: { receipt: { toConfirm: 1 } } })).toEqual({
+      count: 1,
+      color: "treehouseGreen",
+      label: "1 receipt waits for your confirmation",
+    });
+    expect(confirm.badge?.(counts)).toBeNull();
   });
 
   it("My receipts carries a green pill for the receipts that wait on their uploader", () => {

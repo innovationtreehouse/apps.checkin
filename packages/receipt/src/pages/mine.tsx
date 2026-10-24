@@ -2,13 +2,11 @@
 import { useState } from "react";
 import { Alert, Checkbox, Group, Title } from "@mantine/core";
 import { useLoad, type ReceiptListRow } from "../components/api";
-import ConfirmationList from "../components/ConfirmationList";
 import ReceiptTable from "../components/ReceiptTable";
 
 /**
- * /receipts — reimbursements waiting for the caller's confirmation, then the caller's own receipts,
- * each with its state and, when owed, whether QuickBooks shows it paid. "Hide completed" starts
- * unchecked and is not remembered.
+ * /receipts — the caller's own receipts, each with its state and, when owed, whether
+ * QuickBooks shows it paid. "Hide completed" starts unchecked and is not remembered.
  */
 export default function MyReceiptsPage() {
   const [hideCompleted, setHideCompleted] = useState(false);
@@ -19,7 +17,6 @@ export default function MyReceiptsPage() {
         <Title order={3}>My receipts</Title>
         <Checkbox label="Hide completed" checked={hideCompleted} onChange={(e) => setHideCompleted(e.currentTarget.checked)} />
       </Group>
-      <ConfirmationList />
       {mine.error && <Alert color="red" mb="md">{mine.error}</Alert>}
       {mine.data && <ReceiptTable rows={mine.data} paid flagMine />}
     </>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import MyReceiptsPage from "@checkin/receipt/pages/mine";
 
@@ -13,13 +13,11 @@ const rows = [
   row("d", "Drills", "receipt_finalized"),
   { ...row("e", "Epoxy", "submitter_review"), needsReimbursement: true, reimburseePersonId: 2 },
 ];
-let mockConfirmations: unknown[] = [];
-const mockSend = jest.fn<Promise<boolean>, unknown[]>();
+
 
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
-  useLoad: (path: string) => ({ data: path === "/confirmations" ? mockConfirmations : rows, error: null, reload: jest.fn() }),
-  send: (...args: unknown[]) => mockSend(...args),
+  useLoad: () => ({ data: rows, error: null, reload: jest.fn() }),
 }));
 
 beforeAll(() => {
@@ -48,23 +46,4 @@ describe("My receipts", () => {
     expect(within(rowOf("Epoxy")).queryByText("Needs you")).not.toBeInTheDocument();
   });
 
-  it("lists reimbursements waiting for the caller's confirmation, with what finance changed, and confirms one", () => {
-    mockConfirmations = [{
-      id: "f", state: "receipt_finalized", retailer: "Fasteners Inc", receiptDate: "2026-10-01", currency: "USD", shippingCents: 0, taxCents: 0,
-      discountCents: 0, receiptTotalCents: 1000, onBehalf: true, changedFields: ["reimbursee"],
-      lineItems: [{ id: 1, lineNumber: 1, description: "Hinge", quantity: 2, totalPriceCents: 1000, isDelayed: false }],
-    }];
-    mockSend.mockResolvedValue(true);
-    render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
-    expect(screen.getByText("Receipts to confirm")).toBeInTheDocument();
-    expect(screen.getByText("For a person with no account")).toBeInTheDocument();
-    expect(screen.getByText(/Finance changed this receipt; confirm it again\. Changed: reimbursee\./)).toBeInTheDocument();
-    expect(screen.getByText("Hinge")).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "These lines and amounts are right" });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Why the Board confirms on their behalf/), { target: { value: "No email address" } });
-    fireEvent.click(confirm);
-    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", { reason: "No email address" }, "Confirmed", "Couldn't confirm this receipt");
-    mockConfirmations = [];
-  });
 });
