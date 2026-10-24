@@ -5,12 +5,15 @@ import AuditLogPage from "@checkin/workflow-mapping/pages/auditLog";
 const mockLoadPaths: string[] = [];
 const mockApi = jest.fn<Promise<unknown>, [string]>();
 let mockRows: unknown[] = [];
+// One stable array per path, as useLoad keeps one response per load.
+let mockLoads = new Map<string, unknown[]>();
 
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
   useLoad: (path: string) => {
     mockLoadPaths.push(path);
-    return { data: mockRows, error: null, reload: jest.fn() };
+    if (!mockLoads.has(path)) mockLoads.set(path, [...mockRows]);
+    return { data: mockLoads.get(path), error: null, reload: jest.fn() };
   },
   api: (path: string) => mockApi(path),
 }));
@@ -40,6 +43,7 @@ const detail = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockLoadPaths.length = 0;
+  mockLoads = new Map();
   mockRows = [
     row({ id: 2, eventType: "line_associated", lineStatusId: 55, toState: null }),
     row({ id: 1 }),
@@ -75,11 +79,37 @@ describe("receiving audit log", () => {
     expect(await within(rowFor("Line associated with catalog item")).findByText("—")).toBeInTheDocument();
   });
 
+  it("reads at most four receipts at a time", async () => {
+    mockRows = Array.from({ length: 10 }, (_, i) => row({ id: i + 1, eventType: "line_associated", receivedReceiptId: i + 1, lineStatusId: 55 }));
+    let inFlight = 0;
+    let peak = 0;
+    mockApi.mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return detail;
+    });
+    wrap();
+    await waitFor(() => expect(screen.getAllByText("3 · M3 bolts")).toHaveLength(10));
+    expect(mockApi).toHaveBeenCalledTimes(10);
+    expect(peak).toBe(4);
+  });
+
   it("reads 100 rows by default and lets the viewer pick another limit", async () => {
     wrap();
     expect(mockLoadPaths.at(-1)).toBe("/audit-log?limit=100");
     fireEvent.click(screen.getByRole("textbox", { name: "Rows" }));
     fireEvent.click(await screen.findByRole("option", { name: "500" }));
     await waitFor(() => expect(mockLoadPaths.at(-1)).toBe("/audit-log?limit=500"));
+  });
+
+  it("reads each receipt again on a new load of the log, so labels follow later edits", async () => {
+    wrap();
+    expect(await screen.findByText("3 · M3 bolts")).toBeInTheDocument();
+    mockApi.mockResolvedValue({ ...detail, WorkflowReceiptView: { lineItems: [{ receiptLineItemId: 100, lineNumber: 3, description: "M4 bolts" }] } });
+    fireEvent.click(screen.getByRole("textbox", { name: "Rows" }));
+    fireEvent.click(await screen.findByRole("option", { name: "500" }));
+    expect(await screen.findByText("3 · M4 bolts")).toBeInTheDocument();
+    expect(mockApi).toHaveBeenCalledTimes(2);
   });
 });
