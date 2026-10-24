@@ -339,9 +339,10 @@ The review screen becomes the signature:
   by the submitter and citing that confirmation.
 
 **A finance change sends a reimbursement back to the submitter** (decided).
-Once the submitter has confirmed a reimbursement, any change finance makes to
-the receipt or the expense voids the submitter's signature, and the submitter
-confirms again before the expense can post. The changes that count:
+Once the submitter has confirmed a reimbursement, a change finance makes to
+what the submitter claimed or what they are paid voids the submitter's
+signature, and the submitter confirms again before the expense can post. The
+changes that count:
 
 - line items: adding, removing or editing a line;
 - amounts: a line's quantity, unit price or total, and the receipt total;
@@ -349,10 +350,10 @@ confirms again before the expense can post. The changes that count:
 - the receipt date;
 - the reimbursee.
 
-Whether a bucket assignment, or finance's other bookkeeping (capital
-designation, depreciation, the account on a mapping hold), should count too is
-open question 9. The design leaves them out until you decide, because none of
-them changes what the submitter is paid.
+Finance's bookkeeping doesn't count, as you decided (open question 9): which
+bucket a line is charged to, the QuickBooks account set on a hold, and the
+capital or depreciation designation. None of them changes what the submitter
+claimed or what they are paid.
 
 Where the change lands depends on how far the receipt has gone:
 
@@ -555,11 +556,15 @@ from your decisions; the last two wait on open questions 2 and 5:
   lines and amounts, before the receipt goes to finance, whatever the intake
   path. Submitting the receipt is not the signature. Finance may correct a card
   charge's receipt without the submitter. *(new line)* `[Decision — owner]`
-- Once the submitter has confirmed a reimbursement, any change finance makes to
-  its line items, amounts, tax, shipping, discount, date or reimbursee voids the
-  submitter's signature, and the reimbursement does not reach the books until
-  the submitter confirms it again. The void and the new confirmation are both
-  recorded. *(new line)* `[Decision — owner]`
+- Once the submitter has confirmed a reimbursement, a change finance makes to
+  what the submitter claimed or what they are paid voids the submitter's
+  signature: its line items, a line's quantity or unit price, tax, shipping,
+  discount, the total, the receipt date, or the person reimbursed. The
+  reimbursement does not reach the books until the submitter confirms it
+  again. Finance's bookkeeping does not void it: a line's bucket, the
+  accounting-system account set on a hold, or the capital or depreciation
+  designation. The void and the new confirmation are both recorded.
+  *(new line)* `[Decision — owner]`
 - *(audience line)* replace "since that seat is filled from the receipt" with
   "since that seat is filled by their confirmation of a reimbursement's
   receipt". *(same tag)*
@@ -670,10 +675,9 @@ Each PR is based on `main`, not stacked.
 8. **The Treasurer seat after a bucket move.** *Decided:* signatures happen in
    order (C′.9), so a line moves only before the Treasurer signs, and the
    conflict can't arise.
-9. **Which finance changes send a reimbursement back.** The list in §3 covers
-   what the submitter is paid. Should a bucket assignment, or finance's other
-   bookkeeping (capital designation, depreciation, a mapping hold's account),
-   also void the submitter's signature?
+9. **Which finance changes send a reimbursement back.** *Decided:* only
+   changes to what the submitter claimed or is paid (§3). A line's bucket, a
+   hold's account, and the capital or depreciation designation don't.
 10. **A Board member approving a program-budget line.** *Decided:* a Board
     stand-in replaces the program approver's signature, including on a
     reimbursement in a Board-approved program budget. Your reasoning: a
