@@ -9,7 +9,10 @@ export interface LineAction {
   act: LineAct;
   /** The seat a `sign` fills. */
   seat?: Seat;
-  /** True on at most one act per line: the button on the line. The rest go under More. */
+  /**
+   * True on at most one act per line: the button on the line. The rest go under More. A line waits
+   * on the caller, for every count and list, only when one of its acts is primary.
+   */
   primary: boolean;
   /** The server refuses the act without a note: an exception's, or a Board stand-in's reason. */
   noteRequired: boolean;
@@ -137,11 +140,11 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   if (expense.backfill) return ["Booked before the app; no sign-off"];
   if (CLOSED_STATES.has(expense.state)) return [];
   const out: string[] = [];
-  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !acts.some((a) => a.act === "approve")) {
+  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
     const approver = facts.approvers.some((id) => id !== input.caller.id && approvesAsApprover(input, id));
     out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
   }
-  if (expense.reimburseeUnknown && input.holds.length > 0) out.push("Held until finance names the reimbursee");
+  if (expense.reimburseeUnknown) out.push("Held until finance names the reimbursee");
   const blocked = blockedSeats(facts, filled);
   for (const seat of SEATS) {
     if (!input.holds.includes(seat) || acts.some((a) => a.seat === seat)) continue;
