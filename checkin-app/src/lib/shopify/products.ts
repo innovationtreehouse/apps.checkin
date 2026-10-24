@@ -216,8 +216,8 @@ export async function createShopifySingleVariantProgram(
                             variants: [{
                                 price: (program.nonOrgMemberPriceCents / 100).toFixed(2),
                                 requires_shipping: false,
-                                inventory_management: program.maxParticipants ? 'shopify' : null,
-                                inventory_policy: program.maxParticipants ? 'deny' : 'continue',
+                                inventory_management: program.maxParticipants != null ? 'shopify' : null,
+                                inventory_policy: program.maxParticipants != null ? 'deny' : 'continue',
                             }],
                         }
                     })
