@@ -125,9 +125,9 @@ describeDb("nav badge counts", () => {
     expect(await signoffsAwaitingCount(principal(OUTSIDER))).toBe(0);
   });
 
-  it("skips expenses out of owner approval, lines already approved, and the caller's own, and examines a capped number of expenses", async () => {
+  it("skips expenses out of owner approval, lines already approved, the caller's own, and reimbursements with no reimbursee, and examines a capped number of expenses", async () => {
     as(APPROVER);
-    for (const opts of [{ state: "rejected" }, { state: "qb_pending" }, { state: "owner_approval", submitterId: APPROVER }]) {
+    for (const opts of [{ state: "rejected" }, { state: "qb_pending" }, { state: "owner_approval", submitterId: APPROVER }, { state: "owner_approval", needsReimbursement: true }]) {
       const id = await seedExpense({ submitterId: 1, ...opts });
       await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET });
     }

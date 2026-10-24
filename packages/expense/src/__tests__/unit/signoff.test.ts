@@ -19,6 +19,7 @@ const pending: SignoffFacts = {
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
@@ -124,6 +125,22 @@ describe("signatures in order (C′.9)", () => {
 
   it("the submitter seat is signed at any time", () => {
     expect(signoffRefusal(pending, [], "SUBMITTER", 1)).toBeNull();
+  });
+});
+
+describe("the reimbursee is known before any sign-off", () => {
+  const unknown = { ...pending, reimburseeUnknown: true };
+
+  it("refuses the approval to a bucket approver and a Board member alike", () => {
+    expect(approvalRefusal(unknown, [], 2)).toMatch(/reimbursee is unknown/);
+    expect(approvalRefusal(unknown, [], 5)).toMatch(/reimbursee is unknown/);
+  });
+
+  it("refuses every seat, the submitter's included", () => {
+    const approved = { ...base, reimburseeUnknown: true, kind: "card_charge" as const, boardSeat: true };
+    expect(signoffRefusal(unknown, [], "SUBMITTER", 1)).toMatch(/reimbursee is unknown/);
+    expect(signoffRefusal(approved, [], "TREASURER", 3)).toMatch(/reimbursee is unknown/);
+    expect(signoffRefusal(approved, seats(["TREASURER", 3]), "BOARD", 5)).toMatch(/reimbursee is unknown/);
   });
 });
 

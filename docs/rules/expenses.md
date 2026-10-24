@@ -118,9 +118,20 @@ Income and donation rules are in `revenue.md`.
   exist; a Board signature waits for the Treasurer's.
   [Decision — owner]
 
+- Nobody signs off a reimbursement line, its approval included, until the
+  person reimbursed is known.
+  [Decision — owner]
+
 - When an earlier step on a line is cleared or has to be given again, every
   later signature on that line is cleared, and they are given again in order.
   Each clearing is recorded.
+  [Decision — owner]
+
+- When an expense goes back to an earlier step, every later step's result is
+  cleared too and done again in order: the capital review, the depreciation
+  cycle and its assets, and the QuickBooks step, as for later signatures. None
+  is skipped, even when nothing it depends on changed. Each clearing is
+  recorded.
   [Decision — owner]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
