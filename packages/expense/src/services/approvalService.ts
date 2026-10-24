@@ -9,7 +9,6 @@ import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
 import { approvalRefusal, approvesAsStandIn } from "../lib/signoff";
-import { APPROVABLE } from "../lib/line-actions";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -72,7 +71,7 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
 }
 
 /** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
-export const APPROVABLE_STATUSES = APPROVABLE;
+export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
 
 /**
  * The program approver's sign-off. A bucket approver approves; a Board member without a conflict

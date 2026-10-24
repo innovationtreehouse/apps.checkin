@@ -79,8 +79,6 @@ interface LineAction {
   seat?: string;
   primary: boolean;
   noteRequired: boolean;
-  /** An approval by a Board member in place of the bucket's approvers. */
-  standIn?: boolean;
 }
 interface SignoffStatus {
   lineItemId: number;
@@ -122,7 +120,7 @@ const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", TREASURER: 
 /** The button text, naming the role the caller acts in. */
 function actLabel(a: LineAction): string {
   switch (a.act) {
-    case "approve": return a.standIn ? "Approve as Board (program approver)" : "Approve as Program approver";
+    case "approve": return a.noteRequired ? "Approve as Board (program approver)" : "Approve as Program approver";
     case "sign": return `Sign as ${SEAT_LABEL[a.seat ?? ""] ?? a.seat}`;
     case "raise-exception": return "Raise exception";
     case "reject-exception": return "Reject exception";
@@ -695,7 +693,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             </>
           ) : takesNote && (
             <Textarea
-              label={dialog?.action.act === "approve" ? "Reason" : "Notes"}
+              label={dialog?.action.act === "approve" ? "Reason for approving in place of the bucket's approvers" : "Notes"}
               required={dialog?.action.noteRequired}
               value={text}
               onChange={(ev) => setText(ev.currentTarget.value)}
