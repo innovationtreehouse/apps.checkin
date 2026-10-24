@@ -8,6 +8,7 @@ import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
+import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
 import ApproveAllButton from "../components/ApproveAllButton";
 
 interface Line {
@@ -17,6 +18,7 @@ interface Line {
   partNumber: string | null;
   manufacturer: string | null;
   nonInventory?: boolean;
+  manualQbAccount?: string | null;
   quantity: number;
   unitPriceCents: number;
   totalPriceCents: number;
@@ -60,6 +62,7 @@ interface Expense {
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
+  holds?: Hold[];
 }
 type Act = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
 interface LineAction {
@@ -362,6 +365,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           })}
         </Table.Tbody>
       </Table>
+
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={reloadAll} />
 
       {(e.flags ?? []).filter((f) => !f.checkedOffAt).length > 0 && (
         <Paper withBorder p="sm">
