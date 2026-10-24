@@ -11,7 +11,6 @@ import { isTerminalApproval, anyRejected } from "../../lib/expense-rules";
 describe("isTerminalApproval", () => {
   it("treats decided statuses as terminal", () => {
     expect(isTerminalApproval("approved")).toBe(true);
-    expect(isTerminalApproval("finance_assigned")).toBe(true);
     expect(isTerminalApproval("rejected")).toBe(true);
   });
 
@@ -19,6 +18,10 @@ describe("isTerminalApproval", () => {
     expect(isTerminalApproval("pending")).toBe(false);
     expect(isTerminalApproval("exception_raised")).toBe(false);
     expect(isTerminalApproval("unknown")).toBe(false);
+  });
+
+  it("a finance-assigned line waits for its new bucket's approver", () => {
+    expect(isTerminalApproval("finance_assigned")).toBe(false);
   });
 });
 

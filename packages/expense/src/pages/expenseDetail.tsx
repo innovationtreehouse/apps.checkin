@@ -66,6 +66,8 @@ interface LineAction {
   seat?: string;
   primary: boolean;
   noteRequired: boolean;
+  /** An approval by a Board member in place of the bucket's approvers. */
+  standIn?: boolean;
 }
 interface SignoffStatus {
   lineItemId: number;
@@ -89,12 +91,12 @@ const NOT_SENT: Record<string, string> = {
   NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
 };
 
-const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer", BOARD: "Board" };
+const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", TREASURER: "Treasurer", BOARD: "Board" };
 
 /** The button text, naming the role the caller acts in. */
 function actLabel(a: LineAction): string {
   switch (a.act) {
-    case "approve": return a.noteRequired ? "Approve as FINANCE (override)" : "Approve as bucket approver";
+    case "approve": return a.standIn ? "Approve as Board (program approver)" : "Approve as Program approver";
     case "sign": return `Sign as ${SEAT_LABEL[a.seat ?? ""] ?? a.seat}`;
     case "raise-exception": return "Raise exception";
     case "reject-exception": return "Reject exception";
@@ -210,7 +212,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
     const { action, approval } = dialog;
     const route = approvalRoute(action.act, approval);
     const body =
-      action.act === "approve" ? { overrideComment: text || null }
+      action.act === "approve" ? { reason: text || null }
       : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
     if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
@@ -462,7 +464,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             </>
           ) : takesNote && (
             <Textarea
-              label={dialog?.action.act === "approve" ? "Comment" : "Notes"}
+              label={dialog?.action.act === "approve" ? "Reason" : "Notes"}
               required={dialog?.action.noteRequired}
               value={text}
               onChange={(ev) => setText(ev.currentTarget.value)}
