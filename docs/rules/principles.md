@@ -335,6 +335,38 @@ reusability in the abstract, and this principle never asks for a plugin system.
 
 ---
 
+## The books are finance's
+
+The accounting system is where finance keeps the books, and the app works
+alongside finance there, never over it. These hold wherever the app touches the
+books: expenses, income and donations. Catching up late follows *urgency of
+consistency follows risk*, and no double booking follows *apply once*.
+
+- **The app only adds to the books.** It never pays, voids, edits or deletes
+  anything there. A correction is finance's to make, in the accounting system.
+
+- **Finance's books come first.** Nothing is booked into a year that is closed
+  in the books. Until the app starts posting in an area, it only matches what
+  finance has booked; anything it cannot match goes to finance to book or skip.
+  After that it books on its own, matching finance's entries first.
+
+- **Nothing is booked twice, and the app never guesses a match.** When the app
+  cannot tell which entry something matches, finance decides.
+
+- **A later change in the books goes back to finance.** If an entry the app
+  booked or matched changes or disappears afterwards, finance is told. The app
+  never corrects it or matches it again on its own.
+
+- **Only production reaches the real company.** Development uses only the
+  accounting system's test company, and staging has none. The production company
+  is set in infrastructure configuration, never in code or an in-app setting,
+  and the app never holds the accounting system's client secret.
+
+The tell is the app reaching into the books to fix something. Whatever it would
+fix, finance fixes.
+
+---
+
 ## Capture a fact where it is known
 
 - **Record something at the point someone can verify it, not the point it is
