@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
@@ -54,14 +54,15 @@ const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 /**
- * /receipts/[id] and /receipts/review/[id] — one receipt: its file, details and lines, and the
- * actions its state allows the caller. Opened from a review queue, a decision returns to that queue.
+ * /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the
+ * caller. Opened from the host's finance queue at `queueBase` (`?queue=` present), a decision
+ * returns to that queue.
  */
-export default function ReceiptDetailPage() {
+export default function ReceiptDetailPage({ queueBase }: { queueBase?: string }) {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queueParam = useSearchParams().get("queue");
-  const fromReview = usePathname().startsWith("/receipts/review/");
+  const fromReview = queueParam !== null && queueBase !== undefined;
   const { data: session } = useSession();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
@@ -84,7 +85,7 @@ export default function ReceiptDetailPage() {
   if (!r) return <Text>Loading…</Text>;
 
   const back = fromReview
-    ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
+    ? { href: reviewHref(queueBase, returnQueue(queueParam, r.state)), label: "Finance review" }
     : { href: "/receipts", label: "My receipts" };
 
   const reasons = r.financialReviewReasons;

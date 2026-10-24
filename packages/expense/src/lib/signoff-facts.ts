@@ -49,12 +49,14 @@ export async function seatedHouseholds(db: Db, expenseId: string): Promise<numbe
 
 /**
  * The expense's frozen Everyday amount check. An expense frozen at intake keeps its result; one
- * with none freezes now against the current limits, and a concurrent freeze's result wins.
+ * with none freezes now against the current limits, and a concurrent freeze's result wins. A
+ * read-only caller gets the check against the current limits and freezes nothing.
  */
-async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCents: number[]): Promise<boolean> {
+async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCents: number[], readOnly: boolean): Promise<boolean> {
   if (expense.everydayWithinLimits !== null) return expense.everydayWithinLimits;
   const limits = await readExpenseSettings(db, expense.orgId);
   const withinLimits = withinEverydayLimits({ receiptTotalCents: expense.receiptTotalCents, unitPricesCents }, limits);
+  if (readOnly) return withinLimits;
   await db.expense.updateMany({
     where: { id: expense.id, everydayWithinLimits: null },
     data: { everydayWithinLimits: withinLimits, everydayTotalLimitCents: limits.everydayTotalLimitCents, everydayItemLimitCents: limits.everydayItemLimitCents },
@@ -62,8 +64,11 @@ async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCen
   return (await db.expense.findUniqueOrThrow({ where: { id: expense.id }, select: { everydayWithinLimits: true } })).everydayWithinLimits!;
 }
 
-/** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
-export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
+/**
+ * Sign-off facts for each line of an expense, read once through the SignoffDirectory port.
+ * `readOnly` is for counts, which must not freeze the Everyday check.
+ */
+export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { readOnly = false } = {}): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
   const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
@@ -86,7 +91,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     if (b.owner !== null) ownerHouseholds.set(bucket, [...new Set([b.owner, ...(await dir.householdOf([b.owner]))])]);
   }
   const kind = lineKind(expense);
-  const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents));
+  const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents), readOnly);
   const everyday = isEveryday({ withinLimits });
   return new Map(
     lines.map((l) => {

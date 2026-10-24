@@ -5,7 +5,6 @@ import { hasAnyRole, linkGate, sectionShown, visibleLinks } from "@/lib/nav/gate
 import { SAFETY } from "@/lib/nav/sections/safety";
 import { MY_ACTIVITIES } from "@/lib/nav/sections/myActivities";
 import { MY_RECEIPTS } from "@/lib/nav/sections/myReceipts";
-import { RECEIPT_REVIEW } from "@/lib/nav/sections/receiptReview";
 import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { SHOP_OPS } from "@/lib/nav/sections/shopOps";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
@@ -14,15 +13,15 @@ import { MEMBERSHIP_OPS } from "@/lib/nav/sections/membershipOps";
 import { MEMBERSHIP_AUDIT } from "@/lib/nav/sections/membershipAudit";
 import { PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
-import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
+import { FINANCE } from "@/lib/nav/sections/finance";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 import { SETTINGS } from "@/lib/nav/sections/settings";
 import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
 import { tabBadgeFor } from "@/components/navBadges";
 
 const SECTIONS: NavSection[] = [
-  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
-  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, EXPENSE_OPS, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
+  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
+  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, FINANCE, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
 ];
 
 const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
@@ -108,29 +107,23 @@ describe("the Receipts split", () => {
     expect(list?.badge?.(counts)).toBeNull();
   });
 
-  it("Receipt Review holds review, settings, mail and flow status, for FINANCE or BOARD; mail for FINANCE alone", () => {
-    expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
-      "/receipts/review",
-      "/receipts/settings",
-      "/receipts/mail",
-      "/receipt-flow",
-    ]);
-    expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.board, counts).map((l) => l.href)).toEqual([
-      "/receipts/review",
-      "/receipts/settings",
-      "/receipt-flow",
-    ]);
+  it("Finance holds the queue, flow status, mail and the settings group for FINANCE or BOARD; mail for FINANCE alone", () => {
+    const hrefs = (user: NavUser) => visibleLinks(FINANCE, user, counts).map((l) => l.href);
+    expect(hrefs(PERSONAS.finance)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/mail", "/expense/settings"]));
+    expect(hrefs(PERSONAS.board)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/expense/settings"]));
+    expect(hrefs(PERSONAS.board)).not.toContain("/receipts/mail");
+    expect(linkGate(FINANCE, "/receipts/settings")(PERSONAS.board, counts)).toBe(true);
     for (const name of ["member", "sysadmin", "operations"]) {
-      expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);
+      expect(sectionShown(FINANCE, PERSONAS[name], counts)).toBe(false);
     }
   });
 
-  it("Receipts review carries a green pill for the receipts that wait on FINANCE", () => {
-    const review = RECEIPT_REVIEW.links.find((l) => l.href === "/receipts/review");
+  it("Finance review carries a green pill for the receipts that wait on FINANCE", () => {
+    const review = FINANCE.links.find((l) => l.href === "/finance/review");
     expect(review?.badge?.({ ...counts, libraries: { receipt: { awaitingFinance: 1 } } })).toEqual({
       count: 1,
       color: "treehouseGreen",
-      label: "1 receipt needs review",
+      label: "1 item waits on you in Finance review",
     });
     expect(review?.badge?.(counts)).toBeNull();
   });

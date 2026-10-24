@@ -205,13 +205,13 @@ describeDb("QB-3 drift", () => {
     expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
   });
 
-  it("keeps the stay-closed rule to QB_DRIFT: a re-raised COI flag still reopens", async () => {
+  it("keeps the stay-closed rule to QB_DRIFT: a re-raised QB_POST_HELD review still reopens", async () => {
     const { id } = await created("2026-09-10");
-    await raiseFlag(id, "COI", "same detail");
-    await db.expenseFlag.updateMany({ where: { expenseId: id, kind: "COI" }, data: { checkedOffAt: new Date(), checkedOffByUserId: 5 } });
+    await raiseFlag(id, "QB_POST_HELD", "same detail");
+    await db.expenseFlag.updateMany({ where: { expenseId: id, kind: "QB_POST_HELD" }, data: { checkedOffAt: new Date(), checkedOffByUserId: 5 } });
 
-    await raiseFlag(id, "COI", "same detail");
-    expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "COI" } })).toMatchObject({ checkedOffAt: null });
+    await raiseFlag(id, "QB_POST_HELD", "same detail");
+    expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_HELD" } })).toMatchObject({ checkedOffAt: null });
   });
 
   it("raises nothing for a matched entry still as it was at match", async () => {

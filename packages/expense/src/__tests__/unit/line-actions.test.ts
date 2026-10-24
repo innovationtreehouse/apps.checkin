@@ -1,6 +1,6 @@
 /** The caller's acts on an expense line and what it waits on otherwise, pure — no database. */
 import { describe, it, expect } from "vitest";
-import { lineActions, mayRecordBoardAuthorization, type LineActionsInput } from "../../lib/line-actions";
+import { lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../../lib/line-actions";
 import { lineHolds } from "../../lib/signoff-facts";
 import type { FilledSeat, SignoffFacts } from "../../lib/signoff";
 
@@ -235,5 +235,36 @@ describe("mayRecordBoardAuthorization", () => {
     expect(may(3, { expense: { ...expense, reimburseeUnknown: true } })).toBe(false);
     expect(may(3, { factsByLine: [base] })).toBe(false);
     expect(may(3, { factsByLine: [base], boardApprovalNeeded: true })).toBe(true);
+  });
+});
+
+describe("signatureTab", () => {
+  const sign = (seat: "TREASURER" | "BOARD") => ({ act: "sign" as const, seat, primary: true, noteRequired: false });
+
+  it("puts a FINANCE holder's Treasurer seat in To sign", () => {
+    expect(signatureTab(base, sign("TREASURER"), 3)).toBe("toSign");
+  });
+
+  it("puts the Board seat, and a Board member's Treasurer stand-in, in the Board tab", () => {
+    expect(signatureTab(base, sign("BOARD"), 5)).toBe("board");
+    expect(signatureTab(base, sign("TREASURER"), 5)).toBe("board");
+  });
+
+  it("gives every other act no tab", () => {
+    expect(signatureTab(base, { act: "approve", primary: true, noteRequired: false }, 2)).toBeNull();
+    expect(signatureTab(base, { act: "sign", seat: "SUBMITTER", primary: true, noteRequired: false }, 1)).toBeNull();
+  });
+
+  it("lists a line in a tab only once the function offers its signature, so only after the earlier steps", () => {
+    const tabs = (c: Case) => {
+      const approved = (c.approval ?? { status: "pending" }).status === "approved";
+      const facts = { ...base, approved, approver: approved ? 2 : null, ...c.facts };
+      return run(c).actions.map((a) => signatureTab(facts, a, c.caller)).filter((t) => t !== null);
+    };
+    expect(tabs({ caller: 3 })).toEqual([]);
+    expect(tabs({ caller: 3, ...APPROVED })).toEqual(["toSign"]);
+    const card = { ...APPROVED, facts: { kind: "card_charge" as const, boardSeat: true } };
+    expect(tabs({ caller: 5, ...card })).toEqual([]);
+    expect(tabs({ caller: 5, ...card, filled: seats(["TREASURER", 3]) })).toEqual(["board"]);
   });
 });
