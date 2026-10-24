@@ -1,21 +1,26 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import ReceiptFile from "../components/ReceiptFile";
-import { BASE, dollars, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import ReceiptEditor from "../components/ReceiptEditor";
+import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewHref } from "../components/reviewQueue";
 
-interface Line {
-  id: number;
-  lineNumber: number;
-  description: string;
-  quantity: number;
-  unitPriceCents: number;
-  totalPriceCents: number;
-  isDelayed: boolean;
+const REVIEW_REASON_LABELS: Record<string, string> = {
+  tax: "tax was charged",
+  old_date: "the receipt is older than the age limit",
+  future_date: "the receipt is dated in the future",
+  submitter_correction: "the submitter changed the tax or date",
+};
+
+/** Marks a value that is a reason the receipt is in finance review. */
+function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return on ? <Mark color="red">{children}</Mark> : <>{children}</>;
 }
 
 interface Receipt extends ReceiptListRow {
@@ -25,7 +30,7 @@ interface Receipt extends ReceiptListRow {
   discountCents: number | null;
   reimbursementFor?: string | null;
   financialReviewReasons: string[];
-  lineItems: Line[];
+  lineItems: ServerLine[];
 }
 
 interface AuditRow {
@@ -53,7 +58,10 @@ export default function ReceiptDetailPage() {
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
   const [note, setNote] = useState("");
-  const [edit, setEdit] = useState<{ retailer?: string; receiptDate?: string; tax?: string; receiptTotal?: string }>({});
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [saving, setSaving] = useState(false);
+  // A ref, not state: a second click in the same tick must see the first save already running.
+  const busy = useRef(false);
 
   const r = receipt.data;
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
@@ -63,6 +71,9 @@ export default function ReceiptDetailPage() {
     ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
     : { href: "/receipts", label: "My receipts" };
 
+  const reasons = r.financialReviewReasons;
+  const dateFlagged = reasons.includes("old_date") || reasons.includes("future_date");
+  const taxFlagged = reasons.includes("tax");
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
@@ -73,22 +84,61 @@ export default function ReceiptDetailPage() {
         return;
       }
       setNote("");
-      setEdit({});
+      setDraft(EMPTY_DRAFT);
       receipt.reload();
       audit.reload();
     }
   };
-  const saveEdit = () =>
-    act(
-      "",
-      "PATCH",
-      {
-        ...edit,
-        ...(edit.tax === undefined ? {} : { tax: Number(edit.tax) }),
-        ...(edit.receiptTotal === undefined ? {} : { receiptTotal: Number(edit.receiptTotal) }),
-      },
-      "Saved",
-    );
+  const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
+  const dirty = editing && isDirty(r, draft);
+  const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
+
+  /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
+  const saveDraft = async (): Promise<boolean> => {
+    const problem = draftProblem(r, draft);
+    if (problem) {
+      failed(problem);
+      return false;
+    }
+    let remaining = draft;
+    for (const op of planSave(r, draft)) {
+      try {
+        await api(`/${id}${op.path}`, { method: op.method, ...(op.body ? { body: JSON.stringify(op.body) } : {}) });
+      } catch (err) {
+        setDraft(remaining);
+        receipt.reload();
+        failed(errorMessage(err));
+        return false;
+      }
+      if (op.addedKey !== undefined) remaining = { ...remaining, added: remaining.added.filter((a) => a.key !== op.addedKey) };
+    }
+    setDraft(EMPTY_DRAFT);
+    receipt.reload();
+    audit.reload();
+    return true;
+  };
+  /** Runs `work` unless a save is already running, so a double click never posts a new line twice. */
+  const exclusive = async (work: () => Promise<void>) => {
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    try {
+      await work();
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  const save = () =>
+    exclusive(async () => {
+      if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
+    });
+  /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
+  const afterSave = (run: () => Promise<void>) =>
+    exclusive(async () => {
+      if (dirty && !(await saveDraft())) return;
+      await run();
+    });
 
   return (
     <Stack>
@@ -101,54 +151,51 @@ export default function ReceiptDetailPage() {
         </Group>
       </Group>
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
-      {r.financialReviewReasons.length > 0 && <Alert color="blue">Finance review: {r.financialReviewReasons.join(", ")}</Alert>}
+      {r.financialReviewReasons.length > 0 && (
+        <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+      )}
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
           <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
-          <Text>Date: {r.receiptDate ?? "—"}</Text>
-          <Text>Total: {dollars(r.receiptTotalCents)} (tax {dollars(r.taxCents)}, shipping {dollars(r.shippingCents)})</Text>
+          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged></Text>
+          <Text>
+            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>, shipping {dollars(r.shippingCents)}
+            {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
+          </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}
-          <Table>
-            <Table.Thead>
-              <Table.Tr><Table.Th>Item</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Total</Table.Th><Table.Th /></Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {r.lineItems.map((l) => (
-                <Table.Tr key={l.id}>
-                  <Table.Td>{l.description}{l.isDelayed && <Badge ml="xs" size="xs" color="orange">Backordered</Badge>}</Table.Td>
-                  <Table.Td>{l.quantity}</Table.Td>
-                  <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
-                  <Table.Td>
-                    {EDITABLE.has(r.state) && r.lineItems.length > 1 && (
-                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => void act(`/line-items/${l.id}`, "DELETE", undefined, "Item removed")}>Remove</Button>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+          {!editing && (
+            <Table>
+              <Table.Thead>
+                <Table.Tr><Table.Th>Item</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Total</Table.Th></Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {r.lineItems.map((l) => (
+                  <Table.Tr key={l.id}>
+                    <Table.Td>{l.description}{l.isDelayed && <Badge ml="xs" size="xs" color="orange">Backordered</Badge>}</Table.Td>
+                    <Table.Td>{l.quantity}</Table.Td>
+                    <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
 
-          {EDITABLE.has(r.state) && (own || isFinance) && (
-            <Paper withBorder p="sm">
-              <Stack gap="xs">
-                <Text fw={500} size="sm">Correct the details</Text>
-                <TextInput label="Retailer" value={edit.retailer ?? r.retailer ?? ""} onChange={(e) => setEdit({ ...edit, retailer: e.currentTarget.value })} />
-                <TextInput label="Date" value={edit.receiptDate ?? r.receiptDate ?? ""} onChange={(e) => setEdit({ ...edit, receiptDate: e.currentTarget.value })} />
-                <TextInput label="Tax ($)" value={edit.tax ?? ((r.taxCents ?? 0) / 100).toFixed(2)} onChange={(e) => setEdit({ ...edit, tax: e.currentTarget.value })} />
-                {own && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
-                <TextInput label="Total ($)" value={edit.receiptTotal ?? ((r.receiptTotalCents ?? 0) / 100).toFixed(2)} onChange={(e) => setEdit({ ...edit, receiptTotal: e.currentTarget.value })} />
-                <Button size="xs" w="fit-content" disabled={Object.keys(edit).length === 0} onClick={() => void saveEdit()}>Save</Button>
-              </Stack>
-            </Paper>
+          {editing && (
+            <Group gap="xs">
+              <Button size="xs" disabled={!dirty} loading={saving} onClick={() => void save()}>Save changes</Button>
+              {dirty && (
+                <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
+              )}
+            </Group>
           )}
 
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" onClick={() => void act("/submitter-confirm", "POST", {}, "Confirmed")}>Confirm</Button>
+                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed"))}>Confirm</Button>
                 {isAdult && !r.isInKind && (
                   <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
@@ -160,7 +207,9 @@ export default function ReceiptDetailPage() {
               <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
             )}
             {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted", true)}>Resubmit</Button>
+              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", true))}>
+                {dirty ? "Save and resubmit" : "Resubmit"}
+              </Button>
             )}
             {(own || isFinance) && !TERMINAL.has(r.state) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
@@ -203,6 +252,8 @@ export default function ReceiptDetailPage() {
           )}
         </Stack>
       </Group>
+
+      {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} />}
 
       {audit.data && (
         <Paper withBorder p="sm">
