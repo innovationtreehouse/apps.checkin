@@ -92,6 +92,26 @@ describe("acts per role", () => {
     expect(run({ caller: 3, facts: { conflicted: [1, 2, 8] } }).awaiting).toContain("Awaiting a Board stand-in");
   });
 
+  describe("a Board stand-in is secondary unless only the Board can act", () => {
+    const primaries = (c: Case) => run(c).actions.filter((x) => x.primary);
+
+    it("leaves a line with no main act, so it does not wait on the Board member, while a bucket approver can approve", () => {
+      expect(primaries({ caller: 5 })).toEqual([]);
+      expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual([]);
+      expect(primaries({ caller: 5, facts: { approvers: [2, 4], conflicted: [1, 2, 8] } })).toEqual([]);
+    });
+
+    it("is the main act when every bucket approver is conflicted or already seated through their household", () => {
+      expect(primaries({ caller: 5, facts: { conflicted: [1, 2, 8] } }).map((x) => x.act)).toEqual(["approve"]);
+      expect(primaries({ caller: 5, facts: { seatedHouseholds: [2] } }).map((x) => x.act)).toEqual(["approve"]);
+    });
+
+    it("the Board seat stays the Board member's main act", () => {
+      const facts = { reimburseeIsMember: false };
+      expect(primaries({ caller: 5, facts, ...APPROVED, filled: seats(["TREASURER", 3]) }).map((x) => x.seat)).toEqual(["BOARD"]);
+    });
+  });
+
   it("an org-level line takes a Board member's approval, with no reason", () => {
     const orgLevel = { approvers: [], orgLevel: true };
     expect(acts({ caller: 5, facts: orgLevel })).toEqual(["*approve"]);

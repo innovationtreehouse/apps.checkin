@@ -9,7 +9,10 @@ export interface LineAction {
   act: LineAct;
   /** The seat a `sign` fills. */
   seat?: Seat;
-  /** True on at most one act per line: the button on the line. The rest go under More. */
+  /**
+   * True on at most one act per line: the button on the line. The rest go under More. A line waits
+   * on the caller, for every count and list, only when one of its acts is primary.
+   */
   primary: boolean;
   /** The server refuses the act without a note: an exception's, or a Board stand-in's reason. */
   noteRequired: boolean;
