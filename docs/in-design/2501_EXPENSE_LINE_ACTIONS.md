@@ -209,6 +209,28 @@ need no change for timing.
 **C′.8 No FINANCE override.** You decided to remove it: finance has no approve
 act on a line outside its own buckets. See §7.
 
+**C′.9 Signatures in order.** You decided that a line's signatures happen in
+order, as the Inventory prototype did, so no later step can create a problem
+for an earlier one. The order follows Financial Policy Art. IX §IX.3's list:
+
+1. the submitter confirms the receipt (reimbursements only);
+2. the line is approved, by a bucket approver or a Board stand-in;
+3. the Treasurer signs;
+4. any Board signature the line takes: the Board seat on a non-Everyday card
+   charge without Board authorization, or on a non-member reimbursement.
+
+The server refuses a later signature until the earlier ones exist, and the
+line-actions function offers only the next one. Today's sign-off service lets
+any seat be signed at any time while the expense is open; that changes. The
+Board's approval of a purchase of $2,000 or more is recorded, not signed, so it
+isn't a step in this order. Whether the Board seat comes after the Treasurer or
+may come before it is open question 11.
+
+Because the approval comes before the Treasurer, and finance can move a line
+only before it is approved (bucket assignment, an unknown bucket, or an
+exception raised), no Treasurer or Board signature exists when a line moves. A
+move needs no seat voiding, and the conflict in open question 8 can't arise.
+
 ### What is deleted, and what moves
 
 | Today | Under C′ |
@@ -217,7 +239,7 @@ act on a line outside its own buckets. See §7.
 | The rule that sends the program-approver seat to the Board for an org-level bucket or a non-member | Deleted. Org-level lines take a Board member's approval (C′.4); non-member lines take a Board seat after approval (C′.6) |
 | Sign as Program approver, and its "Waiting for Finance to assign a budget bucket" note | Deleted from the page |
 | The approver pill's count of open program-approver seats | Replaced by a count of lines the caller may approve (§8) |
-| Voiding the seats on a line whose bucket changes, in the three bucket-assignment services | Deleted, as you decided. The program approver's part was the only seat that belonged to the bucket. See open question 8 for the Treasurer seat |
+| Voiding the seats on a line whose bucket changes, in the three bucket-assignment services | Deleted, as you decided. With signatures in order (C′.9), a line moves only before any Treasurer or Board signature exists, so nothing needs voiding |
 | Seat conflict checks: the household already seated, another seat on the line, the Treasurer exclusion | Move into the approve service and the line-actions function (C′.2); the Treasurer-seat refusal reads the approver from the approval row |
 | The catalog snapshot and the drain that run when the last seat is signed | Also run when the approval meets the last requirement |
 | Org-level pre-approval at intake and at bucket assignment | Deleted; org-level lines start pending (C′.4) |
@@ -450,13 +472,15 @@ decided). The signatures FINANCE and the Board give get screens of their own in
 #2482's Finance review queue.
 
 - **To sign tab:** lists the lines waiting for a Treasurer signature that this
-  viewer may give, one row per expense with the count of such lines, opening
+  viewer may give, and only those whose earlier steps are complete: the
+  submitter's confirmation on a reimbursement, and the approval (C′.9). It
+  lists them one row per expense with the count of such lines, opening
   the expense page. A "Sign all N as Treasurer" button, the Treasurer's
   equivalent of Approve All, signs every listed line on that expense the
   viewer may sign, in one all-or-nothing request under the same per-line
   refusals as a single signature.
 - **Board tab:** lists the lines waiting for a Board signature this viewer may
-  give: the Board seat on a non-Everyday card charge without Board
+  give, again only once the earlier steps are complete: the Board seat on a non-Everyday card charge without Board
   authorization, the Board seat on a non-member reimbursement once the line is
   approved, and the Treasurer seat when no finance holder without a conflict
   can sign it. The Board's approval of a purchase of $2,000 or more is
@@ -541,6 +565,10 @@ from your decisions; the last two wait on open questions 2 and 5:
   receipt". *(same tag)*
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line. *(new line)* `[Decision — owner]`
+- A line's signatures are given in order: the submitter's confirmation on a
+  reimbursement, then the line's approval, then the Treasurer, then any Board
+  signature the line takes. A signature is refused until the ones before it
+  exist. *(new line)* `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -575,7 +603,9 @@ Each PR is based on `main`, not stacked.
    approve service takes the seat's refusals and admits a Board stand-in;
    org-level lines start pending; finance-assigned lines wait for the new
    bucket's approver; the Board seat on a non-member line, after approval. The
-   data-only migration and the rule edits ship in the same PR (C′.1 to C′.8).
+   sign-off service enforces the order of C′.9, where today it accepts any
+   seat at any time while the expense is open. The data-only migration and the
+   rule edits ship in the same PR (C′.1 to C′.9).
 4. **Approve All PR** (3.13): the batch route and button. After steps 1 and 3.
 5. **Pill and landing PR** (3.25): the badge from the function and the "Waiting
    on you" view, and #2500's owner-approval count moved onto the same function
@@ -606,7 +636,7 @@ Each PR is based on `main`, not stacked.
 | 3.16 | Override comment required only on the server | Moot: no override. Raise and reject exception notes are marked required, with Confirm disabled while blank (§6) | 2 |
 | 3.17 | Only FINANCE overrides; no rule | No override: only bucket approvers, or a Board stand-in, approve (§7) | 8 |
 | 3.25 | Pill counts seats, page opens on approval | Approval is the sign-off, so one count, and a "Waiting on you" view (§8) | 3, 5 |
-| 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.8) | 2, 3 |
+| 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.9) | 2, 3 |
 | #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a card charge takes no submitter seat (§3) | 7 |
 | #2433 | Sign-as shown to people who can't sign | Same as 3.15; other seats show as status (§1) | 2 |
 | #1272 | No rule for the override | As 3.17 | 8 |
@@ -637,11 +667,9 @@ Each PR is based on `main`, not stacked.
 7. **A finance-assigned line.** *Decided:* finance can still move a line to
    another bucket, but the line then waits for the new bucket's approver
    (C′.5). Finance's assignment never counts as the approval.
-8. **The Treasurer seat after a bucket move.** With seat voiding gone, a
-   Treasurer who signed before finance moved the line keeps their seat, even
-   if the new bucket's owner shares their household, which the Treasurer
-   conflict rule forbids. Should a bucket move void the Treasurer seat in that
-   case only?
+8. **The Treasurer seat after a bucket move.** *Decided:* signatures happen in
+   order (C′.9), so a line moves only before the Treasurer signs, and the
+   conflict can't arise.
 9. **Which finance changes send a reimbursement back.** The list in §3 covers
    what the submitter is paid. Should a bucket assignment, or finance's other
    bookkeeping (capital designation, depreciation, a mapping hold's account),
@@ -654,6 +682,14 @@ Each PR is based on `main`, not stacked.
     letter in every case. You expect it to be very rare, and the required
     reason (§6) records each one. The rule is `[Decision — owner]` and cites
     no policy clause.
+11. **The Board seat and the Treasurer.** Must the Board seat (non-Everyday card
+    charge, non-member reimbursement) wait for the Treasurer's signature, or
+    may a Board member sign it once the line is approved? C′.9 leaves it open.
+12. **Re-confirmation and the order.** A finance change to a confirmed
+    reimbursement voids the submitter's signature (§3). If the line is already
+    approved or signed by then, later signatures exist without the earlier one.
+    Should the re-confirmation also void the later signatures, so they are given
+    again in order, or do they stand?
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
