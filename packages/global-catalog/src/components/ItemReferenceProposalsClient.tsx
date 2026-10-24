@@ -15,18 +15,19 @@ const PAGE_LIMIT = 200;
 
 export default function ItemReferenceProposalsClient() {
   const [proposals, setProposals] = useState<ItemReferenceProposalRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  function fetchProposals() {
+    return api<ItemReferenceProposalRow[]>(`/proposals/item-references?page=1&limit=${PAGE_LIMIT}`)
+      .then((rows) => { setProposals(rows); setError(null); }, (e) => setError(errorMessage(e)))
+      .finally(() => setLoading(false));
+  }
+  useEffect(() => { fetchProposals(); }, []);
   async function load() {
     setLoading(true);
-    try {
-      setProposals(await api<ItemReferenceProposalRow[]>(`/proposals/item-references?page=1&limit=${PAGE_LIMIT}`));
-      setError(null);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setLoading(false); }
+    await fetchProposals();
   }
-  useEffect(() => { load(); }, []);
 
   const [rejectTarget, setRejectTarget] = useState<ItemReferenceProposalRow | null>(null);
   const [rejectReason, setRejectReason] = useState("");

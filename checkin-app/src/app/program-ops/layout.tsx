@@ -7,7 +7,7 @@ import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { PROGRAM_NAV_LINKS } from "@/lib/programNav";
+import { PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { programsMisconfigBadge } from "@/components/navBadges";
 
@@ -29,7 +29,7 @@ export default function ProgramOpsLayout({ children }: { children: React.ReactNo
   const { data: session, status } = useSession();
 
   const user = session?.user;
-  const isGlobalAdmin = !!(user?.isSysadmin || user?.isBoardMember);
+  const isGlobalAdmin = PROGRAM_OPS.visible(user, null);
 
   // Red pill on the Programs tab for priced programs missing their Shopify variant.
   // The count is only in the payload for admin/board, so gate the fetch on that.
@@ -78,7 +78,7 @@ export default function ProgramOpsLayout({ children }: { children: React.ReactNo
 
   return (
     <PageContainer>
-      <SectionTabs links={PROGRAM_NAV_LINKS} prefixMatch badgeFor={badgeFor} mb="md" />
+      <SectionTabs links={PROGRAM_OPS.links} prefixMatch badgeFor={badgeFor} mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

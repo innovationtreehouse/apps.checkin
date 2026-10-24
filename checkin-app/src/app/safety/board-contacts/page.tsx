@@ -21,22 +21,23 @@ export default function BoardContactInfoPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchMembers = useCallback(async () => {
-    try {
-      const res = await fetch('/api/safety/board-contacts');
+  const fetchMembers = useCallback(() => fetch('/api/safety/board-contacts')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setMembers(data.members || []);
       } else {
         setError("Failed to load board contacts. Ensure you have the proper authorizations.");
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       console.error("Failed to load board contacts:", e);
       notifications.show({ color: "red", message: "Network error loading board contacts.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchMembers();

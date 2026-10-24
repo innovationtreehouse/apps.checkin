@@ -4,7 +4,7 @@ const nextJest = require('next/jest');
 const createJestConfig = nextJest({ dir: './' });
 
 // LIVE Shopify contract suite (docs/ops/shopify-live-tests.md): drives the
-// real lib/shopify.ts functions against the REAL dev store. Excluded from the
+// real lib/shopify/ functions against the REAL dev store. Excluded from the
 // unit/CI/pre-commit runs (see testPathIgnorePatterns in jest.config.js); run
 // via `npm run test:shopify-live` where dev-store credentials are provisioned
 // (.github/workflows/shopify-live.yml). Serialized (maxWorkers 1) to respect

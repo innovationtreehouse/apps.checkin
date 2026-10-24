@@ -15,6 +15,7 @@ const STATUS_BY_CODE: Record<ExternalErrorCode, number> = {
     no_household: 404,
     not_lead: 403,
     wrong_phase: 409,
+    signing_in_progress: 409,
 };
 
 /**

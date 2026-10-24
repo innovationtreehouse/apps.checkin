@@ -1,0 +1,27 @@
+name: Log in to Amazon ECR Public
+description: >
+  Assume a pull-only role via OIDC and log Docker in to ECR Public, so image
+  pulls are rate-limited per account instead of per shared-runner IP. The
+  calling job needs `id-token: write`.
+
+inputs:
+  role-to-assume:
+    description: "ARN of the pull-only OIDC role (ecr-public auth only)"
+    required: true
+  aws-region:
+    description: "AWS region"
+    default: us-east-2
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Log in to Amazon ECR Public
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registry-type: public

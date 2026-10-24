@@ -68,9 +68,18 @@ on:
   # short-circuits to success below.
   merge_group:
 
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   isolation:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Skip on merge queue (already enforced on the PR)
         if: github.event_name == 'merge_group'
@@ -88,7 +97,6 @@ jobs:
       - name: Check boundary changes ship alone
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
@@ -110,10 +118,17 @@ jobs:
           # commits. Diffing against HEAD would sweep in main's advance (any
           # src/security/* it landed) and mis-flag it as this PR's boundary
           # change. BASE_SHA...HEAD_SHA is merge-base(base,head)→head: only the
-          # branch's real changes. fetch-depth:0 already has both parents of the
-          # merge ref (= base.sha and head.sha) local, so no fetch is needed;
-          # if either SHA is unreachable the diff below fails loud, never a
-          # silent unaudited pass.
+          # branch's real changes. BASE_SHA is the merge ref's first parent —
+          # the current tip of main — not pull_request.base.sha, which can lag
+          # behind a rebased branch and so sweep main's newer commits into the
+          # diff. fetch-depth:0 has both parents local, so no fetch is needed;
+          # if either SHA is unreachable this fails loud, never a silent
+          # unaudited pass.
+          if ! BASE_SHA=$(git rev-parse --verify HEAD^1); then
+            echo "::error::Could not resolve the merge ref's first parent (base tip). Failing rather than passing this PR unaudited."
+            exit 1
+          fi
+
           # --no-renames: with rename detection on, `git diff --name-only`
           # reports ONLY the destination, so renaming a boundary file never puts
           # its name in CHANGED, is_boundary never fires, and the step exits

@@ -74,10 +74,11 @@ keyword** (design-doc rule); #1314 tracks only the residual sub-actor detail
 **third in a series** and **reuses the base architecture** established by the
 global-catalog design
 ([#1286](https://github.com/innovationtreehouse/checkin/issues/1286),
-`docs/in-design/1286_GLOBAL_CATALOG_INTEGRATION.md`) and the local-inventory
+now distilled to `docs/designs/COMPONENT_ARCHITECTURE.md`) and the local-inventory
 design
 ([#1287](https://github.com/innovationtreehouse/checkin/issues/1287),
-`docs/in-design/1287_LOCAL_INVENTORY_INTEGRATION.md`) — **read those two first.**
+now distilled to `docs/rules/inventory.md` and the same architecture doc) —
+**read those two first.**
 Everything about in-process packaging, the own-database topology, the security
 regime over a separate schema, the retire-source-auth decision, the injected
 `Org` registry, and the per-crossing coupling rule is carried over verbatim from
@@ -185,7 +186,7 @@ layered:
 src/
   repositories/   expense, org, orgEvents, provisionalItemMap, provisionalResolution   (Prisma access)
   services/       provisionalItemMapService                                            (domain logic)
-  workflows/      expense.machine + events/guards/invariants + expense-event-schema     (xstate lifecycle; QbLineItemSchema)
+  workflows/      expense.machine + events/guards/invariants                           (xstate lifecycle)
   lib/            expense-qb-processor, expense-rules, financial-flow, capital-register,
                   workflow-engine, expense-constants, catalog-schemas          (domain; portable)
                   inventory-client, api-client, org-events-poller, org-events-container (crossings)
@@ -226,8 +227,11 @@ preserve them exactly:
   runs `owner_approval → (capital_review → set_depreciation_cycle) → qb_pending`,
   and at `qb_pending` `expense-qb-processor.ts` resolves each line to one QB
   account, allocates tax/shipping/discount, and — in **one interactive
-  transaction** — writes a validated `QbExpenseEvent` row to the `ExpenseEvent`
-  table and advances `qb_pending → qb_complete`. The row is the durable outbox;
+  transaction** — writes each line's allocations and resolved account
+  (`ExpenseLineItem.resolvedQbAccount`), commits the `ExpenseEvent` outbox row
+  and advances `qb_pending → qb_complete`. The row is the durable outbox marker
+  and carries no data; the poster and the drift check read the expense and its
+  lines;
   **something downstream posts it to QuickBooks.** In the source that downstream
   writer does not exist yet — the machine terminates the moment the event is
   committed. **The write path is exactly what §9 QB-2 builds** in
@@ -410,12 +414,15 @@ person-linked. So the tiering is heavier and the **read audience is narrow** (§
   annotate `@sensitivity:secret` on the schema, and the app hosts **no OAuth route**
   (consent is an operator CLI step, §9) — so QB adds no new boundary surface at all
   beyond the app's read-only IAM grant to the access-token secret.
-- **`internal`** — **money + vendor + attribution + free text + plumbing**:
+- **`pii`** — **every person id and username**: `submitterId`,
+  `reimbursementFor`, `reimburseePersonId`, `decidedByUserId`, `signerUserId`,
+  `capitalOwnerId`, and every other actor `*UserId` / `*Username` (audit
+  `userId` / `username` included).
+- **`internal`** — **money + vendor + free text + plumbing**:
   amounts (`*Cents`, `unitPriceCents`, `taxCents`, thresholds), `vendorName`,
-  `receiptNumber` / `orderNumber`, `reimbursementFor`, `qbAccount` / account
+  `receiptNumber` / `orderNumber`, `qbAccount` / account
   mappings, `assetNumber` and the capital register, bucket ids
-  (`budgetOwnerId`), all actor ids/usernames (`submitterId`, `decidedByUserId`,
-  `capitalOwnerId`, `userId`, `username`), free text (`notes`, `reason`,
+  (`budgetOwnerId`), free text (`notes`, `reason`,
   `rejectionReason`, `failureReason`, audit `valueBefore`/`valueAfter`), and
   cross-app plumbing (`payload`, `payloadJson`, `matchedRows`, `receiptId`,
   `sourceQbTxnId`, `sourceEventId`).
@@ -423,11 +430,10 @@ person-linked. So the tiering is heavier and the **read audience is narrow** (§
   (Non-sensitive enums like a hold `status` string are `internal`, surfaced only
   to the finance/board reader.)
 
-**`reimbursementFor` and `submitterId` are person-linked** — treat them at least
-`internal` and consider whether the reimbursee's identity warrants `pii`
-handling if it is ever joined to a name in a response; default to `internal` +
-the narrow read gate, and raise it to `pii` if a route ever returns the person's
-contact details alongside.
+**Person ids stay `pii`, never `internal`.** A view granted `internal` only —
+the bucket approver's — then carries no submitter, reimbursee or decider id.
+Lowering any of them to `internal` would hand those ids to every `internal`
+reader.
 
 ### No scopeBindings — but the narrow read is a route+query concern, not a field scope
 
@@ -448,7 +454,7 @@ handler **filters the query** to lines whose bucket the principal approves (a
 `WHERE budgetOwnerId IN (buckets the principal approves)`, from the injected
 budget-owner accessor), returning a
 `FINANCE`-tier response shape over a restricted row set. So the field tiers stay
-flat (`internal` behind the finance/board reader), scopeBindings stay zero, and the
+flat (`internal` and `pii` behind the finance/board reader), scopeBindings stay zero, and the
 row-narrowing lives in the handler — consistent with catalog/inventory's
 registry-only boundary.
 
@@ -681,16 +687,15 @@ this is a genuine port-gets-better item.
 raises no conflict of interest. COI controls apply only to **external payouts**
 (reimbursements) and to anything affecting **external reporting**. So the predicate runs on reimbursement and card-charge lines: a
 signer who is the submitter or the reimbursee, or shares a household with either,
-is conflicted. A conflicted signer cannot fill a seat, and a conflicted Treasurer
-adds Board seats (F2-COI, next subsection). Design it as a real predicate over
+is conflicted. A conflicted signer cannot fill a seat; a conflicted Treasurer is
+replaced, not escalated (next subsection). Design it as a real predicate over
 checkin's household graph (read via the injected principal/port, not a cross-DB
 join — §4), not as another rubber-stamp. This directly discharges GC-ROLES'
 "expense approval + conflict constraints" duty gap.
 
 ### Reimbursement and card-charge sign-off (Financial Policy F2 / F2-COI)
 
-Policy chain: purchaser → Program Leader or Program Treasurer → Treasurer (→ +1
-or +2 non-conflicted Board members on conflict). The Treasurer pays in
+Policy chain: purchaser → Program Leader or Program Treasurer → Treasurer. The Treasurer pays in
 QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 
 **Seats.** A reimbursement line needs every seat filled by a distinct person:
@@ -699,8 +704,7 @@ QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 |---|---|
 | Submitter | the person who submitted (an attestation, not an approval) |
 | Program approver | the bucket's Program Leader or one of its Program Treasurers (`ProgramVolunteer.isTreasurer`); for an org-level bucket, an independent Board member who is not the Treasurer-seat signer |
-| Treasurer | any `FINANCE` holder (a Treasurer-only seat can come later via #1314 designations) |
-| +1 / +2 Board | non-conflicted Board members, when F2-COI requires them |
+| Treasurer | any `FINANCE` holder without a conflict (a Treasurer-only seat can come later via #1314 designations); if none, a Board member without one |
 
 **Independence — who cannot fill a seat:**
 
@@ -708,25 +712,23 @@ QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 - anyone already in another seat for the same line (no one authorises and
   executes);
 - a conflicted program approver: another PL/PT of that program signs; if none
-  can, a Board member takes the seat.
+  can, a Board member takes the seat;
+- for the Treasurer seat, also the line's Program Leader and their household.
 
-**F2-COI escalation:**
-
-- Treasurer conflicted (is the submitter or related to them) → +1 non-conflicted
-  Board member;
-- Treasurer is the same person who signed as PL/PT → +1 (and a different
-  Treasurer-seat signer is required anyway by "distinct people");
-- both → +2.
+**Conflicted Treasurer: replaced, not escalated.** A conflicted Treasurer does not
+sign; another `FINANCE` holder or a Board member fills the seat, and no Board
+seats are added. See `docs/rules/expenses.md`, "Spending sign-off".
 
 **Exceptions carried from F2:**
 
 - a signed note in lieu of a receipt, under $50, in a program budget → PL/PT +
   Treasurer;
 - $50 or more, or not in a program budget → Board;
-- a non-member purchaser's reimbursement → Board only.
+- a reimbursement owed to a non-member → Board in the program seat (the person
+  reimbursed, not the submitter; card charges are not affected).
 
-**Card charges** use the same seats and independence rules with a reduced
-escalation: at most **+1** non-conflicted Board member, never +2.
+**Card charges** use the same seats and independence rules, with at most one
+Board stand-in. Their own policy rules are still to be designed.
 
 **Hold and record.** A line with an unfilled seat stays out of the QB-2 outbox
 (§9); no `ExpenseEvent` row is committed for it. Each sign-off writes an
@@ -739,9 +741,9 @@ reimbursement.
 |---|---|
 | one person fills two seats on a line | second sign-off rejected |
 | signer shares a household with the reimbursee | rejected for every seat |
-| Treasurer conflicted | line held until +1 Board seat is filled |
-| Treasurer also signed as PL/PT, and conflicted | +2 Board seats required |
-| card charge with both conflicts | +1 Board seat, never +2 |
+| only `FINANCE` holder conflicted | a Board member fills the Treasurer seat |
+| `FINANCE` holder in the Program Leader's household | refused for the Treasurer seat |
+| card charge needing two Board stand-ins | one, then held |
 | org-level bucket line | program approver seat accepts only a Board member who is not the Treasurer-seat signer |
 | line with any seat unfilled | no `ExpenseEvent`, nothing posted |
 
@@ -853,7 +855,7 @@ sign-off (owner), so expense never calls local-inventory.
 | **C — catalog lookups** | expense → catalog | **in-process read (caller)** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` (pathPrefix `/api/internal`) → catalog's org-bearer **machine** surface `/api/internal/[...path]` (#1286 §8) |
 | **X12 — reimbursement status** | receipt → expense | **in-process read (callee)** | `ReimbursementStatus.forReceipts` (§8c) | none; receipt stamped "reimbursed" by hand |
 | **S5 — provisional events** | catalog → expense | **post-commit call-out (consumer)** | `orgEventPayloadSchema` | catalog's `OrgEvent` table, HTTP-polled |
-| **QB — post** | expense → QuickBooks | **outbox** | `QbExpenseEventSchema` / `QbLineItemSchema` (schemaVersion 1) | `ExpenseEvent` outbox row; drained by the write path (§9) |
+| **QB — post** | expense → QuickBooks | **outbox** | the `Expense` and `ExpenseLineItem` rows (`resolvedQbAccount`, allocations) | `ExpenseEvent` outbox row; drained by the write path (§9) |
 
 ### 8a. Expense intake (S2) — in-process only; checkin cannot host the org-bearer route
 
@@ -1091,9 +1093,9 @@ once every sign-off seat is filled (§6); until then it is held and nothing is
 committed for it.
 
 - **Exists in the source (checkin side of the port):** the `expense-qb-processor`
-  already builds and **validates** the outbound payload against `QbExpenseEventSchema`
-  / `QbLineItemSchema` (schemaVersion 1), resolves each line to **one** QB account
-  (rules → one account/line, **no category splits by design**), allocates
+  resolves each line to **one** QB account
+  (rules → one account/line, **no category splits by design**) and stores it on
+  the line (`resolvedQbAccount`), allocates
   tax/shipping/discount, and commits the `ExpenseEvent` **outbox row** in one
   transaction (`qb_pending → qb_complete`). The outbox, idempotency
   (`expense_events_org_expense_unique`), holds, and crash-recovery
@@ -1301,7 +1303,7 @@ library skeleton + shared packages) has landed.
      only, audited) + classifications, and the derived bucket-approver lookup
      (§6).
 3. **Security boundary** — `@sensitivity` annotations (`internal` for money /
-   vendor / attribution / plumbing; **no `secret` field — QB tokens are external**,
+   vendor / plumbing, `pii` for every person id; **no `secret` field — QB tokens are external**,
    §5/§9), `generator security` for the expense schema (cross-package wiring, §5),
    registry route entries — **no scopeBindings** (expense FKs aren't scopable; the
    narrow read is a handler query-filter, not a field scope — §5). **QB adds no app
@@ -1458,10 +1460,9 @@ this doc.
   `VolunteerDesignation` / household rows (seed has 0), a program bucket with a
   leader and a treasurer, an org-level bucket, and enough Board and `FINANCE`
   holders in separate households, so the COI flag, the bucket-approver gate and
-  every sign-off seat (including +2 Board) are exercisable.
-- **`reimbursementFor` / reimbursee tiering** defaults to `internal` behind the
-  narrow gate; raise to `pii` if a route ever returns the person's contact details
-  alongside (§5).
+  every sign-off seat (including a Board stand-in) are exercisable.
+- **`reimbursementFor` / reimbursee tiering** is `pii`, as are all person ids
+  (§5).
 - **QuickBooks account/vendor identity:** the QBO chart of accounts + vendor list
   are the authority (QB-1 bootstraps the mapping tables); a 0-or-many match is
   resolved by the QB ambiguity queue, never guessed (§9 QB-2).
@@ -1474,12 +1475,10 @@ This doc lives in `docs/in-design/` — **deleted at merge**. Planning the split
 keeps the extract step a file move, not a months-later judgement call over every
 paragraph (§4.2). Content splits three ways.
 
-**(1) Standing domain rules → the EXISTING `docs/rules/finance-payments.md`.**
-Unlike catalog (which created `docs/rules/catalog.md`) and local-inventory
-(`inventory.md`), expense is **not** a new domain — `finance-payments.md` already
-covers *"fees, refunds, payment plans, and reconciliation,"* and expense→QB is
-reconciliation's core. So **add rules to that file, do not create a new one**
-(creating a near-duplicate finance file would fragment the register). Run the §3.9
+**(1) Standing domain rules → `docs/rules/expenses.md`.**
+Expense rules (receipts, buckets, sign-off, QuickBooks posting) go in
+`expenses.md`, beside catalog and local-inventory in `docs/rules/inventory.md`
+and fees and income in `docs/rules/revenue.md`. Run the §3.9
 test (*could a later change violate this?*) on each; seeds that qualify — decisions
 and invariants only, no mechanism:
 - **Flag / checkoff / audit:** the app **surfaces** procurement/finance flags
@@ -1489,8 +1488,8 @@ and invariants only, no mechanism:
   from Procurement Policy H.
 - **Money leaving the org needs filled sign-off seats:** a reimbursement or
   card-charge line is held out of QuickBooks until its submitter, program
-  approver and Treasurer seats (plus +1/+2 Board under F2-COI; at most +1 for a
-  card charge) are filled by distinct, independent people, and each sign-off is
+  approver and Treasurer seats (a Board member standing in where nobody eligible
+  can sign; at most one stand-in on a card charge) are filled by distinct, independent people, and each sign-off is
   audit-recorded — *cite Financial Policy F2 / F2-COI* (§6).
 - **COI is household-aware and limited to external payouts and external
   reporting:** the submitter, the reimbursee and their households cannot sign;
@@ -1555,12 +1554,12 @@ mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring
 handler-endpoint gotcha, pagination/count mechanics, outbox-drain wiring, test
 tiers) — a reader derives it from the source (§3).
 
-**Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first, so
-`docs/rules/{catalog,inventory}.md` and their `docs/designs/*` will exist by the
-time expense merges. The finance rules here **reference** the shared decisions
-(org identity, the crossing rule, the security regime) rather than restating them;
-`EXPENSE_QB.md` references `GLOBAL_CATALOG.md`/`LOCAL_INVENTORY.md` for the shared
-library-isolation and DB-topology substrate.
+**Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first into
+the unified `docs/rules/inventory.md` and `docs/designs/COMPONENT_ARCHITECTURE.md`, which exist
+by the time expense merges. The finance rules here **reference** the shared
+decisions (org identity, the crossing rule, the security regime) rather than
+restating them; `EXPENSE_QB.md` references `docs/designs/COMPONENT_ARCHITECTURE.md` for the
+shared library-isolation and DB-topology substrate.
 
 ---
 

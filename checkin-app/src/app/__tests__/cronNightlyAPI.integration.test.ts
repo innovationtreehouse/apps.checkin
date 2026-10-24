@@ -17,16 +17,19 @@ jest.mock('@/lib/email', () => ({
 // runs the genuine DB logic. `mock`-prefixed name so jest's hoist allows the
 // factory to close over it.
 const mockBadVisitIds = new Set<number>();
+// Visits another path departed before the sweep took the lock: checkout sets nothing.
+const mockRacedVisitIds = new Set<number>();
 jest.mock('@/lib/attendanceTransitions', () => {
     const actual = jest.requireActual('@/lib/attendanceTransitions');
     return {
         __esModule: true,
         ...actual,
-        processVisitCheckout: jest.fn((visitId: number, checkoutTime: Date, db?: unknown, source?: unknown) => {
+        processVisitCheckout: jest.fn((visitId: number, checkoutTime: Date, db?: unknown, source?: unknown, facilityCloseId?: unknown) => {
             if (mockBadVisitIds.has(visitId)) {
                 return Promise.reject(new Error(`Simulated checkout failure for visit ${visitId}`));
             }
-            return actual.processVisitCheckout(visitId, checkoutTime, db, source);
+            if (mockRacedVisitIds.has(visitId)) return Promise.resolve([]);
+            return actual.processVisitCheckout(visitId, checkoutTime, db, source, facilityCloseId);
         }),
     };
 });
@@ -315,6 +318,57 @@ describe('Cron Nightly API Integration Tests', () => {
 
             expect(await systemNotifyCount()).toBe(1); // no NEW force-checkout audit row
             expect(sendEmail).not.toHaveBeenCalled(); // no duplicate board/post-event email
+        });
+
+        it('notifies the board of every force-closed visit, not only keyholders', async () => {
+            await closeAllOpenVisits();
+            await prisma.auditLog.deleteMany();
+            mockBadVisitIds.clear();
+
+            const arrivedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            await prisma.visit.create({ data: { personId: normalUserId, arrivedAt } });
+
+            const res = await GET(cronReq());
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.facilityClose.checkedOutCount).toBe(1);
+            expect(data.facilityClose.boardNotified).toBe(true);
+
+            const notes = await prisma.auditLog.findMany({ where: { tableName: 'SYSTEM_NOTIFY' } });
+            expect(notes).toHaveLength(1);
+            const message = (notes[0].newData as { message: string }).message;
+            expect(message).toContain('Normal User');
+            expect(message).not.toContain('Abandoned keyholders');
+        });
+
+        it('names only keyholders whose visit the sweep closed or could not close, and counts only real checkouts', async () => {
+            await closeAllOpenVisits();
+            await prisma.auditLog.deleteMany();
+            mockBadVisitIds.clear();
+
+            const otherKeyholder = await prisma.person.create({
+                data: { email: 'keyholder2-nightly@example.com', name: 'Departed Keyholder', isKeyholder: true, household: { create: { name: "Test HH" } } }
+            });
+            const arrivedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            await prisma.visit.create({ data: { personId: keyholderId, arrivedAt } });
+            const raced = await prisma.visit.create({ data: { personId: otherKeyholder.id, arrivedAt } });
+            mockRacedVisitIds.add(raced.id);
+
+            try {
+                const res = await GET(cronReq());
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.facilityClose.checkedOutCount).toBe(1);
+                expect(data.failed).toBe(0);
+
+                const notes = await prisma.auditLog.findMany({ where: { tableName: 'SYSTEM_NOTIFY' } });
+                expect(notes).toHaveLength(1);
+                const message = (notes[0].newData as { message: string }).message;
+                expect(message).toContain('Abandoned keyholders: Forgetful Keyholder.');
+                expect(message).not.toContain('Departed Keyholder');
+            } finally {
+                mockRacedVisitIds.clear();
+            }
         });
 
         it('caps a visit the sweep missed at arrival + MAX_VISIT_MS instead of stamping run time', async () => {

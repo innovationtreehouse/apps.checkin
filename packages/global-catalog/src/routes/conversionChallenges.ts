@@ -1,9 +1,9 @@
 /** Conversion-challenge route factories (#1286). */
+import { mapServiceErrors, parseId, query } from "@checkin/component-kit";
 import { createConversionChallengeRepository } from "../repositories/conversionChallenge";
 import { acceptChallenge, rejectChallenge } from "../services/conversionChallengeService";
-import { getDb, getPrincipal, mapServiceErrors } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, query } from "./_shared";
 
 const repo = () => createConversionChallengeRepository(getDb());
 

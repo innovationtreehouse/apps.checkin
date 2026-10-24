@@ -10,8 +10,8 @@ import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
 import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
-import { benevityTakeoverLine, QB_MATCH_STATE } from "../../lib/qb-match";
-import { ServiceError } from "../../services/serviceError";
+import { QB_MATCH_STATE } from "../../lib/qb-match";
+import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
@@ -21,6 +21,7 @@ const READER = { actorUserId: 1, actorUsername: "testfinance", route: "/api/dona
 const HEADER =
   "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment";
 const DONOR_FIELDS = ["Jane", "Doe", "Robotics team", "John", "Smith"];
+const DONOR_KEYS = ["donorFirstName", "donorLastName", "donorComment"];
 
 function csv(rows: string[]): Buffer {
   return Buffer.from([HEADER, ...rows].join("\n"));
@@ -61,8 +62,8 @@ describeDb("upload and dedup", () => {
     expect(again).toMatchObject({ rowCount: 3, newRowCount: 0, duplicateRowCount: 3, allDuplicate: true });
     expect(await db.transaction.count({ where: { orgId } })).toBe(3);
 
-    expect(await uploadedFileService.deleteBlob(orgId, again.fileId)).toEqual({ id: again.fileId, blobDeleted: true });
-    await expect(uploadedFileService.deleteBlob(orgId, first.fileId)).rejects.toBeInstanceOf(ServiceError);
+    expect(await uploadedFileService.deleteBlob(orgId, again.id, AUDIT)).toEqual({ id: again.id, blobDeleted: true });
+    await expect(uploadedFileService.deleteBlob(orgId, first.id, AUDIT)).rejects.toBeInstanceOf(ServiceError);
   });
 
   it("file listing never selects the blob", async () => {
@@ -94,6 +95,93 @@ describeDb("owner assignment", () => {
     expect(event.qbTxnId).toBeNull();
     expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
   });
+
+  it("the owner and organizational-level writes return no donor field", async () => {
+    await upload(FILE);
+    const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
+    const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
+    const assigned = await transactionService.assignOwner(orgId, t1.id, 201, false, AUDIT);
+    const orgLevel = await transactionService.markOrganizationalLevel(orgId, t2.id, AUDIT);
+    for (const row of [assigned, orgLevel]) {
+      for (const key of DONOR_KEYS) expect(row).not.toHaveProperty(key);
+    }
+    expect(assigned).toMatchObject({ id: t1.id, ownerId: 201 });
+    expect(orgLevel).toMatchObject({ id: t2.id, isOrganizationalLevel: true });
+  });
+});
+
+describeDb("concurrent owner decisions", () => {
+  it("racing assign and organizational-level calls record exactly one decision; the loser is refused", async () => {
+    await upload(FILE);
+    const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
+    const results = await Promise.allSettled([
+      transactionService.assignOwner(orgId, t1.id, 201, false, AUDIT),
+      transactionService.assignOwner(orgId, t1.id, 202, false, AUDIT),
+      transactionService.markOrganizationalLevel(orgId, t1.id, AUDIT),
+      transactionService.markOrganizationalLevel(orgId, t1.id, AUDIT),
+    ]);
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of results) {
+      if (r.status === "rejected") {
+        expect(r.reason).toBeInstanceOf(ServiceError);
+        expect([400, 409]).toContain((r.reason as ServiceError).status);
+      }
+    }
+    const row = await db.transaction.findUniqueOrThrow({ where: { id: t1.id } });
+    expect(row.ownerId !== null && row.isOrganizationalLevel).toBe(false);
+    const decisions = await db.workflowEvent.count({
+      where: { orgId, entityId: String(t1.id), eventType: { in: ["OWNER_ASSIGNED", "ORG_LEVEL_MARKED"] } },
+    });
+    expect(decisions).toBe(1);
+  });
+});
+
+describeDb("gifts for an already-completed disbursement", () => {
+  it("refuses the whole file, names the disbursement, and imports nothing", async () => {
+    await makeAccountMapRule(orgId);
+    await db.transactionCommentRule.create({ data: { orgId, comment: "Robotics team", ownerId: 201, createdByUserId: 1 } });
+    await upload(FILE.slice(0, 2));
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
+    const filesBefore = await db.uploadedFile.count({ where: { orgId } });
+
+    const late = upload([
+      ...FILE.slice(0, 2),
+      "D-1,2026-09-01,Acme Corp,T-9,30.00,0,0,check,standard,Bo,Kim,Robotics team",
+      "D-2,2026-09-08,Acme Corp,T-10,5.00,0,0,check,standard,Al,Ng,Robotics team",
+    ]);
+    await expect(late).rejects.toMatchObject({ status: 409, message: expect.stringContaining("D-1") });
+    expect(await db.transaction.count({ where: { orgId, transactionId: { in: ["T-9", "T-10"] } } })).toBe(0);
+    expect(await db.uploadedFile.count({ where: { orgId } })).toBe(filesBefore);
+  });
+
+  it("an upload racing the completing assignment never stores a gift the completion missed", async () => {
+    await makeAccountMapRule(orgId);
+    await db.transactionCommentRule.create({ data: { orgId, comment: "Robotics team", ownerId: 201, createdByUserId: 1 } });
+    for (let i = 0; i < 5; i++) {
+      const d = `D-R${i}`;
+      await upload([
+        `${d},2026-09-01,Acme Corp,T-R${i}a,10.00,0,0,check,standard,Jane,Doe,Robotics team`,
+        `${d},2026-09-01,Acme Corp,T-R${i}b,10.00,0,0,check,standard,John,Smith,Chess club`,
+      ]);
+      const open = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: `T-R${i}b` } });
+
+      const [assigned, late] = await Promise.allSettled([
+        transactionService.assignOwner(orgId, open.id, 202, false, AUDIT),
+        upload([`${d},2026-09-01,Acme Corp,T-R${i}c,5.00,0,0,check,standard,Bo,Kim,Debate club`]),
+      ]);
+      expect(assigned.status).toBe("fulfilled");
+
+      const completed = (await db.disbursementEvent.count({ where: { orgId, disbursementId: d } })) === 1;
+      const stored = (await db.transaction.count({ where: { orgId, transactionId: `T-R${i}c` } })) === 1;
+      if (late.status === "rejected") {
+        expect(late.reason).toMatchObject({ status: 409 });
+        expect(completed && !stored).toBe(true);
+      } else {
+        expect(stored && !completed).toBe(true);
+      }
+    }
+  });
 });
 
 describeDb("comment rules apply at upload", () => {
@@ -116,6 +204,50 @@ describeDb("comment rules apply at upload", () => {
     await upload(FILE);
     const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
     expect(t1.ownerId).toBeNull();
+  });
+});
+
+describeDb("upload runs the owner-assigned cycle per new disbursement", () => {
+  async function ruleFor(comment: string, ownerId: number) {
+    await db.transactionCommentRule.create({ data: { orgId, comment, ownerId, createdByUserId: 1 } });
+  }
+
+  it("a disbursement fully assigned at upload completes, attributed to the uploader", async () => {
+    await makeAccountMapRule(orgId);
+    await ruleFor("Robotics team", 201);
+    await upload([
+      ...FILE,
+      "D-2,2026-09-01,Acme Corp,T-5,7.00,0,0,check,standard,Al,Ng,",
+    ]);
+
+    for (const disbursementId of ["D-1", "D-2"]) {
+      await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId } });
+      expect(await db.disbursementSnapshot.count({ where: { orgId, disbursementId } })).toBe(0);
+    }
+    const completed = await db.workflowEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1", eventType: "DISBURSEMENT_COMPLETED" } });
+    expect(completed.actorUserId).toBe(1);
+    expect(completed.correlationId).toBe("corr-intake");
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
+  });
+
+  it("a partly assigned disbursement waits for ownership, and a fully assigned one with no account map goes on hold", async () => {
+    await ruleFor("Robotics team", 201);
+    await upload([
+      "D-1,2026-09-01,Acme Corp,T-1,100.00,0,0,check,standard,Jane,Doe,Robotics team",
+      "D-1,2026-09-01,Acme Corp,T-2,20.00,0,0,check,standard,John,Smith,Chess club",
+      "D-2,2026-09-01,Acme Corp,T-3,10.00,0,0,check,standard,Ann,Lee,Robotics team",
+    ]);
+
+    expect(await db.disbursementEvent.count({ where: { orgId } })).toBe(0);
+    expect(await db.disbursementSnapshot.count({ where: { orgId, disbursementId: "D-1" } })).toBe(0);
+    const d2 = await db.disbursementSnapshot.findFirstOrThrow({ where: { orgId, disbursementId: "D-2" } });
+    expect(d2.state).toBe("on_hold");
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 1, disbursementHolds: 1 });
+
+    await makeAccountMapRule(orgId);
+    const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
+    await transactionService.assignOwner(orgId, t2.id, 201, false, AUDIT);
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
   });
 });
 
@@ -177,10 +309,4 @@ describeDb("QuickBooks match pre-seat", () => {
     await expect(db.donationQbMatchExclusion.create({ data })).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("the Benevity takeover line is the newest MATCHED disbursement date", async () => {
-    expect(await benevityTakeoverLine(db, orgId)).toBeNull();
-    await event("D-A", "2026-08-01", QB_MATCH_STATE.MATCHED, "qb-1");
-    await event("D-B", "2026-09-01", QB_MATCH_STATE.CREATED, "qb-2");
-    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-08-01");
-  });
 });

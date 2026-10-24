@@ -9,23 +9,25 @@
   ],
   "scripts": {
     "build": "npm -w checkin-app run build",
-    "build:functions": "npm run build -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function",
+    "build:functions": "npm run build -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function -w qbo-refresher-function",
     "build:prisma-layer": "node scripts/build-prisma-layer.mjs",
     "lint": "npm -w checkin-app run lint",
+    "lint:packages": "eslint --max-warnings 0 packages",
     "test": "npm -w checkin-app run test",
-    "db:generate:test": "npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db && npm run db:generate -w @inventory/global-catalog",
+    "db:generate:test": "npm run db:generate -ws --if-present",
     "pretest:packages": "npm run db:generate:test",
     "check:library-boundaries": "node scripts/check-library-boundaries.mjs",
     "test:packages": "npm run test -w ./packages --if-present",
     "pretest:functions": "npm run db:generate:test",
-    "test:functions": "npm run test -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function --if-present",
+    "test:functions": "npm run test -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function -w qbo-refresher-function --if-present",
+    "test:affected": "node scripts/test-affected.mjs",
     "test:all": "npm run test && npm run test:packages && npm run test:functions",
     "test:ci": "npm -w checkin-app run test:ci",
     "test:integration": "npm -w checkin-app run test:integration",
     "test:coverage": "npm -w checkin-app run test:coverage",
     "test:coverage:unit": "npm -w checkin-app run test:coverage:unit",
     "test:coverage:integration": "npm -w checkin-app run test:coverage:integration",
-    "check-route-coverage": "npm -w checkin-app run check-route-coverage",
+    "check-route-coverage": "npm -w checkin-app run check-route-coverage --",
     "prepare": "husky"
   },
   "engines": {
@@ -44,9 +46,6 @@
   "overrides": {
     "next-auth": {
       "uuid": "^11.1.1"
-    },
-    "next": {
-      "postcss": "^8.5.10"
     },
     "@prisma/dev": {
       "@hono/node-server": "^1.19.13"

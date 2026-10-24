@@ -1,13 +1,18 @@
+import { ServiceError } from "@checkin/component-kit";
+import { WorkflowTransitionError } from "@checkin/workflows";
 import { db } from "../db";
 import { createCatalogRepository } from "../repositories/catalog";
 
 const catalogRepo = createCatalogRepository(db);
 
-export class ServiceError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-    this.name = "ServiceError";
-  }
+/**
+ * Maps a refused review transition to a ServiceError. A refusal from an already
+ * reviewed (final) state means another reviewer won the race: 409, the same
+ * status a lost in-transaction claim returns.
+ */
+export function reviewTransitionError(err: unknown, alreadyReviewed: boolean, conflictMessage: string): unknown {
+  if (!(err instanceof WorkflowTransitionError)) return err;
+  return alreadyReviewed ? new ServiceError(409, conflictMessage) : new ServiceError(400, err.message);
 }
 
 export type ResolvedCategory = { id: number; letter: string };

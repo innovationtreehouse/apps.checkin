@@ -4,7 +4,7 @@
 /**
  * Integration tests for POST /api/dev/shopify/orders-paid — the dev-only mock
  * that synthesizes an orders/paid payload and self-fires it at the REAL inbound
- * webhook (see docs/designs/SHOPIFY_DEV_STORE_WEBHOOK.md §6). Covers the gate
+ * webhook (see docs/ops/shopify-dev-store.md §6). Covers the gate
  * fuses (mock-active, session, validation) plus an end-to-end happy path that
  * proves the mock actually drives activate() via the real webhook handler —
  * not just a mocked 200.
@@ -61,7 +61,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     /** A fresh household + membership + PENDING_PAYMENT process, matching what the dev UI lists. */
     async function makeProc() {
         const hh = await prisma.household.create({ data: { name: `Dev Mock HH ${TAG}` } });
-        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         // No bgClearedAt: activate() deterministically lands PENDING_BG_CLEARANCE
         // (not ACTIVE) when it advances — see payment.ts `activating = !!process.bgClearedAt`.
         const p = await prisma.orgMembershipProcess.create({
@@ -175,7 +175,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     it('settles via the synthetic mock variant when none is configured on BoardSettings', async () => {
         // A local seed never sets a membership variant; the mock falls back to
         // DEV_MOCK_MEMBERSHIP_VARIANT_ID (config), which the inbound handler echoes,
-        // so dues still settle end-to-end instead of dead-ending on a 409.
+        // so the membership fee still settles end-to-end instead of dead-ending on a 409.
         asSession();
         await setVariant(null);
         const { processId } = await makeProc();

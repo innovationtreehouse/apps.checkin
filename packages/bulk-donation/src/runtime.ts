@@ -1,20 +1,14 @@
+import { defineRuntime, NotWiredError } from "@checkin/component-kit";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
   CatalogLookup,
-  DonationQbWriter,
+  DonationQbPosting,
+  InKindDirectory,
   InventoryApply,
   OrgIdentity,
   OwnerDirectory,
 } from "./contract";
-
-/** Thrown by an inert port: the crossing is declared but not bound yet. Callers retry later. */
-export class NotWiredError extends Error {
-  constructor(port: string) {
-    super(`${port} is not wired`);
-    this.name = "NotWiredError";
-  }
-}
 
 const INERT_OWNERS: OwnerDirectory = { list: async () => [] };
 const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async () => null };
@@ -23,36 +17,33 @@ const INERT_INVENTORY: InventoryApply = {
     throw new NotWiredError("InventoryApply (X11)");
   },
 };
-const INERT_QB: DonationQbWriter = {
-  post: async () => {
-    throw new NotWiredError("DonationQbWriter");
-  },
+
+/** Nobody holds a role or is conflicted, so nobody can decide a gift. */
+const INERT_IN_KIND: InKindDirectory = {
+  financeHolders: async () => [],
+  boardMembers: async () => [],
+  householdsOf: async (ids) => new Map(ids.map((id) => [id, [id]])),
+  householdsSharingSurname: async (checks) => checks.map(() => false),
+  bucketsApprovedBy: async () => [],
+  largeValueCents: async () => 50_000,
 };
 
-// Stored on globalThis so the boot chunk that configures and the route chunks that read see
-// one runtime (survives Turbopack HMR re-evaluation).
-const globalForRuntime = globalThis as typeof globalThis & { __bulkDonationRuntime?: BulkDonationConfig };
+export { NotWiredError };
 
-export function configureBulkDonation(config: BulkDonationConfig): void {
-  globalForRuntime.__bulkDonationRuntime = config;
-}
+export const bulkDonationRuntime = defineRuntime<BulkDonationConfig, BulkDonationPrincipal>("bulk-donation");
+const requireRuntime = bulkDonationRuntime.require;
 
-function requireRuntime(): BulkDonationConfig {
-  const runtime = globalForRuntime.__bulkDonationRuntime;
-  if (!runtime) {
-    throw new Error("bulk-donation runtime not configured — the host must call configureBulkDonation() at boot");
-  }
-  return runtime;
-}
+export const configureBulkDonation = bulkDonationRuntime.configure;
 
-/** The acting host user. Throws if absent: host admission runs before any route body. */
-export async function getPrincipal(): Promise<BulkDonationPrincipal> {
-  const principal = await requireRuntime().auth.getPrincipal();
-  if (!principal) throw new Error("no bulk-donation principal — host admission should have rejected this request");
-  return principal;
-}
+/** The acting host user. A 401 if absent: host admission runs before any route body. */
+export const getPrincipal = bulkDonationRuntime.getPrincipal;
 
-export function getOrg(): OrgIdentity {
+/** The current request's org id, the scope of every donation row. */
+export const getOrgId = bulkDonationRuntime.getOrgId;
+
+export const assertOrg = bulkDonationRuntime.assertOrg;
+
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
 }
 
@@ -64,10 +55,20 @@ export function getCatalogLookup(): CatalogLookup {
   return requireRuntime().catalog ?? INERT_CATALOG;
 }
 
+export function getInKindDirectory(): InKindDirectory {
+  return requireRuntime().inKind ?? INERT_IN_KIND;
+}
+
 export function getInventoryApply(): InventoryApply {
   return requireRuntime().inventory ?? INERT_INVENTORY;
 }
 
-export function getQbWriter(): DonationQbWriter {
-  return requireRuntime().qb ?? INERT_QB;
+/** The QuickBooks posting binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
+export function getQbPosting(): DonationQbPosting | undefined {
+  return requireRuntime().qb;
+}
+
+/** Deposits another lane holds; empty while that port is unbound. */
+export async function otherLaneClaimedDepositIds(orgId: string): Promise<string[]> {
+  return (await requireRuntime().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
 }

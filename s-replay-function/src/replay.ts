@@ -26,7 +26,7 @@ import {
   withSyncRun,
   reingestBulkExports,
   logger,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 
 /** Object types that carry a sync watermark (refunds ride within orders). */
 const WATERMARKED_TYPES: ObjectType[] = [ObjectType.ORDER, ObjectType.PAYOUT, ObjectType.BALANCE_TXN];

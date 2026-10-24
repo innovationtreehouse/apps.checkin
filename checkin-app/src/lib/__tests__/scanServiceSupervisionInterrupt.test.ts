@@ -12,7 +12,12 @@
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
-import { processCheckin, processCheckout } from "@/lib/scan-service";
+import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/attendance/scan";
+import { toResponse } from "@/app/api/scan/scanResponse";
+
+/** A scan service's outcome as the kiosk receives it. */
+const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
+
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/notifications", () => ({
@@ -69,7 +74,7 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
 
 async function checkout(householdIds: number[], warnedAt: Date | null = null, youthPresent = true) {
     const { db, update } = fakeDb(householdIds, warnedAt, youthPresent);
-    const res = await processCheckout(adult, DEPARTING_VISIT, "kiosk", db);
+    const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
     return { res, body: await res.json(), update, db };
 }
 
@@ -176,7 +181,7 @@ describe("a departure that removes no supervising adult", () => {
             openVisits([10, 20]).map(v => ({ ...v, id: v.id === DEPARTING_VISIT ? 999 : v.id })),
         );
 
-        const res = await processCheckout(adult, DEPARTING_VISIT, "kiosk", db);
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
 
         expect(res.status).toBe(200);
         expect((await res.json()).warning).toBeUndefined();
@@ -187,7 +192,7 @@ describe("a departure that removes no supervising adult", () => {
 describe("youth check-in below two supervising adults", () => {
     it("warns but is never blocked", async () => {
         const { db } = fakeDb([10]);
-        const res = await processCheckin(youth, "kiosk", db);
+        const res = await wire(processCheckin(youth, "kiosk", db));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -197,12 +202,12 @@ describe("youth check-in below two supervising adults", () => {
 
     it("says nothing when the room is two deep", async () => {
         const { db } = fakeDb([10, 20]);
-        expect((await (await processCheckin(youth, "kiosk", db)).json()).warning).toBeUndefined();
+        expect((await (await wire(processCheckin(youth, "kiosk", db))).json()).warning).toBeUndefined();
     });
 
     it("costs an adult check-in no supervision query at all", async () => {
         const { db } = fakeDb([10]);
-        await processCheckin(adult, "kiosk", db);
+        await wire(processCheckin(adult, "kiosk", db));
         expect(db.visit.findMany).not.toHaveBeenCalled();
     });
 });
@@ -217,7 +222,7 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
     it("departs instead of demanding a confirm nobody can give", async () => {
         const { db, update } = fakeDb([10, 20]);
 
-        const res = await processCheckout(adult, DEPARTING_VISIT, "kiosk", db, null, SCANNED_AT, "evt-1");
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db, SCANNED_AT, true));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -231,7 +236,7 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
     it("still departs when the room is left with NO supervising adult", async () => {
         const { db } = fakeDb([10]);
 
-        const res = await processCheckout(adult, DEPARTING_VISIT, "kiosk", db, null, SCANNED_AT, "evt-2");
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db, SCANNED_AT, true));
 
         expect(res.status).toBe(200);
         expect((await res.json()).type).toBe("checkout");
@@ -241,5 +246,33 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
         const { res, body } = await checkout([10, 20]);
         expect(res.status).toBe(400);
         expect(body.type).toBe("warning");
+    });
+});
+
+describe("a web (session) checkout skips the ladder (rule: badge scanner only)", () => {
+    // docs/rules/attendance-checkin.md, Supervision: whoever checks someone out
+    // from the web is not at the reader and cannot re-badge to confirm.
+    it("departs without a confirm when the room would drop below two deep", async () => {
+        const { db, update } = fakeDb([10, 20]);
+
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "session", db));
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body.type).toBe("checkout");
+        expect(body.warning).toBeUndefined();
+        expect(update).not.toHaveBeenCalled();
+        expect(db.visit.findMany).not.toHaveBeenCalled();
+    });
+
+    it("leaves the kiosk badge on the ladder", async () => {
+        const { db } = fakeDb([10, 20]);
+
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
+        const body = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(body.type).toBe("warning");
+        expect(body.error).toMatch(/within 15 seconds/);
     });
 });

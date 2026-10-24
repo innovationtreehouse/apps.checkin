@@ -13,7 +13,7 @@ import type {
   CatalogReferenceConflict,
   CompletedReceipt,
   ResolvedInventoryDelta,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 
 /** The acting host user. `id` is the host Person.id. */
 export interface WorkflowPrincipal {
@@ -150,10 +150,8 @@ export const inertCatalogEventSource: CatalogEventSource = {
 
 export interface WorkflowRuntimeConfig {
   auth: WorkflowAuth;
-  /** Accessor, not a frozen value: resolved per call. */
-  org: () => OrgIdentity;
-  /** Builds the host's HTTP error; the library throws what it returns. */
-  httpError: (status: number, message: string) => Error;
+  /** Async accessor resolved per call, never at boot: the host may read it from its own store. */
+  org: () => Promise<OrgIdentity>;
   catalogReader?: CatalogReader;
   catalogSubmissions?: CatalogSubmissions;
   expenseSink?: ExpenseSink;

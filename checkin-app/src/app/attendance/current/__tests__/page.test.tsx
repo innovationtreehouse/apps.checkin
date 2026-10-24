@@ -21,7 +21,8 @@ const attendanceData = {
     { id: 203, arrivedAt: "2026-07-01T14:10:00.000Z", participant: { id: 70, email: "stu@example.com", name: "Stu Student", isKeyholder: false, isSysadmin: false, dateOfBirth: "2012-01-01", householdId: 8 } },
   ],
   counts: { keyholders: 1, volunteers: 1, youth: 1, total: 3 },
-  safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+  safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+  building: { reachable: true, lastSeenAt: null },
 };
 
 const householdData = {
@@ -42,6 +43,12 @@ function mockRoutes(overrides: Record<string, unknown | (() => unknown)> = {}) {
 // A roster column is the element wrapping its header label and its card grid.
 function columnFor(label: string) {
   return screen.getByText(label).closest("div")!.parentElement!.parentElement!;
+}
+
+// A message as the kiosk wrapper sends it: from the parent window, on the page's own origin.
+// At the top level of jsdom, window.parent is window itself.
+function postFromWrapper(data: unknown) {
+  fireEvent(window, new MessageEvent("message", { data, origin: window.location.origin, source: window.parent }));
 }
 
 // The admin (id 1, sysadmin + keyholder) is not checked in and has a household,
@@ -212,7 +219,8 @@ describe("attendance/current page", () => {
       "/api/attendance": {
         access: "limited",
         counts: { keyholders: 0, volunteers: 0, students: 1, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         self: null,
         household: [
           { id: 301, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 8801, email: "kid@example.com", name: "Kid Eight", isKeyholder: false, isSysadmin: false, dateOfBirth: "2015-01-01", householdId: 8 } },
@@ -236,7 +244,8 @@ describe("attendance/current page", () => {
       "/api/attendance": {
         access: "limited",
         counts: { keyholders: 0, volunteers: 1, students: 0, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         self: { id: 401, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 42, email: "self@example.com", name: "Self Member", isKeyholder: false, isSysadmin: false, householdId: 8 } },
         household: [],
       },
@@ -326,7 +335,8 @@ describe("attendance/current page", () => {
           { id: 204, arrivedAt: "2026-07-01T14:15:00.000Z", participant: { id: 80, email: "dob@example.com", name: "No Dob", isKeyholder: false, isSysadmin: false, dateOfBirth: null, householdId: 11 } },
         ],
         counts: { keyholders: 0, volunteers: 0, youth: 1, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: true },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: true },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -336,6 +346,136 @@ describe("attendance/current page", () => {
     expect(within(columnFor("Volunteers/Adults")).queryByText("No Dob")).not.toBeInTheDocument();
   });
 
+  it("never shows the facility open on no-keyholder visits: closed banner + per-visit mark", async () => {
+    setAdminSession();
+    mockFetchJson({
+      "/api/household": householdData,
+      "/api/attendance": {
+        access: "full",
+        attendance: [
+          { id: 205, arrivedAt: "2026-07-01T07:00:00.000Z", noKeyholder: true, participant: { id: 60, email: "val@example.com", name: "Val Volunteer", isKeyholder: false, isSysadmin: false, isYouth: false, householdId: 7 } },
+        ],
+        counts: { keyholders: 0, volunteers: 1, youth: 0, total: 1 },
+        safety: { facilityOpen: false, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
+      },
+    });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("Facility closed — no keyholder present")).toBeInTheDocument();
+    expect(within(columnFor("Volunteers/Adults")).getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.getByText("No keyholder")).toBeInTheDocument();
+  });
+
+  describe("when the kiosk proxy answers 204", () => {
+    function mockResting(first: "roster" | "resting") {
+      let calls = 0;
+      global.fetch = jest.fn(async () => {
+        calls += 1;
+        const resting = first === "resting" || calls > 1;
+        return {
+          ok: true,
+          status: resting ? 204 : 200,
+          json: async () => (resting ? Promise.reject(new SyntaxError("no body")) : attendanceData),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+    }
+
+    it("says the kiosk is resting, not unavailable, when it has no roster yet", async () => {
+      setSearchParams("mode=kiosk");
+      mockResting("resting");
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+      expect(screen.queryByText("Attendance is unavailable — the roster could not be loaded.")).not.toBeInTheDocument();
+      expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
+    });
+
+    it("clears an earlier error so the resting message shows", async () => {
+      setSearchParams("mode=kiosk");
+      let calls = 0;
+      global.fetch = jest.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false, status: 502, json: async () => ({}) } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 204,
+          json: async () => Promise.reject(new SyntaxError("no body")),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+      renderWithProviders(<KioskDisplay />);
+      expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+
+      postFromWrapper("refresh-attendance");
+
+      expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+      expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+    });
+
+    it("keeps the last real roster instead of replacing it", async () => {
+      setSearchParams("mode=kiosk");
+      mockResting("roster");
+      renderWithProviders(<KioskDisplay />);
+      expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+
+      postFromWrapper("refresh-attendance");
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+
+      expect(screen.getByText("People Present: 3")).toBeInTheDocument();
+      expect(screen.queryByText("Kiosk resting — zzz. Badge in to wake it.")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("when the kiosk is unreachable", () => {
+    const unreachable = {
+      ...attendanceData,
+      safety: { facilityOpen: false, isLastKeyholder: true, isTwoDeepViolation: true },
+      building: { reachable: false, lastSeenAt: null },
+    };
+
+    it("says it can't confirm building state instead of stating occupancy, closed or two-deep", async () => {
+      setAdminSession();
+      mockRoutes({ "/api/attendance": unreachable });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Can't confirm building state")).toBeInTheDocument();
+      expect(screen.getByText("Checked in (unconfirmed): 3")).toBeInTheDocument();
+      expect(screen.queryByText("People Present: 3")).not.toBeInTheDocument();
+      expect(screen.queryByText("Critical Warning")).not.toBeInTheDocument();
+      expect(screen.queryByText("Facility closed — no keyholder present")).not.toBeInTheDocument();
+      expect(screen.queryByText("Supervision status unknown")).not.toBeInTheDocument();
+    });
+
+    it("reads a payload without the link as unreachable", async () => {
+      setAdminSession();
+      const { building: _omit, ...withoutLink } = attendanceData;
+      mockRoutes({ "/api/attendance": withoutLink });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Can't confirm building state")).toBeInTheDocument();
+    });
+
+    it("leaves the kiosk's own display as it is", async () => {
+      setSearchParams("mode=kiosk");
+      mockRoutes({ "/api/attendance": unreachable });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+      expect(screen.queryByText("Can't confirm building state")).not.toBeInTheDocument();
+      expect(screen.getByText("Critical Warning")).toBeInTheDocument();
+    });
+  });
+
+  it("reads safety without facilityOpen as unknown", async () => {
+    setAdminSession();
+    mockRoutes({ "/api/attendance": { ...attendanceData, safety: { isLastKeyholder: false, isTwoDeepViolation: false } } });
+    renderWithProviders(<KioskDisplay />);
+    expect(await screen.findByText("Supervision status unknown")).toBeInTheDocument();
+    expect(screen.queryByText("Facility closed — no keyholder present")).not.toBeInTheDocument();
+  });
+
   it("switches to kiosk mode automatically when the server flags a signed request", async () => {
     setAdminSession();
     mockFetchJson({
@@ -343,7 +483,8 @@ describe("attendance/current page", () => {
         access: "full",
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         signedRequest: true,
       },
     });
@@ -353,24 +494,43 @@ describe("attendance/current page", () => {
     expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
   });
 
-  it("applies a pushed attendance snapshot from a postMessage event", async () => {
+  const emptySnapshot = {
+    type: "refresh-attendance",
+    attendance: [],
+    counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
+    safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+    signedRequest: true,
+  };
+
+  it("applies a pushed attendance snapshot from the framing wrapper, without entering kiosk mode", async () => {
     setAdminSession();
     mockRoutes();
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("People Present: 3");
 
-    fireEvent(window, new MessageEvent("message", {
-      data: {
-        type: "refresh-attendance",
-        attendance: [],
-        counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
-        signedRequest: true,
-      },
-    }));
+    postFromWrapper(emptySnapshot);
 
-    expect(await screen.findByText("The facility is currently empty.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
+    // Off the kiosk a pushed roster carries no building link, so it reads as unconfirmed.
+    expect(await screen.findByText("No open visits recorded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check Me In" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["another origin", { origin: "https://evil.example", source: window }],
+    ["a window other than the parent", { origin: window.location.origin, source: null }],
+  ])("ignores a pushed snapshot from %s", async (_label, from) => {
+    setAdminSession();
+    const fetchMock = mockRoutes();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("People Present: 3");
+    const callsBefore = fetchMock.mock.calls.length;
+
+    fireEvent(window, new MessageEvent("message", { data: emptySnapshot, ...from }));
+    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance", ...from }));
+
+    expect(screen.getByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 
   it("re-fetches attendance on a string postMessage refresh signal", async () => {
@@ -380,11 +540,80 @@ describe("attendance/current page", () => {
     await screen.findByText("People Present: 3");
     const callsBefore = fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length;
 
-    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+    postFromWrapper("refresh-attendance");
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length).toBeGreaterThan(callsBefore),
     );
+  });
+
+  // First /api/attendance call answers the roster; later ones fail like the proxy's bodiless 502.
+  function rosterThenFailure() {
+    let calls = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/attendance")) {
+        calls += 1;
+        if (calls === 1) return { ok: true, json: async () => attendanceData } as Response;
+        return { ok: false, status: 502, json: async () => { throw new Error("no body"); } } as unknown as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+  }
+
+  it("kiosk keeps the last roster, marked not up to date, when a refresh fails", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    rosterThenFailure();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("Karen");
+
+    postFromWrapper("refresh-attendance");
+
+    expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
+    expect(screen.getByText("Karen")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+  });
+
+  it("kiosk marks the proxy's own view (offline or overnight) with the roster's time", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({ "/api/attendance": { ...attendanceData, kioskAsOf: "2026-07-01T14:30:00.000Z" } });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText(/^Not up to date — as of \S/)).toBeInTheDocument();
+    expect(screen.getByText("Karen")).toBeInTheDocument();
+  });
+
+  it("kiosk marks a view built without any roster as not up to date, with no time", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({ "/api/attendance": { ...attendanceData, kioskAsOf: null } });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("Not up to date")).toBeInTheDocument();
+  });
+
+  it("kiosk shows no stale marker on a fresh server roster", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes();
+    renderWithProviders(<KioskDisplay />);
+
+    await screen.findByText("Karen");
+    expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
+  });
+
+  it("off the kiosk a failed refresh still replaces the roster with the error", async () => {
+    setAdminSession();
+    rosterThenFailure();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("Karen Keyholder");
+
+    postFromWrapper("refresh-attendance");
+
+    expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+    expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
   });
 
   it("includes kiosk-signature headers on both the initial load and a post-action refresh", async () => {
@@ -576,7 +805,8 @@ describe("attendance/current page", () => {
           },
         ],
         counts: { keyholders: 1, volunteers: 2, students: 0, total: 3 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -641,7 +871,8 @@ describe("attendance/current page", () => {
           },
         ],
         counts: { keyholders: 1, volunteers: 1, students: 0, total: 2 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -677,7 +908,8 @@ describe("attendance/current page", () => {
               { id: 999, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 1, email: "admin@example.com", name: "Admin Self", isKeyholder: true, isSysadmin: true, dateOfBirth: "1980-01-01", householdId: 5 } },
             ],
             counts: { keyholders: 1, volunteers: 0, students: 0, total: 1 },
-            safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+            safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+            building: { reachable: true, lastSeenAt: null },
           }),
         } as Response;
       }
@@ -701,7 +933,6 @@ describe("attendance/current page", () => {
   it("does not treat a roster without safety flags as two-deep compliant (B6)", async () => {
     setAdminSession();
     const { safety: _omit, ...withoutSafety } = attendanceData;
-    void _omit;
     mockFetchJson({
       "/api/household": householdData,
       "/api/attendance": withoutSafety,
@@ -742,7 +973,7 @@ describe("attendance/current page", () => {
     setAdminSession();
     mockFetchJson({
       "/api/household": householdData,
-      "/api/attendance": { ...attendanceData, safety: { isLastKeyholder: true, isTwoDeepViolation: true } },
+      "/api/attendance": { ...attendanceData, safety: { facilityOpen: true, isLastKeyholder: true, isTwoDeepViolation: true } },
     });
     renderWithProviders(<KioskDisplay />);
 

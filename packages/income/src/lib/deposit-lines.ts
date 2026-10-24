@@ -18,8 +18,8 @@ export interface DepositLineInput {
   payoutNetCents: number;
   txns: MirrorBalanceTxn[];
   orderLines: MirrorOrderLine[];
-  /** variantId → budget-owner bucket id. Unmapped variants book at organization level. */
-  categories: ReadonlyMap<string, number>;
+  /** variantId → budget-owner bucket id. Unmapped variants and null buckets book at organization level. */
+  categories: ReadonlyMap<string, number | null>;
 }
 
 const lineAmount = (l: MirrorOrderLine) => l.priceCents * l.quantity - l.discountCents;

@@ -82,7 +82,7 @@ describe('notifyNewProgramAnnounced opt-in filtering', () => {
         mockSendEmail.mockResolvedValue(true);
     });
 
-    const program = { name: 'Robotics', startAt: null, endAt: new Date('2026-12-01') };
+    const program = { name: 'Robotics', endAt: new Date('2026-12-01'), appliesToYear: null };
 
     it('emails only prefs-passing users, defaulting ON, when coverage passes for all', async () => {
         mockFindMany.mockResolvedValue([

@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { buildingLink } from "@/lib/kioskSeen";
 
 // Front-desk contact sheet. Merged-away people are tombstones, so both the
 // household filter and the member list count live people only — a household
@@ -70,7 +71,7 @@ export const GET = withAuth(
                 };
             });
 
-            return NextResponse.json({ households: formattedHouseholds });
+            return NextResponse.json({ households: formattedHouseholds, building: buildingLink() });
         } catch (error) {
             await logBackendError(error, "GET /api/safety/emergency-contacts");
             return apiError("Internal Server Error fetching emergency contacts.", 500);

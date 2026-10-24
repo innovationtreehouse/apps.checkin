@@ -1,6 +1,6 @@
 /** Push and settle: S2 / X9 money side, S3 inventory side, failure semantics, retry. */
 import { beforeEach, expect, it } from "vitest";
-import { CompletedReceiptSchema, ResolvedInventoryDeltaSchema } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { executePushAndSettle } from "../../lib/apply-receipt";
 import { receiptService } from "../../services/receiptService";
@@ -88,7 +88,7 @@ describeDb("failure, retry, inert adapters", () => {
     const r = await makeReceipt({ state: "applying" });
     await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
     const result = await executePushAndSettle(r.id, r, 1);
-    expect(result.state).toBe("apply_failed");
+    expect(result?.state).toBe("apply_failed");
     expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).state).toBe("apply_failed");
   });
 
@@ -115,6 +115,6 @@ describeDb("failure, retry, inert adapters", () => {
 
   it("a corrupt stored receipt settles apply_failed", async () => {
     const r = await db.receivedReceipt.create({ data: { orgId: "00000000-0000-0000-0000-000000000001", receiptId: "corrupt", state: "applying", receiptJson: "{" } });
-    expect((await executePushAndSettle(r.id, r, 1)).state).toBe("apply_failed");
+    expect((await executePushAndSettle(r.id, r, 1))?.state).toBe("apply_failed");
   });
 });

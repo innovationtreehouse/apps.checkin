@@ -14,7 +14,7 @@
  * orderedView is walked top-to-bottom; the first role the caller satisfies
  * decides the view. Order matters — treat reorders as policy changes.
  *
- * Each vendored library (#1286 §5) keeps its route entries in its own
+ * Each vendored library keeps its route entries in its own
  * `registry/<lib>.ts` module, registered by the side-effect imports below.
  * Importing this file registers the whole policy.
  */
@@ -26,6 +26,8 @@ import './registry/income';
 import './registry/donation';
 import './registry/workflow';
 import './registry/receipt';
+import './registry/budgetOwner';
+import './registry/shopifyRead';
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
@@ -50,8 +52,8 @@ defineRoute({
 // may not act for; the two per-row tokens are the field backstop for the two
 // legitimate subjects:
 //   their_own      — Visit.personId === caller (a member editing their own row)
-//   led_households — Visit.personId is in a household the caller LEADS (AT3,
-//                    #1254: the lead is the responsible adult for members who
+//   led_households — Visit.personId is in a household the caller LEADS (AT3:
+//                    the lead is the responsible adult for members who
 //                    cannot self-serve). Lead-only, not household-wide: a
 //                    non-lead sibling holds neither token and sees nothing.
 // Both are needed — under led_households a plain member editing their own visit
@@ -77,24 +79,24 @@ defineRoute({
     orderedView: [],
 });
 
-// Staff insert of a past visit for ANOTHER person (AT3, #1254) — the walk-in
+// Staff insert of a past visit for ANOTHER person (AT3) — the walk-in
 // neither the kiosk (live only, personId from the badge) nor the event roster
 // mark (program-scoped, event window) can record. Unlike the self-service
 // routes above, the target personId comes from the REQUEST BODY, so the role
 // gate is the entire subject boundary — there is no 'their_own' leg to fall
 // back on and no scope resolver in play. Sysadmin and board only: the same set
 // the sibling GET/PATCH/DELETE on /api/facility/visits carry and the same set
-// facility-ops/visits gates the page on, which must stay equal (their drifting
-// apart was AT13/#1259). Widening to isOperations was answered NO: #1633 puts
-// operations' reach into attendance at aggregate only (the trends, printing ID
-// badges), so one person's visit record stays outside it. #1476, closed.
+// facility-ops/visits gates the page on, which must stay equal (AT13). Not
+// isOperations: operations' reach into attendance is aggregate only (the
+// trends, printing ID badges; docs/rules/attendance-checkin.md), so one
+// person's visit record stays outside it.
 //
 // Its own endpoint rather than a POST on /api/facility/visits: adding a verb to
 // an existing legacy route file cannot satisfy this registry's own lints in any
 // PR ordering — registry-first trips `orphan-registry` (the file exports no such
 // verb yet), route-first trips `new-route-old-authz`, and shipping both together
 // trips boundary isolation. A new path has no route file, which is exactly the
-// register-first state `orphan-registry` warns for. See #1491.
+// register-first state `orphan-registry` warns for.
 //
 // The response echoes the single Visit just created, so everyones:internal
 // covers the tombstone columns the model carries (deletedAt/deletedById — both
@@ -111,8 +113,8 @@ defineRoute({
     ],
 });
 
-// Board/sysadmin review of recent attendance-correction activity (AT12,
-// #1258). The handler does not query Visit directly — it reads AuditLog rows
+// Board/sysadmin review of recent attendance-correction activity (AT12).
+// The handler does not query Visit directly — it reads AuditLog rows
 // where tableName === 'Visit' and SYNTHESIZES a Visit view per row from the
 // audit blob (arrivedAt/departedAt/arrivedVia/departedVia extracted from
 // newData). stripValue (stripper.ts) copies any field present on an object
@@ -137,8 +139,7 @@ defineRoute({
 // strips before the envelope wraps), so the handler caps rows and over-fetches
 // by one to signal "more" instead.
 //
-// This entry also settles the open question #1497 left to the route PR: how a
-// before/after pair crosses the boundary. A separate bag key is not expressible
+// How a before/after pair crosses the boundary: a separate bag key is not expressible
 // — stripBag drops any top-level key that is not a model name, so there can be
 // exactly one Visit key — and a before row and its after row share a Visit.id,
 // so no field distinguishes them. Array position is the only discriminator, and
@@ -146,7 +147,7 @@ defineRoute({
 //
 // Served by src/app/api/facility/corrections/route.ts. Its flagged-only default
 // view is complete only once every Visit audit write persists
-// newData.significance (#1523, PR #1558) — an unscored write never surfaces.
+// newData.significance — an unscored write never surfaces.
 defineRoute({
     endpoint: 'GET /api/facility/corrections',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -178,16 +179,10 @@ defineRoute({
         // rows, so the pii grant reaches the two adults a lead would call and no
         // one else — siblings and other household members hold nothing.
         //
-        // FINDING for the CODEOWNERS reviewer: this widens live traffic. The route
-        // already returns full-row Person selects outside the participant bag —
-        // `volunteers.include.person` and `leadMentor` — so a lead/core-vol now
-        // receives, for any program volunteer or lead mentor who is also a household
-        // lead of an in-scope household (a parent volunteer, the common case):
-        // email/phone from this pii grant, plus dateOfBirth/allergies/
-        // notificationSettings/emailSuppressed from the pre-existing :personal token,
-        // which now resolves on those rows too. Those rows held `everyones` only
-        // before. Narrowing the two selects to what the roster renders is a route
-        // change, not a boundary one.
+        // The route's volunteer and lead-mentor Person selects (id, name, email)
+        // carry neither householdId nor isHouseholdLead, so this scope fails closed
+        // on those rows. Adding either column to those selects widens what a
+        // lead/core-vol receives for a parent volunteer.
         //
         // Still out of reach: the family's home address (Household.line1..postalCode
         // are 'internal', above every token here) and Household.intakeNotes ('pii',
@@ -244,28 +239,22 @@ defineRoute({
     ],
 });
 
-// Staff directory SEARCH for un-enrolled participants to add to a program. The
-// rows are NOT in the program (by definition), so the per-row
-// their_program_participants scope grants nothing here — admission is the real
-// boundary: 'program-lead-mentor' (resolveAccess also admits sysadmin/board)
-// restricts callers to a lead of THIS program. Once admitted, staff see the
-// directory's contact band (name[public]/email[pii]); dateOfBirth is 'personal'
-// (the strict tier), so it reaches only sysadmin/board (everyones:personal) —
-// a program lead may NOT enumerate the whole directory's DOBs. The UI degrades
-// cleanly: the age-warning badge in the enroll picker needs dob, and only
-// sysadmin/board can enroll anyway. FINDING for the CODEOWNERS reviewer:
-// 'everyones:pii' here is a deliberate global-directory contact grant, not a
-// per-program scope.
+// Staff directory SEARCH for un-enrolled participants to add to a program.
+// Admission ('program-lead-mentor'; resolveAccess also admits sysadmin/board)
+// is the real boundary. The search returns names only (owner ruling,
+// docs/rules/programs.md) as EligibleCandidate rows: id, name and a computed
+// age-fit label, all public. Person is not in the bag, so no email or date of
+// birth can leave even if the query over-selects.
 defineRoute({
     endpoint: 'GET /api/programs/[id]/eligible-participants',
     authorize: 'program-lead-mentor',
     envelope: 'members',
-    // Bag: { Person }.
-    returns: ['Person'],
+    // Bag: { EligibleCandidate }.
+    returns: ['EligibleCandidate'],
     orderedView: [
-        ['isSysadmin',        ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['programLeadMentor', ['everyones:pii', 'member', 'public']],
+        ['isSysadmin',        ['public']],
+        ['isBoardMember',     ['public']],
+        ['programLeadMentor', ['public']],
     ],
 });
 
@@ -285,10 +274,6 @@ defineRoute({
 // The route's Prisma select stays tight (id/name/email/phone) as defense in
 // depth: dateOfBirth and googleId are 'personal'/'pii' on Person and must
 // never enter this response even for sysadmin.
-//
-// Landed registry-first, ahead of the route's handler() migration, per the
-// AGENTS.md boundary-isolation rule: an unused defineRoute is inert, so the
-// grant is reviewable on its own before anything serves it.
 defineRoute({
     endpoint: 'GET /api/safety/board-contacts',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember', 'isKeyholder'] },
@@ -302,7 +287,7 @@ defineRoute({
     ],
 });
 
-// Board opens an individual membership agreement for one adult child (#1224).
+// Board opens an individual membership agreement for one adult child.
 // The response echoes only the obligation it just opened — the route selects
 // id/kind/status and nothing else, so no person, household or Zoho field is in
 // the bag to begin with. `status` is the sole internal-tier field, hence a grant
@@ -317,6 +302,21 @@ defineRoute({
     returns: ['OrgMembershipProcess'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Board records a membership refund already made in Shopify. Board-only: a refund
+// is a money decision the policy gives the board, and sysadmin has no counterpart
+// there. The response echoes the application's id and new status and nothing
+// else, so the grant stops at internal with no pii/personal band.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/applications/refund',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'process',
+    // Bag: { OrgMembershipProcess }, no relations.
+    returns: ['OrgMembershipProcess'],
+    orderedView: [
         ['isBoardMember', ['everyones:internal', 'public']],
     ],
 });
@@ -351,9 +351,8 @@ defineRoute({
 // application is observable in the response even though the column itself
 // never reaches the wire.
 //
-// Landed registry-first, ahead of the route in #1387, per the AGENTS.md
-// boundary-isolation rule: an unused defineRoute is inert, so the grant is
-// reviewable on its own before anything serves it.
+// Registered ahead of its handler() conversion; inert until the route
+// serves it.
 defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -368,27 +367,22 @@ defineRoute({
     ],
 });
 
-// Sysadmin-only cleanup path for a BackgroundCheckAttestation the participant-
-// merge route refuses to carry forward: its collision check ("Both attested
-// the same background check", merge/route.ts) means the same human reviewed
-// under two Person identities, and nothing removes the duplicate row today.
-// Sysadmin-only, NOT board — attestations are review artifacts, not a
-// membership decision (#1456 Decision 3). No bag: the response is
-// { success: true }, no model data.
-//
-// Landed registry-first, ahead of the route, per the AGENTS.md boundary-
-// isolation rule: an unused defineRoute is inert, so the grant is reviewable
-// on its own before anything serves it.
+// Board-only cleanup path for a BackgroundCheckAttestation the participant-
+// merge refuses to carry forward: its collision check ("Both attested the
+// same background check") means the same human reviewed
+// under two Person identities. Board-only, NOT sysadmin — removing a review
+// is a membership decision (docs/rules/membership.md). No bag: the response
+// is { success: true }, no model data.
 defineRoute({
     endpoint: 'DELETE /api/membership-ops/bg-attestations/[id]',
-    authorize: { anyRole: ['isSysadmin'] },
+    authorize: { anyRole: ['isBoardMember'] },
     envelope: null,
     orderedView: [
-        ['isSysadmin', ['public']],
+        ['isBoardMember', ['public']],
     ],
 });
 
-// Tombstone census (#1456 §2a). Lists merged-away Person rows and, per tombstone,
+// Tombstone census. Lists merged-away Person rows and, per tombstone,
 // the residue still parked on it — the surface a sysadmin/board uses to triage the
 // existing stock before the LIVE_PERSON removal deletes those rows. The bag is
 // { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
@@ -401,11 +395,8 @@ defineRoute({
 // are internal-tier, and `_count` is gated per-relation on relationVisible (any
 // field of the target model visible under these tokens) — without everyones:internal
 // those two counts silently drop and PersonMerge always reads empty, understating
-// the census (#1823 review: every tombstone read "no archive" and the no-pathway
-// total under-reported).
-//
-// Landed registry-first, ahead of the route, per the AGENTS.md boundary-isolation
-// rule: an unused defineRoute is inert, so the grant is reviewable on its own.
+// the census (every tombstone reads "no archive" and the no-pathway total
+// under-reports).
 defineRoute({
     endpoint: 'GET /api/membership-ops/participants/tombstones',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -417,6 +408,16 @@ defineRoute({
         ['isSysadmin',    ['everyones:internal', 'everyones:pii', 'public']],
         ['isBoardMember', ['everyones:internal', 'everyones:pii', 'public']],
     ],
+});
+
+// A reviewer withdraws their own approval while the review still waits on its
+// second reviewer; the service enforces ownership, APPROVE-only and phase. Same
+// admission band as the queue. No bag: the response is {}, no model data.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/undo',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
 });
 
 // Background-check reviewers' queue. Reviewers must see applicant parents' names
@@ -503,17 +504,17 @@ defineRoute({
 // Board's payment-plan approval queue. Returns pending ProgramParticipant rows
 // with the full participant + program nested, plus the participant's
 // household/orgMembership (so the board can see CURRENT membership while
-// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/sysadmin
-// only, and they hold everyones:* so they see every field — the win is the
-// declared policy: any role later added to this view is field-stripped
+// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
+// only, no sysadmin, and they hold everyones:* so they see every field — the win
+// is the declared policy: any role later added to this view is field-stripped
 // automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
 });
@@ -564,24 +565,48 @@ defineRoute({
 
 // Board's membership payment-plan approval queue. Returns PENDING_PAYMENT
 // OrgMembershipProcess rows the household asked to pay by plan, with the
-// membership + household nested. Board/sysadmin only, and they hold everyones:*
-// so they see every field — the win is the declared policy: any role later added
-// to this view is field-stripped automatically.
+// membership + household nested. Board/finance only, no sysadmin, and they hold
+// everyones:* so they see every field — the win is the declared policy: any role
+// later added to this view is field-stripped automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+    ],
+});
+
+// Board's unconfirmed Shopify stock screen: programs whose stock write could not
+// be confirmed (lib/shopify/stock.ts parks it in Program.shopifyStockParked;
+// legacy rows sit in shopifyStockUnconfirmed), and the per-program settle action
+// ("Shopify has it" / "doesn't have it"). Board only: no sysadmin, no finance.
+// Rows are computed, all `internal`.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/shopify-stock',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockRow'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+defineRoute({
+    endpoint: 'POST /api/finance-ops/shopify-stock/[id]',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockSettlement'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
     ],
 });
 
 // Shop member roster (for certifying tools). Admins/board see the full row incl.
 // email (pii). Certifiers only need to NAME the member they certify, so they get
-// name (public) + member-tier — NOT everyones:pii. This deliberately TIGHTENS the
-// pre-migration behavior, which leaked every member's email to any certifier.
+// name (public) + member-tier — NOT everyones:pii, so no certifier receives
+// another member's email.
 defineRoute({
     endpoint: 'GET /api/shop/org-members',
     authorize: 'certifier',
@@ -618,8 +643,7 @@ defineRoute({
     ],
 });
 
-// Standalone (one-time) events list — admin surface. Registered ahead of its
-// handler() conversion (inert until then; AGENTS.md boundary-isolation rule).
+// Standalone (one-time) events list — admin surface.
 // The handler selects only public-tier Event columns (id/name/startAt/endAt/
 // description). Declared public-only ON PURPOSE: the response is exact, not
 // aspirational. If the select later grows to an internal field
@@ -638,8 +662,7 @@ defineRoute({
     ],
 });
 
-// Facility visit log (latest 50, all people) — admin surface. Registered ahead
-// of its handler() conversion (inert until then). Nested person carries email
+// Facility visit log (latest 50, all people) — admin surface. Nested person carries email
 // (pii) + role flags; the admin everyones band covers them, and the near-raw
 // response makes the declared view exact.
 defineRoute({
@@ -654,8 +677,7 @@ defineRoute({
     ],
 });
 
-// Raw badge scan log (latest 200) — admin surface, registered ahead of its
-// handler() conversion (inert until then). RawBadgeLog rows are
+// Raw badge scan log (latest 200) — admin surface. RawBadgeLog rows are
 // internal/personal tier; nested person name/email for display. Near-raw
 // response, so the declared everyones band is exact.
 defineRoute({
@@ -670,8 +692,7 @@ defineRoute({
     ],
 });
 
-// Server error log (latest 100) — admin surface, all internal tier. Registered
-// ahead of its handler() conversion (inert until then).
+// Server error log (latest 100) — admin surface, all internal tier.
 defineRoute({
     endpoint: 'GET /api/system-status/errors',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -684,8 +705,7 @@ defineRoute({
 });
 
 // Integration error log (latest 200) — admin surface, all internal tier.
-// Registered ahead of its handler() conversion (inert until then). The response
-// key is `errors` for back-compat with the existing UI.
+// The response key is `errors` for back-compat with the existing UI.
 defineRoute({
     endpoint: 'GET /api/system-status/links',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -700,7 +720,7 @@ defineRoute({
 // Parked kiosk scans awaiting review (docs/rules/attendance-checkin.md, kiosk
 // resilience) — the
 // RawBadgeLog rows a replay parked instead of toggling (reviewReason set,
-// reviewedAt still null). Landed registry-first, ahead of the route.
+// reviewedAt still null).
 //
 // Same everyones band as the sibling GET /api/facility/badges, MINUS pii:
 // the panel names the person and nothing more, so the route selects person
@@ -712,7 +732,7 @@ defineRoute({
 // reviewReason, clientEventId, personId, and the two new reviewedAt/reviewedBy
 // columns.
 //
-// Q15 admits keyholders. isOperations stays out: #1633 / the attendance rule
+// Keyholders are admitted. isOperations stays out: the attendance rule
 // puts operations at aggregate only — they do not read one person's raw
 // badge events. The bag is already minimized, so the keyholder grant matches
 // board's band rather than growing it.
@@ -733,12 +753,22 @@ defineRoute({
 // bag: the response is `{}`, so the grant is inert by construction and the
 // entry is an admission gate only (same shape as DELETE
 // /api/attendance/manual/[id]). `[id]` is a RawBadgeLog id. Deliberately NOT a
-// resolver: minting a Visit from a parked scan inherits the open §5.26/B4
-// staleness question, so the panel's other action is a deep link to the manual-
-// visit tool, which carries its own registered grant. Landed registry-first.
+// resolver: minting a Visit from a parked scan raises an open staleness
+// question, so the panel's other action is a deep link to the manual-visit
+// tool, which carries its own registered grant.
 defineRoute({
     endpoint: 'POST /api/system-status/unsynced-scans/[id]',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember', 'isKeyholder'] },
+    envelope: null,
+    orderedView: [],
+});
+
+// Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
+// write, so it answers only to its own secret, never the shared CRON_SECRET.
+// Admission gate only: the response carries no rows.
+defineRoute({
+    endpoint: 'GET /api/cron/qbo-posting',
+    authorize: { cronSecret: 'qbo-posting' },
     envelope: null,
     orderedView: [],
 });
@@ -747,7 +777,7 @@ defineRoute({
 // lives on the task, so the bag is a synthesized SystemMetricLog (metric
 // `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
 // in seconds). Empty array means never seen since this task started (or
-// overnight after scale-to-zero). Landed registry-first, ahead of the route.
+// overnight after scale-to-zero).
 defineRoute({
     endpoint: 'GET /api/system-status/kiosk-heartbeat',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -760,8 +790,7 @@ defineRoute({
 });
 
 // Volunteer designations (dues-discount allowlist; email is pii) — admin
-// surface, registered ahead of its handler() conversion (inert until then). GET
-// is a pure findMany (create/delete live on other HTTP methods).
+// surface. GET is a pure findMany (create/delete live on other HTTP methods).
 defineRoute({
     endpoint: 'GET /api/settings/membership/volunteer-designations',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -773,12 +802,10 @@ defineRoute({
     ],
 });
 
-// The caller's own visit history (±7-day window). Registered ahead of its
-// handler() conversion (inert until then). their_own:personal delivers
+// The caller's own visit history (±7-day window). their_own:personal delivers
 // arrivedAt/departedAt on the caller's rows — the Visit binding keys on
-// row.personId, so the conversion PR's select MUST include personId or the
-// scope fails closed and the timestamps strip (#1137 finding 1). Nested event
-// name is public.
+// row.personId, so the route's select MUST include personId or the scope fails
+// closed and the timestamps strip. Nested event name is public.
 defineRoute({
     endpoint: 'GET /api/profile/visits',
     authorize: 'authenticated',
@@ -834,10 +861,68 @@ defineRoute({
 });
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
+// A surface's tiers are enforced only for a caller that goes through
+// outboundCall(), and an entry's comment says when that is so. Every other
+// entry is an inventory, not a guarantee: its tiers state what the code sends
+// today, and changing them changes nothing on the wire.
+
+// src/lib/shopify/ surfaces → <SHOPIFY_STORE_DOMAIN> Admin API. Every caller of
+// these write surfaces goes through outboundCall(); each entry names its callers.
 
 defineOutbound({
     surface: 'shopify.product.create',
-    // Program name + prices + maxParticipants — all 'public' tier.
+    // src/lib/shopify/products.ts: the public and reserved-seat product creates.
+    // Program name, nonOrgMemberPriceCents and maxParticipants ('public'), plus a
+    // handle built from the program's id and name.
+    // Enforced: createShopifySingleVariantProgram and createClaimantProduct
+    // (src/lib/shopify/products.ts) build the product request inside outboundCall(),
+    // so the Program fields are stripped to these tiers.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.product.update',
+    // src/lib/shopify/products.ts (unlist the reserved-seat product) and
+    // src/lib/shopify/stock.ts (variant price sync, product off sale). Program
+    // shopifyProductId / claimantShopifyProductId, shopifyVariantId /
+    // claimantShopifyVariantId and nonOrgMemberPriceCents ('public').
+    // Enforced: createClaimantProduct (src/lib/shopify/products.ts) and
+    // syncProgramPrice and setProgramProductOffSale (src/lib/shopify/stock.ts)
+    // build their requests inside outboundCall(), so the Program fields are
+    // stripped to these tiers.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.inventory.activate',
+    // src/lib/shopify/stock.ts inventoryActivate. Program id ('public') inside the
+    // idempotency key, plus Shopify's own inventory item and location ids.
+    // Enforced: drainStock (src/lib/shopify/stock.ts) builds the activate request
+    // inside outboundCall(), so the Program id is stripped to these tiers.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'shopify.inventory.adjust',
+    // src/lib/shopify/stock.ts inventoryAdjustQuantities. The bag carries the whole
+    // Program.shopifyStockPendingWrite ('internal', a JSON string). The request takes
+    // from it the idempotency key (program id and stock reason), the delta (a seat
+    // count taken from shopifyStockCarry) and Shopify's inventory item and location
+    // ids; its reason, owedPart and sentAt are not sent.
+    // Enforced: sendStockWrite (src/lib/shopify/stock.ts) builds the adjust request
+    // inside outboundCall() from the stripped pending write, so it is stripped to
+    // these tiers.
+    tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'shopify.discount.create',
+    // src/lib/shopify/discounts.ts discountCodeBasicCreate. Program id and checkout
+    // variant id, Household id ('public') in the code's prefix, and the member
+    // discount (the gap between the two 'public' prices).
+    // Enforced: mintMemberDiscountCode (src/lib/shopify/discounts.ts) builds the
+    // discount request inside outboundCall(), so the Program and Household fields
+    // are stripped to these tiers.
     tiers: ['public'],
 });
 
@@ -845,4 +930,78 @@ defineOutbound({
     surface: 'email.admin-notify',
     // Email address is 'pii' tier; the address is the entire payload here.
     tiers: ['public', 'pii'],
+});
+
+// packages/* and *-function surfaces. These callers use fetch or an SDK
+// directly, not outboundCall(), except where an entry says otherwise.
+// check-route-coverage confines each surface to the files PACKAGE_EGRESS_FILES
+// (egressAllowlist.ts) maps to it, and only for a host it can see in a literal
+// or SDK import.
+
+defineOutbound({
+    surface: 'quickbooks.query',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Query literals: date windows, QBO ids, and account/class names ('public').
+    // Vendor/Customer name lookups are quickbooks.vendor. Never an email, address or phone.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.create',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Purchase/Bill/Deposit only: amounts, dates, account/class/vendor ids, line
+    // descriptions and memos ('internal'; memos may name a program participant,
+    // accepted by the owner).
+    // Enforced for one caller: packages/expense's poster builds its Purchase/Bill
+    // inside outboundCall() (the expense `outbound` port, bound in
+    // lib/expense/configure.ts), so its rows are stripped to these tiers. The
+    // income and bulk-donation (Benevity) posters still call directly; for them
+    // this entry is inventory.
+    tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.vendor',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Vendor create and Vendor/Customer lookup carry the vendor display name only
+    // ('public'). Never an email, address or phone.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.oauth',
+    // packages/quickbooks/src/oauth.ts → oauth.platform.intuit.com. The app's client
+    // credentials, an authorization code or a refresh token; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'shopify.admin-read',
+    // packages/s-ingest-core/src/config.ts builds the Admin GraphQL endpoint that
+    // s-read-function calls. Read-only bulk/order queries and cursors; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'shopify.oauth',
+    // s-read-function/src/shopify/token.ts → <shop>.myshopify.com/admin/oauth/access_token.
+    // The app's client credentials for a client-credentials grant; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'anthropic.receipt-ocr',
+    // packages/receipt/src/lib/ocr.ts → api.anthropic.com via @anthropic-ai/sdk.
+    // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
+    // purchaser's name, address and partial card number. Bytes only, never a URL.
+    tiers: ['pii'],
+});
+
+defineOutbound({
+    surface: 'gmail.read',
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com. Read-only by intent:
+    // the token comes from a refresher outside this repo and its scope is not checked.
+    // List/get requests only: a date-window query string and message/attachment ids;
+    // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
 });

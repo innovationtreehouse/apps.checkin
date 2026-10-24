@@ -39,7 +39,7 @@ export function fileAccessTokenSource(path: string): AccessTokenSource {
   return {
     async current() {
       let tokens = loadTokens(path);
-      if (!tokens) throw new Error(`No QBO tokens at ${path}; run \`npm run consent -w @inventory/quickbooks\` first`);
+      if (!tokens) throw new Error(`No QBO tokens at ${path}; run \`npm run consent -w @checkin/quickbooks\` first`);
       if (isExpired(tokens)) {
         tokens = await refreshTokens(oauthConfigFromEnv(), tokens);
         saveTokens(path, tokens);

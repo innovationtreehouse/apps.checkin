@@ -5,6 +5,8 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, getPrimaryValidContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
+import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Admin edit of a household's own info (name, address, emergency contact).
@@ -34,6 +36,8 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const body = await request.json();
+        // An edit modal loaded before the rename deploy still sends isVolunteer; drop the fallback one release later.
+        const isVolunteerFamily: unknown = body.isVolunteerFamily ?? body.isVolunteer;
         const data: { name?: string } & Partial<StructuredAddress> = {};
         if (body.name !== undefined) {
             if (typeof body.name !== "string" || !body.name.trim()) {
@@ -51,7 +55,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         // unchanged field re-sent by the form never writes a spurious audit row.
         // Both "member since" and the volunteer-only flag live on the household's
         // Membership (1:1); fetch it once if either is being edited.
-        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof body.isVolunteer === "boolean";
+        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof isVolunteerFamily === "boolean";
         const membership = editsMembership ? await prisma.orgMembership.findUnique({ where: { householdId: id } }) : null;
 
         let memberSinceChange: { orgMembershipId: number; oldValue: Date; newValue: Date } | null = null;
@@ -73,17 +77,25 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         // Volunteer-only household: reduced-fee volunteer family, flagged on the membership.
-        let isVolunteerChange: { orgMembershipId: number; oldValue: boolean; newValue: boolean } | null = null;
-        if (typeof body.isVolunteer === "boolean") {
+        let isVolunteerFamilyChange: { orgMembershipId: number; oldValue: boolean; newValue: boolean } | null = null;
+        if (typeof isVolunteerFamily === "boolean") {
             if (!membership) {
                 return apiError("Household has no membership record", 400);
             }
-            if (membership.isVolunteer !== body.isVolunteer) {
-                isVolunteerChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteer, newValue: body.isVolunteer };
+            if (membership.isVolunteerFamily !== isVolunteerFamily) {
+                isVolunteerFamilyChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteerFamily, newValue: isVolunteerFamily };
             }
         }
 
-        if (!editsHousehold && !memberSinceChange && !isVolunteerChange) {
+        // The volunteer flag discounts the membership fee, so no actor may set it on their own household.
+        if (isVolunteerFamilyChange && await refuseSelfGrant(prisma, auth.user.id, { householdId: id }, {
+            table: "OrgMembership",
+            attempted: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
+        })) {
+            return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+        }
+
+        if (!editsHousehold && !memberSinceChange && !isVolunteerFamilyChange) {
             return apiError("No fields to update provided", 400);
         }
 
@@ -138,25 +150,27 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             });
         }
 
-        if (isVolunteerChange) {
-            await prisma.orgMembership.update({
-                where: { id: isVolunteerChange.orgMembershipId },
-                data: { isVolunteer: isVolunteerChange.newValue },
-            });
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "OrgMembership",
-                    affectedEntityId: isVolunteerChange.orgMembershipId,
-                    secondaryAffectedEntity: id,
-                    oldData: { isVolunteer: isVolunteerChange.oldValue },
-                    newData: { isVolunteer: isVolunteerChange.newValue },
-                }
-            });
+        if (isVolunteerFamilyChange) {
+            await prisma.$transaction([
+                prisma.orgMembership.update({
+                    where: { id: isVolunteerFamilyChange.orgMembershipId },
+                    data: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
+                }),
+                prisma.auditLog.create({
+                    data: {
+                        actorId: auth.user.id,
+                        action: "EDIT",
+                        tableName: "OrgMembership",
+                        affectedEntityId: isVolunteerFamilyChange.orgMembershipId,
+                        secondaryAffectedEntity: id,
+                        oldData: { isVolunteerFamily: isVolunteerFamilyChange.oldValue },
+                        newData: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
+                    }
+                }),
+            ]);
         }
 
-        return NextResponse.json({ household: updated });
+        return NextResponse.json({ household: withIntakeNotesFor(updated, auth.user) });
     } catch (error) {
         if (error instanceof EmergencyContactError) {
             return apiError(error.message, 400);

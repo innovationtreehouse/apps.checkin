@@ -14,11 +14,15 @@ import { isProgramCheckoutBroken } from '@/lib/programCheckout';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ProgramYearField, formYearsTouched, useMembershipYearBoundary } from '../../ProgramYearField';
+import { membershipYearLabel } from '@/lib/programYear';
 export type ProgramDetail = {
   id: number;
   name: string;
-  startAt: string | null;
-  endAt: string | null;
+  startAt: string;
+  endAt: string;
+  appliesToYear: number | null;
+  offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;
   enrollmentStatus: string;
@@ -35,7 +39,6 @@ export type ProgramDetail = {
     person: {
       name: string | null;
       email: string;
-      phone?: string | null;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -52,9 +55,12 @@ export type ProgramDetail = {
   nonOrgMemberPriceCents: number | null;
   shopifyProductId: string | null;
   shopifyVariantId: string | null;
+  claimantShopifyVariantId?: string | null;
 };
 
-export type ParticipantOption = { id: number; name: string | null; email: string; dateOfBirth?: string | null };
+export type ParticipantOption = { id: number; name: string | null; email: string };
+// The eligible-participants search returns names only, plus the program's age-fit label.
+export type EligibleOption = { id: number; name: string | null; ageWarning: string | null };
 
 const PHASE_BADGE: Record<string, { label: string; color: string }> = {
   PLANNING: { label: 'Planning', color: 'gray' },
@@ -78,6 +84,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   // Form States
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [yearChoice, setYearChoice] = useState<number | null>(null);
+  const [offSaleAt, setOffSaleAt] = useState("");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("");
@@ -106,14 +114,15 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<'general' | 'roster' | 'events'>('general');
 
-  const fetchProgram = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/programs/${id}`);
+  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
-        setStartAt(data.startAt ? data.startAt.split('T')[0] : "");
-        setEndAt(data.endAt ? data.endAt.split('T')[0] : "");
+        setStartAt(data.startAt.split('T')[0]);
+        setEndAt(data.endAt.split('T')[0]);
+        setYearChoice(null);
+        setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
         setMinAge(data.minAge !== null ? String(data.minAge) : "");
         setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
         setMaxParticipants(data.maxParticipants !== null ? String(data.maxParticipants) : "");
@@ -134,12 +143,14 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       } else {
         setMessage("Failed to load program.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     if (ready) fetchProgram();
@@ -153,8 +164,24 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     return data.people || [];
   }, []);
 
+  const canStateYear = !!sessionUser?.isBoardMember;
+  const boundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const years = formYearsTouched(boundary, startAt, endAt);
+  const crossing = years.length > 1;
+  // A stored year counts as stated only when the saved dates cross; a derived year is never pre-selected.
+  const statedYear = program && formYearsTouched(boundary, program.startAt.split('T')[0], program.endAt.split('T')[0]).length > 1
+    ? program.appliesToYear : null;
+  const candidateYear = yearChoice ?? statedYear;
+  const effectiveYear = candidateYear != null && years.includes(candidateYear) ? candidateYear : null;
+
   const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
+    const statesYear = canStateYear && crossing;
+    const paidPlaces = program?.participants.filter((p) => p.status === 'ACTIVE').length ?? 0;
+    if (statesYear && statedYear != null && effectiveYear != null && effectiveYear !== statedYear && paidPlaces > 0
+      && !window.confirm(`${paidPlaces} paid place${paidPlaces === 1 ? ' was' : 's were'} priced against ${membershipYearLabel(statedYear)}. Changing the membership year to ${membershipYearLabel(effectiveYear)} does not reprice them; the Board settles any difference with those families. Save anyway?`)) {
+      return;
+    }
     setSaving(true);
     setSaveError("");
     try {
@@ -164,6 +191,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
+          ...(statesYear && { appliesToYear: effectiveYear }),
+          // Sent only when edited, so an untouched date keeps following the start date.
+          ...(offSaleAt !== (program?.offSaleAt?.split('T')[0] ?? "") && { offSaleAt: offSaleAt || null }),
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           maxParticipants: maxParticipants ? parseInt(maxParticipants) : null,
@@ -220,7 +250,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       const res = await fetch(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Shopify checkout configured." });
+        notifications.show(data.warning
+          ? { color: "yellow", message: data.warning, autoClose: false }
+          : { message: "Shopify checkout configured." });
         notifyNavRefresh();
         fetchProgram();
       } else {
@@ -356,13 +388,27 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                         Save Shopify IDs
                       </Button>
                     </Group>
+                    <Text size="sm" mt="md">
+                      Reserved-seat variant: {program.claimantShopifyVariantId ?? "none — checkout uses the public variant"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
+                    </Text>
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                      && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
+                      <Group mt="xs">
+                        <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>
+                          Create reserved-seat product
+                        </Button>
+                      </Group>
+                    )}
                   </Card>
                 )}
               </Stack>
 
               <Stack>
                 <Card withBorder radius="md" padding="md">
-                  <Text fw={500} mb="sm">Lead Mentor / Program Coordinator</Text>
+                  <Text fw={500} mb="sm">Program Leader</Text>
                   {isSysAdminOrBoard ? (
                     program.leadMentor && !isEditingMentor ? (
                       <Group>
@@ -389,19 +435,22 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                       </Group>
                     )
                   ) : (
-                    program.leadMentor ? <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text> : <Text c="dimmed">No Lead Mentor Assigned</Text>
+                    program.leadMentor ? <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text> : <Text c="dimmed">No Program Leader Assigned</Text>
                   )}
                   <Text size="xs" c={isSysAdminOrBoard ? 'yellow' : 'dimmed'} mt="xs">
-                    {isSysAdminOrBoard ? '*You have permission to reassign this program.' : '*Only Administrators/Board Members can change the Lead Mentor.'}
+                    {isSysAdminOrBoard ? '*You have permission to reassign this program.' : '*Only Administrators/Board Members can change the Program Leader.'}
                   </Text>
                 </Card>
 
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <TextInput type="date" label="Start Date" value={startAt} onChange={e => setStartAt(e.currentTarget.value)} />
                   <TextInput type="date" label="End Date" value={endAt} onChange={e => setEndAt(e.currentTarget.value)} />
+                  <TextInput type="date" label="Off-Sale Date" value={offSaleAt} onChange={e => setOffSaleAt(e.currentTarget.value)} disabled={!user?.isBoardMember} description="Enrollment closes and the store product comes off sale on this date. Blank = start date." />
                   <NumberInput label="Minimum Age (Optional)" value={minAge} onChange={v => setMinAge(String(v))} min={0} max={25} placeholder="e.g. 14" />
                   <NumberInput label="Maximum Age (Optional)" value={maxAge} onChange={v => setMaxAge(String(v))} min={0} max={25} placeholder="e.g. 18" />
                 </SimpleGrid>
+
+                <ProgramYearField years={years} value={effectiveYear} onChange={setYearChoice} canEdit={canStateYear} />
 
                 <div>
                   <NumberInput label="Max Participants (Optional)" value={maxParticipants} onChange={v => setMaxParticipants(String(v))} min={1} placeholder="Leave blank for unlimited" description="Sets the inventory limit on Shopify. Leave blank for unlimited enrollment." />
@@ -435,7 +484,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   checked={announceOnOpen}
                   onChange={e => setAnnounceOnOpen(e.currentTarget.checked)}
                   label="Announce to members when enrollment opens"
-                  description="Off by default. When on, reaching Upcoming + Open emails members whose membership covers this program's dates (once)."
+                  description="Off by default. When on, reaching Upcoming + Open emails members whose membership covers this program's membership year (once)."
                 />
 
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
@@ -455,7 +504,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
                 {saveError && <Alert color="red" variant="light">{saveError}</Alert>}
                 <Group gap="sm">
-                  <Button type="submit" disabled={saving || !leadMentorIdInput} loading={saving}>
+                  <Button type="submit" disabled={saving || !leadMentorIdInput || (canStateYear && crossing && effectiveYear == null)} loading={saving}>
                     Save Settings
                   </Button>
                 </Group>
@@ -469,6 +518,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               programId={id}
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
+              isBoardMember={!!user?.isBoardMember}
               fetchProgram={fetchProgram}
             />
           </Tabs.Panel>

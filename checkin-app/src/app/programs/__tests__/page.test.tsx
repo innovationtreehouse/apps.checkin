@@ -87,7 +87,7 @@ describe("counts omitted (system waking)", () => {
     setSession(null);
     mockFetchJson({
       "/api/programs?": [
-        { id: 1, name: "Robotics", description: "Bots", phase: "ACTIVE", enrollmentStatus: "OPEN", startAt: "2026-08-01T00:00:00Z", endAt: null, maxParticipants: 6 },
+        { id: 1, name: "Robotics", description: "Bots", phase: "ACTIVE", enrollmentStatus: "OPEN", startAt: "2026-08-01T00:00:00Z", endAt: "2026-08-15T00:00:00Z", maxParticipants: 6 },
       ],
     });
     renderWithProviders(<PublicProgramsDirectory />);

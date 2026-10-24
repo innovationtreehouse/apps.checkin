@@ -29,8 +29,8 @@ whether a reimbursement has been paid.
   duplicate and validation queues, all under the
   `FINANCE` role the expense port introduces.
 - **Operators** add one secret, `ANTHROPIC_API_KEY`, and no new service: OCR is a
-  direct API call from the app process, and receipt files are stored in the
-  receipt database (§3).
+  direct API call from the app process. Receipt files are stored in a private
+  S3 bucket per environment, which Infra provisions (§3).
 - **Not changed:** the receipt state machine, duplicate rules and the
   `CompletedReceipt` contract port verbatim, plus one optional in-kind mark
   (§4). In-kind donations as a whole belong to donations (§5).
@@ -42,7 +42,7 @@ library (`@inventory/receipt`), own database (`RECEIPT_DATABASE_URL`), checkin's
 security regime, retired source auth, injected `Org` and `Person` principal,
 per-crossing ports, no hosted `/api/internal`.
 
-**Domain rules relied on:** `docs/rules/finance-payments.md` (a financial control
+**Domain rules relied on:** `docs/rules/revenue.md` (a financial control
 is a flag a person signs off, recorded; nobody decides a matter they are
 conflicted in, *Ethics Policy Art. III §III.5*; SaaS vendors must be SOC 2 and
 ISO 27001 compliant, *Definitions Policy Art. III, "Suitably Secure Electronic
@@ -130,12 +130,15 @@ intake (owner decision). Nothing in the source does this, so it is designed here
 **Mailbox access, on the QuickBooks pattern (#1272 §9).** One Google mailbox
 at an address in the organization's own domain (owner decision; the name is a
 deploy-time value, `RECEIPT_MAILBOX_ADDRESS`) and one OAuth grant with the `gmail.readonly` scope only: the app never
-labels, moves or deletes mail. An operator runs the consent once from a CLI with
-the write grant; the resulting refresh token is seeded into a secret only an
-**Infra-owned refresher** can read and write; the refresher publishes a
-short-lived access token to a second secret, and the app has read-only IAM on that
-one. No OAuth route in the app, no token in Postgres. Static client credentials are
-Infra env for the refresher and consent tool, not the app.
+labels, moves or deletes mail. An operator runs the consent once from a CLI;
+the resulting refresh token is seeded into a secret only an **Infra-owned
+refresher Lambda** can read and write. The app invokes that Lambda, as it does the
+QuickBooks refresher, and gets back a short-lived access token with its expiry and
+the mailbox it belongs to; the app refuses a token for any other mailbox and never
+refreshes. No OAuth route in the app, no token in Postgres. Static client
+credentials are Infra env for the refresher and consent tool, not the app. The
+step is bound only on a deployed instance with both `GMAIL_REFRESHER_FN` and
+`RECEIPT_MAILBOX_ADDRESS` set; otherwise it reports "unbound" and does nothing.
 
 **Trigger: a step inside the existing daily `/api/cron/reconcile-shopify`
 handler, not Pub/Sub push.**
@@ -149,14 +152,15 @@ handler, not Pub/Sub push.**
 
 A day's latency is fine for receipts; nobody is waiting on one at the door. The
 step runs in its own `try/catch`, so a Gmail failure never fails the reconcile, and
-it is skipped when the access-token secret is unset (local, flow tests). The
+it is skipped when the refresher or mailbox is unset (local, flow tests). The
 constraint to state plainly: no machine-facing route can be added to checkin
 today, so push is not an option without first changing that rule.
 
 **Reading the mailbox.** Each run lists messages from the last 3 days. A message
-with attachments of an accepted type (§2) yields one receipt per attachment. A
-message with none (an order confirmation, owner decision) yields **one receipt
-whose file is the body**:
+yields one receipt per file of an accepted type (§2): each attachment, each inline
+image, and **the body**, which is dropped only as the bullets below allow. A
+message with no attachment (an order confirmation, owner decision) is the common
+case of a body receipt:
 
 - The body's `text/plain` part when Gmail has one; otherwise the `text/html` part's
   source, stored as **`text/plain`**. OCR reads it as text, as the source's `.eml`
@@ -164,13 +168,130 @@ whose file is the body**:
   own origin, so stored HTML would be one header mistake away from live script
   there (§3 shows text only as escaped text).
 - The ledger hash for a body is the hash of that stored text.
-- When a message has attachments, its body is ignored; it is usually covering
-  text.
+- **Inline images are read too** (owner ruling 2026-10-16). A photo pasted into
+  the body of an email is a receipt as often as an attached one; members do it.
+  A message's files are therefore every attachment (a part with a filename not
+  marked `inline`) **and** every inline part of an accepted non-text type (§2:
+  JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
+  forwarded message are still never read.
+- **The body is a receipt unless it is trivial or proven to repeat an
+  attachment** (owner ruling 2026-10-16). Dropping a body unread is how a
+  receipt gets lost without anyone noticing, so the step reads every body and
+  drops one only on evidence:
+  - **Trivial:** the body's text holds no money amount (a number with two
+    decimal places). "For the lathe, see photo" is trivial; any order
+    confirmation or emailed receipt is not. A trivial body is skipped and
+    counted under `ignored`. `ponytail:` ceiling is a receipt whose body prints
+    its total without cents; widen the pattern if one is found. With no
+    `text/plain` part the test runs on the HTML source, where CSS values such as
+    `0.50` or `1.25em` count as amounts, so most HTML bodies are non-trivial.
+  - **Same as an attachment:** when the message also has attachments or inline
+    images, those are read first, then the body. Once the body's reading is in,
+    it is compared with every receipt the same message produced. If one has the
+    same total and the same date, the body is discarded automatically, with the
+    reason "same as attachment" and the matching receipt named in its audit row.
+    Any mismatch, or a reading missing either field, keeps the body as its own
+    receipt. A body discarded as the same as an attachment is final; it matched
+    that receipt's total and date, so the money is already on that receipt
+    (`[Decision — deliberate limit]`).
+  - **Held mail:** a held item has no reading until finance assigns it, so the
+    comparison cannot run at intake. A non-trivial body from an untrusted sender
+    is held beside its attachments, and finance discards whichever is the copy.
+  - **Cost:** a non-trivial body beside an attachment spends one more reading,
+    against the sender's daily allowance and the run's cap. Bodies are read
+    after the message's other files, so a capped run defers the body to the next
+    run, inside the window, and never an attachment.
+- Inline images make logos candidates, which is what the next block exists to
+  contain.
+- A file whose content fails the §2 type check is skipped and counted, as a
+  manual upload would be refused.
+
+**Files that are never receipts.** Two filters run on every candidate file,
+and each match is counted under a new `ignored` count in the run result. The
+size floor writes no ledger row; the next run repeats it without a download. An
+ignore-list match writes a discarded ledger row with no file, so the next run
+skips its message before any download, and the file is charged only once.
+
+- **A size floor for inline images.** An inline image under 5 KB is skipped
+  without downloading it; the part's declared size is enough. That drops tracking
+  pixels, social icons and most small logos. A legible receipt photo or
+  screenshot is far above that size. The floor never applies to an attachment,
+  which somebody chose to send, nor to a text body. `ponytail:` ceiling is a
+  legible receipt image under 5 KB, which would be skipped silently; lower the
+  floor if one is ever found.
+- **An ignore list, kept by finance.** A new table, `ReceiptIgnoredFile`, holds
+  one row per file the organization has said is never a receipt: `orgId`, the
+  SHA-256 of the file's bytes, a reason, the person who added it, and when.
+  Unique on `(orgId, fileHash)`. Intake loads the org's list once per run and
+  skips any candidate whose hash is on it. The hash is the one the ledger and
+  `Receipt.fileHash` already use, so no file needs re-reading to add it. A
+  candidate is downloaded to hash it, so an ignored file is charged like a
+  rejected one: from an unknown sender, through `chargeHold`. Only the size
+  floor skips a file without a download.
+  - **Adding an entry.** Finance gets an "Ignore this file from now on" action
+    in two places. On a held mail item it discards the item and adds its hash in
+    one transaction, using the discard reason; the same transaction discards
+    every other held item with that hash, so one click clears a newsletter's
+    logo from the whole queue. That bulk discard returns the ids it
+    discarded, so each item's stored file can be deleted after commit once held
+    files leave the database (`1265_RECEIPT_FILES_S3.md`); the hashes the list
+    keys on do not change there. On a discarded receipt it adds the receipt's
+    hash. Receipts already made from that file are left alone; each is
+    discarded the ordinary way.
+  - **Who.** `FINANCE` only (owner ruling 2026-10-16), the audience that
+    already discards from the mail queue. A submitter discarding their own logo
+    receipt cannot add it.
+  - **Removing an entry.** Finance can remove one (owner ruling 2026-10-16): a
+    mistaken entry drops that exact file from every future email, leaving only a
+    count, so it must be undoable. The mail-queue page lists the entries with a
+    remove action, audited like adding. Removal applies to mail that arrives
+    after it; a file already skipped has a discarded ledger row and is not read
+    again.
+  - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
+    or resizes the same logo produces a new hash, and that copy arrives as a
+    candidate until someone ignores it too. This is the ceiling, stated plainly:
+    the list stops repeats of one file, not every image that looks like it.
+    Matching by look (a perceptual hash) is the upgrade if repeats prove common;
+    nothing here needs it yet.
+  - **Scope.** The list filters the mailbox only. A file a person uploads by
+    hand is theirs to send, and upload never consults it.
+  - **Sensitivity** (owner ruling 2026-10-16). Hash, reason, actor and time
+    are `internal`. A hash is a
+    fingerprint of a file, not its content. Adding or removing an entry writes an audit
+    row (actor, the mail item or receipt it came from, the reason); the row
+    carries no file bytes.
+
+Inline images change how much mail the step turns into work. A trusted sender's
+logos spend that sender's upload limits and the run's OCR cap, and an untrusted
+sender's land in the mail queue, bounded per run and in total (below). The size floor and the ignore
+list are the containment; the rate limits for flooding are designed with the
+mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
-`ponytail:` ceiling is a cron outage longer than 3 days; widen the window if one
-happens.
+Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
+spend. Held items have caps of their own, so untrusted mail cannot push a
+member's receipt out of the window within the documented ceiling: each listed
+message still costs one fetch before the ledger check, so a flood of more
+messages than a run can fetch in its time budget can (the `ponytail:` note on
+`MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
+- A message whose files are all in the ledger is skipped before any download.
+- Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
+  next run. The charging rule is one function (`chargeHold`): each file downloaded
+  from an unknown sender costs one file and its size, whether it is held, refused
+  by the type check, or already in the ledger, and so does each file deferred for
+  a known sender over their upload limit. A later retry of a deferred file
+  downloads nothing and costs nothing. Mail from an unknown sender cannot raise
+  the run's download cost past that budget.
+- At 500 stored items, held and deferred together, nothing more is stored:
+  finance gets one alert per run while over it, and the run counts the files it
+  did not store. Receipts from members within their limit are still read.
+- Each run starts no new message after 2 minutes; the rest wait for the next run.
+- A file over 10 MB, the manual upload limit, is refused before download.
+
+Mail the mailbox sent itself is not read.
+`ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
+receipts in one window; widen the window or the cap if either happens.
 
 **Message to receipt.**
 
@@ -191,8 +312,40 @@ happens.
     "From:" lines in the body) are never read for identity.
 - **Sender to person:** the authenticated `From` address must match a `Person`
   email, and that person must be in the submitter audience (§6). Then the
-  attachment enters the **same upload pipeline** in auto mode (OCR, the duplicate
-  check including the §2 lock) with that person as uploader.
+  attachment enters the **same upload pipeline** in auto mode (the daily upload
+  limits, OCR on the sender's daily allowance, the duplicate check including the
+  §2 lock) with that person as uploader. One over the OCR allowance lands in
+  `ocr_failed`, where its uploader types the details. The ledger row is written in
+  the receipt's own insert, so a receipt never exists without it.
+- **The sender's mailed-receipt limit depends on role** (owner ruling
+  2026-10-17): 25 a day for a program lead (the lead mentor of a program not yet
+  finished) or a Board member, 5 a day for everyone else. It counts only that
+  person's own mailed receipts in the same rolling 24 hours as the other upload
+  limits. Manual uploads keep their own separate limit (30), which counts all of
+  that person's receipts, mailed ones included; it is not a combined ceiling on
+  mail. A held file finance assigns to a person is checked against that manual
+  limit, not the mail limit, and never counts toward the person's mail limit.
+  The byte limits apply to all alike. The role is read when the sender is
+  resolved, on each run.
+- **Over the sender's daily upload limit: deferred, not held** (owner ruling
+  2026-10-16). The file is stored in the ledger as `deferred`, with its bytes, so
+  it no longer depends on the 3-day window. Each run retries deferred files first,
+  oldest first, inside the run's receipt cap, as the sender re-resolved then. The
+  upload limit is checked before OCR, so a refused retry spends no reading and no
+  cap, and that sender's other deferred files wait for the next run; one sender
+  over their limit cannot crowd out another's receipt. A sender who is no longer
+  a submitter has their deferred files held for finance. Finance sees deferred
+  files in the mail queue and can release one early: it becomes a receipt by its
+  sender now, outside the daily upload limit for that one file, with an audit row
+  naming who released it. The same conflict rule as assigning applies. Finance
+  can also assign or discard a deferred file as it would a held one. The mail
+  queue also releases in bulk (owner request): "Release all from" a sender, or
+  "Release all deferred", each after a confirm showing the count. The page
+  releases one item at a time through the same release, so each still writes its
+  own audit row and faces the conflict rule. An item already handled or
+  conflicted is skipped; any other failure stops the run, and the page reports
+  what was released, skipped and not tried. Held items have no sender to run as,
+  so they are still assigned or discarded one by one.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
@@ -207,9 +360,10 @@ happens.
 **Sensitivity.** Stored per item: Gmail message id, attachment hash, received
 time, sender address, status, and the file until it becomes a receipt. **Never
 stored:** subject, other recipients, any other header, and the body, **with one
-exception**: when the body itself is the receipt document (a message with no
-attachment), it is stored as that receipt's file, at the same tier and behind the
-same file route as an uploaded file, and nowhere else. The sender address is
+exception**: a body read as a receipt document (one that is neither trivial nor
+proven to repeat an attachment, above) is stored as that receipt's file, or as a
+held or deferred item's file, at the same tier and behind the same file route as
+an uploaded file, and nowhere else. The sender address is
 `pii`, read by `FINANCE` only; a held file is tiered like the receipt file and
 leaves only through the file route (§3). Every view of the mail queue writes an
 audit row (§6).
@@ -262,9 +416,16 @@ dev seed), following `docs/ops/dev-instance.md`'s Zoho/Shopify pattern; `dev`/`p
 bind the real client, and a missing key there fails OCR into `ocr_failed` ("not
 configured") while manual entry keeps working.
 
-**File storage: `bytea` in the receipt database, as the source does.** Hundreds of
-files a year is under a gigabyte annually; lists already `omit` the blob. The file
-column (and a held mail item's file) is **`pii`** tier: it carries names and
+**File storage: a private S3 bucket, read and written only by the app**
+(amended; full design in `1265_RECEIPT_FILES_S3.md`). The first design stored
+files as `bytea` in the receipt database, on the assumption that only signed-in
+submitters upload. Gmail intake lets any sender store a held file, so files move
+to one private bucket per environment, keyed `receipts/<receiptId>` and
+`mail-items/<uuid>`, written once with a checksum, and read on the server only:
+the file route serves the bytes through `fileHandler` and no presigned URL is
+ever issued. Existing rows move by copy, verify, then switch; `file_blob` stays
+until the owner schedules its removal. The file (`file_blob`, and the new
+`file_key` that names its object) is **`pii`** tier: it carries names and
 delivery addresses. It is not `secret`, which `SECURITY-POLICY.md` reserves for
 cryptographic material that is never returned; a receipt file is returned, but only
 through the file route.
@@ -292,8 +453,8 @@ Every view or download writes an audit row (§6). A test asserts that no
 JSON route's response contains a receipt file column (`Receipt.fileBlob`,
 `ReceiptMailItem.fileBlob`). H6 is a boundary PR
 that lands before this lane's B and W.
-`ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
-read with the task role, as `agreementDocument.ts` does.
+The S3 move in `1265_RECEIPT_FILES_S3.md` keeps this route and `fileHandler`
+unchanged: the route hands over bytes read from the bucket instead of the column.
 
 ---
 
@@ -307,7 +468,8 @@ an endpoint today; the e2e plan's "no REJECT endpoint" finding is stale.
 **Push outcome is recorded.** New `Receipt.pushedAt`, stamped when S1 returns. A
 failed push leaves it null with an audit row; the daily catch-up step re-pushes
 every finalized, unpushed receipt, and the manual `push-to-inventory` button does
-one at once. Safe because S1 is idempotent on `receiptId` (§7).
+one at once. Catch-up skips a receipt after five of its own failures in a row, until
+a manual push of that receipt or any delivery in the org. Safe because S1 is idempotent on `receiptId` (§7).
 
 **Catch-up steps: no database at boot, no new schedules** (plan rule 5). The
 library reads nothing at app start. Every sweep is a `try/catch` step inside the
@@ -329,7 +491,7 @@ budget of `reconcile-shopify`:
 | 1. OCR-interrupted sweep | none needed | one `UPDATE`; milliseconds |
 | 2. S1 re-push | 50 receipts | in-process calls; seconds |
 | 3. X13 re-send | 50 receipts | in-process calls; seconds |
-| 4. Gmail intake | 10 receipt files | one OCR call each, seconds to tens of seconds; worst case about 5 minutes |
+| 4. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
 
 Gmail runs last because it is the only slow step; anything over its cap waits for
 the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
@@ -344,7 +506,7 @@ their own. "Did I get paid back?" has no answer anywhere.
 **QuickBooks is the system of record for reimbursement (owner decision)**, whether
 the payment happened years ago (backfill) or happens after this receipt. So the
 app records nothing about it: no "mark reimbursed" action and no reimbursed columns
-on `Receipt`, the same rule finance-payments sets for the store ("no payment fact
+on `Receipt`, the same rule revenue.md sets for the store ("no payment fact
 is authored here"). "My receipts" shows *Reimbursement: not yet paid / paid on
 <date>* beside the state, read through a port:
 
@@ -393,11 +555,14 @@ required when a reason is tax**, stored on the audit row. The source approves
 silently, so nothing records why tax was accepted; that note is FR4's "tax
 explanation". QB-linked backfill keeps its waivers (no submitter step, no age gate).
 
-**Self-decision is refused.** A `FINANCE` person cannot approve or reject their
-own upload (409), as finance-payments already refuses deciding a
-scholarship for one's own household (*Ethics Policy Art. III §III.5*). The source
-allows it. Household conflicts are left to expense's COI flag (#1272 §6), which
-reviews the same money downstream.
+**Self-decision is refused.** A `FINANCE` person makes no finance decision on a
+receipt they, or anyone in their household, uploaded or are reimbursed for:
+approve, reject, clear the duplicate flag, restart the flow, edit details or
+lines, or discard. Each attempt is a 403 with a `decision_refused` audit row, as
+revenue.md already refuses deciding a scholarship for one's own household
+(*Ethics Policy Art. III §III.5*). The uploader still edits their own receipt as
+its submitter. Tax and the receipt date drive financial review, so only an
+independent finance person changes them. The source allows all of this.
 
 **Backorder deferral (FR6)** is a per-line `isDelayed` flag here, set by hand or by
 OCR and carried on S1. The deferral itself is local-inventory's receive queue,
@@ -464,10 +629,10 @@ instead of expense. This lane's part is the mark and nothing else:
 
 | Action | Source guard | checkin |
 |---|---|---|
-| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **anyone who may view the catalog** (owner-decided): the `catalog-viewer` audience of #1286 (any RBAC role holder, program leader, or volunteer). |
+| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **an adult member, or a staff or role holder** (owner ruling 2026-10-13, superseding the 2026-10-12 ruling that admitted any signed-in adult: the age band rests on a self-declared adult flag anyone can set, so it cannot admit on its own): the `receipt-submitter` token, `isActiveOrgMember && ageBand === 'adult'` on the session, or `isTreehouseVolunteer` (role holder or staff account) whatever their age or membership. No background check; an adult with no ACTIVE membership, and any youth or unknown age without a role, is refused. Gates every submitter and shared route and the receipt file route. Rule: `docs/rules/expenses.md`. |
 | Review queue; approve / reject financial; see all receipts and files; clear duplicate; discard any; audit log; restart flow; import | `isFinance`, `isOrgManager` | **`FINANCE`** (org-manager collapses onto it, as #1272 did) |
 | Org receipt settings (tax-exempt, age limit) | `canEditOrg` | **`FINANCE`** |
-| `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (finance-payments excludes sysadmins from Finance Ops) |
+| `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (revenue.md excludes sysadmins from Finance Ops) |
 
 `FINANCE` comes from lane L3's role PR. The receipt W PR needs it on `main`; B does
 not (an unused `defineRoute` is inert).
@@ -485,8 +650,8 @@ action, time. The audit payload carries no PII and no file bytes.
 
 **Narrow reads at the handler, no scopeBindings**, as #1272 §5 settled: a
 submitter's list and detail calls filter `WHERE uploadedByUserId = principal.id`;
-finance reads the org. Submitter routes reuse the existing `catalog-viewer`
-`authorize` token, so no new token grammar enters the boundary.
+finance reads the org. Submitter routes use the `receipt-submitter`
+`authorize` token, a session-claim check with no DB read.
 
 **A caller with no integer id is unauthenticated** (boundary rule 6). Receipt's
 checkin-side adapter `getPrincipal()` returns `null` unless
@@ -614,6 +779,7 @@ All PRs are based on `main`; none stacks.
 | **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
+| **F** files to S3 | four PRs (infra, library behind a flag, backfill, removal of `bytea` reads); `1265_RECEIPT_FILES_S3.md` §8. After G's mail queue (#2239). |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
 | **X7** | promote `receipt-types`, delete temporary shims. After X6. |
@@ -630,9 +796,15 @@ All PRs are based on `main`; none stacks.
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
 
+Routes the ignore list needs, each a registry entry PR before its route PR
+(boundary isolation, `AGENTS.md`): the mail-item discard takes an optional
+`ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
+(finance, discarded receipts only); `GET /api/receipts/ignored-files`; and
+`DELETE /api/receipts/ignored-files/[id]`.
+
 ### Assumptions
 
-- Receipt volume stays in the hundreds a year (drives synchronous OCR and `bytea`).
+- Receipt volume stays in the hundreds a year (drives synchronous OCR and buffered file reads).
 - A QuickBooks reimbursement can be tied back to its receipt (expense lane to confirm).
 - No receipt data is migrated from the source app; the library starts from its seed.
 
@@ -640,7 +812,7 @@ All PRs are based on `main`; none stacks.
 
 ## 11. Distillation at merge
 
-Into `docs/rules/finance-payments.md`, if the owner accepts them: a receipt's
+Into `docs/rules/expenses.md`, if the owner accepts them: a receipt's
 financial-review sign-off is recorded with a reason, and a tax exception needs an
 explanation; nobody approves or rejects their own receipt; QuickBooks is the
 system of record for reimbursement and the app never authors a reimbursement fact;

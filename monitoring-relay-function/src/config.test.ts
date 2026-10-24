@@ -4,7 +4,11 @@ import { loadRelayConfig } from "./config.js";
 // loadRelayConfig takes an explicit env bag (defaulting to process.env) so config
 // parsing is testable without mutating the real environment.
 const env = (over: Record<string, string> = {}) =>
-  ({ SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:monitoring-alerts", ...over }) as NodeJS.ProcessEnv;
+  ({
+    SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:monitoring-alerts",
+    MONITORING_ENV: "dev",
+    ...over,
+  }) as NodeJS.ProcessEnv;
 
 describe("loadRelayConfig — config-missing (negative paths)", () => {
   it("throws when SNS_TOPIC_ARN is absent (fail fast at startup, not at first publish)", () => {
@@ -13,6 +17,12 @@ describe("loadRelayConfig — config-missing (negative paths)", () => {
 
   it("throws when SNS_TOPIC_ARN is empty", () => {
     expect(() => loadRelayConfig({ SNS_TOPIC_ARN: "" } as NodeJS.ProcessEnv)).toThrow();
+  });
+
+  it("throws when MONITORING_ENV is absent (no silent fallback to dev)", () => {
+    expect(() =>
+      loadRelayConfig({ SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:monitoring-alerts" } as NodeJS.ProcessEnv),
+    ).toThrow(/MONITORING_ENV/);
   });
 
   it("throws on a non-numeric RELAY_BATCH_LIMIT", () => {
@@ -38,7 +48,7 @@ describe("loadRelayConfig — config-missing (negative paths)", () => {
 });
 
 describe("loadRelayConfig — defaults & coercion (positive paths)", () => {
-  it("applies defaults when only the topic ARN is provided", () => {
+  it("applies defaults when only the required vars are provided", () => {
     expect(loadRelayConfig(env())).toEqual({
       snsTopicArn: "arn:aws:sns:us-east-1:123456789012:monitoring-alerts",
       env: "dev",

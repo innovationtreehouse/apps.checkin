@@ -1,10 +1,11 @@
 import * as crypto from "crypto";
-import { db } from "../db";
+import { db, isUniqueConstraintError } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import { getOwnerDirectory } from "../runtime";
+import { lockDisbursementTx, runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 
 const SELECT_FILE_FIELDS = {
   id: true,
@@ -21,11 +22,12 @@ const SELECT_FILE_FIELDS = {
 } as const;
 
 export const uploadedFileService = {
-  async listFiles(orgId: string) {
+  async listFiles(orgId: string, page?: { skip: number; take: number }) {
     return db.uploadedFile.findMany({
       where: { orgId },
       select: SELECT_FILE_FIELDS,
-      orderBy: { uploadedAt: "desc" },
+      orderBy: [{ uploadedAt: "desc" }, { id: "desc" }],
+      ...page,
     });
   },
 
@@ -38,6 +40,11 @@ export const uploadedFileService = {
     rows: BenevityRow[],
     correlationId: string | null,
   ) {
+    const seen = new Set<string>();
+    for (const { transactionId } of rows) {
+      if (seen.has(transactionId)) throw new ServiceError(400, `Transaction ${transactionId} appears more than once in this file`);
+      seen.add(transactionId);
+    }
     const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
     const rowCount = rows.length;
     const now = new Date();
@@ -45,6 +52,8 @@ export const uploadedFileService = {
       (await getOwnerDirectory().list()).filter((o) => o.archivedAt === null).map((o) => o.id),
     );
 
+    // Rows are deduplicated against committed transactions, so the unique key fires only when a
+    // concurrent upload of the same gifts commits first.
     return db.$transaction(async (tx) => {
       const fileRecord = await tx.uploadedFile.create({
         data: {
@@ -126,6 +135,24 @@ export const uploadedFileService = {
         });
       }
 
+      // A completed disbursement's payload is final, so a late gift for it would never be booked.
+      const newDisbursementIds = [...new Set(toInsert.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])))].sort();
+      for (const disbursementId of newDisbursementIds) await lockDisbursementTx(tx, orgId, disbursementId);
+      const completed =
+        newDisbursementIds.length > 0
+          ? await tx.disbursementEvent.findMany({
+              where: { orgId, disbursementId: { in: newDisbursementIds } },
+              select: { disbursementId: true },
+            })
+          : [];
+      if (completed.length > 0) {
+        const ids = completed.map((c) => c.disbursementId).sort().join(", ");
+        throw new ServiceError(
+          409,
+          `This file has new gifts for disbursements that are already completed (${ids}). Nothing was imported; these gifts need manual booking.`,
+        );
+      }
+
       const inserted =
         toInsert.length > 0
           ? await tx.transaction.createManyAndReturn({
@@ -167,16 +194,28 @@ export const uploadedFileService = {
         payload: { originalFilename, fileHash, rowCount, newRowCount, duplicateRowCount, allDuplicate },
       });
 
-      return { fileId: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
+      const audit = { actorUserId: userId, actorUsername: username, correlationId };
+      const disbursementIds = new Set(inserted.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])));
+      for (const disbursementId of disbursementIds) {
+        await runOwnerAssignedCycleTx(tx, orgId, disbursementId, audit);
+      }
+
+      return { id: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
+    }).catch((err: unknown) => {
+      if (isUniqueConstraintError(err)) throw new ServiceError(409, "This file is already being uploaded; retry once that upload finishes");
+      throw err;
     });
   },
   /** Drop the stored CSV of an upload that added nothing; the file row stays. */
-  async deleteBlob(orgId: string, id: number) {
+  async deleteBlob(orgId: string, id: number, audit: AuditContext) {
     const file = await db.uploadedFile.findFirst({ where: { id, orgId }, select: { allDuplicate: true, blobDeleted: true } });
     if (!file) throw new ServiceError(404, "File not found");
     if (!file.allDuplicate) throw new ServiceError(400, "Blob can only be deleted for fully-duplicate uploads");
     if (file.blobDeleted) throw new ServiceError(400, "Blob already deleted");
-    await db.uploadedFile.update({ where: { id }, data: { fileBlob: null, blobDeleted: true } });
+    await db.$transaction(async (tx) => {
+      await tx.uploadedFile.update({ where: { id }, data: { fileBlob: null, blobDeleted: true } });
+      await recordEvent(tx, { orgId, entityType: "uploaded_file", entityId: id, eventType: "FILE_BLOB_DELETED", ...audit });
+    });
     return { id, blobDeleted: true };
   },
 };

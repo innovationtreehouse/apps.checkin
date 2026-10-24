@@ -13,7 +13,7 @@ import {
     SHOPIFY_WEBHOOK_RECEIPT_TABLE,
     isShopifyTestNotification,
     recordShopifyWebhookReceipt,
-    tryParseJson,
+    logRejectedShopifyWebhook,
 } from '../shopifyWebhookReceipt';
 
 jest.mock('@/lib/logger', () => ({
@@ -21,11 +21,14 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 const auditCreate = jest.fn();
+const auditFindFirst = jest.fn();
 
 beforeEach(() => {
     jest.clearAllMocks();
     auditCreate.mockResolvedValue({});
+    auditFindFirst.mockResolvedValue(null);
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
+    prisma.auditLog.findFirst = auditFindFirst as unknown as typeof prisma.auditLog.findFirst;
 });
 
 function req(headers: Record<string, string> = {}) {
@@ -44,7 +47,7 @@ describe('isShopifyTestNotification', () => {
     it('detects the sample order id through JSON.parse precision loss (> 2^53)', () => {
         // Shopify sends the id as a bare JSON number; JSON.parse rounds it to the
         // nearest double, so a strict string compare of the parsed value would miss.
-        expect(isShopifyTestNotification(tryParseJson('{"id":820982911946154508}'))).toBe(true);
+        expect(isShopifyTestNotification(JSON.parse('{"id":820982911946154508}'))).toBe(true);
     });
 
     it('is false for real orders and junk payloads', () => {
@@ -57,10 +60,18 @@ describe('isShopifyTestNotification', () => {
     });
 });
 
-describe('tryParseJson', () => {
-    it('parses valid JSON and swallows invalid bytes', () => {
-        expect(tryParseJson('{"id":1}')).toEqual({ id: 1 });
-        expect(tryParseJson('not json')).toBeNull();
+describe('logRejectedShopifyWebhook', () => {
+    it('logs at most once a minute, counts the rejections between, and never writes', () => {
+        const t0 = 10_000_000;
+        logRejectedShopifyWebhook('signature mismatch', t0);
+        logRejectedShopifyWebhook('signature mismatch', t0 + 1_000);
+        logRejectedShopifyWebhook('missing signature', t0 + 59_000);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+
+        logRejectedShopifyWebhook('signature mismatch', t0 + 60_000);
+        expect(logger.warn).toHaveBeenCalledTimes(2);
+        expect((logger.warn as jest.Mock).mock.calls[1][0]).toContain('3 rejected');
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 });
 
@@ -87,15 +98,59 @@ describe('recordShopifyWebhookReceipt', () => {
         expect(typeof data.newData.receivedAt).toBe('string');
     });
 
-    it('records null topic/shopDomain/orderId when headers and payload are missing', async () => {
+    it('records null topic/shopDomain/orderId/delivery fields when headers and payload are missing', async () => {
         await recordShopifyWebhookReceipt(req(), null, { hmacValid: false, outcome: 'rejected: bad hmac' });
+        expect(auditFindFirst).not.toHaveBeenCalled();
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
             topic: null,
             shopDomain: null,
+            deliveryId: null,
+            triggeredAt: null,
+            retry: null,
             orderId: null,
             hmacValid: false,
             test: false,
         });
+    });
+
+    it('records the delivery id and trigger time, and marks a first delivery as not a retry', async () => {
+        await recordShopifyWebhookReceipt(
+            req({ 'x-shopify-webhook-id': 'delivery-1', 'x-shopify-triggered-at': '2026-10-21T12:00:00.000Z' }),
+            { id: 999001 },
+            { hmacValid: true, outcome: 'settled process 12' },
+        );
+        const { where } = auditFindFirst.mock.calls[0][0];
+        expect(where.tableName).toBe(SHOPIFY_WEBHOOK_RECEIPT_TABLE);
+        expect(where.newData).toEqual({ path: ['deliveryId'], equals: 'delivery-1' });
+        const receivedAt = Date.parse(auditCreate.mock.calls[0][0].data.newData.receivedAt);
+        expect(receivedAt - where.timestamp.gte.getTime()).toBe(48 * 60 * 60 * 1000);
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
+            deliveryId: 'delivery-1',
+            triggeredAt: '2026-10-21T12:00:00.000Z',
+            retry: false,
+        });
+    });
+
+    it('marks a receipt as a retry when an earlier receipt has the same delivery id', async () => {
+        auditFindFirst.mockResolvedValueOnce({ id: 7 });
+        await recordShopifyWebhookReceipt(
+            req({ 'x-shopify-webhook-id': 'delivery-1' }),
+            { id: 999001 },
+            { hmacValid: true, outcome: 'already settled' },
+        );
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ deliveryId: 'delivery-1', triggeredAt: null, retry: true });
+    });
+
+    it('still records the receipt, with retry unknown, when the retry lookup fails', async () => {
+        auditFindFirst.mockRejectedValueOnce(new Error('db hiccup'));
+        await recordShopifyWebhookReceipt(
+            req({ 'x-shopify-webhook-id': 'delivery-1' }),
+            { id: 999001 },
+            { hmacValid: true, outcome: 'settled process 12' },
+        );
+        expect(auditCreate).toHaveBeenCalledTimes(1);
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ deliveryId: 'delivery-1', retry: null });
+        expect(logger.warn).toHaveBeenCalled();
     });
 
     it('never throws when the insert fails — logs and moves on', async () => {

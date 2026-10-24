@@ -6,12 +6,14 @@
  * ProgramParticipant rows with the participant nested. Pulls the live view
  * tokens from the registry so this tracks any future policy edit.
  *
- *   - board/sysadmin view (everyones:*)  → nested participant.email (pii) survives.
+ *   - board/finance view (everyones:*)   → nested participant.email (pii) survives.
  *   - any non-admin view (member+public) → email stripped, name kept. This is the
  *     migration's whole point: a role later added to this route is auto-stripped.
+ *   - admission: Board and Finance only; a sysadmin-only session is refused.
  */
 import { stripValue } from '@/security/stripper';
-import { scopesHeld, type CallerContext } from '@/security/access-resolvers';
+import { resolveAccess, scopesHeld, type CallerContext } from '@/security/access-resolvers';
+import type { AuthenticatedUser } from '@/types/auth';
 import { getRoute, type Role, type Token } from '@/security/core';
 import '@/security/registry';
 
@@ -118,7 +120,7 @@ const membershipRow = {
     isPaymentPlanRequested: true,
     stageEnteredAt: '2026-01-15T00:00:00.000Z',
     orgMembership: {
-        id: 1, isVolunteer: false,
+        id: 1, isVolunteerFamily: false,
         household: {
             id: 1, name: 'The Members',
             householdMembers: [{ id: 3, name: 'Lead Parent', email: 'lead@x.test' }],
@@ -147,5 +149,37 @@ describe('membership-payment-plans field-stripping', () => {
         expect(leads).toHaveLength(1);
         expect(leads[0].email).toBeUndefined();
         expect(leads[0].name).toBe('Lead Parent');
+    });
+});
+
+describe('payment-plan queue admission', () => {
+    const noFlags: AuthenticatedUser = {
+        id: 5,
+        email: 'caller@x.test',
+        isSysadmin: false,
+        isBoardMember: false,
+        isKeyholder: false,
+        isBackgroundCheckReviewer: false,
+        isOperations: false,
+        isInventoryManager: false,
+        isFinance: false,
+    };
+
+    async function admits(endpoint: string, flags: Partial<AuthenticatedUser>) {
+        const spec = getRoute(endpoint);
+        if (!spec) throw new Error(`no registry entry for ${endpoint}`);
+        const auth = { type: 'session' as const, user: { ...noFlags, ...flags } };
+        return (await resolveAccess(spec.authorize, { auth, params: {}, callerContext: ctx() })).allowed;
+    }
+
+    it.each([PROGRAM_ENDPOINT, MEMBERSHIP_ENDPOINT])('%s admits board and finance, refuses a sysadmin-only session', async (endpoint) => {
+        expect(await admits(endpoint, { isBoardMember: true })).toBe(true);
+        expect(await admits(endpoint, { isFinance: true })).toBe(true);
+        expect(await admits(endpoint, { isSysadmin: true })).toBe(false);
+        expect(await admits(endpoint, {})).toBe(false);
+    });
+
+    it.each([PROGRAM_ENDPOINT, MEMBERSHIP_ENDPOINT])('%s gives finance the same view as board', (endpoint) => {
+        expect(tokensFor(endpoint, 'isFinance')).toEqual(tokensFor(endpoint, 'isBoardMember'));
     });
 });

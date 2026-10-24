@@ -74,7 +74,7 @@ describe('Program Lifecycle Integration Tests', () => {
                 nonOrgMemberPriceCents: 100,
                 shopifyProductId: "test-prod",
                 shopifyVariantId: "test-non-var",
-                enrollmentStatus: "OPEN"
+                enrollmentStatus: "OPEN", offSaleAt: new Date("2999-01-01")
             }
         });
         testProgramId = program.id;
@@ -136,6 +136,9 @@ describe('Program Lifecycle Integration Tests', () => {
 
     it('Should require a Board Member to supply override=true when bypassing payment flows', async () => {
         mockGetSession.mockResolvedValue({ user: { id: boardAdminId, isBoardMember: true } });
+
+        // An existing PENDING claim short-circuits to 409 before the override prompt.
+        await prisma.programParticipant.deleteMany({ where: { programId: testProgramId, personId: testParticipantId } });
 
         const req = new Request(`http://localhost/api/programs/${testProgramId}/participants`, {
             method: 'POST',

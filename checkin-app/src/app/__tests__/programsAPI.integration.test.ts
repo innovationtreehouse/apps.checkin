@@ -11,6 +11,7 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { classifications } from '@/security/generated/classifications';
 import { ORG_DOMAIN } from '@/lib/config';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -21,6 +22,11 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 describe('Programs API Integration Tests', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let adminId: number;
     let commonId: number;
     let leadId: number;
@@ -152,7 +158,7 @@ describe('Programs API Integration Tests', () => {
              expect(orgMemberOnly).toBeDefined(); // Revealed because admin
         });
 
-        // #1397: dues paid, background check still with the board — the catalog
+        // #1397: membership fee paid, background check still with the board — the catalog
         // shows them members-only programs, same as an ACTIVE household.
         it('reveals member-only programs to a household that has paid but is awaiting background clearance', async () => {
              const paidPending = await prisma.person.create({
@@ -308,7 +314,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31' })
+                 body: JSON.stringify({ leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30' })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(400);
@@ -319,7 +325,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ name: 'New API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31' })
+                 body: JSON.stringify({ name: 'New API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30' })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(400);
@@ -332,7 +338,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ name: 'Created API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', minAge: 12, maxAge: 17, maxParticipants: 50 })
+                 body: JSON.stringify({ name: 'Created API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30', minAge: 12, maxAge: 17, maxParticipants: 50 })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(200);
@@ -351,7 +357,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ name: 'Clamp Create API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', maxParticipants: 50, orgMemberOnly: false, publiclyVisible: true })
+                 body: JSON.stringify({ name: 'Clamp Create API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-06-30', maxParticipants: 50, orgMemberOnly: false, publiclyVisible: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(200);

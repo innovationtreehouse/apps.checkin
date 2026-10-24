@@ -138,7 +138,7 @@ describe('Program Age Bounds Integration Tests', () => {
                 startAt: NOW,
                 endAt: new Date(NOW.getTime() + 365 * 24 * 60 * 60 * 1000),
                 phase: 'UPCOMING',
-                enrollmentStatus: 'OPEN'
+                enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01')
             }
         });
         testProgramId = program.id;

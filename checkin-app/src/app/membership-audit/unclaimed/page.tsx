@@ -14,24 +14,29 @@ export default function UnclaimedHouseholdsIndex() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(false);
-    try {
-      const res = await fetch('/api/membership-audit/unclaimed-households');
+  const fetchHouseholds = useCallback(() => fetch('/api/membership-audit/unclaimed-households')
+    .then(async (res) => {
       const data = await res.json();
       if (data.households) setHouseholds(data.households);
-    } catch (err) {
+    })
+    .catch((err) => {
       console.error("Failed to load unclaimed households:", err);
       setError(true);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
+
+  const load = () => {
+    setLoading(true);
+    setError(false);
+    return fetchHouseholds();
+  };
 
   useEffect(() => {
-    load();
-  }, [load]);
+    fetchHouseholds();
+  }, [fetchHouseholds]);
 
   return (
     <Stack>

@@ -5,14 +5,14 @@
  * pagination meta (total/pages) is not carried in the model bag; the list UI +
  * a count endpoint land in track 5.
  */
+import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { createCatalogRepository } from "../repositories/catalog";
 import { usageBehaviorEnum } from "../db/schema";
 import { createItem } from "../services/itemService";
-import { getDb, getPrincipal, catalogError, mapServiceErrors } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseBody, readJson, query } from "./_shared";
 
 const repo = () => createCatalogRepository(getDb());
 
@@ -76,12 +76,12 @@ export const count: CatalogRouteHandler = async ({ req }) => {
 
 export const get: CatalogRouteHandler = async ({ params }) => {
   const item = await repo().findItemByGtin13WithIncludes(params.gtin13);
-  if (!item) throw catalogError(404, "Item not found");
+  if (!item) throw httpError(404, "Item not found");
   return { Item: item };
 };
 
 export const create: CatalogRouteHandler = async ({ req }) => {
-  const parsed = parseBody(createSchema, await readJson(req));
+  const parsed = await parseBody(req, createSchema);
   const principal = await getPrincipal();
   const created = await mapServiceErrors(() =>
     createItem({ ...parsed, createdByUserId: principal.id, createdByUsername: principal.name ?? undefined }),
@@ -93,10 +93,10 @@ export const create: CatalogRouteHandler = async ({ req }) => {
 export const update: CatalogRouteHandler = async ({ req, params }) => {
   const { gtin13 } = params;
   const r = repo();
-  if (!(await r.findItemByGtin13(gtin13))) throw catalogError(404, "Item not found");
-  const { name, usageBehavior } = parseBody(updateSchema, await readJson(req));
+  if (!(await r.findItemByGtin13(gtin13))) throw httpError(404, "Item not found");
+  const { name, usageBehavior } = await parseBody(req, updateSchema);
   if (await r.findItemByNameExcluding(name.trim(), gtin13)) {
-    throw catalogError(409, "An item with that name already exists");
+    throw httpError(409, "An item with that name already exists");
   }
   const principal = await getPrincipal();
   await r.updateItem(gtin13, {
@@ -112,9 +112,9 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
 async function setArchived(gtin13: string, archivedAt: Date | null, wantArchived: boolean) {
   const r = repo();
   const existing = await r.findItemByGtin13(gtin13);
-  if (!existing) throw catalogError(404, "Item not found");
-  if (wantArchived && existing.archivedAt) throw catalogError(409, "Item is already archived");
-  if (!wantArchived && !existing.archivedAt) throw catalogError(409, "Item is not archived");
+  if (!existing) throw httpError(404, "Item not found");
+  if (wantArchived && existing.archivedAt) throw httpError(409, "Item is already archived");
+  if (!wantArchived && !existing.archivedAt) throw httpError(409, "Item is not archived");
   const principal = await getPrincipal();
   await r.updateItem(gtin13, {
     archivedAt,

@@ -75,4 +75,16 @@ describe("EntityPicker", () => {
 
     expect(search).not.toHaveBeenCalled();
   });
+
+  it("clears the results once the query drops below minChars", async () => {
+    const search = jest.fn().mockResolvedValue([{ id: 5, name: "Acme" }]);
+    renderPicker({ search, minChars: 2 });
+    const input = screen.getByPlaceholderText("Search...");
+
+    fireEvent.change(input, { target: { value: "ac" } });
+    expect(await screen.findByText("Acme")).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: "a" } });
+    expect(screen.queryByText("Acme")).toBeNull();
+  });
 });

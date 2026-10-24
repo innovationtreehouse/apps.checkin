@@ -4,18 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run db:generate -w @inventory/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
+    "build": "npm run db:generate -w @checkin/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
     "typecheck": "tsc --noEmit",
     "run:once": "node --env-file=.env --import tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@inventory/monitoring-db": "*",
-    "@inventory/telemetry": "*"
+    "@checkin/monitoring-db": "*",
+    "@checkin/telemetry": "*"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.8",
     "tsx": "^4.19.0",

@@ -58,16 +58,28 @@ Two runners, split by workspace type — no file ever runs under both (issue #22
   below are all Jest; run their commands from `checkin-app/`.
 - **`packages/*` and `*-function` → Vitest.** Each such workspace owns its own
   `vitest.config.ts` + `vitest` devDep — no shared root config. Real-Postgres
-  integration tiers boot a throwaway container via `@inventory/pg-test-harness`
+  integration tiers boot a throwaway container via `@checkin/pg-test-harness`
   (testcontainers), so they need a running Docker daemon and self-skip without
   one.
 
 Root aggregate scripts (run from the repo root): `test` (app Jest, the default),
 `test:packages` (`vitest run` across every `packages/*`), `test:functions`
-(across every `*-function`), `test:all` (all three). CI runs the Jest tiers and
+(across every `*-function`), `test:all` (all three), `test:affected` (only the
+areas the diff touches, no database or Docker). CI runs the Jest tiers and
 the Vitest tier (`package-tests` job) as separate path-filtered lanes. Jest's
 `rootDir` is `checkin-app/`, so it never collects a sibling workspace's
 `.test.ts` — a Vitest file cannot leak into the Jest run.
+
+## Local testing for agents
+
+Locally, run `npm run test:affected` from the repo root and nothing broader. It
+tests only the areas your diff touches and needs no database or Docker. The
+heavy tiers (the full jest suite, the integration suite, flow tests, and every
+package's database tier) come from CI. Do not run them locally to "make sure".
+To run a heavy tier for your area (`--db`, `--flow`), first ask your coordinator
+or user, and wait for a yes: any Docker-backed or database-backed run needs
+one. Never run `--all` or `--wide` unasked. What each flag runs, and how a
+changed file maps to tests: `docs/ops/per-library-testing.md`.
 
 ## Test classes
 
@@ -83,6 +95,12 @@ In-process, but talk to a **real Postgres** via `DATABASE_URL` (the prisma mock
 defers to the real client for these). They import service functions directly and
 assert DB state. Excluded from the default run. Run: `npm run test:integration`
 against a live DB. Each suite self-cleans by a unique `TAG`.
+
+Each jest worker gets its own database, cloned from a freshly migrated template
+(`test/integrationGlobalSetup.js`), so workers never share rows. Files within one
+worker run in sequence and share its database, so a suite that leaves residue
+breaks whichever suite runs after it. The script runs `INTEGRATION_WORKERS`
+workers (default 1, CI 3) and recycles a worker once its heap passes 1GB.
 
 ### 3. Flow tests — `flow-tests/*.flow.test.ts`  ← read this before adding e2e
 **End-to-end user journeys driven over HTTP against a *running* dev server.** No
@@ -108,7 +126,7 @@ routes, auth, and DB together.
   is a thin JSON `fetch` wrapper.
 - **In CI:** the `Flow tests` workflow (`.github/workflows/flow-tests.yml`) brings
   up `deploy/docker-compose.flow.yml` — Postgres + a **dev-mode** app container
-  (`next dev`) — installs, `prisma db push`, seeds, then runs the flow tests
+  (`next dev`) — installs, `prisma migrate deploy`, seeds, then runs the flow tests
   inside that container.
 
 **Gotchas (why it's built this way):**
@@ -209,6 +227,32 @@ on the thread. Do not leave it and start something else.
 - Same rule for a finding already **rejected**. Re-raising it needs new evidence
   named in the body, not a new PR number.
 
+## AI review and approval
+
+Every PR carries the **`ai-review`** label. Add it when you open the PR, or
+when you mark a draft ready for review. The label starts the OpenRouter AI
+review (`.github/workflows/openrouter-pr-review.yml`); without it no AI review
+runs. Applying a label needs triage access, so the public cannot trigger it.
+
+The approval sequence for each PR:
+
+1. **AI review round.** Routing picks the review checklists and the model, the
+   review posts, and a completeness check may rerun it once on a stronger
+   model. It usually finishes in under ten minutes. Every later push re-reviews
+   while the label stays on.
+2. **Agent and human reviews start after the AI review posts**, and build on its
+   findings instead of repeating them. Reply on its threads: fixed (name the
+   commit), or accepted or disputed with a reason. Settled threads stay settled
+   in later rounds, because each AI review reads the PR's review history.
+3. **Recommendation.** The final AI review carries a
+   `Recommendation:` line (approve, comment or request changes) and, for
+   approve, the `ai-recommends-approve` label. It is advisory only.
+4. **Approval is a maintainer's.** A maintainer approves after reading the AI
+   review and the other reviews. The AI review never submits an approval.
+
+Remove `ai-review` only to stop further reviews on a PR, for example while it
+is parked. Each run spends the OpenRouter key.
+
 ## Reviewing a PR
 
 A review comment earns its place only if a careful human reading the diff would
@@ -237,7 +281,7 @@ means say nothing, or approve.
 Read these before changing the relevant area — start here, then follow links.
 
 **Domain rules — read first** (`docs/rules/`)
-- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `finance-payments.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
+- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `expenses.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
 - `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes, what belongs in the register and what does not, the citation and format rules, and the working-doc lifecycle (write it in `docs/in-design/`, extract standing rules and delete it at merge). Read before writing or moving any doc.
 - `docs/conventions.md` — how we build, independent of any domain.
 
@@ -250,19 +294,20 @@ Read these before changing the relevant area — start here, then follow links.
 - `TRADEMARKS.md` — naming/brand constraints.
 
 **Design & product** (`docs/designs/`)
-- `DESIGN.md` — system design overview.
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
-- `PRODUCTION_PLAN.md`, `ARCHITECT_IDEAS_*.md` — roadmap/scoping notes.
+- `PRODUCTION_PLAN.md` — the production launch runbook.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).
 - `pentest_findings_2026-04-21.md` — prior findings.
-- **Boundary isolation rule**: the handler/registry layer (`checkin-app/src/security/`) exists to make the data policy easy to AUDIT — it is not a substitute for careful route management (tight selects, deliberate response shapes). Any change to the boundary itself — registry grants, token grammar, handler/stripper, scope bindings, or a re-tier of an existing field's `@sensitivity` — must ship **in its own PR** (tests/docs/schema annotations may accompany; no app/feature code). New registered route: land the registry entry PR first (an unused `defineRoute` is inert), then the route PR. CI-enforced by `.github/workflows/security-boundary-isolation.yml`. `checkin-app/src/middleware.ts` counts as a boundary file — it is the site-wide org-login/access gate and nothing imports it, so deleting or renaming it leaves tsc and the build green; a PR touching it ships alone. Security *tests* (`src/security/__tests__/`) are companions, not boundary files. One exception, for decommissions: a boundary diff that only removes *whole* entries whose subjects cease to exist in the same PR (model dropped from schema, route file/verb deleted) may ship with the drop migration and the route files of the removed registry entries — no other deletion — certified fail-closed by `checkin-app/scripts/check-boundary-decommission.js`; see `checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
+- **Boundary isolation rule**: the handler/registry layer (`checkin-app/src/security/`) exists to make the data policy easy to AUDIT — it is not a substitute for careful route management (tight selects, deliberate response shapes). Any change to the boundary itself — registry grants, token grammar, handler/stripper, scope bindings, or a re-tier of an existing field's `@sensitivity` — must ship **in its own PR** (tests/docs/schema annotations may accompany; no app/feature code). New registered route: land the registry entry PR first (an unused `defineRoute` is inert), then the route PR. CI-enforced by `.github/workflows/security-boundary-isolation.yml`. `checkin-app/src/middleware.ts` counts as a boundary file — it is the site-wide org-login/access gate and nothing imports it, so deleting or renaming it leaves tsc and the build green; a PR touching it ships alone. Security *tests* (`src/security/__tests__/`) are companions, not boundary files. One exception, for decommissions: a boundary diff that only removes *whole* entries whose subjects cease to exist in the same PR (model dropped from schema, route file/verb deleted) may ship with the drop migration and the route files of the removed registry entries — no other deletion — certified fail-closed by `checkin-app/scripts/check-boundary-decommission.js`; see `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
   - **Stacking hazard — base the route PR on `main`, not on the registry branch.** Registry-first means two PRs, and stacking the second on the first strands it: when the registry PR merges, the route PR still targets a branch tip nothing will ever merge, while GitHub reports it `MERGED` once you merge it there. Its code never reaches `main`, and a closed PR cannot be retargeted — recovery is a cherry-pick into a fresh PR. This happened to #1447 (stranded on `claude/registry-turning-18` behind #1490; re-landed as #1495). **After any stacked merge, confirm the files are on `main`** (`git show origin/main:<path>`) rather than trusting the PR state.
 
-**Deploy & migrations** (`checkin-app/docs/`)
+**Deploy & migrations** (`docs/ops/`)
 - `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — infra rules + order of operations for schema migrations vs. deploys (read before writing a migration); `.claude/skills/migration-safety/` fires this as a checklist whenever a migration is being built.
-- `MIGRATION_COALESCE_FLOW.md` — the migration-coalesce script (`scripts/coalesce-migrations.ts`) for squashing a long unreleased tail, and the dev/prod ledger-reconcile procedure.
+- `MIGRATION_COALESCE_FLOW.md` — the migration-coalesce script (`checkin-app/scripts/coalesce-migrations.ts`) for squashing a long unreleased tail, and the dev/prod ledger-reconcile procedure.
+
+**Architecture** (`docs/architecture/`)
 - `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` — single-pool Shopify capacity model + the scholarship hold-ledger state machine (read before touching `Program`/`ProgramParticipant` capacity or payment-plan logic).
 
 **Subprojects** (each has its own `README.md`)

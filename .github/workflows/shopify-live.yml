@@ -53,6 +53,13 @@ jobs:
         working-directory: .
         run: npm ci
 
+      # lib/shopify/ imports the generated Prisma client. Generating needs only
+      # a syntactically valid DATABASE_URL; it never connects.
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: "postgresql://unused:unused@localhost:5432/unused"
+        run: npx prisma generate
+
       # Sweep leftovers from any previously-crashed run BEFORE testing, so
       # stale citest resources can't confuse this run's assertions.
       - name: Janitor (pre)

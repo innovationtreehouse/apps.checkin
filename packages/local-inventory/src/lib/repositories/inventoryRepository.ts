@@ -50,10 +50,6 @@ export function createInventoryRepository(db: Db) {
       await db.orgItem.update({ where: { orgGtin: { orgId, gtin13 } }, data });
     },
 
-    async delete(orgId: string, gtin13: string): Promise<void> {
-      await db.orgItem.delete({ where: { orgGtin: { orgId, gtin13 } } });
-    },
-
     async logChange(entry: Prisma.InventoryLogCreateInput): Promise<void> {
       await db.inventoryLog.create({ data: entry });
     },

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * ENV GATE: LOCAL ONLY. Stand-in for a Shopify orders/paid webhook (see
- * docs/designs/SHOPIFY_DEV_STORE_WEBHOOK.md §6). Lists the membership processes
+ * docs/ops/shopify-dev-store.md §6). Lists the membership processes
  * AND program enrollments currently awaiting payment and fires a
  * synthesized-but-real webhook for the chosen one. 404s on dev AND prod
  * (shopifyMockActive() is true iff CHECKIN_ENV=local) — dev/prod pay through
@@ -20,7 +20,7 @@ export default async function DevShopifyPage() {
     const processes = await prisma.orgMembershipProcess.findMany({
         where: { status: "PENDING_PAYMENT" },
         orderBy: { id: "desc" },
-        select: { id: true, orgMembership: { select: { household: { select: { name: true } }, isVolunteer: true } } },
+        select: { id: true, orgMembership: { select: { household: { select: { name: true } }, isVolunteerFamily: true } } },
     });
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -45,7 +45,7 @@ export default async function DevShopifyPage() {
             processes={processes.map((p) => ({
                 id: p.id,
                 household: p.orgMembership?.household?.name ?? "(unnamed household)",
-                isVolunteer: p.orgMembership?.isVolunteer ?? false,
+                isVolunteerFamily: p.orgMembership?.isVolunteerFamily ?? false,
             }))}
             enrollments={pendingParticipants.map((pp) => ({
                 programId: pp.program.id,

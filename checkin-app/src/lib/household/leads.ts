@@ -2,6 +2,7 @@ import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { isYouth } from "@/lib/time";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 
 /**
  * Shared household-lead ownership check (audit P1-2). Loads the person and
@@ -84,6 +85,14 @@ export class HouseholdLeadYouthError extends Error {
     }
 }
 
+/** Nobody becomes a lead of a DENIED household. Callers raise it to the board after their transaction. */
+export class HouseholdLeadDeniedError extends Error {
+    constructor(public readonly householdId: number, public readonly personId: number) {
+        super("This household has been denied membership, so no one can be made its lead.");
+        this.name = "HouseholdLeadDeniedError";
+    }
+}
+
 /**
  * The count-then-flag core, run inside a transaction. Takes a row lock on the
  * household first so concurrent promotions are serialized: a second caller
@@ -100,6 +109,11 @@ async function addHouseholdLeadTx(
     householdId: number,
     participantId: number,
 ): Promise<{ created: boolean }> {
+    // The OrgMembership lock comes before the Household lock, the order every
+    // caller that also checks for a deny takes them in, so a deny of this
+    // household serializes with the promotion.
+    const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
+
     // FOR UPDATE serializes lead additions for this household. Postgres' default
     // Read Committed isolation does NOT prevent two transactions from both
     // counting N and both flagging — the explicit lock is what does.
@@ -117,6 +131,8 @@ async function addHouseholdLeadTx(
         throw new HouseholdLeadMismatchError(householdId, participantId);
     }
     if (person?.isHouseholdLead) return { created: false };
+    // Checked after the already-lead return: re-saving an existing lead promotes nobody.
+    if (denied) throw new HouseholdLeadDeniedError(householdId, participantId);
     // Youth exclusion (server-side; UI also filters). null/unknown DOB is allowed.
     if (person && isYouth(person.dateOfBirth)) {
         throw new HouseholdLeadYouthError(householdId, participantId);

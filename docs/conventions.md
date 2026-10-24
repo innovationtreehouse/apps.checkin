@@ -180,3 +180,56 @@ and in a UTC test environment both are right. The failure appears later as a
 birthday rendered a day early, an age gate that turns someone away on the morning
 they qualify, or a second record for a person because a lookup by exact date
 missed a row stored at a different time of day.
+
+---
+
+## A library names its failures; the host renders them
+
+- **Every expected failure in a hosted library leaves it as an HTTP status, never
+  a 500.** Its services throw `ServiceError(status)` from `@checkin/component-kit`
+  and its route factories throw the kit's `httpError(status, message)`: 400 for
+  validation, 403 for forbidden, 404 for not found, 409 for a conflict or a
+  duplicate. A zod parse that fails anywhere in the call is a 400 with the first
+  issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
+  renders all three as checkin's API error; anything else is rethrown and the host
+  answers an opaque 500. The kit's tests and the host wrapper's test pin this.
+
+- **A library's runtime fails closed the same way everywhere.** Each library
+  builds its runtime with the kit's `defineRuntime`. Until the host configures
+  it, every accessor throws. A missing principal, or one without an integer id,
+  is a 401. An unbound port or accessor throws `NotWiredError` and never fakes
+  success. A callee that takes an `orgId` from its caller checks it with
+  `assertOrg` first.
+
+- **A duplicate the service expects is caught by the service.** A unique-key race
+  it can tolerate is caught where it happens and re-read or thrown as
+  `ServiceError(409)`. A P2002 that escapes uncaught is a bug and stays a 500,
+  logged with enough to find the missing handler: `handler()` logs the route's
+  endpoint and the error itself, whose `meta` names the colliding constraint.
+  Nothing on the way may swallow or rewrap it into a bare message.
+
+- **A Prisma error is recognised by its `code`, never by `instanceof`.** Clients
+  are memoized on `globalThis`, and the instrumentation chunk that configures a
+  library and each route chunk can load separate copies of the generated client,
+  so the class identity differs. The library's `isUniqueConstraintError` and
+  checkin's `isPrismaError` (`lib/prismaUniqueViolation.ts`) read the code. For
+  the same reason the kit's own errors are recognised by a `Symbol.for` brand,
+  not by class.
+
+The failure shows only in a built app. In unit tests every module is loaded once,
+so `instanceof` holds; in the server, the same 409 arrives as an error from
+another copy of the class and the caller sees a 500.
+
+## The dictionary's word is the code's word
+
+- **Identifiers, comments and prose use the canonical term** from
+  `docs/VOCABULARY.md`. No `minor`, no loose `dependent`, no bare
+  `member`, in identifiers or in comments. `child` is allowed: it names a
+  relationship (offspring), and `youth` names the under-18 age.
+
+- **A serialized API key is a contract, not a free rename.** A request or
+  response key changes only in the change that owns that contract, with every
+  consumer moved together. Surrounding variables rename freely; the key waits.
+
+- **Age is derived from `dateOfBirth` through `isYouth`**, never by an inline
+  age check.

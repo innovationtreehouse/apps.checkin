@@ -8,7 +8,7 @@
  *                                    DEAD rows in this MONITORING_ENV. Use after fixing the
  *                                    root cause (e.g. SNS topic permissions).
  */
-import { prisma, requeueDead } from "@inventory/monitoring-db";
+import { prisma, requeueDead } from "@checkin/monitoring-db";
 import { loadRelayConfig } from "./config.js";
 import { handler } from "./handler.js";
 

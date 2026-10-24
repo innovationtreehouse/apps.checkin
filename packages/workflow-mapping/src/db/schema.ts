@@ -18,12 +18,9 @@ export type ReceivedReceiptState = (typeof receivedReceiptStateEnum)[number];
 /** States whose lines a manager may still edit (and the S5 remap may touch). */
 export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review", "apply_failed"];
 
-/** A receipt's lines are editable in an editable state while no downstream leg has applied. */
+/** A receipt's lines are editable in an editable state, even after a leg applied (that edit is logged as late). */
 export const EDITABLE_RECEIPT_WHERE = {
   state: { in: EDITABLE_RECEIPT_STATES },
-  inventoryAppliedAt: null,
-  expenseAppliedAt: null,
-  donationAppliedAt: null,
 };
 
 /** The apply-failed queue also lists `applying`, so a receipt whose push never landed is visible. */
@@ -48,6 +45,7 @@ export const workflowAuditEventTypeEnum = [
   "line_marked_non_inventory",
   "line_proposed",
   "line_remapped",
+  "line_edited_late",
   "provisional_rejected",
   "org_event_rejected",
   "auto_proceed_triggered",

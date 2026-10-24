@@ -41,6 +41,12 @@ export function dollarsToCentsOrNull(value: string | undefined): number | null {
   return Number.isNaN(cents) ? null : cents;
 }
 
+/** Integer cents as a dollar number for an external API's wire format (e.g. QuickBooks); never for display. */
+export function centsToDollars(cents: number): number {
+  if (!Number.isSafeInteger(cents)) throw new Error(`Cents must be a safe integer, got ${cents}`);
+  return cents / 100;
+}
+
 /** Sum integer-cent amounts. Inputs must already be integer cents. */
 export function sumCents(...amounts: number[]): number {
   return amounts.reduce((acc, n) => acc + n, 0);

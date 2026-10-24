@@ -1,8 +1,8 @@
-# @inventory/monitoring-db
+# @checkin/monitoring-db
 
 The **dedicated monitoring Postgres** layer — the DB-backed enrichment tier from
 [`MONITORING-PRD.md`](../../s-read-function/MONITORING-PRD.md). Separate from
-`@inventory/telemetry` so services that only *emit* don't pull in Prisma.
+`@checkin/telemetry` so services that only *emit* don't pull in Prisma.
 
 ## Tables
 
@@ -18,7 +18,7 @@ The **dedicated monitoring Postgres** layer — the DB-backed enrichment tier fr
 - **Relay** reads via `claimPending()` / `markSent()` / `markFailed()`.
 
 ```ts
-import { prisma, recordIncident, IncidentKind, Severity } from "@inventory/monitoring-db";
+import { prisma, recordIncident, IncidentKind, Severity } from "@checkin/monitoring-db";
 
 await recordIncident(prisma, {
   service: "shopify-read",

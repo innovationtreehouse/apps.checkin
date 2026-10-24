@@ -1,6 +1,6 @@
 /**
  * Non-Prisma response models the inventory library ships through handler()
- * (#1287 §11 track 5; the catalogSyntheticClassifications.ts pattern).
+ * (the catalogSyntheticClassifications.ts pattern).
  *
  * The paginated inventory lists each have a `.../count` endpoint returning a
  * scalar total that no Prisma model carries, and handler()'s stripper drops any

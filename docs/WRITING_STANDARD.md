@@ -18,7 +18,7 @@ Two places keep their own rules, which override this one:
 - **Code comments.** `AGENTS.md` limits a comment to what someone editing that
   line needs, and says to keep it short, usually one line. "Take the space the
   idea requires" in §3 governs prose and never a comment block.
-- **User-facing copy.** `checkin-app/docs/VOCABULARY.md` fixes product terms.
+- **User-facing copy.** `docs/VOCABULARY.md` fixes product terms.
   Where it defines a term, use it exactly, even when a plainer word would read
   better.
 

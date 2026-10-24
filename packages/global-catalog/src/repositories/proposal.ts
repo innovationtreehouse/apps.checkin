@@ -12,8 +12,9 @@ export function createProposalRepository(db: PrismaClient) {
     createItemReferenceProposal: (data: Prisma.ItemReferenceProposalUncheckedCreateInput) =>
       db.itemReferenceProposal.create({ data }),
 
-    updateItemReferenceProposal: (tx: Tx, id: number, data: Prisma.ItemReferenceProposalUncheckedUpdateInput) =>
-      tx.itemReferenceProposal.update({ where: { id }, data }),
+    /** Moves the proposal on only if it is still in `fromStatus`; returns the rows changed (0 or 1). */
+    transitionItemReferenceProposal: async (tx: Tx, id: number, fromStatus: string, data: Prisma.ItemReferenceProposalUncheckedUpdateInput) =>
+      (await tx.itemReferenceProposal.updateMany({ where: { id, status: fromStatus }, data })).count,
 
     updateManyItemReferenceProposals: (tx: Tx, where: Prisma.ItemReferenceProposalWhereInput, data: Prisma.ItemReferenceProposalUncheckedUpdateInput) =>
       tx.itemReferenceProposal.updateMany({ where, data }),
@@ -50,8 +51,9 @@ export function createProposalRepository(db: PrismaClient) {
     createProvisionalItem: (data: Prisma.ProvisionalItemUncheckedCreateInput) =>
       db.provisionalItem.create({ data }),
 
-    updateProvisionalItem: (tx: Tx, id: number, data: Prisma.ProvisionalItemUncheckedUpdateInput) =>
-      tx.provisionalItem.update({ where: { id }, data }),
+    /** Moves the provisional on only if it is still in `fromStatus`; returns the rows changed (0 or 1). */
+    transitionProvisionalItem: async (tx: Tx, id: number, fromStatus: string, data: Prisma.ProvisionalItemUncheckedUpdateInput) =>
+      (await tx.provisionalItem.updateMany({ where: { id, status: fromStatus }, data })).count,
 
     countPendingProvisionalItems: () =>
       db.provisionalItem.count({ where: { status: "pending" } }),

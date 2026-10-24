@@ -1,6 +1,6 @@
 /** S5 consumer: remap on editable receipts, audit-only rejection, org check, cursor, catch-up. */
 import { beforeEach, expect, it } from "vitest";
-import { fixturesForSeam } from "@inventory/receipt-contract-fixtures";
+import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
 import type { OrgEventRecord } from "../../contract";
 import { catchUpOrgEvents, orgEventConsumer } from "../../services/orgEventConsumer";
@@ -57,6 +57,21 @@ describeDb("S5 remap", () => {
     expect(await cursor()).toBe(5);
   });
 
+  it("leaves a recognized line that still carries the provisional GTIN alone", async () => {
+    const r = await makeReceipt({ state: "pending_review" });
+    const ls = await makeLineStatus(r.id, {
+      recognitionStatus: "recognized",
+      assignedGtin13: "0000000000024",
+      provisionalItemGtin13: PROV,
+    });
+    await orgEventConsumer.onOrgEvents([approved(5)]);
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
+      recognitionStatus: "recognized",
+      assignedGtin13: "0000000000024",
+    });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
+  });
+
   it("provisional_mapped_to_existing remaps the same way", async () => {
     const ls = await provisionalLine("pending_review");
     await orgEventConsumer.onOrgEvents([
@@ -82,11 +97,21 @@ describeDb("S5 remap", () => {
     expect(await cursor()).toBe(events.length);
   });
 
-  it("replay is a no-op: events at or below the cursor are skipped", async () => {
+  it("replay is a no-op: a re-applied event changes nothing and audits nothing new", async () => {
     await provisionalLine("pending_review");
-    await orgEventConsumer.onOrgEvents([approved(5)]);
-    await orgEventConsumer.onOrgEvents([approved(5)]);
+    const rejected = event(6, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" });
+    await orgEventConsumer.onOrgEvents([approved(5), rejected]);
+    await orgEventConsumer.onOrgEvents([approved(5), rejected]);
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
+  });
+
+  it("an event committed after a higher id is still applied, and the cursor does not move back", async () => {
+    const ls = await provisionalLine("pending_review");
+    await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
+    await orgEventConsumer.onOrgEvents([approved(7)]);
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await cursor()).toBe(8);
   });
 
   it("an event for another org is rejected, audited, and the cursor advances past it", async () => {
@@ -103,19 +128,50 @@ describeDb("catch-up sweep", () => {
     expect(await catchUpOrgEvents()).toEqual({ applied: 0, failed: 0 });
   });
 
-  it("replays from the cursor, stops at the first failure, and returns counts only", async () => {
+  it("replays past a bad event, records it, and retries it by id", async () => {
     const asked: number[] = [];
+    const poison = event(3, "provisional_approved", { bad: true });
     configure({
       catalogEventSource: {
         eventsSince: async (_org, since) => {
           asked.push(since);
-          return [approved(1), approved(2), event(3, "provisional_approved", { bad: true }), approved(4)].filter((e) => e.id > since);
+          return [approved(1), approved(2), poison, approved(4)].filter((e) => e.id > since);
         },
       },
     });
-    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 1 });
-    expect(await cursor()).toBe(2);
-    expect(await catchUpOrgEvents({ limit: 1 })).toEqual({ applied: 0, failed: 1 });
-    expect(asked).toEqual([0, 2]);
+    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
+    expect(await cursor()).toBe(4);
+    expect(await db.workflowFailedOrgEvent.findMany()).toMatchObject([{ id: 3, eventType: "provisional_approved" }]);
+
+    // The recorded failure is retried by id from its stored payload, not re-read from the window.
+    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
+    expect(asked).toEqual([0, 0]);
+  });
+
+  it("a bad event in the post-commit call-out does not block later events, and a fixed retry clears it", async () => {
+    const ls = await provisionalLine("pending_review");
+    await orgEventConsumer.onOrgEvents([event(3, "provisional_approved", { bad: true }), approved(4)]);
+
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await cursor()).toBe(4);
+    expect(await db.workflowFailedOrgEvent.count()).toBe(1);
+
+    // A failure that clears (the stored payload now applies) is removed from the record.
+    await db.workflowFailedOrgEvent.update({ where: { id: 3 }, data: { payload: approved(3).payload } });
+    expect(await catchUpOrgEvents()).toEqual({ applied: 1, failed: 0 });
+    expect(await db.workflowFailedOrgEvent.count()).toBe(0);
+  });
+
+  it("catch-up re-reads behind the cursor, so an event that committed late is not skipped", async () => {
+    const ls = await provisionalLine("pending_review");
+    // Event 8 committed and was applied first; event 7 committed after it.
+    await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
+    configure({ catalogEventSource: { eventsSince: async (_org, since) => [approved(7), event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })].filter((e) => e.id > since) } });
+
+    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 0 });
+
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
+    expect(await cursor()).toBe(8);
   });
 });

@@ -22,6 +22,12 @@ jest.mock('@/lib/verify-kiosk', () => ({
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 describe('General Attendance API Integration Tests', () => {
     let adminId: number;
     let commonId: number;

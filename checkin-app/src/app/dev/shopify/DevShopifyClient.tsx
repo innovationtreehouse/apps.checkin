@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 interface PendingProcess {
     id: number;
     household: string;
-    isVolunteer: boolean;
+    isVolunteerFamily: boolean;
 }
 
 interface PendingEnrollment {
@@ -116,7 +116,7 @@ export default function DevShopifyClient({
                                 <tr key={key} style={{ borderTop: "1px solid #e5e7eb" }}>
                                     <td style={{ padding: "0.4rem" }}>#{p.id}</td>
                                     <td style={{ padding: "0.4rem" }}>{p.household}</td>
-                                    <td style={{ padding: "0.4rem" }}>{p.isVolunteer ? "Volunteer" : "Normal"}</td>
+                                    <td style={{ padding: "0.4rem" }}>{p.isVolunteerFamily ? "Volunteer" : "Normal"}</td>
                                     <td style={{ padding: "0.4rem", textAlign: "right" }}>
                                         <button
                                             onClick={() => fire(key, { processId: p.id }, (d) => `Fired for process ${p.id} → status ${d.status ?? "unknown"}`)}

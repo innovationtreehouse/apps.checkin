@@ -54,12 +54,16 @@ export function EntityPicker<T extends { id: number }>({
   const [searching, setSearching] = useState(false);
 
   const hasSelection = selectedId !== null && selectedId !== "";
+  const active = !hasSelection && query.length >= minChars;
+  // Results clear once a selection is made or the query gets too short.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) setResults([]);
+  }
 
   useEffect(() => {
-    if (hasSelection || query.length < minChars) {
-      setResults([]);
-      return;
-    }
+    if (!active) return;
     let cancelled = false;
     const timeoutId = setTimeout(async () => {
       setSearching(true);
@@ -76,7 +80,7 @@ export function EntityPicker<T extends { id: number }>({
     };
     // `search` is recreated each render by callers; intentionally excluded so typing alone drives it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, hasSelection, minChars, debounceMs]);
+  }, [query, active, debounceMs]);
 
   const handleClear = () => {
     setQuery("");

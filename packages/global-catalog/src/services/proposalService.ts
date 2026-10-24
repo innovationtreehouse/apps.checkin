@@ -2,17 +2,15 @@ import { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import { createProposalRepository } from "../repositories/proposal";
 import { createCatalogRepository } from "../repositories/catalog";
-import { createItemReferenceRepository } from "../repositories/itemReference";
 import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/schema";
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
-const itemRefRepo = createItemReferenceRepository(db);
-import { ServiceError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 import { normalizeDescription } from "../lib/normalizeDescription";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 
 export interface CreateItemReferenceProposalParams {
   gtin13: string;
@@ -109,8 +107,7 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
   try {
     approvedStatus = assertItemReferenceProposalTransition(proposal.status as ItemReferenceProposalStatus, "APPROVE");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", "Proposal was already reviewed");
   }
 
   const matchClause = buildSupersessionMatchClause(proposal);
@@ -118,8 +115,11 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
     ? { status: "pending", id: { not: proposalId }, ...matchClause }
     : undefined;
 
-  await db.$transaction(async (tx) => {
-    const now = new Date();
+  await transactionWithEvents(async (tx) => {
+    const reviewedAt = new Date();
+    const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
+    if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
+
     await tx.itemReference.create({
       data: {
         gtin13: proposal.gtin13,
@@ -134,9 +134,6 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
         updatedByUsername: username ?? null,
       },
     });
-
-    const reviewedAt = new Date();
-    await proposalRepo.updateItemReferenceProposal(tx, proposalId, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
 
     await recordTransition(tx, "item_reference_proposal", proposalId, proposal.status, approvedStatus, userId);
     await emitOrgEvent(tx, proposal.orgId, {
@@ -185,12 +182,12 @@ export async function rejectItemReferenceProposal(
   try {
     rejectedStatus = assertItemReferenceProposalTransition(proposal.status as ItemReferenceProposalStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", "Proposal was already reviewed");
   }
 
-  await db.$transaction(async (tx) => {
-    await proposalRepo.updateItemReferenceProposal(tx, proposalId, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date(), rejectionReason: reason });
+  await transactionWithEvents(async (tx) => {
+    const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date(), rejectionReason: reason });
+    if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
     await recordTransition(tx, "item_reference_proposal", proposalId, proposal.status, rejectedStatus, userId, reason);
     await emitOrgEvent(tx, proposal.orgId, {
       eventType: "item_reference_proposal_rejected",

@@ -20,6 +20,14 @@ import { POST as RefusePost } from '@/app/api/finance-ops/payment-plans/refuse/r
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import prisma from '@/lib/prisma';
+import * as shopify from '@/lib/shopify/stock';
+
+// Wrap only changeProgramStockWith (call-through) so one test can force a −1 that
+// could not be recorded; SWC exports are non-configurable getters, so no spyOn.
+jest.mock('@/lib/shopify/stock', () => {
+    const actual = jest.requireActual('@/lib/shopify/stock');
+    return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
+});
 import { classify, validate, toRow, type EnrollmentStateName } from '@/lib/programs/enrollmentState';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -79,6 +87,8 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 inventoryHeldAt: fields.held ? now : null,
                 paymentPlanDeniedAt: fields.den ? now : null,
                 pendingSince: fields.pendingSince ?? now,
+                shopifyOrderId: null,
+                seatTakenWithoutSaleAt: null,
             },
             create: {
                 programId, personId: selfId,
@@ -107,8 +117,8 @@ describe('enrollment state — validator oracle over real transitions', () => {
         expect(row).toBeNull(); // UNENROLLED
     }
 
-    const reqReq = () => new Request(`http://localhost/api/programs/${programId}/request-payment-plan`, {
-        method: 'POST', headers: { cookie: 'session=test' }, body: JSON.stringify({ participantId: selfId }),
+    const reqReq = (kind?: string) => new Request(`http://localhost/api/programs/${programId}/request-payment-plan`, {
+        method: 'POST', headers: { cookie: 'session=test' }, body: JSON.stringify({ participantId: selfId, kind }),
     }) as unknown as import('next/server').NextRequest;
     const params = () => ({ params: Promise.resolve({ id: String(programId) }) });
     const financeReq = (url: string) => new Request(url, {
@@ -131,16 +141,39 @@ describe('enrollment state — validator oracle over real transitions', () => {
 
     it('T3f apply (−1 FAILS): PENDING_UNPAID → PENDING_HOLD_FAILED', async () => {
         const prev = process.env.CHECKIN_ENV;
-        delete process.env.CHECKIN_ENV; // no mock, no creds → adjust returns false → rollback
+        delete process.env.CHECKIN_ENV;
+        // Only a −1 the stock writer could not even record leaves the request without a hold.
+        jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new shopify.StockNotRecordedError('stock carry could not be written'));
         try {
             await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
             mockSession.mockResolvedValue({ user: { id: selfId } });
-            const res = await RequestPost(reqReq(), params());
+            const res = await RequestPost(reqReq('PAYMENT_PLAN'), params());
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toMatch(/board/i);
             await assertState('PENDING_HOLD_FAILED');
+            // The stated kind survives the failed hold.
+            const row = await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } });
+            expect(row.scholarshipRequestKind).toBe('PAYMENT_PLAN');
         } finally {
             if (prev !== undefined) process.env.CHECKIN_ENV = prev;
+        }
+    });
+
+    it.each([
+        ['a failed -1', () => new shopify.StockNotRecordedError('stock carry could not be written')],
+        ['any other transaction error', () => new Error('lock timeout')],
+    ])('T3 re-apply that fails on %s leaves a denied row PENDING_HELD_DENIED, with no warning', async (_label, error) => {
+        jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(error());
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {}); // the route logs its 500
+        try {
+            await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(reqReq('SCHOLARSHIP'), params());
+            expect(res.status).toBe(500);
+            expect((await res.json()).warning).toBeUndefined();
+            await assertState('PENDING_HELD_DENIED');
+        } finally {
+            errorSpy.mockRestore();
         }
     });
 
@@ -211,6 +244,37 @@ describe('enrollment state — validator oracle over real transitions', () => {
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await withdrawAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
+        await assertGone();
+    });
+
+    const stampOf = async () =>
+        (await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } })).seatTakenWithoutSaleAt;
+
+    it('T5 then T11: an approved held seat is recorded, and withdrawal returns it (+1)', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        expect(await stampOf()).not.toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(true);
+        await assertGone();
+    });
+
+    it('T11 after approving a request whose hold failed: nothing recorded, nothing returned', async () => {
+        await seed({ req: true, held: false, den: false }); // PENDING_HOLD_FAILED
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        await assertState('ACTIVE');
+        expect(await stampOf()).toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        await assertGone();
+    });
+
+    it('T11 on an ACTIVE place with no record (paid, or enrolled while free) returns nothing', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
     });
 

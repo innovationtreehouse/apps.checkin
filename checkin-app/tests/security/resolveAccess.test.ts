@@ -3,8 +3,10 @@
  * Focus on the 'self' case binding to the resource id param — a latent IDOR
  * guard, so it must fail closed on a present-but-mismatched id.
  */
-import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
+import { callerHoldsRole, resolveAccess, type ResolverContext } from '@/security/access-resolvers';
+import type { Authorize } from '@/security/core';
 import type { AuthResult } from '@/types/auth';
+import prisma from '@/lib/prisma';
 
 const session = (id: number): AuthResult => ({
     type: 'session',
@@ -169,6 +171,110 @@ describe("resolveAccess 'kiosk'", () => {
 
     test('a normal session (not kiosk) → denied', async () => {
         expect((await resolveAccess('kiosk', rctx(session(1)))).allowed).toBe(false);
+    });
+});
+
+// H4 finance vocabulary (#1272 §6, #1280 §4, #1265 §6). One persona per audience:
+// finance, board, inventory manager, sysadmin-only, a Treehouse Volunteer (keyholder), and a plain
+// household member with no role.
+describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole', () => {
+    const as = (flags: Partial<Extract<AuthResult, { type: 'session' }>['user']>): AuthResult => {
+        const a = session(1);
+        if (a.type === 'session') Object.assign(a.user, flags);
+        return a;
+    };
+    const personas: Record<string, AuthResult> = {
+        finance: as({ isFinance: true }),
+        board: as({ isBoardMember: true }),
+        inventoryManager: as({ isInventoryManager: true }),
+        sysadminOnly: as({ isSysadmin: true }),
+        volunteer: as({ isKeyholder: true }),
+        familyMember: as({ householdId: 7 }),
+    };
+    const allowed = async (authorize: Authorize, who: string) =>
+        (await resolveAccess(authorize, rctx(personas[who]))).allowed;
+
+    test.each([
+        ['finance', true], ['board', false], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("'finance' admits %s → %s", async (who, expected) => {
+        expect(await allowed('finance', who)).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', true], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("'finance-or-board' admits %s → %s", async (who, expected) => {
+        expect(await allowed('finance-or-board', who)).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', true], ['sysadminOnly', true], ['volunteer', true], ['familyMember', false],
+    ])("'catalog-viewer' admits %s → %s", async (who, expected) => {
+        expect(await allowed('catalog-viewer', who)).toBe(expected);
+    });
+
+    test.each<[string, Partial<Extract<AuthResult, { type: 'session' }>['user']>, boolean]>([
+        ['a Volunteer Family youth with an ACTIVE membership', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, true],
+        ['a program leader without an ACTIVE membership', { ageBand: 'adult', programsLed: [3], isActiveOrgMember: false }, false],
+        ['a program leader with an ACTIVE membership', { ageBand: 'adult', programsLed: [3], isActiveOrgMember: true }, true],
+        ['a program volunteer with an ACTIVE membership', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: true }, true],
+        ['FINANCE with no membership', { isFinance: true }, true],
+        ['a Google-verified staff account', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }, true],
+        ['a staff hd claim on an off-domain address', { email: 'u@x.test', hd: 'innovationtreehouse.org', emailVerified: true }, false],
+    ])("'catalog-viewer' on %s", async (_who, claims, expected) => {
+        expect((await resolveAccess('catalog-viewer', rctx(as(claims)))).allowed).toBe(expected);
+    });
+
+    test.each<[string, Partial<Extract<AuthResult, { type: 'session' }>['user']>, boolean]>([
+        ['an adult with no role and no membership', { ageBand: 'adult' }, false],
+        ['an adult whose membership is not ACTIVE', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }, false],
+        ['an adult with an ACTIVE membership and no role', { ageBand: 'adult', isActiveOrgMember: true }, true],
+        ['a member of unknown age', { ageBand: 'unknown', isActiveOrgMember: true }, false],
+        ['a youth', { ageBand: 'youth' }, false],
+        ['a youth with an ACTIVE membership', { ageBand: 'youth', isActiveOrgMember: true }, false],
+        ['a youth catalog viewer', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, false],
+        ['a caller of unknown age', { ageBand: 'unknown' }, false],
+        ['FINANCE of unknown age', { isFinance: true }, true],
+        ['a keyholder youth', { ageBand: 'youth', isKeyholder: true }, true],
+        ['a staff-domain account of unknown age with no role', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }, true],
+        ['a program leader of unknown age', { programsLed: [3], isActiveOrgMember: true }, false],
+    ])("'receipt-submitter' on %s", async (_who, claims, expected) => {
+        expect((await resolveAccess('receipt-submitter', rctx(as(claims)))).allowed).toBe(expected);
+    });
+
+    test("'receipt-submitter' denies a caller with no session", async () => {
+        expect((await resolveAccess('receipt-submitter', rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
+    });
+
+    test("'catalog-viewer' makes no DB read", async () => {
+        prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+        expect((await resolveAccess('catalog-viewer', rctx(as({ isActiveOrgMember: true })))).allowed).toBe(false);
+        expect(prisma.volunteerDesignation.findFirst).not.toHaveBeenCalled();
+    });
+
+    test.each(['finance', 'finance-or-board'] as const)(
+        "'%s' denies a caller with no session", async (authorize) => {
+            expect((await resolveAccess(authorize, rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
+        },
+    );
+
+    test.each([
+        ['finance', true], ['board', true], ['inventoryManager', true],
+        ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("anyRole [isInventoryManager, isFinance, isBoardMember] admits %s → %s", async (who, expected) => {
+        const authorize: Authorize = { anyRole: ['isInventoryManager', 'isFinance', 'isBoardMember'] };
+        expect((await resolveAccess(authorize, rctx(personas[who]))).allowed).toBe(expected);
+    });
+
+    test.each([
+        ['sysadminOnly', true], ['board', true], ['finance', false], ['volunteer', false], ['familyMember', false],
+    ])("a BusinessRole-only anyRole [isSysadmin, isBoardMember] admits %s → %s", async (who, expected) => {
+        expect((await resolveAccess({ anyRole: ['isSysadmin', 'isBoardMember'] }, rctx(personas[who]))).allowed).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', false], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("role 'isFinance' held by %s → %s", (who, expected) => {
+        expect(callerHoldsRole('isFinance', personas[who], {}, rctx(personas[who]).callerContext)).toBe(expected);
     });
 });
 

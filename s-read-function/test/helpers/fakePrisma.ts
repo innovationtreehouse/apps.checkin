@@ -19,4 +19,4 @@ export function fakePrisma(): FakePrisma {
 }
 
 /** An opaque prisma stand-in for code paths that only forward prisma to mocked core fns. */
-export const prismaSentinel = { __fake: true } as unknown as import("@inventory/s-ingest-core").PrismaClient;
+export const prismaSentinel = { __fake: true } as unknown as import("@checkin/s-ingest-core").PrismaClient;

@@ -1,6 +1,6 @@
 /**
  * Integration: runWatchdog against a REAL monitoring Postgres. Telemetry is mocked;
- * @inventory/monitoring-db is real, so readServiceHeartbeats, the freshness/erroring
+ * @checkin/monitoring-db is real, so readServiceHeartbeats, the freshness/erroring
  * evaluation, and the transactional recordIncident write (health_event + outbox, plus the
  * renotify-window alert dedup) are exercised end to end. Skipped unless MONITORING_DATABASE_URL
  * is set (no Docker → skip).
@@ -15,7 +15,7 @@ const m = vi.hoisted(() => ({
   emitMonitorHeartbeat: vi.fn(),
 }));
 
-vi.mock("@inventory/telemetry", () => ({
+vi.mock("@checkin/telemetry", () => ({
   logger: m.logger,
   newCorrelationId: m.newCorrelationId,
   emitServiceError: m.emitServiceError,

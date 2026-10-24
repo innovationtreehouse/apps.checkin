@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/quickbooks",
+  "name": "@checkin/quickbooks",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,13 +9,21 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./oauth": {
+      "types": "./src/oauth.ts",
+      "import": "./src/oauth.ts"
     }
   },
   "scripts": {
     "test": "vitest run",
     "consent": "tsx scripts/consent.ts",
     "consent:manual": "tsx scripts/consent-manual.ts",
-    "pull": "tsx scripts/pull.ts"
+    "pull": "tsx scripts/pull.ts",
+    "sandbox-checks": "tsx scripts/sandbox-checks.ts"
+  },
+  "dependencies": {
+    "@checkin/money": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

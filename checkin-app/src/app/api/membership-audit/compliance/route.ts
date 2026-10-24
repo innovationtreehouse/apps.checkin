@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
-import { bgObligatedWhere, LIVE_PERSON } from "@/lib/person/filters";
+import { bgObligatedWhere, ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -144,7 +144,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                 dateOfBirth: true,
                 isDeclaredAdult: true,
                 lastBackgroundCheck: true,
-                programParticipants: { select: { program: { select: { id: true, name: true } } } },
+                programParticipants: { where: ENROLLED_PARTICIPANT, select: { program: { select: { id: true, name: true } } } },
                 programVolunteers: { select: { program: { select: { id: true, name: true } } } },
                 programsLed: { select: { id: true, name: true } },
             },

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Deploy-build smoke (#1967): boot the production image against a migrated
+# Postgres and check that each wired library's HTTP errors keep their status
+# (400/409, never 500) under `next build` bundling.
+#
+# Usage: deploy-build-error-smoke.sh <runner-image> <builder-image>
+#   runner-image  the production image (checkin-app/Dockerfile, final stage)
+#   builder-image the same Dockerfile's `builder` stage: full workspace, used
+#                 for cookie minting
+# Databases and migrations follow checkin-app/libraries.json, and run the
+# deploy migrate task's command in the runner image.
+set -euo pipefail
+
+# One write route per wired library. A malformed JSON body must answer 400.
+# A library's wiring PR adds its line here. A 403 means the probe person lacks
+# the route's role (fix the role grant), not a pass; a route that admits more
+# roles later must still answer 400.
+MALFORMED_JSON_PROBES=(
+  /api/catalog/categories
+  /api/inventory/locations
+  /api/donations/account-map
+  /api/expense/qb-accounts
+  /api/workflow-mapping/receipts/1/lines/1/associate
+  /api/income/qb-exclusions
+)
+
+# Duplicate create: the first POST must succeed, the second must answer 409.
+DUPLICATE_PROBE_PATH=/api/catalog/categories
+DUPLICATE_PROBE_BODY='{"name":"Smoke probe","letter":"Z"}'
+
+# Replayed transition: a second proceed on the same receipt must answer 409.
+# workflow-mapping's error is built in the instrumentation bundle and translated
+# in the route bundle, so this proves that translation under the production build.
+REPLAY_PROBE_RECEIPT=smoke-replay
+
+RUNNER_IMAGE=${1:?runner image}
+BUILDER_IMAGE=${2:?builder image}
+NET=checkin-error-smoke
+DB=checkin-error-smoke-db
+APP=checkin-error-smoke-app
+BASE=http://127.0.0.1:4000
+PG=postgresql://prisma:prisma@$DB:5432
+LIBRARIES_JSON="$(dirname "$0")/../checkin-app/libraries.json"
+# Same name extraction as deploy/prod-initdb/10-library-dbs.sh.
+LIB_NAMES=$(sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' "$LIBRARIES_JSON")
+[ -n "$LIB_NAMES" ] || { echo "::error::no libraries listed in $LIBRARIES_JSON"; exit 1; }
+
+# Per-run secret, never committed: the app verifies the minted cookie with it.
+SECRET=$(openssl rand -hex 32)
+echo "::add-mask::$SECRET"
+
+cleanup() {
+  docker logs "$APP" 2>&1 | tail -80 || true
+  docker rm -f "$APP" "$DB" >/dev/null 2>&1 || true
+  docker network rm "$NET" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+PG_IMAGE=public.ecr.aws/docker/library/postgres:15
+bash "$(dirname "$0")/ci-pull-image.sh" "$PG_IMAGE"
+
+docker network create "$NET" >/dev/null
+docker run -d --name "$DB" --network "$NET" \
+  -e POSTGRES_USER=prisma -e POSTGRES_PASSWORD=prisma -e POSTGRES_DB=checkmein \
+  "$PG_IMAGE" >/dev/null
+# Probe over TCP: the image's first-start init server listens only on the unix
+# socket, so a TCP answer means the post-init restart is done.
+pg_up=0
+for _ in $(seq 1 30); do
+  docker exec "$DB" pg_isready -h 127.0.0.1 -U prisma -d checkmein >/dev/null 2>&1 && { pg_up=1; break; }
+  sleep 1
+done
+[ "$pg_up" = 1 ] || { echo "::error::Postgres not ready over TCP after 30s"; docker logs "$DB" 2>&1 | tail -40; exit 1; }
+
+psql() { docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d checkmein -qtA "$@"; }
+DB_ENV=(-e "DATABASE_URL=$PG/checkmein?sslmode=disable")
+for name in $LIB_NAMES; do
+  psql -c "CREATE DATABASE \"$name\""
+  DB_ENV+=(-e "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_DATABASE_URL=$PG/$name?sslmode=disable")
+done
+
+# The deploy workflows' migrate-task command, in the runner image.
+docker run --rm --network "$NET" "${DB_ENV[@]}" "$RUNNER_IMAGE" sh -ec \
+  'cd checkin-app && ../scripts/each-library.sh exec --no -- prisma migrate deploy && npx --no-install prisma migrate deploy'
+
+# One pending_review receipt whose only line is resolved, so proceed is legal once.
+REPLAY_RECEIPT_ID=$(docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d workflow_mapping -qtA <<SQL
+WITH r AS (INSERT INTO received_receipts (org_id, receipt_id, receipt_json)
+           VALUES ('treehouse', '$REPLAY_PROBE_RECEIPT', '{}') RETURNING id),
+     l AS (INSERT INTO received_receipt_line_statuses (received_receipt_id, receipt_line_item_id, recognition_status)
+           SELECT id, 1, 'non_inventory' FROM r)
+SELECT id FROM r;
+SQL
+)
+
+PERSON_ID=$(psql <<'SQL'
+WITH h AS (INSERT INTO "Household" (name) VALUES ('Smoke') RETURNING id),
+     p AS (INSERT INTO "Person" (name, email, "householdId")
+           SELECT 'Smoke Probe', 'smoke-probe@example.com', id FROM h RETURNING id),
+     r AS (INSERT INTO "PersonRole" ("personId", role)
+           SELECT p.id, k::"PersonRoleKind" FROM p, unnest(ARRAY['FINANCE', 'BOARD', 'INVENTORY_MANAGER']) k)
+SELECT id FROM p;
+SQL
+)
+
+# Persona-mint is off under NODE_ENV=production; a JWT carrying the person id
+# and email is enough: the jwt callback re-reads roles by token.id on every
+# request and ends a token whose email no longer matches the person's.
+TOKEN=$(docker run --rm -w /app/checkin-app -e SECRET="$SECRET" -e PERSON_ID="$PERSON_ID" \
+  "$BUILDER_IMAGE" node -e '
+    require("next-auth/jwt")
+      .encode({ secret: process.env.SECRET, token: { id: Number(process.env.PERSON_ID), sub: process.env.PERSON_ID, email: "smoke-probe@example.com" } })
+      .then((t) => process.stdout.write(t));')
+echo "::add-mask::$TOKEN"
+COOKIE="next-auth.session-token=$TOKEN"
+
+docker run -d --name "$APP" --network "$NET" -p 4000:4000 "${DB_ENV[@]}" \
+  -e NEXTAUTH_URL="$BASE" -e AUTH_TRUST_HOST=true -e NEXTAUTH_SECRET="$SECRET" \
+  -e GOOGLE_CLIENT_ID=smoke-placeholder -e GOOGLE_CLIENT_SECRET=smoke-placeholder \
+  -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \
+  "$RUNNER_IMAGE" >/dev/null
+
+app_up=0
+for _ in $(seq 1 30); do
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/auth/csrf" || true)" = 200 ] && { app_up=1; break; }
+  sleep 2
+done
+# On exit the cleanup trap prints the app container's log tail.
+[ "$app_up" = 1 ] || { echo "::error::app did not answer 200 on /api/auth/csrf within 60s; container log tail follows"; exit 1; }
+
+post() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE$1" \
+  -H "Cookie: $COOKIE" -H 'Content-Type: application/json' --data-raw "$2"; }
+
+failed=0
+expect() { # <label> <want> <got>
+  if [ "$3" = "$2" ]; then echo "ok   $1 -> $3"
+  else echo "::error::$1 -> $3 (want $2)"; failed=1; fi
+}
+
+for path in "${MALFORMED_JSON_PROBES[@]}"; do
+  expect "POST $path (malformed JSON)" 400 "$(post "$path" '{"name":')"
+done
+
+first=$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")
+case "$first" in 2??) echo "ok   POST $DUPLICATE_PROBE_PATH (create) -> $first" ;;
+  *) echo "::error::POST $DUPLICATE_PROBE_PATH (create) -> $first (want 2xx)"; failed=1 ;; esac
+expect "POST $DUPLICATE_PROBE_PATH (duplicate)" 409 "$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")"
+
+proceed=/api/workflow-mapping/receipts/$REPLAY_RECEIPT_ID/proceed
+expect "POST $proceed (first)" 200 "$(post "$proceed" '{}')"
+expect "POST $proceed (replay)" 409 "$(post "$proceed" '{}')"
+
+exit "$failed"

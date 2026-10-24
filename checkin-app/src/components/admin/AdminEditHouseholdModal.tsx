@@ -22,7 +22,7 @@ export type AdminHousehold = {
   emergencyContactPhone: string | null;
   householdMembers?: Array<{ id: number; name: string | null; email: string | null; dateOfBirth?: string | null }>;
   householdLeads?: Array<{ personId: number }>;
-  orgMembership?: { memberSince: string | null; isVolunteer?: boolean } | null;
+  orgMembership?: { memberSince: string | null; isVolunteerFamily?: boolean; isVolunteer?: boolean } | null;
 } & Partial<StructuredAddress>;
 
 type FormState = {
@@ -35,10 +35,10 @@ type FormState = {
   emergencyContactName: string;
   emergencyContactPhone: string;
   memberSince: string;
-  isVolunteer: boolean;
+  isVolunteerFamily: boolean;
 };
 
-const EMPTY: FormState = { name: "", line1: "", line2: "", city: "", state: "", postalCode: "", emergencyContactName: "", emergencyContactPhone: "", memberSince: "", isVolunteer: false };
+const EMPTY: FormState = { name: "", line1: "", line2: "", city: "", state: "", postalCode: "", emergencyContactName: "", emergencyContactPhone: "", memberSince: "", isVolunteerFamily: false };
 
 /** Deep-compares flat string form state. Exported for unit test. */
 export function isFormDirty(a: FormState, b: FormState): boolean {
@@ -79,10 +79,9 @@ export function AdminEditHouseholdModal({
   // next to the form instead of a global corner toast behind the modal.
   const [notice, setNotice] = useState<{ color: string; message: string } | null>(null);
 
-  const loadHousehold = useCallback(async (signal?: { cancelled: boolean }) => {
-    if (householdId == null) return;
-    try {
-      const res = await fetch(`/api/membership-ops/households?id=${householdId}`);
+  const loadHousehold = useCallback((signal?: { cancelled: boolean }) => {
+    if (householdId == null) return Promise.resolve();
+    return fetch(`/api/membership-ops/households?id=${householdId}`).then(async (res) => {
       const data = await res.json();
       const h: AdminHousehold | null = data.household;
       if (signal?.cancelled) return;
@@ -95,7 +94,8 @@ export function AdminEditHouseholdModal({
           emergencyContactPhone: h.emergencyContactPhone || "",
           // date-only slice of the membership's join date (ISO → YYYY-MM-DD)
           memberSince: h.orgMembership?.memberSince ? h.orgMembership.memberSince.slice(0, 10) : "",
-          isVolunteer: !!h.orgMembership?.isVolunteer,
+          // isVolunteer comes from a server still on the pre-rename release during a deploy.
+          isVolunteerFamily: !!(h.orgMembership?.isVolunteerFamily ?? h.orgMembership?.isVolunteer),
         };
         setForm(loaded);
         setInitial(loaded);
@@ -104,15 +104,22 @@ export function AdminEditHouseholdModal({
         setMembers(h.householdMembers ?? []);
         setLeadIds((h.householdLeads ?? []).map((l) => l.personId));
       }
-    } catch {
+    }).catch(() => {
       notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
-    }
+    });
   }, [householdId]);
+
+  // Show the loader from the render that opens the modal (or switches household).
+  const loadKey = opened && householdId != null ? householdId : null;
+  const [loadingFor, setLoadingFor] = useState<number | null>(null);
+  if (loadingFor !== loadKey) {
+    setLoadingFor(loadKey);
+    if (loadKey != null) setLoading(true);
+  }
 
   useEffect(() => {
     if (!opened || householdId == null) return;
     const signal = { cancelled: false };
-    setLoading(true);
     loadHousehold(signal).finally(() => {
       if (!signal.cancelled) setLoading(false);
     });
@@ -216,7 +223,7 @@ export function AdminEditHouseholdModal({
         headers: { "Content-Type": "application/json" },
         // Membership fields are hidden without a membership; don't submit them
         // either, or the server rejects the whole edit as membership-less.
-        body: JSON.stringify(hasMembership ? form : { ...form, memberSince: undefined, isVolunteer: undefined }),
+        body: JSON.stringify(hasMembership ? form : { ...form, memberSince: undefined, isVolunteerFamily: undefined }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -309,8 +316,8 @@ export function AdminEditHouseholdModal({
                 <Switch
                   label="Volunteer-only household"
                   description="Reduced-fee volunteer family (no youth enrolled). Editing this is recorded in the audit log."
-                  checked={form.isVolunteer}
-                  onChange={(e) => update({ isVolunteer: e.currentTarget.checked })}
+                  checked={form.isVolunteerFamily}
+                  onChange={(e) => update({ isVolunteerFamily: e.currentTarget.checked })}
                 />
               </>
             ) : (

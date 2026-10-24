@@ -29,6 +29,7 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         rawBadgeLog: { findMany: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn() },
         person: { findUnique: jest.fn(), findFirst: jest.fn() },
+        personMerge: { findUnique: jest.fn() },
         visit: { findFirst: jest.fn(), count: jest.fn(), create: jest.fn() },
         presenceEvent: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
         auditLog: { create: jest.fn() },
@@ -38,14 +39,13 @@ jest.mock("@/lib/prisma", () => ({
 }));
 jest.mock("@/lib/attendanceTransitions", () => ({
     findAssociatedEventAt: jest.fn().mockResolvedValue(null),
-    processVisitCheckout: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("@/lib/facilityLock", () => ({ lockFacility: jest.fn() }));
-jest.mock("@/lib/presence/project", () => ({ flushParkedClosed: jest.fn() }));
 
 const db = prisma as unknown as {
     rawBadgeLog: { findMany: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock };
     person: { findUnique: jest.Mock; findFirst: jest.Mock };
+    personMerge: { findUnique: jest.Mock };
     visit: { findFirst: jest.Mock; count: jest.Mock; create: jest.Mock };
     presenceEvent: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
     auditLog: { create: jest.Mock };
@@ -89,6 +89,7 @@ beforeEach(() => {
     db.rawBadgeLog.updateMany.mockResolvedValue({ count: 1 });
     db.rawBadgeLog.findFirst.mockResolvedValue(parkedRow);
     db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: false, mergedIntoId: null });
+    db.personMerge.findUnique.mockResolvedValue(null);
     db.visit.findFirst.mockResolvedValue(null);
     db.visit.count.mockResolvedValue(0);
     db.visit.create.mockResolvedValue({ id: 900 });
@@ -119,6 +120,8 @@ describe("GET /api/system-status/unsynced-scans", () => {
         const res = await GET(listReq());
         const { select } = db.rawBadgeLog.findMany.mock.calls[0][0];
         expect(select.person).toEqual({ select: { id: true, name: true } });
+        // The raw read, for a row that resolved to no person.
+        expect(select.scannedValue).toBe(true);
 
         const [row] = (await res.json()).scans;
         expect(row.person).toEqual({ id: 12, name: "Ada Lovelace" });
@@ -338,16 +341,7 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         expect(lockFacility).toHaveBeenCalled();
     });
 
-    it("keyholder minted open releases the PARKED_CLOSED backlog (flush runs)", async () => {
-        const { flushParkedClosed } = jest.requireMock("@/lib/presence/project");
-        db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: true, mergedIntoId: null });
-        const res = await POST(recordReq({ action: "record" }), dismissCtx());
-        expect(res.status).toBe(200);
-        expect(flushParkedClosed).toHaveBeenCalled();
-    });
-
-    it("appends the departure presence event and processes checkout on a closed mint", async () => {
-        const { processVisitCheckout } = jest.requireMock("@/lib/attendanceTransitions");
+    it("appends the departure presence event on a closed mint", async () => {
         const res = await POST(
             recordReq({ action: "record", departedAt: "2026-08-20T21:00:00.000Z" }),
             dismissCtx(),
@@ -356,7 +350,44 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         // No parked event linked (default mock) → an IN is appended for the log,
         // plus the OUT for the supplied departure.
         expect(db.presenceEvent.create).toHaveBeenCalledTimes(2);
-        expect(processVisitCheckout).toHaveBeenCalledWith(900, new Date("2026-08-20T21:00:00.000Z"), undefined, "TYPED");
         expect(db.auditLog.create).toHaveBeenCalled();
+    });
+});
+
+describe("POST /api/system-status/unsynced-scans/[id] (record — merged person)", () => {
+    const closedRecord = () =>
+        POST(recordReq({ action: "record", departedAt: "2026-08-20T21:00:00.000Z" }), dismissCtx());
+    const people = (rows: Record<number, { mergedIntoId: number | null }>) =>
+        db.person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+            where.id in rows ? { id: where.id, isKeyholder: false, ...rows[where.id] } : null,
+        );
+
+    it("records the visit on the survivor at the end of a tombstone chain", async () => {
+        people({ 12: { mergedIntoId: 13 }, 13: { mergedIntoId: 14 }, 14: { mergedIntoId: null } });
+        expect((await closedRecord()).status).toBe(200);
+        expect(db.visit.create.mock.calls[0][0].data.personId).toBe(14);
+    });
+
+    it("records the visit on the survivor when only the merge archive knows the scanned id", async () => {
+        people({ 14: { mergedIntoId: null } });
+        db.personMerge.findUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) =>
+            where.fromId === 12 ? { toId: 14 } : null,
+        );
+        expect((await closedRecord()).status).toBe(200);
+        expect(db.visit.create.mock.calls[0][0].data.personId).toBe(14);
+    });
+
+    it("404s, without writing, when the scanned id names no person and no merge", async () => {
+        people({});
+        expect((await closedRecord()).status).toBe(404);
+        expect(db.visit.create).not.toHaveBeenCalled();
+        expect(db.rawBadgeLog.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("409s, without writing, when the merge chain leads nowhere", async () => {
+        people({ 12: { mergedIntoId: 13 } });
+        expect((await closedRecord()).status).toBe(409);
+        expect(db.visit.create).not.toHaveBeenCalled();
+        expect(db.rawBadgeLog.updateMany).not.toHaveBeenCalled();
     });
 });

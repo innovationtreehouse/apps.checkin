@@ -20,27 +20,30 @@ export default function ProvisionalProposalsClient() {
   const [proposals, setProposals] = useState<ProvisionalItemRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [onlyPending, setOnlyPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Category names label the rows and feed the approve form, so they load with the list.
+  function fetchAll() {
+    return Promise.all([
+      api<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`),
+      api<CategoryRow[]>("/categories"),
+      api<SubcategoryRow[]>("/subcategories"),
+    ])
+      .then(([rows, cats, subs]) => {
+        setProposals(rows);
+        setCategories(cats);
+        setSubcategories(subs);
+        setError(null);
+      }, (e) => setError(errorMessage(e)))
+      .finally(() => setLoading(false));
+  }
+  useEffect(() => { fetchAll(); }, []);
   async function load() {
     setLoading(true);
-    try {
-      const [rows, cats, subs] = await Promise.all([
-        api<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`),
-        api<CategoryRow[]>("/categories"),
-        api<SubcategoryRow[]>("/subcategories"),
-      ]);
-      setProposals(rows);
-      setCategories(cats);
-      setSubcategories(subs);
-      setError(null);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setLoading(false); }
+    await fetchAll();
   }
-  useEffect(() => { load(); }, []);
 
   const pending = proposals.filter((p) => p.status === "pending");
   const reviewed = proposals.filter((p) => p.status !== "pending");
@@ -123,9 +126,9 @@ export default function ProvisionalProposalsClient() {
 
   const canApprove = !!approveName && !!approveUsageBehavior && !!approveCategoryId && !!approveSubcategoryId;
 
-  function ProposalRow({ p }: { p: ProvisionalItemRow }) {
+  function proposalRow(p: ProvisionalItemRow) {
     return (
-      <Table.Tr>
+      <Table.Tr key={p.id}>
         <Table.Td><Text size="sm" ff="monospace">{formatItemId(p.provisionalGtin13)}</Text></Table.Td>
         <Table.Td>{p.orgName}</Table.Td>
         <Table.Td>{p.proposedName}</Table.Td>
@@ -145,7 +148,7 @@ export default function ProvisionalProposalsClient() {
     );
   }
 
-  function ProposalTable({ rows }: { rows: ProvisionalItemRow[] }) {
+  function proposalTable(rows: ProvisionalItemRow[]) {
     return (
       <Table striped highlightOnHover withTableBorder>
         <Table.Thead>
@@ -154,7 +157,7 @@ export default function ProvisionalProposalsClient() {
             <Table.Th>Category</Table.Th><Table.Th>Proposed At</Table.Th><Table.Th>Status</Table.Th><Table.Th w={110}>Actions</Table.Th>
           </Table.Tr>
         </Table.Thead>
-        <Table.Tbody>{rows.map((p) => <ProposalRow key={p.id} p={p} />)}</Table.Tbody>
+        <Table.Tbody>{rows.map(proposalRow)}</Table.Tbody>
       </Table>
     );
   }
@@ -170,8 +173,8 @@ export default function ProvisionalProposalsClient() {
       {error ? <LoadError what="provisional proposals" message={error} onRetry={load} />
         : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? <Text c="dimmed">No provisional proposals.</Text> : (
         <Stack gap="lg">
-          {pending.length > 0 && <div><Text fw={500} mb="xs">Pending ({pending.length})</Text><ProposalTable rows={pending} /></div>}
-          {!onlyPending && reviewed.length > 0 && <div><Text fw={500} mb="xs" c="dimmed">Reviewed ({reviewed.length})</Text><ProposalTable rows={reviewed} /></div>}
+          {pending.length > 0 && <div><Text fw={500} mb="xs">Pending ({pending.length})</Text>{proposalTable(pending)}</div>}
+          {!onlyPending && reviewed.length > 0 && <div><Text fw={500} mb="xs" c="dimmed">Reviewed ({reviewed.length})</Text>{proposalTable(reviewed)}</div>}
         </Stack>
       )}
 

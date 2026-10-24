@@ -117,7 +117,7 @@ describe('Ownership-boundary authorization', () => {
         return p.id;
     }
     async function mkPendingProcess(householdId: number, status: 'PENDING_PAYMENT' | 'PENDING_RENEWAL', kind: 'INITIAL' | 'RENEWAL') {
-        const m = await prisma.orgMembership.create({ data: { householdId, status: 'NONE', isVolunteer: false } });
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'NONE', isVolunteerFamily: false } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind, status } });
     }
 
@@ -317,7 +317,7 @@ describe('Ownership-boundary authorization', () => {
     // ---- membership/payment (GET) — self-scoped (no id param), lead-only -------
     // No IDOR vector: the route derives the household from the session user, so a
     // caller can only ever reach their OWN household's process. Two boundaries:
-    // the dues figure and the live checkout link are the lead's (a non-lead member
+    // the membership fee figure and the live checkout link are the lead's (a non-lead member
     // of the paying household gets 403), and a lead of another household must NOT
     // see this household's link.
     describe('GET /api/membership/payment', () => {

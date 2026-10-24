@@ -15,6 +15,8 @@ A thin Python client for Raspberry Pi that runs at the facility entrance. It act
 # Install dependencies (system-wide)
 sudo apt update
 sudo apt install python3-requests python3-nacl python3-evdev
+# Color emoji font, so emoji in the web UI render in Chromium instead of empty boxes
+sudo apt install fonts-noto-color-emoji
 
 # Generate a keypair (one-time)
 python3 generate_keys.py
@@ -103,7 +105,7 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 | `usb_device` | Device name or path (e.g. `Newtologic` or `/dev/input/event0`), empty for stdin |
 | `listen_port` | Local HTTP server port (default `8083`) |
 | `kiosk_path` | Backend path for the kiosk display and initial data fetch (default `/attendance/current?mode=kiosk`) |
-| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The poller also skips overnight (`in_closed_window`) and while last known `counts.total` is 0. While known-empty, occupancy created off this Pi (manual/web check-in, or a scan at another entrance) will **not** wake the screen; the next local scan re-syncs to the live roster (when the refetch is online). |
+| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The kiosk rests while the building is known empty (the last real roster showed nobody, with no badge or on-screen check-in since and nothing queued), at any hour: the roster poll, the server-version check and the dead-letter retry pause, and once each board page has had the real empty roster, the proxy answers its roster `GET`s with `204` and no body. The next badge ends it. Assumes this is the only door scanner. A web check-in into an empty building does not reach the screen until the next badge. |
 
 ## Architecture
 

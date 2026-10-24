@@ -22,10 +22,10 @@ import {
   setBulkState,
   ingestBulkOrders,
   logger,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "../shopify/client.js";
 import { syncPayouts, syncBalanceTransactions } from "./streams.js";
-import { startOrdersBackfill, getCurrentBulkOperation, downloadBulkJsonl } from "../shopify/bulk.js";
+import { startOrdersBackfill, getBulkOperation, downloadBulkJsonl } from "../shopify/bulk.js";
 
 export interface OrdersBulkStatus {
   action: "STARTED" | "RUNNING" | "INGESTED" | "FAILED" | "NONE";
@@ -85,9 +85,9 @@ async function stepOrdersBulk(
   }
 
   // Tracked operation in flight → poll.
-  const op = await getCurrentBulkOperation(client);
-  if (!op || op.id !== state.bulkOperationId) {
-    // The tracked op is no longer the current one; clear and let a later call restart.
+  const op = await getBulkOperation(client, state.bulkOperationId);
+  if (!op) {
+    // Shopify no longer knows the tracked op; clear and let a later call restart.
     await setBulkState(prisma, storeId, ObjectType.ORDER, { bulkOperationId: null, bulkStatus: null });
     return { action: "NONE" };
   }

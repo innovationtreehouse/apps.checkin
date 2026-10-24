@@ -22,6 +22,7 @@ import prisma from "@/lib/prisma";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { visitSubject } from "@/lib/visit/scope";
+import { correctCloseTime } from "@/lib/attendance/close";
 import { PATCH, DELETE } from "@/app/api/attendance/manual/[id]/route";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
@@ -35,10 +36,15 @@ jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn().mockRes
 // Scope resolution is exercised in lib/visit/__tests__/scope.test.ts; here the
 // default stands in for "self only", and the household-lead cases override it.
 jest.mock("@/lib/visit/scope", () => ({ visitSubject: jest.fn() }));
+jest.mock("@/lib/attendance/close", () => ({
+    ...jest.requireActual("@/lib/attendance/close"),
+    correctCloseTime: jest.fn().mockResolvedValue(undefined),
+}));
 
 const tx = {
     $executeRaw: jest.fn(),
     visit: { findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+    facilityClose: { findFirst: jest.fn() },
 };
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
@@ -83,9 +89,12 @@ beforeEach(() => {
     mockSession.mockResolvedValue({ user: { id: OWN_ID } });
     (visitSubject as jest.Mock).mockImplementation(async (actorId: number, subjectId: number) =>
         actorId === subjectId ? { id: subjectId, isKeyholder: false } : null);
-    tx.visit.findFirst.mockResolvedValue({ id: 42 });
+    // Under the lock the route re-reads the row; unless a test races it, it is
+    // the row the pre-check loaded.
+    tx.visit.findFirst.mockImplementation(() => visitFindUnique.mock.results.at(-1)?.value);
     tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...baseVisit, ...args.data }));
     tx.visit.updateMany.mockResolvedValue({ count: 1 });
+    tx.facilityClose.findFirst.mockResolvedValue(null);
     (processVisitCheckout as jest.Mock).mockResolvedValue([{ ...baseVisit }]);
     auditCreate.mockResolvedValue({});
     personFindUnique.mockResolvedValue({ isKeyholder: false });
@@ -122,6 +131,24 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(res.status).toBe(404);
         expect(tx.visit.update).not.toHaveBeenCalled();
         expect(auditCreate).not.toHaveBeenCalled();
+    });
+
+    it("re-validates against the row read under the lock, not the pre-lock snapshot", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        // A concurrent correction moved the arrival to 15:30 after the pre-check.
+        tx.visit.findFirst.mockResolvedValue({ ...baseVisit, arrivedAt: new Date("2026-07-20T15:30:00Z") });
+        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T15:00:00Z" }), ctx as never);
+        expect(res.status).toBe(400);
+        expect(tx.visit.update).not.toHaveBeenCalled();
+    });
+
+    it("409s when the visit was closed between the pre-check and the lock", async () => {
+        visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
+        tx.visit.findFirst.mockResolvedValue(baseVisit); // the kiosk checked it out meanwhile
+        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
+        expect(res.status).toBe(409);
+        expect(tx.visit.update).not.toHaveBeenCalled();
+        expect(processVisitCheckout).not.toHaveBeenCalled();
     });
 
     it("rejects a departure before the arrival", async () => {
@@ -210,7 +237,7 @@ describe("PATCH /api/attendance/manual/[id]", () => {
     });
 
     it("escapes the actor's self-editable name in the board email", async () => {
-        mockSession.mockResolvedValue({ user: { id: OWN_ID, name: '<a href="http://evil">Pay dues here</a>' } });
+        mockSession.mockResolvedValue({ user: { id: OWN_ID, name: '<a href="http://evil">Pay membership fee here</a>' } });
         visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedVia: "SCANNER", departedVia: "SCANNER" });
         await PATCH(req("PATCH", { arrivedAt: "2026-07-20T12:00:00Z" }), ctx as never);
 
@@ -233,7 +260,8 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
 
         expect(res.status).toBe(200);
-        expect(processVisitCheckout).toHaveBeenCalledWith(42, new Date("2026-07-20T17:00:00Z"), undefined, "TYPED");
+        // In the edit's transaction, which also records a close the caller chose.
+        expect(processVisitCheckout).toHaveBeenCalledWith(42, new Date("2026-07-20T17:00:00Z"), expect.anything(), "TYPED");
         // The lock-scoped update must not have closed it first.
         expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.not.objectContaining({ departedAt: expect.anything() }),
@@ -257,6 +285,28 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const audit = auditCreate.mock.calls[0][0].data;
         expect(audit.affectedEntityId).toBe(102);
         expect(audit.oldData.id).toBe(42); // the replaced row stays traceable
+    });
+
+    it("a closer correcting their own departure corrects the close they made, under the lock", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        const close = { id: 5, closedAt: baseVisit.departedAt };
+        tx.facilityClose.findFirst.mockResolvedValue(close);
+
+        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T15:00:00Z" }), ctx as never);
+
+        expect(res.status).toBe(200);
+        // Only the closer's own visit, corrected by the closer, finds the close.
+        expect(tx.facilityClose.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { closerVisitId: 42, closedById: OWN_ID },
+        }));
+        expect(correctCloseTime).toHaveBeenCalledWith(tx, close, OWN_ID, new Date("2026-07-20T15:00:00Z"));
+    });
+
+    it("an arrival-only edit never corrects a close", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:30:00Z" }), ctx as never);
+        expect(tx.facilityClose.findFirst).not.toHaveBeenCalled();
+        expect(correctCloseTime).not.toHaveBeenCalled();
     });
 
     it("404s a close that lost the race (checkout applied nothing)", async () => {
@@ -324,7 +374,6 @@ describe("household-lead correction of a member's visit", () => {
         // tests override this to model a sysadmin, a non-lead, etc.
         personFindUnique.mockResolvedValue({ isKeyholder: false, householdId: HOUSEHOLD_ID, isHouseholdLead: true, isSysadmin: false });
         visitFindUnique.mockResolvedValue(memberVisit);
-        tx.visit.findFirst.mockResolvedValue({ id: 42 });
         // The row written back is the MEMBER's. Leaving the default (personId =
         // OWN_ID) let their_own resolve on it, which masks what led_households
         // does or doesn't grant — the whole point of this block.

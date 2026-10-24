@@ -126,6 +126,52 @@ describe("membership-ops/volunteer-memberships page", () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === ROSTER)).toHaveLength(2));
   });
 
+  it("lists every person on file with a designated address, signed in or not", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      [ROSTER]: () => roster,
+      [DESIGNATIONS]: () => ({
+        designation: des(9, "pat@example.com", "2026-01-01T00:00:00Z"),
+        matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example", hasMembership: true, isVolunteerFamily: false, signInVerified: false }],
+      }),
+    });
+    renderWithProviders(<VolunteerMembershipsPage />);
+    await screen.findByText("Alvarez");
+
+    fireEvent.change(screen.getByLabelText("Volunteer email"), { target: { value: "pat@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await screen.findByText(/Everyone on file with pat@example.com/);
+    expect(screen.getByText(/has never signed in with this address/)).toBeInTheDocument();
+  });
+
+  it("shows an existing person's household and sets it only on confirm", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const match = { personName: "Pat Example", householdId: 20, householdName: "Example", isVolunteerFamily: false };
+    let designationPosts = 0;
+    const fetchMock = mockFetchJson({
+      [ROSTER]: () => roster,
+      [DESIGNATIONS]: () => (++designationPosts === 1 ? { requiresConfirmation: true, match } : { household: { id: 20, name: "Example" }, isVolunteerFamily: true }),
+    });
+    renderWithProviders(<VolunteerMembershipsPage />);
+    await screen.findByText("Alvarez");
+
+    fireEvent.change(screen.getByLabelText("Volunteer email"), { target: { value: "pat@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await screen.findByText(/belongs to/);
+    expect(screen.getByText("Pat Example")).toBeInTheDocument();
+    const posts = () => fetchMock.mock.calls.filter((c) => String(c[0]) === DESIGNATIONS);
+    expect(posts()).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]) === ROSTER)).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm household" }));
+    await waitFor(() => expect(posts()).toHaveLength(2));
+    expect(posts()[1][1]?.body).toBe(JSON.stringify({ email: "pat@example.com", confirmHouseholdId: 20 }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === ROSTER)).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByText(/belongs to/)).not.toBeInTheDocument());
+  });
+
   it("removes a designation from its roster row", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ [ROSTER]: roster, [DESIGNATIONS]: {} });
@@ -292,6 +338,6 @@ describe("membership-ops/volunteer-memberships page", () => {
 
     // The load effect still fires before the guard's early return — let it settle.
     await waitFor(() => expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument());
-    expect(screen.queryByText("Volunteers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Volunteer Families")).not.toBeInTheDocument();
   });
 });

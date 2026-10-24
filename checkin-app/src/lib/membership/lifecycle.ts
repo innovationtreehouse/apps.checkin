@@ -116,8 +116,26 @@ export const personBgOpen = defineStateSet<Where>()({
     statuses: ["PENDING_BG_REVIEW", "BLOCKED"],
 });
 
+/**
+ * Not yet finished or closed — every status but ACTIVE and ARCHIVED. BLOCKED counts:
+ * it waits on the board. Reopen reads it to keep one open application per household
+ * (and one open person-scoped item per subject).
+ */
+export const openProcess = defineStateSet<Where>()({
+    statuses: [
+        "INTAKE",
+        "PENDING_EXTERNAL_ACTION",
+        "PENDING_BG_REVIEW",
+        "PENDING_PAYMENT",
+        "PENDING_BG_CLEARANCE",
+        "BLOCKED",
+        "PENDING_RENEWAL",
+        "RENEWAL_PENDING_BG",
+    ],
+});
+
 // ── awaiting BG review (fix #1) ────────────────────────────────────────────────
-// Encodes review.ts:75 / AWAITING_BG_WHERE:97 EXACTLY, from one source. Not a
+// The review queue's "awaiting a background check" rule, from one source. Not a
 // single defineStateSet: it's an OR of two sub-rules, both requiring
 // bgClearedAt=null. The two status arrays below are that one source; `has` and
 // `where` both derive from them, and lifecycle.test asserts them equal on a
@@ -158,13 +176,13 @@ export const awaitingBgReview: StateSet<AwaitingBgRow, Where> = {
     },
 };
 
-// ── dues settled, background check outstanding ────────────────────────────────
+// ── membership fee settled, background check outstanding ────────────────
 
 /**
- * Dues paid in full, waiting on the board's background-check clearance. PROGRAM
+ * The membership fee is paid in full, waiting on the board's background-check clearance. PROGRAM
  * ACCESS reads this set: a household here gets the member rate and sees
  * members-only programs even though its membership is not ACTIVE yet (#1397) —
- * see lib/orgMembership.ts's DUES_SETTLED_PERSON_WHERE. It is NOT an answer to
+ * see lib/orgMembership.ts's MEMBERSHIP_FEE_SETTLED_PERSON_WHERE. It is NOT an answer to
  * "is this a member"; ACTIVE stays that answer for every other benefit and every
  * member-only audience.
  *
@@ -172,7 +190,7 @@ export const awaitingBgReview: StateSet<AwaitingBgRow, Where> = {
  * always stamps it) and is asserted anyway — the money question must not rest on
  * a status invariant holding for a row some future path writes differently.
  */
-export const duesSettledAwaitingBg = defineStateSet<Where>()({
+export const membershipFeeSettledAwaitingBg = defineStateSet<Where>()({
     statuses: ["PENDING_BG_CLEARANCE"],
     flags: { paidAt: true },
 });
@@ -196,26 +214,26 @@ export const grantableRenewalWhere: Where = {
 
 /**
  * "Settled for the live membership year" — the MONEY question: a process whose
- * dues are paid — terminal ACTIVE, or paid and only waiting on background
- * clearance ({@link duesSettledAwaitingBg}) — stamped on or after the live
+ * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
+ * clearance ({@link membershipFeeSettledAwaitingBg}) — stamped on or after the live
  * cycle's `settledSince` (membershipYearCycle), INITIAL and RENEWAL alike,
  * because a family that joins during the window buys the coming year exactly as
- * a renewer does (docs/rules/membership.md). ARCHIVED is deliberately absent:
- * archive refuses ACTIVE processes, so every ARCHIVED row never completed
- * payment and must not extend a horizon. Read by the households valid-until,
+ * a renewer does (docs/rules/membership.md). ARCHIVED (a closed application) is
+ * deliberately absent: only unpaid applications can be closed, so it must not
+ * extend a horizon. Read by the households valid-until,
  * membershipValidThrough and the outreach audiences.
  * KNOWN LIMIT: settlement time is stageEnteredAt (stage completion), so a
  * pre-window payment whose review clears in-window reads as coming-year.
  */
 export const settledThisCycleWhere = (settledSince: Date): Where => ({
-    OR: [{ status: "ACTIVE" }, duesSettledAwaitingBg.where],
+    OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where],
     stageEnteredAt: { gte: settledSince },
 });
 
 /**
  * "Nothing more to open this cycle" — the SWEEP question: settled as above, OR
- * ARCHIVED in-window — the board already closed this cycle's process, and
- * reopening would pester a family it just declined or archived. Only
+ * ARCHIVED in-window — the board already closed this cycle's application, and
+ * opening another would pester a family it just closed out. Only
  * runRenewalSweep's skip-test reads this wider set; money horizons never do.
  */
 export const handledThisCycleWhere = (windowStart: Date): Where => ({
@@ -311,22 +329,31 @@ export type OriginState = "∅";
 type TState = ProcessStatus | OriginState;
 
 /**
- * The archive edges this machine DECLARES (§5 #13). ACTIVE is never archivable.
- * RENEWAL_PENDING_BG is out because it is unreachable, so the diagram would gain a
- * dead pair of arrows and lose the unreachable report that surfaces it — but it is
- * NOT the archive gate: `archiveApplication` refuses ACTIVE and nothing else, so a
- * surviving legacy row IS archivable — that gate's set is RESTORABLE_STATUSES below,
- * and the test pins the one status by which the two differ.
+ * What "Close application" (archiveApplication) accepts: the long-idle, unpaid
+ * steps. It also requires `paidAt` null. BLOCKED, PENDING_BG_CLEARANCE and ACTIVE
+ * are not closable here — closing would erase a rejection or hide money. Only a
+ * board restore closes a BLOCKED one (`RESTORE_CLOSABLE_STATUSES`).
  */
 export const ARCHIVABLE_STATUSES = [
     "INTAKE",
     "PENDING_EXTERNAL_ACTION",
     "PENDING_BG_REVIEW",
     "PENDING_PAYMENT",
-    "PENDING_BG_CLEARANCE",
     "PENDING_RENEWAL",
-    "BLOCKED",
 ] as const satisfies readonly ProcessStatus[];
+
+/**
+ * What a board restore of a DENIED household closes, unpaid only: the family starts
+ * over, so a BLOCKED application closes too (its rejection stays in the audit row).
+ */
+export const RESTORE_CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
+
+/**
+ * Steps a row closed before the unpaid-only rule may still hold in
+ * `archivedFromStatus`. Reopening restores them (a BLOCKED row comes back blocked);
+ * of these, only a board restore still closes a BLOCKED row.
+ */
+export const LEGACY_REOPEN_STATUSES = ["PENDING_BG_CLEARANCE", "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
 /**
  * The machine edges, each carrying the (unchanged) enforcement site
@@ -336,54 +363,71 @@ export const ARCHIVABLE_STATUSES = [
  */
 export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Entry (§5 #1,#2 + §4.4 PERSON_BG)
-    { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts:154 FOR UPDATE + membership_one_inflight_initial + P2002", kind: "INITIAL" },
-    { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "cron/board", guardSite: "renewal.ts:243 FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
-    { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers", kind: "PERSON_BG" },
-    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
+    { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts startIntake: OrgMembership FOR UPDATE (refuses DENIED/ACTIVE/BLOCKED/open renewal) + membership_one_inflight_initial + P2002", kind: "INITIAL" },
+    { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "cron/board", guardSite: "renewal.ts createRenewalProcess: OrgMembership FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
+    { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers.ts openPersonBg: Person FOR UPDATE", kind: "PERSON_BG" },
+    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
     // External step (§5 #3,#4)
-    { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts:392", kind: "INITIAL" },
-    { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts:219 updateMany where status=PENDING_RENEWAL", kind: "RENEWAL" },
+    { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
+    { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
     // Advance (§5 #7)
-    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts:113 updateMany" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + consent or cleared)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
-    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts updateMany where contractSignedAt=null", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     // Payment convergence (§5 #8, #12)
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (bgClearedAt set)" },
-    { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (not cleared)" },
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board/sysadmin", guardSite: "renewal.ts:339 → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
+    { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board", guardSite: "renewal.ts grantRenewalPayment → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
     // Clearance convergence (§5 #10, #14)
-    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:256 FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
-    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:256/304 FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
-    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:326 FOR UPDATE (2nd APPROVE)" },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
+    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
+    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE)" },
+    // A refunded order holds a cleared, paid application for the board instead of activating it.
+    { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid on a refunded order)", legacy: true },
     // Reject → BLOCKED (§5 #9)
-    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE" },
-    { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE (parallel review)" },
-    { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE" },
+    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
+    { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE (parallel review)" },
+    { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
     // overrideBlocked reset/approve (§5 #11)
-    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (unpaid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (PERSON_BG)", kind: "PERSON_BG" },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
-    { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board/sysadmin", guardSite: "review.ts:411 FOR UPDATE (paid)" },
-    // Archive (§5 #13) — every pre-terminal status
+    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (unpaid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
+    { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked approve", actor: "board", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid on a refunded order)" },
+    // Refund recorded by the board: money undone, background check untouched. On a
+    // paid BLOCKED row it only clears paidAt (flag-only, no status edge).
+    { from: "PENDING_BG_CLEARANCE", to: "PENDING_PAYMENT", event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" },
+    // Close application (§5 #13) — unpaid, long-idle steps only
     ...ARCHIVABLE_STATUSES.map(
         (from): Transition<TState, string, ProcessKind> => ({
             from,
             to: "ARCHIVED",
             event: "archiveApplication",
             actor: "board",
-            guardSite: "archive.ts:13 (status≠ACTIVE, idempotent)",
+            guardSite: "archive.ts updateMany CAS (status read, paidAt null) + COI",
         }),
     ),
-    // Unarchive (§5 #13 reversed) — back to the status the archive write captured.
-    // ARCHIVED is where processes come to rest, but it is not sealed.
+    // A board restore closes the denied household's unpaid applications, BLOCKED included.
+    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the restore transaction" },
+    // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({
             from: "ARCHIVED",
             to,
             event: "unarchiveApplication",
             actor: "board",
-            guardSite: "archive.ts:88 updateMany CAS + P2002",
+            guardSite: "archive.ts updateMany CAS + OrgMembership FOR UPDATE + COI + P2002",
+        }),
+    ),
+    ...LEGACY_REOPEN_STATUSES.map(
+        (to): Transition<TState, string, ProcessKind> => ({
+            from: "ARCHIVED",
+            to,
+            event: "unarchiveApplication",
+            actor: "board",
+            guardSite: "archive.ts (row closed before the unpaid-only rule)",
+            legacy: true,
         }),
     ),
 ];
@@ -414,12 +458,19 @@ export const ALL_STATUSES: readonly ProcessStatus[] = [
 ];
 
 /**
- * What `archiveApplication` can actually capture — its gate is `status !== ACTIVE`
- * (ARCHIVED returns early) — and so the only targets `unarchiveApplication` restores
- * to. Wider than ARCHIVABLE_STATUSES by the legacy RENEWAL_PENDING_BG, which
- * TRANSITIONS omits on purpose; lifecycle.test.ts pins that gap so neither list moves
- * unnoticed and the restore set is no longer a second, unlinked list.
+ * Every step `unarchiveApplication` restores to: what close accepts today, plus what
+ * rows closed under the older, wider rule may hold — including the legacy
+ * RENEWAL_PENDING_BG, which TRANSITIONS omits on purpose (lifecycle.test.ts pins it).
  */
 export const RESTORABLE_STATUSES: ReadonlySet<ProcessStatus> = new Set(
     ALL_STATUSES.filter((s) => s !== "ACTIVE" && s !== "ARCHIVED"),
 );
+
+/**
+ * Processes a Zoho completion webhook may land on: anything but a closed
+ * (ARCHIVED) one, so an archived PERSON_AGREEMENT is never revived. BLOCKED is
+ * still live — the board may reset it — so a signature arriving then still counts.
+ */
+export const zohoWebhookMatchable = defineStateSet<Where>()({
+    statuses: ALL_STATUSES.filter((s) => s !== "ARCHIVED"),
+});

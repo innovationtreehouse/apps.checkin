@@ -23,6 +23,7 @@ import { PATCH as updateHousehold } from '@/app/api/membership-ops/households/[i
 import { PATCH as updateVisit } from '@/app/api/facility/visits/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -33,8 +34,14 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 describe('AuditLog Integration Tests', () => {
+    // Program writes need the membership-year boundary.
+    let restoreBoundary: () => Promise<void>;
+    beforeAll(async () => { restoreBoundary = await setMembershipYearBoundary(); });
+    afterAll(async () => { await restoreBoundary(); });
+
     let testAdminId: number;
     let testParticipantId: number;
+    let testLeadId: number;
     let testProgramId: number;
     let testEventId: number;
     let testVisitId: number;
@@ -81,6 +88,11 @@ describe('AuditLog Integration Tests', () => {
             data: { email: 'participant-audit-test@example.com', name: 'Participant Test', household: { create: { name: "Test HH" } } }
         });
         testParticipantId = participant.id;
+
+        const lead = await prisma.person.create({
+            data: { email: 'lead-audit-test@example.com', name: 'Lead Test', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
+        });
+        testLeadId = lead.id;
     });
 
     afterAll(async () => {
@@ -112,7 +124,7 @@ describe('AuditLog Integration Tests', () => {
             await prisma.program.deleteMany({ where: { id: testProgramId } });
         }
 
-        const actorIds = [testAdminId, testParticipantId].filter(id => id !== undefined);
+        const actorIds = [testAdminId, testParticipantId, testLeadId].filter(id => id !== undefined);
         if (actorIds.length > 0) {
             await prisma.auditLog.deleteMany({
                 where: { actorId: { in: actorIds } }
@@ -147,8 +159,8 @@ describe('AuditLog Integration Tests', () => {
                 name: 'Audit Test Program',
                 enrollmentStatus: 'OPEN',
                 startAt: '2026-01-01',
-                endAt: '2026-12-31',
-                leadMentorId: testAdminId,
+                endAt: '2026-06-30',
+                leadMentorId: testLeadId,
                 maxParticipants: 50
             })
         });
@@ -279,10 +291,12 @@ describe('AuditLog Integration Tests', () => {
 
     it('should generate an AuditLog when an Admin edits participant PII', async () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'Person' } });
+        // An email change is the board's.
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true, isBoardMember: true } });
 
         const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}`, {
             method: 'PUT',
-            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com' })
+            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com', emailChangeReason: 'New address' })
         });
 
         const res = await editParticipant(req as never, { params: Promise.resolve({ id: testParticipantId.toString() }) });

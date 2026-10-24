@@ -5,12 +5,13 @@ import { withAuth } from "@/lib/auth";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { checkoutVariantId } from "@/lib/programs/variants";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/dev/shopify/orders-paid — dev-only stand-in for a real Shopify
- * orders/paid webhook (see docs/designs/SHOPIFY_DEV_STORE_WEBHOOK.md §6). Reached
+ * orders/paid webhook (see docs/ops/shopify-dev-store.md §6). Reached
  * from the dev tool's "Fire orders/paid" buttons. Rather than shortcut to
  * activate(), it synthesizes the order payload Shopify would send, signs it with
  * the mock webhook secret, and fires the REAL inbound webhook — so it exercises
@@ -125,9 +126,9 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // be unset.
     const program = await prisma.program.findUnique({
         where: { id: programId },
-        select: { shopifyVariantId: true },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true },
     });
-    const variantId = program?.shopifyVariantId;
+    const variantId = program ? checkoutVariantId(program) : null;
     if (!variantId) {
         return apiError("No Shopify variant configured on this program. Set one on the program in program-ops first, or the webhook leaves the participant PENDING.", 409);
     }

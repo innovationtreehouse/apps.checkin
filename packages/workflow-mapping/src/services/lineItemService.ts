@@ -1,15 +1,16 @@
+import { httpError } from "@checkin/component-kit";
 import {
   catalogCheckReferencesSchema,
   catalogItemReferenceProposalSchema,
   catalogProvisionalItemProposalSchema,
   catalogReferenceConflictSchema,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import { createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
 import { insertAuditEvent } from "../lib/audit";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
-import { httpError, ports, requireActor } from "../runtime";
+import { ports, requireActor } from "../runtime";
 import { loadEditableLine, updateEditableLine } from "./receiptLookup";
 
 export const AssociateBodySchema = z.object({
@@ -51,7 +52,8 @@ export const lineItemService = {
     const actor = await requireActor();
     const { gtin13 } = body;
     const conversionFactor = body.conversionFactor ?? 1;
-    const { received, lineItem, receipt } = await loadEditableLine(receiptId, lineId);
+    const edit = await loadEditableLine(receiptId, lineId);
+    const { received, lineItem, receipt } = edit;
     const { catalogReader, catalogSubmissions } = ports();
 
     const retailer = receipt.vendorName ?? undefined;
@@ -132,12 +134,13 @@ export const lineItemService = {
     }
 
     // Manual association: the human-entered factor is authoritative; version 1.
-    await updateEditableLine(lineId, {
+    await updateEditableLine(edit, {
       recognitionStatus: "recognized",
       assignedGtin13: gtin13,
+      provisionalItemGtin13: null,
       conversionFactor,
       conversionVersion: 1,
-    });
+    }, actor);
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
@@ -159,7 +162,8 @@ export const lineItemService = {
   ): Promise<{ provisionalGtin13: string }> {
     const actor = await requireActor();
     const conversionFactor = body.conversionFactor ?? 1;
-    const { received, lineItem, receipt } = await loadEditableLine(receiptId, lineId);
+    const edit = await loadEditableLine(receiptId, lineId);
+    const { received, lineItem, receipt } = edit;
     const { catalogSubmissions } = ports();
 
     const provisionalGtin13 = await viaCatalog(async () =>
@@ -183,12 +187,13 @@ export const lineItemService = {
     );
 
     // Provisional: human-entered factor; version 1 (no catalog reference yet).
-    await updateEditableLine(lineId, {
+    await updateEditableLine(edit, {
       recognitionStatus: "provisional",
+      assignedGtin13: null,
       provisionalItemGtin13: provisionalGtin13,
       conversionFactor,
       conversionVersion: 1,
-    });
+    }, actor);
 
     await insertAuditEvent(db, {
       orgId: received.orgId,
@@ -207,9 +212,10 @@ export const lineItemService = {
 
   async markNonInventory(receiptId: number, lineId: number): Promise<void> {
     const actor = await requireActor();
-    const { received } = await loadEditableLine(receiptId, lineId);
+    const edit = await loadEditableLine(receiptId, lineId);
+    const { received } = edit;
 
-    await updateEditableLine(lineId, { recognitionStatus: "non_inventory" });
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null }, actor);
 
     await insertAuditEvent(db, {
       orgId: received.orgId,

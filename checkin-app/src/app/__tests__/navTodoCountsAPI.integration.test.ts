@@ -182,10 +182,31 @@ describe('Nav todo-counts API', () => {
         // Items carry a label + a deep link so the UI can show *what* is due.
         expect(data.member.household).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ label: 'Pay your membership dues', href: '/membership' }),
+                expect.objectContaining({ label: 'Pay your membership fee', href: '/membership' }),
                 expect.objectContaining({ key: 'household-address', href: '/my-household' }),
             ]),
         );
+    });
+
+    // Unpaid enrollments are payment status: only the adult household lead (per
+    // the DB, whatever the session claims) gets those items.
+    it('gives a non-lead adult member no payment items, even with a stale lead claim', async () => {
+        const data = await (await callAs({ id: secondMemberId, householdId: householdAId, householdLead: true, ageBand: 'adult' })).json();
+        expect(data.member.programs).toHaveLength(0);
+        expect(data.member.programsAwaitingFinance).toBe(0);
+    });
+
+    it('gives a youth household member no payment items', async () => {
+        const youth = await prisma.person.create({
+            data: { email: `youth-${TAG}@example.com`, name: 'Youth A3', dateOfBirth: new Date('2014-01-01'), householdId: householdAId },
+        });
+        try {
+            const data = await (await callAs({ id: youth.id, householdId: householdAId, ageBand: 'youth' })).json();
+            expect(data.member.programs).toHaveLength(0);
+            expect(data.member.programsAwaitingFinance).toBe(0);
+        } finally {
+            await prisma.person.delete({ where: { id: youth.id } });
+        }
     });
 
     // Regression (#1618): a household that renewed a trusted adult early carries a stale
@@ -248,7 +269,7 @@ describe('Nav todo-counts API', () => {
         // Only the ended-unconfirmed event — confirmed and future events excluded.
         expect(led.pending).toHaveLength(1);
         expect(led.pending[0]).toEqual(
-            expect.objectContaining({ href: `/program-ops/sessions/${pendingEventId}?from=my-programs` }),
+            expect.objectContaining({ href: `/program-ops/sessions/${pendingEventId}?from=programs-i-lead` }),
         );
     });
 
@@ -295,6 +316,16 @@ describe('Nav todo-counts API', () => {
         expect(data.admin.paymentPlanPending).toBeGreaterThanOrEqual(1); // payment-plan requested
         expect(data.admin.trustedAdults).toBeGreaterThanOrEqual(1); // the PENDING_BOARD_REVIEW review
         expect(typeof data.admin.unclaimedHouseholds).toBe('number'); // households with an unclaimed account
+    });
+
+    it('zeroes the finance counts for a sysadmin who is not on the Board', async () => {
+        const res = await callAs({ id: boardId, householdId: householdBId, isSysadmin: true });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.admin).toBeDefined();
+        expect(data.admin.paymentPlanPending).toBe(0);
+        expect(data.admin.membershipPaymentPlanPending).toBe(0);
+        expect(data.admin.openPaymentExceptions).toBe(0);
     });
 
     it('counts BLOCKED for the board but not the reviewer-owned review states', async () => {

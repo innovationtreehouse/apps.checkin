@@ -1,13 +1,7 @@
-import { describe } from "vitest";
+import { describeDb as gate } from "@checkin/pg-test-harness";
 import { db } from "../../lib/db/index";
 
-/**
- * DB-gate for the integration tier. `describeDb` is `describe` when LOCAL_INVENTORY_DATABASE_URL
- * is set (the harness publishes the container URL in test/setupEnv.ts) and `describe.skip`
- * otherwise — so route-handler suites that need a real Postgres run against the throwaway
- * container when Docker is up, and cleanly skip (not fail) on a machine without Docker.
- */
-export const describeDb = process.env.LOCAL_INVENTORY_DATABASE_URL ? describe : describe.skip;
+export const describeDb = gate("LOCAL_INVENTORY_DATABASE_URL");
 
 // Delete all data in FK-safe order (children before parents).
 // Using deleteMany avoids raw SQL and works regardless of connection pool behavior.

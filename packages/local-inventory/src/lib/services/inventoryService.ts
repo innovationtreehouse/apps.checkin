@@ -1,6 +1,58 @@
-import type { Db } from "../db/index";
+import type { Prisma } from "../../generated/prisma/client";
+import { isRecordNotFoundError, type Db } from "../db/index";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
+
+export type QtyChangeMeta = {
+  userId: number | null;
+  username?: string | null;
+  changeType: "manual" | "automatic" | "received";
+  receiptId: string | null;
+  // Inventory units per receipt-line unit. The delta added to the live
+  // total is rawQuantity * conversionFactor; raw/factor/derived are kept
+  // in the audit log only. Defaults to 1 ("each") for plain deltas.
+  conversionFactor?: number;
+  conversionVersion?: number;
+};
+
+/** Add a quantity to an org item and log it, inside the caller's transaction. Returns the new total. */
+export async function applyQtyChangeIn(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  gtin13: string,
+  rawQuantity: number,
+  meta: QtyChangeMeta,
+): Promise<number> {
+  const conversionFactor = meta.conversionFactor ?? 1;
+  const conversionVersion = meta.conversionVersion ?? 1;
+  const derived = rawQuantity * conversionFactor;
+  // One atomic upsert-increment, so concurrent writers to one GTIN never lose an add.
+  const { existingQuantity: newQty } = await tx.orgItem.upsert({
+    where: { orgGtin: { orgId, gtin13 } },
+    create: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
+    update: { existingQuantity: { increment: derived } },
+  });
+
+  await tx.inventoryLog.create({
+    data: {
+      orgId,
+      userId: meta.userId,
+      username: meta.username ?? null,
+      changedAt: new Date(),
+      changeType: meta.changeType,
+      gtin13,
+      fieldChanged: "existingQuantity",
+      valueBefore: String(newQty - derived),
+      valueAfter: String(newQty),
+      receiptId: meta.receiptId,
+      rawQuantity,
+      conversionFactor,
+      conversionVersion,
+    },
+  });
+
+  return newQty;
+}
 
 export function createInventoryService({
   inventoryRepo,
@@ -67,11 +119,17 @@ export function createInventoryService({
       return inventoryRepo.findOneEnriched(orgId, data.gtin13);
     },
 
+    /**
+     * Write only the fields sent, against the row locked in this transaction. A count
+     * (existingQuantity) must carry the quantity the caller loaded; if stock moved since,
+     * the save is refused so neither the count nor the concurrent change is lost.
+     */
     async updateItem(
       orgId: string,
       gtin13: string,
       data: {
         existingQuantity?: number;
+        expectedQuantity?: number;
         desiredQuantity?: number;
         locationId?: number | null;
         backstockLocationId?: number | null;
@@ -79,37 +137,35 @@ export function createInventoryService({
       userId: number,
       username?: string,
     ) {
-      const existing = await inventoryRepo.findOne(orgId, gtin13);
-      if (!existing) throw new ServiceError(404, "Organization item not found");
-
-      const updates = {
-        existingQuantity: data.existingQuantity !== undefined ? data.existingQuantity : existing.existingQuantity,
-        desiredQuantity: data.desiredQuantity !== undefined ? data.desiredQuantity : existing.desiredQuantity,
-        locationId: data.locationId !== undefined ? data.locationId : existing.locationId,
-        backstockLocationId: data.backstockLocationId !== undefined ? data.backstockLocationId : existing.backstockLocationId,
-      };
-
-      const fieldMap: Array<{ field: string; oldVal: unknown; newVal: unknown }> = [
-        { field: "existingQuantity", oldVal: existing.existingQuantity, newVal: updates.existingQuantity },
-        { field: "desiredQuantity", oldVal: existing.desiredQuantity, newVal: updates.desiredQuantity },
-        { field: "locationId", oldVal: existing.locationId, newVal: updates.locationId },
-        { field: "backstockLocationId", oldVal: existing.backstockLocationId, newVal: updates.backstockLocationId },
-      ];
-      const changedFields = fieldMap.filter((f) => String(f.oldVal) !== String(f.newVal));
+      // Prisma skips undefined fields, so `updates` writes only what the caller sent.
+      const { expectedQuantity, ...updates } = data;
+      if (updates.existingQuantity !== undefined && expectedQuantity === undefined) {
+        throw new ServiceError(400, "expectedQuantity is required with existingQuantity");
+      }
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.orgItem.update({
-          where: { orgGtin: { orgId, gtin13 } },
-          data: updates,
-        });
-        for (const f of changedFields) {
+        await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${orgId} AND gtin13 = ${gtin13} FOR UPDATE`;
+        const existing = await tx.orgItem.findFirst({ where: { orgId, gtin13 } });
+        if (!existing) throw new ServiceError(404, "Organization item not found");
+        if (updates.existingQuantity !== undefined && existing.existingQuantity !== expectedQuantity) {
+          throw new ServiceError(409, "Stock changed since you loaded this page; recount.");
+        }
+
+        const changedFields = (Object.keys(updates) as Array<keyof typeof updates>)
+          .filter((field) => updates[field] !== undefined && String(existing[field]) !== String(updates[field]));
+        if (changedFields.length === 0) return;
+
+        await tx.orgItem.update({ where: { orgGtin: { orgId, gtin13 } }, data: updates });
+        for (const field of changedFields) {
+          const oldVal = existing[field];
+          const newVal = updates[field];
           await tx.inventoryLog.create({
             data: {
               orgId, userId, username: username ?? null, changedAt: now, changeType: "manual", gtin13,
-              fieldChanged: f.field,
-              valueBefore: f.oldVal !== null && f.oldVal !== undefined ? String(f.oldVal) : null,
-              valueAfter: f.newVal !== null && f.newVal !== undefined ? String(f.newVal) : null,
+              fieldChanged: field,
+              valueBefore: oldVal !== null ? String(oldVal) : null,
+              valueAfter: newVal !== null ? String(newVal) : null,
               receiptId: null,
             },
           });
@@ -119,67 +175,35 @@ export function createInventoryService({
       return inventoryRepo.findOneEnriched(orgId, gtin13);
     },
 
-    async deleteItem(orgId: string, gtin13: string) {
-      const existing = await inventoryRepo.findOne(orgId, gtin13);
-      if (!existing) throw new ServiceError(404, "Organization item not found");
-      await inventoryRepo.delete(orgId, gtin13);
-    },
-
-    async applyQtyChange(
-      orgId: string,
-      gtin13: string,
-      rawQuantity: number,
-      meta: {
-        userId: number | null;
-        username?: string | null;
-        changeType: "manual" | "automatic" | "received";
-        receiptId: string | null;
-        // Inventory units per receipt-line unit. The delta added to the live
-        // total is rawQuantity * conversionFactor; raw/factor/derived are kept
-        // in the audit log only. Defaults to 1 ("each") for plain deltas.
-        conversionFactor?: number;
-        conversionVersion?: number;
-      },
-    ): Promise<number> {
-      const conversionFactor = meta.conversionFactor ?? 1;
-      const conversionVersion = meta.conversionVersion ?? 1;
-      const derived = rawQuantity * conversionFactor;
-      let newQty = 0;
+    /** Remove an org item, logging the removed row and its actor in the same transaction. */
+    async deleteItem(orgId: string, gtin13: string, userId: number, username?: string) {
       await db.$transaction(async (tx) => {
-        const existing = await tx.orgItem.findFirst({ where: { gtin13, orgId } });
-        newQty = (existing?.existingQuantity ?? 0) + derived;
-
-        if (existing) {
-          await tx.orgItem.update({
-            where: { orgGtin: { orgId, gtin13 } },
-            data: { existingQuantity: newQty },
-          });
-        } else {
-          await tx.orgItem.create({
-            data: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
-          });
+        let removed;
+        try {
+          removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13 } } });
+        } catch (err) {
+          if (isRecordNotFoundError(err)) throw new ServiceError(404, "Organization item not found");
+          throw err;
         }
-
         await tx.inventoryLog.create({
           data: {
-            orgId,
-            userId: meta.userId,
-            username: meta.username ?? null,
-            changedAt: new Date(),
-            changeType: meta.changeType,
-            gtin13,
-            fieldChanged: "existingQuantity",
-            valueBefore: String(existing?.existingQuantity ?? 0),
-            valueAfter: String(newQty),
-            receiptId: meta.receiptId,
-            rawQuantity,
-            conversionFactor,
-            conversionVersion,
+            orgId, userId, username: username ?? null, changedAt: new Date(), changeType: "manual", gtin13,
+            fieldChanged: "deleted",
+            valueBefore: JSON.stringify({
+              existingQuantity: removed.existingQuantity,
+              desiredQuantity: removed.desiredQuantity,
+              locationId: removed.locationId,
+              backstockLocationId: removed.backstockLocationId,
+            }),
+            valueAfter: null,
+            receiptId: null,
           },
         });
       });
+    },
 
-      return newQty;
+    async applyQtyChange(orgId: string, gtin13: string, rawQuantity: number, meta: QtyChangeMeta): Promise<number> {
+      return db.$transaction((tx) => applyQtyChangeIn(tx, orgId, gtin13, rawQuantity, meta));
     },
   };
 }

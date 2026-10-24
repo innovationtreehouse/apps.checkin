@@ -1,7 +1,10 @@
 import prisma from "@/lib/prisma";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { LIVE_VISIT } from "@/lib/visit/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { specTrace } from "@/lib/specTrace";
 
 /**
  * Finds all program IDs that a participant is associated with
@@ -11,7 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 async function getRelevantProgramIds(participantId: number, db: DbClient = prisma): Promise<number[]> {
     const [participantPrograms, volunteerPrograms, leadPrograms] = await Promise.all([
         db.programParticipant.findMany({
-            where: { personId: participantId },
+            where: { personId: participantId, ...ENROLLED_PARTICIPANT },
             select: { programId: true }
         }),
         db.programVolunteer.findMany({
@@ -80,11 +83,19 @@ export async function findAssociatedEventAt(participantId: number, targetTime: D
  * The departure is capped at `arrivedAt + MAX_VISIT_MS`. A caller that took a
  * typed time has already rejected anything longer, so the cap only ever bites
  * on a stamped-now close — where the alternative is a record no human path
- * would have been allowed to write.
+ * would have been allowed to write. A departure at or before arrival is raised
+ * to the arrival: the visit closes with zero length and is never deleted.
  *
  * It returns the final list of visits spanning their arrival to departure.
  */
-export async function processVisitCheckout(visitId: number, checkoutTime: Date, db: DbClient = prisma, source: "SCANNER" | "TYPED" | "AUTO_CLOSE") {
+export async function processVisitCheckout(
+    visitId: number,
+    checkoutTime: Date,
+    db: DbClient = prisma,
+    source: "SCANNER" | "TYPED" | "AUTO_CLOSE",
+    /** The facility close this departure belongs to, when one sets it. */
+    facilityCloseId: number | null = null,
+) {
     const originalVisit = await db.visit.findUnique({
         where: { id: visitId }
     });
@@ -95,22 +106,35 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
 
     // Chunks recreated below are all segments of one physical visit: they keep
     // the original arrival's source and take `source` as their departure channel.
-    const { personId: participantId, arrivedAt, arrivedVia } = originalVisit;
+    const { personId: participantId, arrivedAt, arrivedVia, arrivedLive } = originalVisit;
 
     // Cap the whole span, before the event lookup, so every chunk boundary below
     // derives from the capped departure and the segments still sum to one visit.
-    const departure = new Date(Math.min(checkoutTime.getTime(), arrivedAt.getTime() + MAX_VISIT_MS));
+    // A visit never departs before it arrived: a checkout at or before arrival
+    // records a zero-length visit on the original row rather than chunking it away.
+    const departure = new Date(Math.max(
+        arrivedAt.getTime(),
+        Math.min(checkoutTime.getTime(), arrivedAt.getTime() + MAX_VISIT_MS),
+    ));
 
-    const relevantProgramIds = await getRelevantProgramIds(participantId, db);
+    // Every write below applies only while the visit is still open, so a caller
+    // that lost a race to another departure changes nothing and gets [].
+    const closeOpenVisit = async () => {
+        const { count } = await db.visit.updateMany({
+            where: { id: visitId, departedAt: null, ...LIVE_VISIT },
+            data: { departedAt: departure, departedVia: source, facilityCloseId },
+        });
+        if (count === 0) return [];
+        invalidateAttendanceCache();
+        specTrace("VisitDepart", { p: participantId, visitId, via: source, t: departure.getTime(), closeId: facilityCloseId });
+        return [await db.visit.findUniqueOrThrow({ where: { id: visitId } })];
+    };
+
+    const relevantProgramIds = departure > arrivedAt ? await getRelevantProgramIds(participantId, db) : [];
 
     if (relevantProgramIds.length === 0) {
         // No programs enrolled, just close the visit normally
-        const closed = await db.visit.update({
-            where: { id: visitId },
-            data: { departedAt: departure, departedVia: source }
-        });
-        invalidateAttendanceCache();
-        return [closed];
+        return closeOpenVisit();
     }
 
     // Find all events in these programs that fall between arrival and departure
@@ -126,21 +150,16 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
 
     if (eventsDuringStay.length === 0) {
         // No relevant events during their stay, just close normally
-        const closed = await db.visit.update({
-            where: { id: visitId },
-            data: { departedAt: departure, departedVia: source }
-        });
-        invalidateAttendanceCache();
-        return [closed];
+        return closeOpenVisit();
     }
 
     // We have at least one event. We need to chunk the visit by deleting the
     // original open visit and recreating the chunks atomically.
     const chunk = async (tx: TxClient) => {
         // First, delete the original open visit
-        await tx.visit.delete({
-            where: { id: visitId }
-        });
+        const { count } = await tx.visit.deleteMany({ where: { id: visitId, departedAt: null, ...LIVE_VISIT } });
+        if (count === 0) return [];
+        specTrace("VisitDepart", { p: participantId, visitId, via: source, t: departure.getTime(), closeId: facilityCloseId, chunked: true });
 
         const createdVisits = [];
         let currentIterStart = arrivedAt;
@@ -160,7 +179,9 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                             arrivedAt: currentIterStart,
                             departedAt: gapEnd,
                             arrivedVia,
+                            arrivedLive,
                             departedVia: source,
+                            facilityCloseId,
                             associatedEventId: null
                         }
                     }));
@@ -190,7 +211,9 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                         arrivedAt: eventVisitStart,
                         departedAt: eventVisitEnd,
                         arrivedVia,
+                        arrivedLive,
                         departedVia: source,
+                        facilityCloseId,
                         associatedEventId: event.id
                     }
                 }));
@@ -206,7 +229,9 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                     arrivedAt: currentIterStart,
                     departedAt: departure,
                     arrivedVia,
+                    arrivedLive,
                     departedVia: source,
+                    facilityCloseId,
                     associatedEventId: null
                 }
             }));
@@ -216,9 +241,8 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
     };
 
     // If we were handed a transaction client (caller already opened one — e.g.
-    // the scan route's per-participant lock), run the chunking on it directly:
-    // Postgres has no nested transactions and the tx client has no `$transaction`.
-    // Otherwise open our own transaction so the delete + recreates stay atomic.
+    // the scan route's per-participant lock), the chunking joins it as a
+    // savepoint, so it commits or rolls back with the caller. Otherwise open our own transaction so the delete + recreates stay atomic.
     const created = await withTx(db, chunk);
     invalidateAttendanceCache();
     return created;

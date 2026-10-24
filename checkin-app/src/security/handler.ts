@@ -79,6 +79,7 @@ export function handler<P extends Record<string, string> = Record<string, string
             auth,
             params,
             callerContext: callerCtx,
+            authorization: req.headers.get('authorization'),
         });
         if (!allowed) {
             return apiError(

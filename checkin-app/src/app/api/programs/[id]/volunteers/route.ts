@@ -2,7 +2,24 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { apiError } from "@/lib/api-response";
+import { isKnownAdult } from "@/lib/programAge";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { LIVE_PERSON } from "@/lib/person/filters";
+
+/**
+ * A volunteer row confers volunteer standing and core grants scopes over enrolled
+ * youth, so no actor may grant either to themselves or their own household.
+ * Returns the error response to send, or null when the grant may proceed.
+ */
+async function refuseOwnHousehold(actorId: number, personId: number, programId: number, isCore: boolean) {
+    // A merged-away record is no one to volunteer; its survivor is.
+    const subject = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
+    if (!subject) return apiError("Participant not found", 400);
+    const refused = await refuseSelfGrant(prisma, actorId, { personId, householdId: subject.householdId }, { table: "ProgramVolunteer", attempted: { programId, isCore } });
+    return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;
+}
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -34,9 +51,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to assign volunteers", 403);
         }
 
-        // ponytail: no eligibility gate (age/membership) on volunteers — they're
-        // volunteers/program leaders, not enrollees. ProgramVolunteer has only isCore; any
-        // participant is assignable. Add a gate here only if product asks for one.
+        const refused = await refuseOwnHousehold(currentUserId, participantId, programId, false);
+        if (refused) return refused;
+
+        // No eligibility gate (age/membership): a plain volunteer can be anyone.
+        // Being made core (PATCH) is what requires a known adult.
         const assignment = await prisma.programVolunteer.create({
             data: {
                 programId,
@@ -72,13 +91,6 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return apiError("Failed to assign volunteer", 500);
     }
 });
-
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
-}
 
 export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -153,6 +165,9 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
         if (!participantId || isCore === undefined) {
             return apiError("participantId and isCore are required", 400);
         }
+        if (typeof participantId !== 'number' || typeof isCore !== 'boolean') {
+            return apiError("participantId must be a number and isCore a boolean", 400);
+        }
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -165,6 +180,19 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
         if (!isLeadMentor && !isSysAdminOrBoard) {
             return apiError("Forbidden: Not authorized to modify volunteers", 403);
+        }
+
+        // Clearing core stays open to anyone who may manage volunteers.
+        if (isCore) {
+            const refused = await refuseOwnHousehold(currentUserId, participantId, programId, true);
+            if (refused) return refused;
+            const person = await prisma.person.findUnique({
+                where: { id: participantId },
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            });
+            if (!person || !isKnownAdult(person)) {
+                return apiError("A core volunteer must be an adult.", 400);
+            }
         }
 
         const assignment = await prisma.programVolunteer.update({

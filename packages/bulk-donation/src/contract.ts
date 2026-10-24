@@ -1,7 +1,8 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { ResolvedInventoryDelta } from "@inventory/receipt-types";
+import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
 export interface BulkDonationPrincipal {
@@ -25,6 +26,8 @@ export interface OwnerInfo {
   id: number;
   name: string;
   archivedAt: Date | null;
+  /** The bucket's QuickBooks Class; a booked gift line carries it. */
+  quickBooksClassId?: string | null;
 }
 
 /** Read-only list of checkin's budget-owner buckets. */
@@ -66,40 +69,67 @@ export function inventorySourceKey(inKindDonationId: number): string {
   return `donation:${inKindDonationId}`;
 }
 
-/** The two matching streams, each with its own takeover line. */
-export type QbStream = "benevity" | "in_kind";
-
-/** One create-or-find request to the shared QuickBooks find-or-create (L4). */
-export interface DonationQbPostRequest {
-  stream: QbStream;
-  /** Org + disbursement id, or the in-kind donation id. A retry never books twice. */
-  retryKey: string;
-  netCents: number;
-  /** YYYY-MM-DD; candidates are searched within 7 days of it. */
-  depositDate: string;
-  /** The stream's derived takeover line; null means create nothing. */
-  takeoverLine: string | null;
-  claimedQbTxnIds: string[];
-  excludedQbTxnIds: string[];
+/**
+ * What the QuickBooks drain books with: checkin's one guarded client (null while the guard keeps
+ * QuickBooks off), the bank account Benevity disbursements land in, and whether this is prod.
+ * Outside prod only a disbursement whose id starts with "TEST-" is sent; prod never sends one.
+ */
+export interface DonationQbPosting {
+  client(): Promise<QuickBooksClient | null>;
+  bankAccountId: string;
+  prod: boolean;
+  /** Tells finance the daily orphan sweep read a full page, so some Deposits went unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
-export type DonationQbPostResult =
-  | { kind: "found"; qbTxnId: string }
-  | { kind: "created"; qbTxnId: string }
-  | { kind: "ambiguous"; candidateQbTxnIds: string[] }
-  | { kind: "before_line" }
-  | { kind: "failed"; reason: string };
+/** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */
+export interface OtherLaneClaims {
+  claimedDepositIds(orgId: string): Promise<string[]>;
+}
 
-/** The QuickBooks writer (L4's closed-enum, create-only writer behind the find-or-create). */
-export interface DonationQbWriter {
-  post(request: DonationQbPostRequest): Promise<DonationQbPostResult>;
+/**
+ * Who may decide an in-kind gift, read from checkin's roles, programs and households. Person ids
+ * are checkin Person.id.
+ */
+export interface InKindDirectory {
+  financeHolders(): Promise<number[]>;
+  boardMembers(): Promise<number[]>;
+  /** Each person's household member ids, the person included, read in one batch. */
+  householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
+  /** For each check, whether anyone in the person's household, the person included, has that surname; one batch. */
+  householdsSharingSurname(checks: { personId: number; lastName: string }[]): Promise<boolean[]>;
+  /** The buckets whose approvers (owner and treasurers) include this person. */
+  bucketsApprovedBy(personId: number): Promise<number[]>;
+  /** The expense library's large-spend amount; a gift valued at or over it warns its decider. */
+  largeValueCents(): Promise<number>;
 }
 
 export interface BulkDonationConfig {
   auth: BulkDonationAuth;
-  org: () => OrgIdentity;
+  /** Called once per request: the host may resolve it from its own store, so never at boot. */
+  org: () => Promise<OrgIdentity>;
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
-  qb?: DonationQbWriter;
+  qb?: DonationQbPosting;
+  otherLaneClaims?: OtherLaneClaims;
+  inKind?: InKindDirectory;
 }
+
+/** The slice of a route context a factory consumes: request + path params. */
+export interface DonationRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type DonationBag = Record<string, unknown>;
+export type DonationRouteHandler = (ctx: DonationRouteCtx) => Promise<DonationBag>;
+
+/** A stored file a file-route factory serves; the host emits `row.fileBlob`. */
+export interface DonationFile {
+  row: Record<string, unknown>;
+  contentType: "text/plain";
+  filename?: string;
+}
+export type DonationFileRouteHandler = (ctx: DonationRouteCtx) => Promise<DonationFile>;

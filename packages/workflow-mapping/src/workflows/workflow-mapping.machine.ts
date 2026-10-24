@@ -23,7 +23,7 @@
 import { setup, createActor } from "xstate";
 import type { ReceivedReceiptState } from "../db/schema";
 import type { WorkflowMappingEvent, WorkflowMappingEventType } from "./workflow-mapping.events";
-import { WorkflowTransitionError } from "@inventory/workflows";
+import { WorkflowTransitionError } from "@checkin/workflows";
 
 export const workflowMappingMachine = setup({
   types: {

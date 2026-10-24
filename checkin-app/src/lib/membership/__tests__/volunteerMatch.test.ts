@@ -1,7 +1,7 @@
 import { matchesVolunteerDesignation } from "@/lib/membership/review";
 
 /**
- * Volunteer-designation match drives Membership.isVolunteer, which drives dues.
+ * Volunteer-designation match drives Membership.isVolunteerFamily, which drives the membership fee.
  * These lock the two cases the OLD review normalization got wrong (strip dots on
  * every domain, keep +tag) and canonicalizeEmail now handles correctly.
  */

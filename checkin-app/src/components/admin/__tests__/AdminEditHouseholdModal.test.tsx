@@ -7,7 +7,7 @@ import { modals } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { AdminEditHouseholdModal, isFormDirty } from "../AdminEditHouseholdModal";
 
-const base = { name: "Smith", line1: "1 Main", line2: "", city: "Austin", state: "TX", postalCode: "78701", emergencyContactName: "Jo", emergencyContactPhone: "5550000", memberSince: "2020-01-15", isVolunteer: false };
+const base = { name: "Smith", line1: "1 Main", line2: "", city: "Austin", state: "TX", postalCode: "78701", emergencyContactName: "Jo", emergencyContactPhone: "5550000", memberSince: "2020-01-15", isVolunteerFamily: false };
 
 describe("isFormDirty", () => {
   it("is false when snapshots match", () => {
@@ -18,7 +18,7 @@ describe("isFormDirty", () => {
     expect(isFormDirty(base, { ...base, name: "Jones" })).toBe(true);
     expect(isFormDirty(base, { ...base, emergencyContactPhone: "5551111" })).toBe(true);
     expect(isFormDirty(base, { ...base, memberSince: "2021-06-01" })).toBe(true);
-    expect(isFormDirty(base, { ...base, isVolunteer: true })).toBe(true);
+    expect(isFormDirty(base, { ...base, isVolunteerFamily: true })).toBe(true);
   });
 });
 
@@ -264,8 +264,8 @@ describe("AdminEditHouseholdModal", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
   });
 
-  it("toggles the volunteer-only flag and sends isVolunteer in the PATCH body", async () => {
-    const withMembership = { ...household, orgMembership: { memberSince: "2024-01-15T00:00:00.000Z", isVolunteer: false } };
+  it("toggles the volunteer-only flag and sends isVolunteerFamily in the PATCH body", async () => {
+    const withMembership = { ...household, orgMembership: { memberSince: "2024-01-15T00:00:00.000Z", isVolunteerFamily: false } };
     const fetchMock = mockFetchJson({
       "/api/membership-ops/households?id=55": { household: withMembership },
       "/api/membership-ops/households/55": { household: withMembership },
@@ -280,7 +280,7 @@ describe("AdminEditHouseholdModal", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/membership-ops/households/55", expect.objectContaining({ method: "PATCH" })),
     );
     const [, patchOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PATCH")!;
-    expect(JSON.parse(patchOpts!.body as string)).toEqual(expect.objectContaining({ isVolunteer: true }));
+    expect(JSON.parse(patchOpts!.body as string)).toEqual(expect.objectContaining({ isVolunteerFamily: true }));
   });
 
   it("omits the membership fields from the PATCH body for a membership-less household", async () => {
@@ -300,7 +300,7 @@ describe("AdminEditHouseholdModal", () => {
     const [, patchOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PATCH")!;
     const body = JSON.parse(patchOpts!.body as string);
     expect(body).toEqual(expect.objectContaining({ name: "Smith Fam" }));
-    expect(body).not.toHaveProperty("isVolunteer");
+    expect(body).not.toHaveProperty("isVolunteerFamily");
     expect(body).not.toHaveProperty("memberSince");
   });
 

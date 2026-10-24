@@ -120,7 +120,7 @@ describe("ProgramDetailsPage", () => {
   it("searches and adds a volunteer", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
-      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West", email: "wendy@example.com" }] },
+      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West", ageWarning: null }] },
       "/api/programs/1/volunteers": {},
       "/api/programs/1": programData,
     });
@@ -253,7 +253,7 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
-  it("switches to editing the lead mentor, selects a new one, then cancels back", async () => {
+  it("switches to editing the program leader, selects a new one, then cancels back", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
       "/api/programs/1/eligible-participants": {},
@@ -283,8 +283,8 @@ describe("ProgramDetailsPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
-    expect(screen.getByText("No Lead Mentor Assigned")).toBeInTheDocument();
-    expect(screen.getByText("*Only Administrators/Board Members can change the Lead Mentor.")).toBeInTheDocument();
+    expect(screen.getByText("No Program Leader Assigned")).toBeInTheDocument();
+    expect(screen.getByText("*Only Administrators/Board Members can change the Program Leader.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
@@ -352,7 +352,7 @@ describe("ProgramDetailsPage", () => {
   it("keeps the volunteer selection when the add request fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = routedFetch([
-      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", email: "wendy@example.com" }] } } },
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
       { url: "/api/programs/1/volunteers", method: "POST", result: { ok: false, status: 400, body: {} } },
       { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
     ]);
@@ -368,7 +368,7 @@ describe("ProgramDetailsPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/programs/1/volunteers", expect.objectContaining({ method: "POST" })),
     );
-    expect(screen.getByDisplayValue("Wendy West (wendy@example.com)")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Wendy West")).toBeInTheDocument();
   });
 
   it("shows empty states when there are no volunteers, participants, or events", async () => {
@@ -387,13 +387,12 @@ describe("ProgramDetailsPage", () => {
     expect(await screen.findByText("No events scheduled.")).toBeInTheDocument();
   });
 
-  it("enrolls a participant after the sysadmin confirms, warns on age, and shows a server error otherwise", async () => {
+  it("enrolls a participant after the sysadmin confirms, shows the server's age warning, and shows a server error otherwise", async () => {
     setSession({ id: 1, isSysadmin: true });
     const eligible = {
       members: [
-        { id: 777, name: "Gerry Grownup", email: "gerry@example.com", dateOfBirth: "1990-01-01" },
-        { id: 778, name: "Kiki Kid", email: "kiki@example.com", dateOfBirth: "2022-01-01" }, // too young
-        { id: 779, name: "Oldman Owen", email: "owen@example.com", dateOfBirth: "1970-01-01" }, // too old
+        { id: 777, name: "Gerry Grownup", ageWarning: null },
+        { id: 778, name: "Kiki Kid", ageWarning: "Too young" },
       ],
     };
     let attempt = 0;
@@ -412,9 +411,7 @@ describe("ProgramDetailsPage", () => {
     const participantSearch = (await screen.findAllByPlaceholderText("Start typing to search..."))[1];
     fireEvent.change(participantSearch, { target: { value: "e" } });
     await screen.findByText("Kiki Kid");
-    expect(screen.getByText(/Too Young/)).toBeInTheDocument();
-    // Both Gerry (36) and Owen (56) exceed maxAge 18 -> two "Too Old" badges.
-    expect(screen.getAllByText(/Too Old/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Too young/)).toHaveLength(1);
     fireEvent.click(screen.getByText("Gerry Grownup"));
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -542,6 +539,69 @@ describe("ProgramDetailsPage", () => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
         expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403 }) }),
+      ),
+    );
+  });
+
+  const pricedProgram = { ...programData, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: "v1" };
+
+  it("disables removing a paid place for a sysadmin who is not on the Board", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": pricedProgram });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    // Volunteer (201), paid active participant (101), then the pending one (102).
+    const removeButtons = screen.getAllByRole("button", { name: "Remove" });
+    expect(removeButtons[1]).toBeDisabled();
+    expect(removeButtons[1]).toHaveAttribute("title", "Only the Board removes a paid place");
+    expect(removeButtons[2]).toBeEnabled();
+  });
+
+  it("asks a Board member for a written reason before removing a paid place", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ "/api/programs/1": pricedProgram });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    const confirm = within(modal).getByRole("button", { name: "Remove" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: " Family moved away " } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Family moved away" }) }),
+      ),
+    );
+  });
+
+  // A place paid before the Board zeroed the price is still paid; the roster cannot
+  // tell, so a Board member gives a reason for any active place.
+  it("asks a Board member for a reason on an active place of a free program too", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ "/api/programs/1": programData });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    expect(within(modal).getByRole("button", { name: "Remove" })).toBeDisabled();
+    fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Paid before the price was zeroed" }) }),
       ),
     );
   });
@@ -698,5 +758,81 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "← Back to Programs" }));
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs");
+  });
+
+  describe("membership year", () => {
+    // jsdom lacks scrollIntoView, which Mantine's Select/Combobox calls on open.
+    beforeAll(() => {
+      window.HTMLElement.prototype.scrollIntoView = jest.fn();
+    });
+    // Crosses 1 September 2026; one ACTIVE (paid) place in programData.
+    const crossingProgram = { ...programData, startAt: "2026-06-01T00:00:00.000Z", endAt: "2026-10-01T00:00:00.000Z", appliesToYear: 2025 };
+    const setup = () => {
+      setSession({ id: 1, isBoardMember: true });
+      return routedFetch([
+        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
+        { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
+      ]);
+    };
+    const patched = (fetchMock: jest.Mock) => fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+
+    it("asks before saving a changed year on a program with paid places, naming how many", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+      renderPage();
+      fireEvent.click(await screen.findByDisplayValue("2025-2026"));
+      fireEvent.click(screen.getByText("2026-2027", { selector: '[role="option"] span' }));
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 paid place was"));
+      expect(patched(fetchMock)).toHaveLength(0);
+
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(JSON.parse(String((patched(fetchMock)[0][1] as RequestInit).body)).appliesToYear).toBe(2026);
+      confirm.mockRestore();
+    });
+
+    it("drops a year the new dates no longer touch and blocks saving until one is chosen", async () => {
+      const fetchMock = setup();
+      renderPage();
+      await screen.findByDisplayValue("2025-2026");
+
+      fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2027-06-01" } });
+      fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2027-10-01" } });
+
+      expect(screen.queryByDisplayValue("2025-2026")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save Settings" })).toBeDisabled();
+      expect(patched(fetchMock)).toHaveLength(0);
+    });
+
+    it("does not pre-select a derived year when single-year dates are moved across the boundary", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      routedFetch([
+        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: { ...crossingProgram, endAt: "2026-08-15T00:00:00.000Z" } } },
+      ]);
+      renderPage();
+      await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+      fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2026-10-01" } });
+
+      expect(await screen.findByPlaceholderText("Choose the year")).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Save Settings" })).toBeDisabled();
+    });
+
+    it("saves an unchanged year without asking", async () => {
+      const fetchMock = setup();
+      const confirm = jest.spyOn(window, "confirm");
+      renderPage();
+      await screen.findByDisplayValue("2025-2026");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+      await waitFor(() => expect(patched(fetchMock)).toHaveLength(1));
+      expect(confirm).not.toHaveBeenCalled();
+      confirm.mockRestore();
+    });
   });
 });

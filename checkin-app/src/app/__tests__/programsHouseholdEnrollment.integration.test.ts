@@ -87,13 +87,13 @@ describe('Multi-select household enrollment (integration)', () => {
         });
 
         const free = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Household Enroll Test Free', phase: 'RUNNING', enrollmentStatus: 'OPEN', orgMemberPriceCents: null, nonOrgMemberPriceCents: null }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Household Enroll Test Free', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberPriceCents: null, nonOrgMemberPriceCents: null }
         });
         freeProgramId = free.id;
 
         // Cap = 2: the lead will try to enroll 3 members.
         const capped = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Household Enroll Test Capped', phase: 'RUNNING', enrollmentStatus: 'OPEN', maxParticipants: 2 }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Household Enroll Test Capped', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 2 }
         });
         cappedProgramId = capped.id;
     });

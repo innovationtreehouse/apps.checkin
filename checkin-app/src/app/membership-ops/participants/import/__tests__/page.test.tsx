@@ -5,7 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
-import BulkImportParticipants from "../page";
+import BulkImportParticipants from "../ImportParticipantsClient";
 
 beforeEach(() => resetRtl());
 

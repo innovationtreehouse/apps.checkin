@@ -1,5 +1,5 @@
 // Pull Purchases + Bills in a date window → normalized ground-truth JSON. Proves reads work end to end.
-// Run: npm run pull -w @inventory/quickbooks -- 2024-01-01 [2024-12-31] [outfile]
+// Run: npm run pull -w @checkin/quickbooks -- 2024-01-01 [2024-12-31] [outfile]
 // Reads in MAX_WINDOW_DAYS chunks. The production company also needs CHECKIN_ENV=prod.
 import { writeFileSync } from "node:fs";
 import { MAX_WINDOW_DAYS, QuickBooksClient, qboEnvFromEnv, toGroundTruth } from "../src/client";
@@ -12,7 +12,7 @@ const outFile = process.argv[4] ?? new URL("../.ground-truth.json", import.meta.
 
 const tokenFile = tokenFileFromEnv();
 const saved = loadTokens(tokenFile);
-if (!saved) throw new Error(`No QBO tokens at ${tokenFile}; run \`npm run consent -w @inventory/quickbooks\` first`);
+if (!saved) throw new Error(`No QBO tokens at ${tokenFile}; run \`npm run consent -w @checkin/quickbooks\` first`);
 const client = new QuickBooksClient(fileAccessTokenSource(tokenFile), { env: qboEnvFromEnv(), realmId: saved.realmId });
 const day = (d: Date): string => d.toISOString().slice(0, 10);
 const plusDays = (d: Date, n: number): Date => new Date(d.getTime() + n * 86_400_000);

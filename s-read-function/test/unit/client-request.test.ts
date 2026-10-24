@@ -11,14 +11,14 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createShopifyClient, MAX_ATTEMPTS, REQUEST_TIMEOUT_MS } from "../../src/shopify/client.js";
-import type { ShopifyConfig } from "@inventory/s-ingest-core";
+import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
 // Silence the retry warn/info logs and avoid pulling the generated Prisma client in.
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const cfg = { endpoint: "https://shop.myshopify.com/admin/api/2025-07/graphql.json", adminToken: "shpat_test" } as ShopifyConfig;
+const cfg = { endpoint: "https://shop.myshopify.com/admin/api/2026-04/graphql.json", adminToken: "shpat_test" } as ShopifyConfig;
 
 /** Build a fetch-`Response` test double. */
 function resp(opts: { status?: number; body?: unknown; retryAfter?: string; text?: string }) {

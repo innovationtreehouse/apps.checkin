@@ -2,578 +2,348 @@
 
 ## Problem
 
-When a family pays for membership, the system has to know which membership year
-the money bought — this year, or the coming one. It never records that answer.
-It works it out afterwards from a timestamp: the moment the family's application
-finished its last step. For a family renewing, that moment always lands in the
-renewal window, so the guess is always right. For a family joining for the first
-time, it can land anywhere, and the guess can be wrong.
+When a family pays for membership, the app has to know which membership year the
+money bought: the year in progress, or the coming one. It never records that
+answer. It works it out afterwards from the moment the family's application
+finished its last step. For a renewing family that moment always falls in the
+renewal window, so the guess is right. For a family joining for the first time it
+can fall anywhere, and the guess can be wrong.
 
-The case that makes it wrong is ordinary. A family joins in late June or early
-July to sign a child up for a summer program, pays that day, and their
-background check clears a few days later — after the renewal window has opened.
-The system reads the clearance date, sees it inside the window, and concludes the
-family bought the *coming* year. It did not; it bought the year it joined in. The
-consequence is that the renewal sweep never asks them to renew, and they receive
-roughly thirteen months of coverage for one year's fee. An identical family whose
-review happened to finish a few days earlier gets the correct horizon. Which year
-a family's money bought is being decided by how fast a board reviewer worked.
+The case that makes it wrong is ordinary. A family joins in late June to sign a
+child up for a summer program, pays that day, and their background check clears a
+week later, after the renewal window has opened. The app reads the clearance date,
+sees it inside the window, and concludes the family bought the coming year. It did
+not; it bought the year it joined in. The renewal sweep never asks them to renew,
+and they get about thirteen months of membership for one year's fee. An identical
+family whose review finished a few days earlier gets the right answer. Which year a
+family's money bought is being decided by how fast a reviewer worked.
 
-The deeper fault is that a fact — *which year did this purchase cover* — is being
-re-derived every time it is read, from a signal that was never meant to answer
-it. There is no timestamp that answers it correctly in every case, because the
-answer is not a matter of timing at all. It is a property of what was bought.
+The fault underneath is that a fact, *which year did this purchase cover*, is
+worked out again every time it is read, from a signal that was never meant to
+answer it. No timestamp answers it in every case, because the answer is not about
+timing. It is a property of what was bought.
 
 ## Objective
 
-Every membership settlement records the membership year it bought. Coverage
-horizons, the renewal sweep, and program pricing read that recorded year instead
-of inferring one from when a stage completed.
+Every membership settlement records the membership year it bought. Coverage, the
+renewal sweep, the outreach audiences and the badge roster read that recorded year
+instead of inferring one from when a stage completed.
 
 ## Executive summary
 
-**For a family**, the summer-join case stops leaking. A family that joins to buy
-the current year is asked to renew for the coming year on the normal schedule,
-and a family that genuinely buys the coming year is not. Nothing changes for a
-renewal — a renewal has only ever bought the coming year, and it still does.
+**For a family**, the summer-join case stops happening. A family that buys the
+year in progress is asked to renew on the normal schedule; a family that buys the
+coming year is not. From the day the renewal window opens, the checkout sells the
+coming year to a joining family exactly as it does to a renewing one. Nothing
+changes for a renewal.
 
-**For the board**, a membership can now be granted for a specific year, and the
-grant records which. When the current date makes the year unambiguous the app
-fills it in; only inside the renewal-window overlap, where both the current and
-the coming year are plausible, is the board asked which year the grant is for.
+**For the board**, each grant button on the households page names the year it
+records, such as "Grant 2026-2027", and the button pressed is the year granted. Families already settled keep exactly the
+coverage they have today; the board corrects any family that needs it by hand.
 
-**For operations**, the single evergreen Shopify membership variant becomes one
-variant per membership year. Each year's variant is what tells a purchase which
-year it bought. Rolling a new year is adding that year's variant to a mapping
-before its renewal window opens — the same shape of task as setting up any
-year's catalogue.
+**For operations**, the one membership product in Shopify becomes one product
+variant per membership year. Before each renewal window opens, the board enters the
+coming year's variant in membership settings; an empty slot is flagged in the nav
+for months beforehand, and renewals refuse to open without it.
 
-**The cost** is one nullable integer column on the settlement record, a
-variant-to-year mapping replacing one variant id, a stamp on each settlement
-path, a one-time backfill of live data, and the removal of the timestamp-based
-inference the column replaces.
+**The cost** is one nullable integer column on the settlement record, one small
+table mapping each year to its Shopify variant, a year stamped at the one place a
+membership is paid, a one-time fill of existing rows, and the swap of a date test
+for a year test in the readers.
 
-**Deliberately not in scope:** what the membership year *is* (1 September to 31
-August, one boundary for the whole organisation — Policy, unchanged), what dues
-cost, who counts as a member, and when a membership covers what. This design
-changes only how the year a settlement bought is recorded and read.
+**Deliberately not in scope:** what the membership year is (1 September to 31
+August, one boundary for the whole organisation), what dues cost, who counts as a
+member, and how long a membership covers once bought. This design changes only how
+the year a settlement bought is recorded and read.
 
 ## Rules this relies on and intends to change
 
-Relied on, from `docs/rules/membership.md`, all Policy and unchanged:
+Relied on, from `docs/rules/membership.md`, Policy and unchanged: the membership
+year runs 1 September to 31 August, one boundary for the organisation; the fee is
+per family per membership year, and a family joining partway through pays for the
+year it joins in.
 
-- The membership year runs 1 September to 31 August, with one boundary for the
-  whole organisation. The integer that names a year is defined against that
-  boundary; the design does not touch the boundary itself.
-- The fee is per family per membership year, and a payment may buy less than
-  twelve months when a family joins partway through. The declared year is exactly
-  the year that payment buys.
+Relied on, from `docs/rules/membership.md`, Procedure: *coverage is what was
+bought*. A household settled for the membership year now in effect is covered to
+the boundary that closes it; otherwise only to the boundary that opened it. This
+design keeps that rule and changes how "settled for the year" is decided.
 
-Changed, in `docs/rules/membership.md`, the Procedure (`[Decision]`) rule under
-Renewal that today reads:
-
-> Settling inside the renewal window buys the coming membership year — for a
-> family joining (INITIAL) exactly as for one renewing. The derived valid-until,
-> program-pricing coverage, and the renewal sweep's skip-test all read this one
-> rule…
-
-This design keeps the *intent* — a family that buys the coming year is covered
-for it and not asked to renew it — but replaces the *mechanism*. "Settling inside
-the renewal window" was a proxy for "bought the coming year" that holds for
-renewals and fails for the summer INITIAL. The replacement is that the settlement
-states its year outright. The rule's replacement text is in the migration file.
+Changed, in `docs/rules/membership.md` under Renewal: the line saying that
+settling inside the renewal window buys the coming year. Its intent stays: a family
+that buys the coming year is covered for it and is not asked to renew it. Its
+mechanism goes. "Settled inside the window" stood in for "bought the coming year";
+it holds for renewals and fails for the summer join. The replacement says the
+settlement states its year, and that the checkout offered from the day the window
+opens sells the coming year.
 
 Relied on, from `docs/rules/principles.md`: *missing or ambiguous data resolves to
-the more restrictive reading*. The inference this design removes resolves an
-ambiguous case (pay pre-window, clear post-window) to the *more generous* reading
-— thirteen months of coverage. Recording the year removes the ambiguity rather
-than merely re-pointing it.
+the more restrictive reading*. A settlement with no recorded year reads as not
+settled for the year in effect, which is the reading today's rule gives any row it
+cannot place.
 
 ## Naming a membership year
 
-A membership year spans two calendar years — with a 1 September boundary it runs
-from 1 September of one year to 31 August of the next — so its **name is the
-spanning form, `2026-2027`** (both years in full): the year the boundary opens
-in, and the year it closes in. That is what a human sees anywhere a membership
-year is shown, and it is unambiguous in a way a bare `2026` is not. This is the
-exact label the shipped code already produces — `membershipYearCycle(...).label`
-in `checkin-app/src/lib/membership/renewal.ts` returns `` `${endYear-1}-${endYear}` ``
-— and `membershipYearCycleForLabel` parses it back (its test rejects short forms),
-so the design adopts the four-digit form rather than a `2026-27` variant the
-parser would reject.
+A membership year runs from one boundary to the next, so it spans two calendar
+years. Its **name is the spanning form, `2026-2027`**, both years in full. It is
+the label the app already shows for the year in effect
+(`membershipYearCycle(...).label` in `checkin-app/src/lib/membership/renewal.ts`).
 
-**Stored as a single integer — the opening-boundary year (`2026`).** The closing
-half is always the opening half plus one, so storing both would be storing a
-derivable fact twice; the `2026-2027` label is *formatted* from the one integer
-by the existing `membershipYearCycle` / `membershipYearCycleForLabel` pair, not
-stored. The integer is not a stored date, for the same reason program design
-gives: a stored date would be a second copy of the board's boundary setting,
-wrong from the moment the setting moved and silently so. The integer re-resolves
-against the current boundary every time it is read.
+**It is stored as one integer, the year the boundary opens in (`2026`).** The
+closing year is always one more, so the label is formatted, never stored. An integer
+rather than a date keeps the value honest: a stored date would be a second copy of
+the board's boundary setting.
 
-This is the identical storage scheme already chosen for programs in
-`docs/in-design/PROGRAM_MEMBERSHIP_YEAR.md` — see
-[Reconciliation with program fiscal year](#reconciliation-with-program-fiscal-year-1484).
-No new formatter is introduced; both subjects render through the shipped label
-helper, so a member reads the same `2026-2027` label for a program's year and for
-the year their own dues cover.
+Programs use the same integer under the same field name, `appliesToYear`
+(`PROGRAM_MEMBERSHIP_YEAR.md`), so a family reads one `2026-2027` for a program's
+year and for the year their dues cover.
 
-**Precisely which year a settlement's `appliesToYear` is compared against.**
-Coverage follows the **live** membership year, which the shipped
-`membershipYearCycle(boundary, now)` already computes as
-`{ label, settledSince, cycleStart, cycleEnd }`: in renewal season the live cycle
-is the coming one (the label flips on the day the window opens), and off season it
-is the one that opened at the last boundary. The integer key of the live cycle is
-`cycleStart.getUTCFullYear()`. A settlement covers the live cycle when its
-`appliesToYear` equals that key — this is the single comparison every reader makes
-(below), replacing the `stageEnteredAt ≥ settledSince` date test.
+Two pure helpers carry the arithmetic: the membership year a date falls in, and the
+label for a year. They go in the prisma-free `checkin-app/src/lib/programYear.ts`,
+beside `nextBoundary`, because the settings page and the program forms render
+labels in the browser and `renewal.ts` imports prisma.
 
-There is no separate "current vs coming" integer to track: the live cycle already
-rolls forward on its own. Note the boundary-instant behaviour of the underlying
-helper — `nextBoundary` in `programYear.ts` uses a strict `<`, so at the exact
-boundary instant it returns *that* boundary, not the next; `membershipYearCycle`
-is built on it and inherits that edge. It is worth an explicit test but needs no
-special-casing in this design.
+**Two different "years" are in play, and the design needs both.** The *year in
+progress* is the one the calendar is in: from 1 September 2026 to 31 August 2027
+it is `2026`. The *live year* is the one coverage is judged against, and it flips
+early: `membershipYearCycle` moves to the coming year on the day the renewal window
+opens, two months before the boundary. So on 15 July 2027 the year in progress is
+`2026` and the live year is `2027`. Outside the window the two are equal. The live
+year's key is `membershipYearCycle(boundary, now).cycleStart.getUTCFullYear()`.
 
-## What is stored, and where
+## What is stored
 
-**One nullable integer on `OrgMembershipProcess`: the membership year that
-settlement bought.** Call it `appliesToYear`, the same field name programs use.
+**One nullable integer on `OrgMembershipProcess`: `appliesToYear`, the membership
+year that settlement bought.** It goes on the process because the process is the
+record of one settlement: one payment, one grant, one renewal. A household
+accumulates settlements over the years, and "which year did this buy" belongs to
+each one. Stored on `OrgMembership` it would have to overwrite last year's answer.
 
-It goes on the process, not on `OrgMembership`, because the process is the record
-of a single settlement — one purchase, one grant, one renewal — and "which year
-did this buy" is a fact about that settlement, not about the household's
-membership as a whole. A household accumulates settlements over years; its
-coverage horizon is read off the settlement whose `appliesToYear` matches the
-live cycle, which is exactly what the current query does when it looks for a
-process settled for this cycle. Storing the year on the membership would force a
-choice between overwriting last year's answer and inventing a per-year sub-record
-the process table already is.
+It is set once, when the process is paid, and never changed by the app afterwards.
+Background clearance, archive and every later stage leave it alone. It stays
+nullable for good: a row with no year reads as not settled for the live year, which
+is the correct reading for every row that has none (unpaid applications, the two
+per-person process kinds, and legacy rows no rule can place). Tier
+`@sensitivity:public`, like the process's other descriptive scalars.
 
-**Nullable during rollout, and never made NOT NULL by this design.** Legacy rows
-predate the column and cannot all be given a value they never recorded — the
-backfill can compute a year only where today's logic can (see the migration
-file). A NOT NULL constraint would need a value for rows that have none. The
-column stays nullable; the readers treat a null year as "not settled for the
-live cycle", which is the safe reading and preserves today's behaviour for any
-row the backfill cannot resolve. Tightening to NOT NULL is a later contract-stage
-step gated on the backfill reaching completeness, not part of this change.
-
-The column is tier `@sensitivity:public` — it is a year integer, the same tier as
-every other scalar on the process that describes the membership rather than the
-person.
-
-## How the year is set on every settlement path
-
-The process's `appliesToYear` is the single source of truth. The purchased
-variant and the grant are *inputs* that set it; nothing reads the variant again
-afterwards to re-derive the year.
-
-### Shopify purchase → variant → year
-
-Each membership year has its own Shopify variant (see
-[Settings and catalogue](#settings-and-catalogue-per-year-variants)). The paid
-webhook already knows two things: the `Membership_Process_ID` cart attribute that
-says which process to credit, and the order's line-item variant ids, which it
-checks to confirm the order actually contains a membership product
-(`checkin-app/src/app/api/webhooks/shopify/route.ts`, and `activateByProcessId`
-in `checkin-app/src/lib/membership/payment.ts`).
-
-The change: the membership line item's variant id is looked up in the
-variant-to-year mapping, and the resulting year is stamped on the process as it
-activates. The variant the family actually checked out through *is* the
-statement of which year they bought — a family buying in June through the
-current-year variant gets the current year stamped, regardless of when their
-review later clears. This is the fix to the #1655 case at its root: the year is
-no longer a function of review latency.
-
-A paid order whose membership variant is not in the mapping is a
-misconfiguration, not a guess to paper over: it is surfaced the way an unmatched
-membership payment is surfaced today rather than being stamped with an inferred
-year — it flows to the existing unmatched-payment path.
-
-### Board grant or comp → stamped at grant
-
-A board grant settles a household's membership with no Shopify order and no
-`paidAt`, and it states the year directly since there is no variant to read:
-
-- **Outside the renewal-window overlap**, the year is unambiguous — there is
-  exactly one membership year a settlement made now would sensibly buy — so it is
-  stamped automatically with no prompt. A grant made in, say, February buys the
-  current year; the board is not asked.
-- **Inside the renewal-window overlap**, both the current year and the coming
-  year are plausible (a grant now could be completing this year's membership late,
-  or granting next year's early), so the board is asked which year the grant is
-  for, and their answer is stamped.
-
-The overlap window is the existing renewal window (`renewalWindow` /
-`renewalSeasonWindow`) — the span, opening a set period before the boundary,
-during which renewals are in season. The only remaining detail is a test pinning
-the boundary-instant edge; on a concurrent grant inside the overlap the shorter
-grant wins (below).
-
-#### The two grant buttons become one
-
-**The design:** one "Grant membership" button that always writes a real settlement
-record stamped with the year. Outside renewal season it stamps the current year
-with no prompt (the only sensible year then); inside the renewal-window overlap it
-prompts current-vs-coming and stamps the answer. That single button replaces both
-of today's.
-
-Today there are two buttons on the households ops page, both posting to
-`POST /api/membership-ops/households`:
-
-- **Grant Membership** (`active: true`) — a non-member override that flips
-  `OrgMembership.status` to ACTIVE and nothing else. It writes **no settlement
-  record** (no `OrgMembershipProcess`), so no year and no reason.
-- **Grant for coming year** (`comingYear: true`) — shown only in renewal season;
-  writes a real settlement record (via `grantRenewalPayment`) with a reason. That
-  record is the thing that, under this design, carries `appliesToYear`.
-
-**Why there are two today, and why one replaces them.** After #1812 coverage is
-what was *bought*: `coveredThrough(cycle, settled)` reaches the boundary that
-closes the live cycle only when a dues-paid process settled it, and otherwise
-stops at the boundary that *opened* it — an unsettled ACTIVE membership reads as
-lapsed the day after the boundary. So the flag-only "Grant Membership" button,
-which writes status and no process, now grants **nothing durable**: the household
-is ACTIVE but, carrying no settled process, lapses at the very next boundary.
-#1812's own test pins this ("an ACTIVE membership with no dues-paid process is NOT
-settled, however new — bare manual grant / import"). The season-only second button
-exists because writing a real settlement record is the *only* way to grant
-coverage that lasts, and today that record only carries its year implicitly
-(through `stageEnteredAt`).
-
-Give every grant a real record stamped with `appliesToYear` — which the year model
-requires anyway — and the split disappears: one button covers both, prompting for
-the year only where the year is genuinely ambiguous (the overlap). This is a
-simplification the year model enables, and #1812 strengthens the case: the
-flag-only path is no longer a weaker grant, it is a non-grant. The one firm
-consequence is that the `active: true` status flip **cannot be kept as it is** —
-it must route through the settlement path or be disabled, never left as a bare
-status flip that produces a membership lapsing at the next boundary with no record
-the readers can place.
-
-**The overlap prompt races to the shorter grant.** Inside the overlap two actors
-can act on one household at once — one granting (or the family buying) the current
-year, another the coming year. On a race the **shorter coverage wins**: the
-outcome settles to the current year (the summer), never the coming one. The actor
-who saw and chose the shorter grant gets exactly what the UI showed them, and the
-conservative coverage is the safe one to land on a tie — extending a family a year
-they did not clearly buy is the worse error. The grant that stamps the coming year
-therefore yields to a concurrent current-year settlement rather than overwriting
-it.
-
-Residual mechanics the merge settles — whether a reason is always required (the
-coming-year path requires one; make the unified grant require one too), and how a
-grant on a household with no in-flight process creates one to settle, since
-`grantRenewalPayment` today only *completes* an existing PENDING_PAYMENT renewal —
-are build details, not open design questions.
-
-## Settings and catalogue: per-year variants
-
-Today `BoardSettings.orgMembershipVariantId` is a single evergreen variant id
-(schema ~line 624; the checkout link is built from it server-side). This design
-replaces it with a **new table, one row per membership year** — each year's
-membership product sold through its own variant.
-
-**A row per year, never a column per year.** The mapping is its own table keyed
-by the year's integer, so rolling a new year is inserting one row — the
-`BoardSettings` schema is never touched again for this, and in fact shrinks once
-the two evergreen scalars retire (below). A column-per-year, or a growing set of
-`orgMembershipVariant2026Id` fields, is exactly what this avoids.
+**One table mapping each membership year to the Shopify variant that sells it.**
 
 ```
 MembershipYearVariant
-  membershipYear    Int     @unique   // the opening-year key: 2026
-  shopifyVariantId  String            // the Shopify variant sold for that year
-  productUrl        String?           // optional, same role as today's product URL
+  membershipYear    Int     @id       // opening-year key, 2026
+  shopifyVariantId  String  @unique   // @sensitivity:internal
+  productUrl        String?           // @sensitivity:internal
 ```
 
-A table rather than a JSON map on `BoardSettings` (both avoid a per-year column)
-because the reconcilers below ask "is this line-item variant *any* membership
-year's variant" — a keyed `where variant in (…)` query the table answers
-directly, where a JSON blob would have to be loaded and parsed at every match
-site. It also matches how programs already carry per-program variant ids, so it
-reads like the rest of the catalogue.
+One row per year, so rolling a year is adding a row and the settings schema never
+grows. The variant id is unique because a variant must name exactly one year; it is
+`internal` for the same reason the single variant id is today, since the browser
+only ever receives the built checkout link. The table is not a second definition of
+what a year is: the boundary defines the years, and a row only says which product
+sells one.
 
-This is not the "model membership years as rows" that `PROGRAM_MEMBERSHIP_YEAR.md`
-rejects, and it does not reintroduce a second source of truth for what a year *is*.
-The boundary still defines the year completely; a `MembershipYearVariant` row only
-maps an existing year to the Shopify variant that sells it. Its key is the same
-opening-year integer the boundary already defines — the row records a variant, not
-a year.
+## How the year is set
 
-- **Checkout** builds the link from the row for the year being sold. Today
-  `ensurePaymentLink(processId)` builds **one** link per process, so in the
-  overlap window — when both the current and coming year are plausible for a new
-  INITIAL — *which* year's variant that one link points at is a real question, not
-  a given. For a RENEWAL it is unambiguous (a renewal in season buys the coming
-  year). For an INITIAL in the overlap it is the #1655 ambiguity relocated to
-  link-build time, and it is an **owner decision** (see
-  [Open questions](#open-questions)); the year the link sells must equal the
-  `appliesToYear` the webhook will later stamp, whatever the answer.
-- **Rolling a new year** is inserting that year's row before its renewal window
-  opens — an ops step, parallel to setting up any year's catalogue. This is the
-  operational task that replaces "the evergreen variant just keeps working".
-- **The two evergreen `BoardSettings` scalars** (`orgMembershipVariantId`,
-  `orgMembershipProductUrl`) become the current year's row at backfill, then are
-  dropped at the contract stage once every reader is on the table. Net schema
-  change over time is one table added and two columns removed — not a settings
-  table that grows each year.
+Every membership payment, Shopify or board, goes through one function,
+`settle` in `checkin-app/src/lib/membership/payment.ts`. It already writes `paidAt`
+under a row lock when a process moves out of payment. It now writes `appliesToYear`
+in the same update, from a year its caller supplies. The year is never read off the
+variant again afterwards.
 
-### How the table is shown, and the renewal hard stop
+### A Shopify payment
 
-The rows persist for every year ever sold, but the settings surface renders only
-the years **in play**, and which those are is *derived from the boundary, never
-stored* — the same principle as the year integer itself. At any instant the
-editable surface shows exactly two: the **current** year (still sellable to a late
-joiner) and the **coming** year. Past years' rows stay in the table — settled
-processes reference them through `appliesToYear`, and the reconcilers match old
-orders against them — but they drop off the editable surface once they become
-past. Nothing is deleted; a year simply stops rendering when the boundary crosses.
+The paid order's membership line names a variant. Its year is that variant's row in
+the table. The webhook and the reconciler already test "does this order contain the
+membership product" through one helper, `membershipVariantIdSet` in
+`checkin-app/src/lib/finance/reconcile/membership.ts`; that helper becomes a map
+from variant id to year, and "contains the membership product" becomes "has a line
+whose variant is in the map". An order whose variant is in no year's row is an order
+without the membership product, and it goes where such an order goes today: nothing
+is settled and the board is told.
 
-**The coming-year slot appears roughly twelve months ahead, on its own.** A year
-becomes "coming" the moment the previous boundary passes, so its row is visible
-for the whole year before its renewal window opens — no lead-time setting, and far
-more warning than the window needs. Until it is filled it renders as an **empty
-slot with a red "needs variant" badge**, and it feeds the existing
-`settingsMisconfig` nav pill (which already counts unset required checkout
-settings), so the board is nagged to enter it well before it is needed.
+This is the fix at its root. The family that paid in June through the `2026`
+variant is stamped `2026`, whenever their background check clears.
 
-**The renewal sweep hard-stops on the missing coming-year variant.**
-`runRenewalSweep` already refuses when no boundary is configured; it gains a
-second early return of the same shape: **with no coming-year variant row, it opens
-no renewals and reports the gap**, because a renewal it opened could not be paid —
-there would be no product to check out through. The board sees the same gap twice
-before it bites: the empty-slot badge and the nav pill, both live for months, and
-then the sweep's own refusal reason. Building a coming-year checkout link is
-fail-closed for the same reason — an in-window renewal attempted before the
-variant exists is surfaced, not left as a silent dead end.
+### A board payment or grant
 
-When the boundary crosses, this rolls forward with no intervention: the coming
-year becomes current, a fresh empty coming-year slot appears, and its badge starts
-asking to be filled for the next cycle.
+Four board actions pay a process without an order: the two grant buttons, the
+payment-plan approval, and certifying a payment. All four call
+`certifyPaymentPlan`, which calls `settle`, and `certifyPaymentPlan` takes the year
+to record. The payment-plan approval and certifying a payment record the live year
+at that moment, the year the family's own checkout would have sold.
 
-### Impact on the drift reconcilers (#625 / #1293 / #1349)
+### The grant buttons name their year
 
-The finance reconcilers (`checkin-app/src/lib/finance/reconcile.ts`,
-`matchAudit.ts`) match a paid Shopify order to a membership settlement by
-comparing its line-item variant against the single `orgMembershipVariantId`. With
-one variant per year, "is this a membership order" becomes "is this line item
-*any* membership year's variant" — the match set widens from one id to the set of
-ids in the mapping. Every place that reads `orgMembershipVariantId` as a scalar
-(the settings route, the nav todo-counts misconfig check, the dev mock, the
-reconcilers) has to move to the set. Missing one leaves a reconciler that matches
-only the year whose id happens to still be in the old field — a silent
-undercount. The full consumer list is in the migration file; this is the part of
-the change with the widest blast radius, and it is the reason the reconciler
-drift issues are cross-referenced here rather than treated as separate work.
+The households page has two grant buttons, both posting to
+`POST /api/membership-ops/households`. Each is labelled with the year it records,
+formatted by the shared label helper, never written into the page:
 
-## The deletion this enables
+| Button | Year recorded | Shown |
+|---|---|---|
+| "Grant" + the year in progress | the year in progress; off season this is the live year | always, to a household with an application awaiting payment or with no active membership |
+| "Grant" + the coming year | the coming year; in season this is the live year | inside the renewal window only, to a household with an application awaiting payment, joining or renewing |
 
-With the year recorded, the **date** half of the cycle probe collapses to a year
-match. This is written against the post-#1812 shape, which keys on the live
-cycle's `settledSince` and keeps a paid-awaiting-BG arm. In
-`checkin-app/src/lib/membership/lifecycle.ts`, the change replaces only the
-`stageEnteredAt` clause — the `OR` arm stays:
+So on 15 March 2027 the page shows "Grant 2026-2027" alone, and on 15 July 2027 it
+shows "Grant 2026-2027" and "Grant 2027-2028". The Board's choice of button is the
+choice of year: there is no separate prompt and no year chosen for them. The route
+accepts only a year one of the buttons offers at that moment, and refuses any
+other.
+
+The button pressed is the year recorded, even where it differs from what a checkout
+would sell. A renewal granted for the year in progress records that year, so the
+household is still unsettled for the coming one and the sweep asks it to renew.
+
+Both buttons call one function, `grantMembership(householdId, actor, year)` in
+`checkin-app/src/lib/membership/grant.ts`: it pays the household's application
+awaiting payment, joining or renewal, through `certifyPaymentPlan` with that year,
+or opens a joining application when there is none.
+
+Two grants on one application at once are settled by the row lock `settle` already
+takes: the first records its year, and the second is told the application is
+already paid.
+
+### The checkout link
+
+`ensurePaymentLink` builds the link from the row for the live year, for a joining
+family and a renewing one alike. A family who opens their payment page on 15 July
+gets the coming year's variant, which is what the owner decided (`MY-1`). A link
+fetched before the window opened and paid after it still carries the year it was
+issued for, and the family is stamped with that year, because it is what they
+bought.
+
+When the live year has no row, no link is built: the family sees the same "payment
+is not set up" state an unconfigured store gives today, and the gap is already on
+the board's nav (below). The link is never built from another year's variant as a
+substitute.
+
+On a local or flow-test instance with the Shopify mock active, the mock variant
+(`DEV_MOCK_MEMBERSHIP_VARIANT_ID`) maps to the live year. Variant ids are
+per-environment configuration and the seed writes none.
+
+## Settings, and the renewal stop
+
+The membership settings page shows two variant slots, never more: the year in
+progress (still sold to a family joining before the window opens) and the coming
+year. Which two is computed from the boundary each time the page loads. Rows for
+past years stay in the table, because old orders are matched against them, but
+they are not shown.
+
+The coming year's slot appears the day the previous boundary passes, about ten
+months before its renewal window opens. Until it is filled it shows a red "needs
+variant" badge and counts toward the board's settings-misconfiguration pill in
+`checkin-app/src/lib/nav/todoCounts.ts`, which already counts a missing membership
+variant.
+
+**The renewal sweep refuses to open renewals while the coming year has no
+variant.** `runRenewalSweep` already returns early when no boundary is set; it gains
+a second early return of the same shape, with a reason naming the missing variant.
+A renewal opened with nothing to pay through is worse than one not yet opened.
+
+## What the readers become
+
+Each reader asks "did this household settle for the live year". Today it asks
+whether a paid process's stage was entered on or after the live year's
+`settledSince`; it will ask whether the process's `appliesToYear` equals the live
+year. In `checkin-app/src/lib/membership/lifecycle.ts`:
 
 ```
-// #1812 (current):
-settledThisCycleWhere(settledSince) = {
-  OR: [ { status: "ACTIVE" },
-        { status: { in: ["PENDING_BG_CLEARANCE"] }, paidAt: { not: null } } ],
-  stageEnteredAt: { gte: settledSince },
-}
-
-// #1655 (this design):
 settledThisCycleWhere(liveYear) = {
   OR: [ { status: "ACTIVE" },
-        { status: { in: ["PENDING_BG_CLEARANCE"] }, paidAt: { not: null } } ],
+        { status: "PENDING_BG_CLEARANCE", paidAt: { not: null } } ],
   appliesToYear: liveYear,
+}
+
+handledThisCycleWhere(liveYear, windowStart) = {
+  OR: [ { status: "ACTIVE", appliesToYear: liveYear },
+        { status: "ARCHIVED", stageEnteredAt: { gte: windowStart } } ],
 }
 ```
 
-`liveYear` is `membershipYearCycle(boundary, now).cycleStart.getUTCFullYear()`,
-computed once per request. `handledThisCycleWhere` moves the same way, keeping its
-`ARCHIVED` addition. What is deleted is the `stageEnteredAt: { gte: settledSince }`
-clause and the `settledSince`/`MAX_DATE` plumbing that fed it — **not** the `OR`
-arm. The paid-awaiting-BG arm (`{ status: PENDING_BG_CLEARANCE, paidAt: not null }`)
-is #1812's decision that dues-paid-awaiting-clearance is settled money; this design
-keeps it. `paidAt` therefore still appears — but only inside that inherited arm, as
-the marker of a paid process, never as the year signal. The interim
-`paidAt`-fallback band-aid (inferring the *year* from `paidAt`) is still not built
-(see [Alternatives](#alternatives-considered)).
+The paid-awaiting-clearance arm stays: dues paid and waiting on the background check
+count as settled money. The sweep's archived arm keeps its date, because an archive
+buys nothing and has no year; it records only that the board closed this cycle's
+application, and opening another would pester the family.
 
-The off-season behaviour is now #1812's, not this design's: coverage already
-follows the live cycle in and out of season, and an unsettled ACTIVE household
-already reads as lapsed past the boundary. Keying the probe on `appliesToYear`
-rather than `stageEnteredAt ≥ settledSince` changes *which* processes count as
-settled for the live cycle — a summer INITIAL that bought the current year no
-longer counts toward next year — without reintroducing a season gate.
+| Reader | Today keyed on | Becomes |
+|---|---|---|
+| Households list and detail, `checkin-app/src/app/api/membership-ops/households/route.ts` (two sites) | `settledSince` | live year |
+| `membershipValidThrough`, `checkin-app/src/lib/orgMembership.ts` (program pricing, discount code, announcements read this horizon) | `settledSince` | live year |
+| Outreach audiences, `checkin-app/src/lib/outreach/recipients.ts` | `settledSince` | live year |
+| Renewal sweep skip-test, `runRenewalSweep` | `windowStart` | live year, archived arm unchanged |
+| Badge roster and year picklist, `checkin-app/src/app/api/people/search/route.ts` | a `stageEnteredAt` range per label | `appliesToYear` equal to the label's opening year |
 
-Every consumer and test that moves:
+`personAgreementTriggers.ts` has its own local `handledThisCycleWhere`. It shares
+only the name: it decides whether an adult child's yearly agreement was already
+signed this cycle, and a signature is not a settlement. It is not touched.
 
-| Site | Change |
-|---|---|
-| `src/lib/membership/lifecycle.ts` — `settledThisCycleWhere`, `handledThisCycleWhere` | Replace the `stageEnteredAt` clause with `appliesToYear: liveYear`; keep the `OR` arm (and `handledThisCycleWhere`'s `ARCHIVED`). Signatures take a year, not a `settledSince`. |
-| `src/app/api/membership-ops/households/route.ts` (detail `findFirst` + list `include`) | Pass `liveYear` from `membershipYearCycle(...)` instead of `cycle.settledSince`; the `settledSince`/`MAX_DATE` plumbing for these probes goes. `coveredThrough`/`validUntil` and `settledForComingYear` computation are unchanged — they consume the probe result. |
-| `src/lib/orgMembership.ts` — `membershipValidThrough` | Same swap. The `duesSettledAwaitingBg`-shaped arm now lives *inside* `settledThisCycleWhere` (per #1812), so this design keeps it there rather than treating it as separate. |
-| `src/lib/membership/renewal.ts` — `runRenewalSweep` skip-test | The `handledThisCycleWhere(...)` arm of the sweep's probe moves to the year key. Same fragment, so the skip-test moves with the money horizons — the readers stay in lock-step, the invariant the docblock asserts. |
-| `src/lib/membership/personAgreementTriggers.ts` — the local `handledThisCycleWhere(personId, floor)` | **Left alone — out of scope.** Shares only the function name; it dedups the adult-child yearly-agreement trigger, keyed on `stageEnteredAt ≥ floor` for `PERSON_AGREEMENT`. A signature satisfying a cycle is not a settlement buying a year, so it keeps its floor. |
-| `src/lib/membership/__tests__/lifecycle.test.ts` | The `toEqual` fragment assertions for `settledThisCycleWhere` / `handledThisCycleWhere` (now the `OR` + `stageEnteredAt` shape) rewrite to the `OR` + `appliesToYear` shape. |
-| `src/lib/membership/__tests__/renewal.test.ts` | The `handledThisCycleWhere(...)` assertion in the sweep test rewrites; `membershipYearCycle`/`coveredThrough` assertions are unaffected. |
-| `src/app/__tests__/householdsListGrantableAPI.integration.test.ts` | The settled/handled probe expectations move to declared-year fixtures (including #1812's bare-grant and paid-awaiting-BG cases). |
-| `src/__tests__/lifecycleStatusLiteralAllowlist.test.ts` | References `handledThisCycleWhere`; check whether the reshape touches the allowlisted literals. |
+`stageEnteredAt` stays on the model; the lifecycle machine uses it for stage timing.
+Only the coverage probes stop reading it.
 
-## Backfill of live production data
+### Program pricing needs nothing new
 
-There is real production data, and no reset. The rollout is additive first, then
-a one-time backfill, then the readers switch — the standard expand path from
-`checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`, kept safe across the
-rolling-deploy drain window because old code ignores the new column and the new
-readers only switch on once the column is populated. The exact sequence is in the
-migration file.
+Member pricing compares a household's coverage horizon with the date a program needs
+(`programCoverageDate`). Once the horizon comes from the recorded year it is right
+for the summer family, and the comparison stays as it is. A test that a settlement's
+year *equals* the program's year would be wrong: a family that joined inside the
+window bought the coming year and is covered through the end of the year in progress
+too, so it should get the member price on a summer program, and an equality test
+would refuse it.
 
-**The backfill freezes today's answer; it does not retroactively fix the leak.**
-It computes each existing process's year **once** from the current logic — the
-year the process's `stageEnteredAt` fell into, matching exactly what
-`settledThisCycleWhere` answers today — and stores it. That means no live horizon
-shifts under any family at cutover: every already-decided row reads afterwards as
-it read before, including the handful of leaked summer INITIALs. The leak is closed
-**going forward**, for new settlements, by the variant→year stamp — not by
-rewriting history. This is deliberate: correcting a historical INITIAL would mean
-deriving its year from `paidAt` instead of `stageEnteredAt` (they disagree only in
-the leak window), and that is a different, riskier operation than a freeze — it
-moves live coverage horizons for real households at cutover. If the owner wants the
-existing leaked memberships corrected too, that is a separate, explicit pass over
-INITIALs keyed on `paidAt`, decided on its own; the default is freeze-and-fix-forward.
+## Existing rows
 
-## Reconciliation with program fiscal year (#1484)
+Production holds real settlements, and the owner's ruling (`MY-2`) is to fix
+forward. Each existing paid row gets the year today's rule already reads it as
+having bought: the year whose `settledSince` window, as
+`membershipYearCycleForLabel` computes it, contains the row's `stageEnteredAt`. So
+no household's coverage moves when the readers switch, including the few summer
+families who got the extra year. The board corrects any of those it wants to by
+hand. Rows with no `stageEnteredAt`, or that today's rule cannot place, stay empty
+and read as unsettled, as they do today.
 
-Issue #1484, already designed in `docs/in-design/PROGRAM_MEMBERSHIP_YEAR.md`,
-makes a **program** declare the membership year it runs in, as an integer named
-against the same boundary. That design and this one describe **one first-class
-concept — the membership year — with one shared representation**: the integer
-keyed to the boundary that opens the year, and the shared boundary math in
-`checkin-app/src/lib/programYear.ts`.
+## Tests
 
-They are deliberately **stored on different subjects**, because they answer
-different questions:
+The pure pieces are tested at their edges: the year a date falls in, on and either
+side of the boundary day; the live year on the day before and the day the window
+opens; the variant-to-year map with the mock on and off.
 
-- A program's `appliesToYear` says *which year this program runs in* — a property
-  of the program's schedule, set when the program is created.
-- A settlement's `appliesToYear` says *which year this purchase bought* — a
-  property of the transaction, set when it settles.
+Above them, the ones a pure function cannot cover:
 
-Member pricing is where the two meet: a program priced for members requires the
-household's dues to cover *the membership year the program runs in*. Program
-design already frames coverage that way ("Member pricing requires the household's
-dues to cover the membership year the program runs in, not the program's own
-dates"). This design supplies the other half — a reliable record of which years a
-household's dues have actually covered — so the pricing check becomes *does a
-settlement exist with `appliesToYear` = the program's `appliesToYear`* rather than
-a date-range overlap.
-
-**Recommendation:** treat the membership year as one shared concept with one
-representation and one field name (`appliesToYear`) on both subjects, sharing the
-boundary/year helpers, and keep two columns because the two facts are set at
-different times by different actors. Do not merge them into a single table.
-`docs/in-design/PROGRAM_MEMBERSHIP_YEAR.md` already rejected "model membership
-years as rows" for the program side, and the same reasoning holds here: the
-boundary defines the years completely, so a table would be a second source of
-truth for a span two integers describe. This design does not design #1484; it
-adopts its representation and cross-links it.
-
-## Decisions (previously open)
-
-The product owner has settled these; recorded here so they are not re-opened.
-
-- **One year per settlement.** A purchase or grant buys exactly one membership
-  year — no multi-year purchase. `appliesToYear` is a single integer, full stop.
-- **No proration in software.** Prorating a partial year's cost is done with
-  Shopify discounts. The app does not model it; the year field carries no
-  partial-coverage marker.
-- **Overlap race resolves to the shorter grant.** Two concurrent grants on one
-  household in the overlap settle to the current year (the summer), never the
-  coming one — see [the grant section](#the-two-grant-buttons-become-one).
-  The overlap span is the existing `renewalWindow`; the only remaining detail is a
-  test pinning the behaviour at the boundary instant.
-- **Refunds and wrong-year stamps are handled by people, not machinery.** A
-  refunded settlement is not auto-unwound and no skipped renewal auto-re-opens —
-  the board settles it with the family, exactly as it does a place bought at the
-  member rate that a later background-check rejection does not claw back
-  (`docs/rules/membership.md`), and consistent with the standing Assumption that
-  refunds are handled outside the app. A genuinely wrong `appliesToYear` (rare) is
-  a board/sysadmin manual correction; a mis-mapped variant never stamps a guess in
-  the first place (below).
-- **A misconfigured membership variant flows to the unmatched-payment path.** A
-  paid membership order whose variant is in no year's mapping is surfaced exactly
-  as any unmatched membership payment is today — it is not stamped with an
-  inferred year.
-
-## Open questions
-
-One genuine owner decision remains:
-
-- **Which year's variant an INITIAL checkout link sells in the overlap.**
-  `ensurePaymentLink(processId)` builds one link. For a renewal the year is fixed;
-  for a brand-new INITIAL created inside the renewal-window overlap, the link must
-  point at either the current or the coming year's variant, and that choice *is*
-  the year the family will be stamped with. Defaulting it silently would move the
-  #1655 ambiguity to link-build time rather than removing it. Owner to decide the
-  rule (e.g. new INITIALs in the overlap sell the coming year, matching a renewal;
-  or sell the current year unless the family opts into next). Whatever the rule,
-  the sold variant's year must equal the `appliesToYear` the webhook stamps.
-
-The rest are build-time mechanics with a decided direction, not open questions:
-
-- The unified grant should always require a certification reason (the coming-year
-  path already does).
-- A grant on a household with no in-flight process must create one to settle,
-  since `grantRenewalPayment` today only completes an existing PENDING_PAYMENT
-  renewal. Whether the merge lands in this change or as a fast follow is a
-  sequencing call; either way the `active: true` status-only flip cannot remain
-  once the year readers land.
-- Backfill is freeze-and-fix-forward by default; correcting historical leaked
-  INITIALs from `paidAt` is an optional separate pass the owner can call for (see
-  [Backfill](#backfill-of-live-production-data)).
+- the webhook and the reconciler stamp the variant's year, and treat an unmapped
+  variant as an order without the membership product;
+- every board path stamps the live year, inside and outside the window;
+- a June payment whose clearance lands after the window opens keeps its June year,
+  and the sweep opens a renewal for it;
+- the sweep refuses with no coming-year variant, and opens normally with one;
+- the fill of existing rows, run twice against a real database, gives each row the
+  year `membershipYearCycleForLabel` places it in, leaves unplaceable rows empty, and
+  changes nothing the second time;
+- each reader, settled and unsettled, in and out of season, against fixtures that
+  carry a year.
 
 ## Alternatives considered
 
-**Use `paidAt` instead of `stageEnteredAt` (the interim band-aid).** Explicitly
-rejected by the product owner. It answers "when did the money move" rather than
-"which year was bought", still infers the year from a timestamp, and is null for
-granted or comped settlements — so it would need its own fallback for exactly the
-board-grant path this design has to handle anyway. It also only narrows the leak
-window rather than closing it, and the leak is dormant off-season, so the
-band-aid buys little and postpones the real fix.
+**Use the payment time instead of the stage time.** Rejected by the owner. It still
+infers the year from a timestamp, and a grant has none, so the grant path would need
+its own rule anyway.
 
-**Keep a single evergreen variant and record the year by a UI-only choice at
-checkout.** Rejected: the product owner has decided a per-year variant will
-exist, and a per-year variant is a stronger statement of intent than a UI toggle —
-the variant the family actually paid through is unforgeable evidence of which
-year they bought, whereas a client-side choice can drift from what was charged.
+**Keep one product and record the year from a checkout choice.** Rejected: the owner
+decided there will be a variant per year, and the variant the family paid through is
+evidence the store itself holds, where a choice made in the browser can drift from
+what was charged.
 
-**Store the year on `OrgMembership` rather than the process.** Rejected above: a
-household accumulates settlements, and "which year did this buy" is a fact about
-one settlement, not the membership. The process table already is the per-year
-sub-record.
+**Store the year on the membership instead of the settlement.** A household
+settles once a year; the year belongs to each settlement.
 
-**Store a coverage-through date on the settlement instead of a year integer.**
-Rejected for the same reason program design rejected it: a stored date is a stale
-copy of the boundary setting the first time the board moves the boundary. The
-integer re-resolves.
+**Store a covered-through date instead of a year.** A stored date is a stale copy of
+the boundary setting from the day the board moves it. The integer re-resolves.
+
+**Correct the summer families during the fill.** Rejected by the owner (`MY-2`). It
+would move live coverage for real households at cutover, from a rule that infers the
+year from a different timestamp.
 
 ## Appendix: provenance
 
-Root cause behind issue
-[#1655](https://github.com/innovationtreehouse/checkin/issues/1655) (membership
-year ambiguity: `stageEnteredAt` vs `paidAt` for in-window INITIALs), which
-records the timestamp inference as a `KNOWN LIMIT`. Shares its representation with
-[#1484](https://github.com/innovationtreehouse/checkin/issues/1484) (programs
-declare their fiscal year), designed in
-`docs/in-design/PROGRAM_MEMBERSHIP_YEAR.md`. The per-year variant shape relates to
-the membership-segment pricing and legacy-variant work
-(`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md`,
-`checkin-app/docs/designs/975-LEGACY_VARIANT_CONTRACT.md`) and to the variant
-drift issues #625, #1293, and #1349.
+Issue [#1655](https://github.com/innovationtreehouse/checkin/issues/1655), the
+`KNOWN LIMIT` recorded on `settledThisCycleWhere`. Shares its representation with
+[#1484](https://github.com/innovationtreehouse/checkin/issues/1484), designed in
+`PROGRAM_MEMBERSHIP_YEAR.md`. Builds on the coverage model of #1812 and the grant
+path of #2003. The variant reconcilers it touches are those of #625, #1293 and #1349.

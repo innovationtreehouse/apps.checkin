@@ -5,6 +5,14 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the income schema under checkin's security regime (design #1283 §7): the
+// same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
+// Paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/income-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
@@ -13,25 +21,51 @@ datasource db {
 // finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
 // deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
 // status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
-// the row holds a deposit. WAITING, POSTED, POST_FAILED and "created" belong to the create path.
+// the row holds a deposit. WAITING, POSTED, POST_FAILED, OVER_CAP and "created" belong to the create path.
 model PayoutReconciliation {
+  /// @sensitivity:public
   id                Int       @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId             String    @map("org_id")
+  /// @sensitivity:internal
   payoutGid         String    @map("payout_gid")
+  /// @sensitivity:internal
   payoutDate        String    @map("payout_date")
+  /// @sensitivity:internal
   payoutNetCents    Int       @map("payout_net_cents")
+  /// @sensitivity:internal
   status            String    @map("status")
+  /// @sensitivity:internal
   kind              String?   @map("kind")
+  /// @sensitivity:internal
   resolution        String?   @map("resolution")
+  /// @sensitivity:internal
   origin            String?   @map("origin")
+  /// @sensitivity:internal
   depositId         String?   @map("deposit_id")
+  /// @sensitivity:internal
   depositTxnDate    String?   @map("deposit_txn_date")
+  /// @sensitivity:internal
   depositTotalCents Int?      @map("deposit_total_cents")
+  /// @sensitivity:internal
   reason            String?   @map("reason")
+  /// @sensitivity:internal
   resolvedByUserId  Int?      @map("resolved_by_user_id")
+  /// @sensitivity:internal
   resolvedAt        DateTime? @map("resolved_at")
+  /// @sensitivity:internal
   createdAt         DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:internal
   updatedAt         DateTime  @updatedAt @map("updated_at")
+  /// When a post claimed this payout; also the claim's token. Null when no post holds it.
+  /// @sensitivity:internal
+  postClaimedAt       DateTime? @map("post_claimed_at")
+  /// The first post attempt's claim time; never moved once set.
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
+  /// @sensitivity:internal
+  qbNote              String?   @map("qb_note")
 
   @@unique([orgId, payoutGid])
   @@unique([orgId, depositId])
@@ -41,26 +75,54 @@ model PayoutReconciliation {
 
 // Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
 // budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
-// the OwnerDirectory port. Unmapped variants book at organization level.
+// the OwnerDirectory port. Unmapped variants, and rows with no bucket, book at organization level.
 model IncomeItemCategory {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:internal
   variantId     String   @map("variant_id")
-  budgetOwnerId Int      @map("budget_owner_id")
+  /// @sensitivity:internal
+  budgetOwnerId Int?     @map("budget_owner_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@unique([orgId, variantId])
   @@map("income_item_categories")
 }
 
+// The org's limits on the deposits one outbox drain may create. FINANCE may lower them;
+// raising one takes the board. Every change is written to the audit log.
+model IncomeOrgSettings {
+  /// @sensitivity:internal
+  orgId                String @id @map("org_id")
+  /// @sensitivity:internal
+  maxCreatesPerRun     Int    @default(25) @map("max_creates_per_run")
+  /// @sensitivity:internal
+  maxCreateCentsPerRun Int    @default(2500000) @map("max_create_cents_per_run")
+  /// When income posting switched on: set once, by the first connected drain, never cleared.
+  /// @sensitivity:internal
+  qbPostingOnAt        DateTime? @map("qb_posting_on_at")
+
+  @@map("org_settings")
+}
+
 // A QuickBooks deposit finance has permanently removed from matching (D5).
 model IncomeQbMatchExclusion {
+  /// @sensitivity:public
   id               Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId            String   @map("org_id")
+  /// @sensitivity:internal
   qbTxnId          String   @map("qb_txn_id")
+  /// @sensitivity:internal
   reason           String   @map("reason")
+  /// @sensitivity:internal
   excludedByUserId Int      @map("excluded_by_user_id")
+  /// @sensitivity:internal
   excludedAt       DateTime @default(now()) @map("excluded_at")
 
   @@unique([orgId, qbTxnId])
@@ -68,17 +130,29 @@ model IncomeQbMatchExclusion {
 }
 
 model IncomeAuditLog {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:internal
   actorUserId   Int?     @map("actor_user_id")
+  /// @sensitivity:internal
   actorUsername String?  @map("actor_username")
+  /// @sensitivity:internal
   action        String   @map("action")
+  /// @sensitivity:internal
   entityType    String   @map("entity_type")
+  /// @sensitivity:internal
   entityId      String?  @map("entity_id")
+  /// @sensitivity:internal
   before        String?  @map("before")
+  /// @sensitivity:internal
   after         String?  @map("after")
+  /// @sensitivity:internal
   reason        String?  @map("reason")
+  /// @sensitivity:internal
   correlationId String?  @map("correlation_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@map("audit_log")

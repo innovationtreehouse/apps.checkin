@@ -8,10 +8,10 @@ import { apiError } from "@/lib/api-response";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/membership-ops/applications/unarchive — board recovery of a
- * wrongly-archived application. Body: { processId }. Restores it to the
- * in-flight status recorded in its archive audit row (409 wrong_phase if that
- * can't be determined, or if another in-flight process now occupies its slot).
+ * POST /api/membership-ops/applications/unarchive — board "Reopen" of a closed
+ * application. Body: { processId }. Returns it to the step it was closed from;
+ * 409 with the reason when the household is DENIED or already has another open
+ * application; 403 on the actor's own household.
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -27,9 +27,9 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : 409 });
+            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : error.code === "same_household_applicant" ? 403 : 409 });
         }
-        logger.error("Unarchive application error:", error);
+        logger.error("Reopen application error:", error);
         return apiError("Internal Server Error", 500);
     }
 });

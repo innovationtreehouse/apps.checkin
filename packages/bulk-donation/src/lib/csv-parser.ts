@@ -1,6 +1,6 @@
 import { parse } from "csv-parse/sync";
 import { z } from "zod";
-import { dollarsToCents } from "@inventory/money";
+import { dollarsToCents } from "@checkin/money";
 
 /**
  * Benevity CSV row after parsing. Monetary fields are INTEGER CENTS.

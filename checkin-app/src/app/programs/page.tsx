@@ -12,8 +12,8 @@ import { PageLoader } from "@/components/ui/PageLoader";
 type ProgramSummary = {
   id: number;
   name: string;
-  startAt: string | null;
-  endAt: string | null;
+  startAt: string;
+  endAt: string;
   orgMemberOnly: boolean;
   phase: string;
   enrollmentStatus: string;
@@ -36,9 +36,9 @@ export default function PublicProgramsDirectory() {
   // tone as the global DbWakeNotice banner.
   const [slowLoad, setSlowLoad] = useState(false);
   useEffect(() => {
-    if (!loading) { setSlowLoad(false); return; }
+    if (!loading) return;
     const t = setTimeout(() => setSlowLoad(true), 4000);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); setSlowLoad(false); };
   }, [loading]);
   const [message, setMessage] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
@@ -128,8 +128,7 @@ export default function PublicProgramsDirectory() {
                 </Group>
 
                 <Text c="dimmed" style={{ flex: 1 }} mb="md">
-                  {program.startAt ? formatDateOnly(program.startAt) : 'Start Date TBD'}
-                  {program.endAt ? ` - ${formatDateOnly(program.endAt)}` : ' (Ongoing)'}
+                  {formatDateOnly(program.startAt)} - {formatDateOnly(program.endAt)}
                 </Text>
 
                 {/* Counts come live-only (never cached): while the system wakes,

@@ -7,6 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { clearingApprovals, establishedSubject } from "@/lib/membership/approvals";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 interface Person {
@@ -29,7 +30,7 @@ interface QueueItem {
 
 export default function MembershipReviewPage() {
   const { data: session, status: sessionStatus } = useSession();
-  const canReset = !!(session?.user?.isBoardMember || session?.user?.isSysadmin);
+  const canReset = !!session?.user?.isBoardMember;
   // No h1 here: this page always renders inside the Membership Ops layout, whose
   // tab bar already labels it (the standalone /membership/review route is gone).
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -46,32 +47,26 @@ export default function MembershipReviewPage() {
   // Reviews this reviewer already approved that have not cleared.
   const [mine, setMine] = useState<QueueItem[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership/reviews");
-      if (res.status === 403) {
-        setForbidden(true);
-        return;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        setQueue(data.queue || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchQueue = useCallback(() =>
+    fetch("/api/membership/reviews")
+      .then(async (res) => {
+        if (res.status === 403) setForbidden(true);
+        else if (res.ok) setQueue((await res.json()).queue || []);
+      })
+      .finally(() => setLoading(false)), []);
 
-  const loadMine = useCallback(async () => {
-    const res = await fetch("/api/membership/reviews?mine=1");
-    if (res.ok) setMine((await res.json()).queue || []);
-  }, []);
+  const load = () => {
+    setLoading(true);
+    return fetchQueue();
+  };
+
+  const loadMine = useCallback(() =>
+    fetch("/api/membership/reviews?mine=1")
+      .then(async (res) => { if (res.ok) setMine((await res.json()).queue || []); }), []);
 
   useEffect(() => {
-    if (sessionStatus === "authenticated") load();
-    else if (sessionStatus === "unauthenticated") setLoading(false);
-  }, [sessionStatus, load]);
+    if (sessionStatus === "authenticated") fetchQueue();
+  }, [sessionStatus, fetchQueue]);
 
   useEffect(() => {
     if (showMine) loadMine();
@@ -116,6 +111,56 @@ export default function MembershipReviewPage() {
       onConfirm: () => resetReview(item.id),
     });
 
+  const undoApproval = async (processId: number, reason: string) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership/reviews/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: 4000 });
+      }
+      await Promise.all([load(), loadMine()]);
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmUndo = (item: QueueItem) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Undo your approval?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This withdraws your approval of <strong>{applicantLabel(item)}</strong>. The review goes back
+            to waiting for two approvals, and anyone it named is cleared with it.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Undo my approval", cancel: "Cancel" },
+      confirmProps: { color: "orange" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: 4000 });
+          return;
+        }
+        modals.close(modalId);
+        undoApproval(item.id, reason.trim());
+      },
+    });
+  };
+
   const submit = async (processId: number, result: "APPROVE" | "REJECT") => {
     if (result === "REJECT" && !reviewNotes[processId]?.trim()) return;
     setBusyId(processId);
@@ -124,7 +169,7 @@ export default function MembershipReviewPage() {
       const res = await fetch("/api/membership/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, result, isMarkedVolunteer: !!volunteer[processId], note: reviewNotes[processId]?.trim() || undefined, subjectPersonIds: subjectIdsFor(processId) }),
+        body: JSON.stringify({ processId, result, isMarkedVolunteerFamily: !!volunteer[processId], note: reviewNotes[processId]?.trim() || undefined, subjectPersonIds: subjectIdsFor(processId) }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -154,8 +199,11 @@ export default function MembershipReviewPage() {
   // Who this review is about, once someone has approved. A review covers ONE adult:
   // the first approval fixes the subject, so a later reviewer confirms that person
   // rather than choosing again.
-  const settledSubject = (item: QueueItem) =>
-    item.attestations.find((a) => a.subjectPersonId !== null)?.subjectPersonId ?? null;
+  const settledSubject = (item: QueueItem) => establishedSubject(item.attestations);
+
+  // Approvals that count toward clearing — a household's unnamed or other-adult
+  // approvals are recorded but don't, so this can sit below the attestation count.
+  const approvalsSoFar = (item: QueueItem) => clearingApprovals(item.attestations, !!item.subjectPerson);
 
   // The subject this reviewer is about to attest — the settled one if there is one,
   // else whichever lead they picked.
@@ -183,9 +231,8 @@ export default function MembershipReviewPage() {
   // rather than "are you sure?", which trains people to click through.
   const confirmSubmit = (item: QueueItem, result: "APPROVE" | "REJECT") => {
     const who = applicantLabel(item);
-    // Either kind clears on its second approval; a household's subject is already fixed
-    // by then, so an existing attestation is enough to know this click is the last one.
-    const clearing = result === "APPROVE" && item._count.attestations >= 1;
+    // Either kind clears on its second counted approval.
+    const clearing = result === "APPROVE" && approvalsSoFar(item) >= 1;
     modals.openConfirmModal({
       title: result === "REJECT" ? "Reject this background check?" : clearing ? "Approve the background check clearance?" : "Record your attestation?",
       children: (
@@ -217,7 +264,7 @@ export default function MembershipReviewPage() {
     });
   };
 
-  if (sessionStatus === "loading" || loading) {
+  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
     return <PageLoader />;
   }
 
@@ -261,7 +308,7 @@ export default function MembershipReviewPage() {
               <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
                 <Text fw={700}>{applicantLabel(item)}</Text>
                 <Text size="xs" c="dimmed" mt={4}>
-                  You approved this. {item._count.attestations}/2 approvals so far
+                  You approved this. {approvalsSoFar(item)}/2 approvals so far
                   {settled !== null ? ` · for ${leadName(item, settled)}` : ""}.
                 </Text>
                 {unnamed && (
@@ -269,15 +316,18 @@ export default function MembershipReviewPage() {
                     An approval here names nobody, so it can never count toward clearance. Start the review over.
                   </Text>
                 )}
-                {canReset ? (
-                  <Group mt="sm">
+                <Group mt="sm">
+                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmUndo(item)}>
+                    Undo my approval
+                  </Button>
+                  {canReset ? (
                     <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
                       Start review over
                     </Button>
-                  </Group>
-                ) : (
-                  <Text size="xs" c="dimmed" mt="sm">A board member can start this review over.</Text>
-                )}
+                  ) : (
+                    <Text size="xs" c="dimmed">A board member can start this review over.</Text>
+                  )}
+                </Group>
               </Card>
             );
           })}
@@ -313,7 +363,7 @@ export default function MembershipReviewPage() {
                   </Text>
                 </>
               )}
-              <Text size="xs" c="dimmed" mt={4}>{item._count.attestations}/2 approvals so far.</Text>
+              <Text size="xs" c="dimmed" mt={4}>{approvalsSoFar(item)}/2 approvals so far.</Text>
 
               {/* Whose report did you read? The Averity report names its subject, and
                   that name is the only record of who a household's check covered — so

@@ -32,7 +32,7 @@ export interface FakeClient extends ShopifyClient {
 export function fakeClient(responder: Responder): FakeClient {
   const calls: RecordedCall[] = [];
   return {
-    endpoint: "https://test-shop.myshopify.com/admin/api/2025-07/graphql.json",
+    endpoint: "https://test-shop.myshopify.com/admin/api/2026-04/graphql.json",
     async request<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
       const index = calls.length;
       calls.push({ query, variables });

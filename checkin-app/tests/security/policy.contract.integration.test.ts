@@ -18,6 +18,7 @@ import { allRoutes, classifications, relations } from '@/security/core';
 import { collectFieldKeys, tierIsGrantable } from './helpers';
 import { loadPersonas } from './personas';
 import '@/security/registry';
+import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -28,6 +29,8 @@ interface RouteImports {
     PATCH?: (req: Request, ctx?: unknown) => Promise<Response>;
     DELETE?: (req: Request, ctx?: unknown) => Promise<Response>;
 }
+
+const LIBRARY_ROUTE_PREFIXES = libraries.flatMap(l => l.routePrefixes);
 
 function endpointToRoutePath(endpoint: string): string {
     return endpoint.split(' ')[1];
@@ -57,6 +60,10 @@ describe('Security policy contract', () => {
                     const personas = await loadPersonas();
                     const persona = personas[role];
                     if (!persona) return; // role exercised in route-specific tests
+                    // Library routes need the runtime the host injects at server
+                    // boot; their responses are field-checked by each library's
+                    // strip test and flow test instead. A prefix also covers its bare root.
+                    if (LIBRARY_ROUTE_PREFIXES.some(p => routePath.startsWith(p) || routePath === p.slice(0, -1))) return;
 
                     (getServerSession as jest.Mock).mockResolvedValue(
                         persona.sessionUser ? { user: persona.sessionUser } : null,

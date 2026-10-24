@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 /**
  * Source uses NodeNext-style `.js` import specifiers (correct for Node/Lambda), but on
  * disk the files are `.ts`. This pre-resolver rewrites a relative `.js` import to its
- * `.ts` sibling when one exists. The generated Prisma client (via @inventory/monitoring-db)
+ * `.ts` sibling when one exists. The generated Prisma client (via @checkin/monitoring-db)
  * is real `.js` with no `.ts` sibling and falls through untouched. Mirrors
  * `packages/monitoring-db/vitest.config.ts`.
  */

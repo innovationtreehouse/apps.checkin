@@ -164,6 +164,22 @@ describe('Per-adult background-check subjects', () => {
         expect(await bgDate(hh.sam)).toBeNull();
     });
 
+    it('the second approval refuses a subject who is no longer a live household lead', async () => {
+        const hh = await twoLeadHousehold('SubjectLeft');
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
+
+        await prisma.person.update({ where: { id: hh.alex }, data: { isHouseholdLead: false } });
+
+        as(rev2, { isBackgroundCheckReviewer: true });
+        const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
+        expect(res.status).toBe(400);
+        expect((await res.json()).code).toBe('invalid_subject');
+        expect(await bgDate(hh.alex)).toBeNull();
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
+        expect(proc?.bgClearedAt).toBeNull();
+    });
+
     it('a reviewer who disagrees with the settled subject rejects instead', async () => {
         const hh = await twoLeadHousehold('SubjectDispute');
         as(rev1, { isBackgroundCheckReviewer: true });
@@ -272,7 +288,7 @@ describe('Per-adult background-check subjects', () => {
         expect(proc?.status).toBe('PENDING_PAYMENT');
         expect(await bgDate(hh.alex)).not.toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
-        expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership dues'))).toBe(true);
+        expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership fee'))).toBe(true);
     });
 
     // ── Board force-approve ──────────────────────────────────────────────────

@@ -11,7 +11,7 @@
 import { assertLiveTestStore, CITEST_PREFIX, CITEST_PROGRAM_ID_BASE } from "../shopify-live/guard";
 
 const MAX_AGE_HOURS = Number(process.env.SHOPIFY_LIVE_JANITOR_MAX_AGE_HOURS ?? 24);
-const API_VERSION = "2026-01"; // keep aligned with lib/shopify.ts SHOPIFY_API_VERSION
+const API_VERSION = "2026-01"; // keep aligned with lib/shopify/client.ts SHOPIFY_API_VERSION
 
 // Matches the reserved live-test program-id range in minted code titles.
 const TEST_DISCOUNT_RE = new RegExp(`^PRG${CITEST_PROGRAM_ID_BASE.toString().slice(0, -2)}\\d{2}-`);

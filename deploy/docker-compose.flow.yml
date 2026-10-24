@@ -3,7 +3,7 @@
 # Runs the app with `next dev` — NOT the production image (deploy/docker-compose.yml)
 # — on purpose: persona-mint login (how flow tests authenticate) is gated on
 # NODE_ENV != production, and the prod image pins NODE_ENV=production. The app
-# container installs deps, pushes the schema, seeds the debug personas, then
+# container installs deps, applies migrations, seeds the debug personas, then
 # serves on :4000. Flow tests run inside this container (see flow-tests.yml).
 services:
   db:
@@ -12,11 +12,30 @@ services:
       POSTGRES_USER: prisma
       POSTGRES_PASSWORD: prismapassword
       POSTGRES_DB: checkmein
+      # Role passwords, read by prod-initdb.
+      CHECKIN_DML_DB_PASSWORD: checkin_dml_pw
+      CATALOG_OWNER_DB_PASSWORD: catalog_owner_pw
+      CATALOG_DML_DB_PASSWORD: catalog_dml_pw
+      LOCAL_INVENTORY_OWNER_DB_PASSWORD: local_inventory_owner_pw
+      LOCAL_INVENTORY_DML_DB_PASSWORD: local_inventory_dml_pw
+      BULK_DONATION_OWNER_DB_PASSWORD: bulk_donation_owner_pw
+      BULK_DONATION_DML_DB_PASSWORD: bulk_donation_dml_pw
+      EXPENSE_OWNER_DB_PASSWORD: expense_owner_pw
+      EXPENSE_DML_DB_PASSWORD: expense_dml_pw
+      WORKFLOW_MAPPING_OWNER_DB_PASSWORD: workflow_mapping_owner_pw
+      WORKFLOW_MAPPING_DML_DB_PASSWORD: workflow_mapping_dml_pw
+      INCOME_OWNER_DB_PASSWORD: income_owner_pw
+      INCOME_DML_DB_PASSWORD: income_dml_pw
+      RECEIPT_OWNER_DB_PASSWORD: receipt_owner_pw
+      RECEIPT_DML_DB_PASSWORD: receipt_dml_pw
     volumes:
-      # #1286: create the catalog's dedicated database on first init (design §4).
-      - ./flow-initdb:/docker-entrypoint-initdb.d:ro
+      # Creates checkin's DML role and each checkin-app/libraries.json database and its roles on first init.
+      - ./prod-initdb:/docker-entrypoint-initdb.d:ro
+      - ../checkin-app/libraries.json:/libraries.json:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prisma -d checkmein"]
+      # Over TCP: the initdb-phase server listens on the socket only, so this
+      # stays unhealthy until the init scripts finish and the real server starts.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U prisma -d checkmein"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -30,8 +49,15 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://prisma:prismapassword@db:5432/checkmein?schema=public
-      CATALOG_DATABASE_URL: postgresql://prisma:prismapassword@db:5432/catalog?schema=public  # #1286 global catalog DB
+      DATABASE_URL: postgresql://checkin_dml:checkin_dml_pw@db:5432/checkmein?schema=public
+      # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database, as its DML role.
+      CATALOG_DATABASE_URL: postgresql://catalog_dml:catalog_dml_pw@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_dml:local_inventory_dml_pw@db:5432/local_inventory?schema=public
+      BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_dml:bulk_donation_dml_pw@db:5432/bulk_donation?schema=public
+      EXPENSE_DATABASE_URL: postgresql://expense_dml:expense_dml_pw@db:5432/expense?schema=public
+      WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_dml:workflow_mapping_dml_pw@db:5432/workflow_mapping?schema=public
+      INCOME_DATABASE_URL: postgresql://income_dml:income_dml_pw@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_dml:receipt_dml_pw@db:5432/receipt?schema=public
       CHECKIN_ENV: local            # enables persona-mint login + keyless kiosk
       NEXTAUTH_URL: http://localhost:4000
       NEXTAUTH_SECRET: flow-test-secret
@@ -44,10 +70,9 @@ services:
     command:
       - sh
       - -lc
-      # Checkin DB: generate + push + seed. Catalog DB (#1286): migrate deploy
-      # (NOT db push — the schema uses partial unique indexes db push can't express)
-      # + seed the baseline reference rows, then start the dev server.
-      - npm ci && npm -w @inventory/global-catalog exec -- prisma migrate deploy && npm -w @inventory/global-catalog run db:seed && cd checkin-app && npx prisma generate && npx prisma db push && npx prisma db seed && npm run dev
+      # migrate deploy, never db push: the migrations carry constraints db push can't create.
+      # Libraries: migrate + seed as each owner role. Checkin: generate + migrate + seed as the bootstrap user. Then serve as DML.
+      - npm ci && CATALOG_DATABASE_URL='postgresql://catalog_owner:catalog_owner_pw@db:5432/catalog?schema=public' LOCAL_INVENTORY_DATABASE_URL='postgresql://local_inventory_owner:local_inventory_owner_pw@db:5432/local_inventory?schema=public' BULK_DONATION_DATABASE_URL='postgresql://bulk_donation_owner:bulk_donation_owner_pw@db:5432/bulk_donation?schema=public' EXPENSE_DATABASE_URL='postgresql://expense_owner:expense_owner_pw@db:5432/expense?schema=public' WORKFLOW_MAPPING_DATABASE_URL='postgresql://workflow_mapping_owner:workflow_mapping_owner_pw@db:5432/workflow_mapping?schema=public' INCOME_DATABASE_URL='postgresql://income_owner:income_owner_pw@db:5432/income?schema=public' RECEIPT_DATABASE_URL='postgresql://receipt_owner:receipt_owner_pw@db:5432/receipt?schema=public' scripts/each-library.sh exec --no -- prisma migrate deploy && scripts/each-library.sh run db:seed && cd checkin-app && npx prisma generate && DATABASE_URL='postgresql://prisma:prismapassword@db:5432/checkmein?schema=public' sh -c 'npx prisma migrate deploy && npx prisma db seed' && npm run dev
     healthcheck:
       # Up = the dev server answers an auth route. start_period covers npm ci + seed + first compile.
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/auth/csrf').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]

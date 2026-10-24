@@ -139,4 +139,106 @@ describe("QuickBooksClient", () => {
     expect(sql(1)).toBe("SELECT * FROM Class WHERE FullyQualifiedName = 'Robotics'");
     expect(sql(2)).toBe("SELECT * FROM Vendor WHERE DisplayName = 'O\\'Reilly'");
   });
+
+  it("searches Vendors by part of their DisplayName and reads one by id", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond("Vendor", [{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    respond("Vendor", [{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    respond("Vendor", []);
+    await expect(client.vendorsMatching("O'Ne%")).resolves.toEqual([{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    await expect(client.vendorById("3")).resolves.toMatchObject({ Id: "3" });
+    await expect(client.vendorById("4")).resolves.toBeNull();
+    expect(sql(0)).toBe("SELECT * FROM Vendor WHERE DisplayName LIKE '%O\\'Ne%' MAXRESULTS 20");
+    expect(sql(1)).toBe("SELECT * FROM Vendor WHERE Id IN ('3')");
+  });
+
+  it("reads a Bill's Balance and LinkedTxn so a caller can tell it was paid", async () => {
+    const bill = { Id: "7", TxnDate: "2025-03-01", TotalAmt: 50, Balance: 0, LinkedTxn: [{ TxnId: "90", TxnType: "BillPayment" }] };
+    respond("Bill", [bill]);
+    await expect(new QuickBooksClient(tokens, sandbox).billsBetween("2025-03-01", "2025-03-01")).resolves.toEqual([bill]);
+  });
+
+  it("reads BillPayments by id, escaping every id", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond("BillPayment", [{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
+    await expect(client.billPaymentsByIds(["90", "9' OR Id > '0"])).resolves.toEqual([{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
+    expect(sql(0)).toBe("SELECT * FROM BillPayment WHERE Id IN ('90', '9\\' OR Id > \\'0')");
+  });
+
+  it.each([
+    ["billsByIds", "Bill"],
+    ["purchasesByIds", "Purchase"],
+  ] as const)("%s looks %s rows up by escaped id", async (method, entity) => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond(entity, [{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
+    await expect(client[method](["7", "x'y"])).resolves.toEqual([{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity} WHERE Id IN ('7', 'x\\'y')`);
+    await expect(client[method]([])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads no BillPayments for no ids and refuses more than a page of ids", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    await expect(client.billPaymentsByIds([])).resolves.toEqual([]);
+    await expect(client.billPaymentsByIds(Array.from({ length: 1001 }, (_, i) => String(i)))).rejects.toThrow(/at most 1000/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["accounts", "Account"],
+    ["classes", "Class"],
+    ["vendors", "Vendor"],
+  ] as const)("%s pages the %s list", async (method, entity) => {
+    respond(entity, [{ Id: "1" }]);
+    await expect(new QuickBooksClient(tokens, sandbox)[method]()).resolves.toEqual([{ Id: "1" }]);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity} STARTPOSITION 1 MAXRESULTS 1000`);
+  });
+});
+
+describe("bookCloseDate", () => {
+  it("reads AccountingInfoPrefs.BookCloseDate from Preferences", async () => {
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "2026-06-30" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBe("2026-06-30");
+    expect(sql(0)).toBe("SELECT * FROM Preferences");
+  });
+
+  it("is null when no closing date is set, absent, null or empty", async () => {
+    respond("Preferences", [{ AccountingInfoPrefs: {} }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: null } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+    respond("Preferences", [{}]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).resolves.toBeNull();
+  });
+
+  it("throws on an empty read or a malformed date, never answering null", async () => {
+    respond("Preferences", []);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).rejects.toThrow(/returned nothing/);
+    respond("Preferences", [{ AccountingInfoPrefs: { BookCloseDate: "06/30/2026" } }]);
+    await expect(new QuickBooksClient(tokens, sandbox).bookCloseDate()).rejects.toThrow(/Invalid QBO date/);
+  });
+});
+
+describe("createdSince", () => {
+  it("reads one page of entries created at or after the time, flooring to the second", async () => {
+    respond("Deposit", [{ Id: "1" }]);
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Deposit", new Date("2026-10-01T12:34:56.789Z"));
+    expect(got).toEqual({ entries: [{ Id: "1" }], full: false });
+    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T12:34:56Z' STARTPOSITION 1 MAXRESULTS 1000");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("signals a full page, since more entries may exist", async () => {
+    respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: String(i) })));
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.full).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an invalid time before any request", async () => {
+    await expect(new QuickBooksClient(tokens, sandbox).createdSince("Purchase", new Date("nope"))).rejects.toThrow(/valid time/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

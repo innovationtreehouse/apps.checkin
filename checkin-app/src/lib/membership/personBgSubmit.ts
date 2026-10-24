@@ -47,7 +47,7 @@ export async function submitPersonBgForReview(personId: number, actorId: number)
     }
 
     const firstSubmit = !process.bgConsentAt;
-    await markBgConsent(process.id, actorId); // sets bgConsentAt (+ audit row), idempotent
+    await markBgConsent(process.id, actorId, "PERSON_BG"); // sets bgConsentAt (+ audit row), idempotent
     if (firstSubmit) await notifyReviewers(); // ping only on the transition into the queue
     return process;
 }

@@ -70,6 +70,10 @@ Things the app takes as true because they are handled outside it.
   requirement and the enhanced tripod are enforced by the people present. The app
   records who is certified, not who is watching.
 
+- The age minimum for each level, and which tools fall in each category, are
+  enforced in the shop. The app records the level granted; it does not check the
+  person's age against it, and it holds no tool categories.
+
 ---
 
 ## Procedure
@@ -91,3 +95,9 @@ Things the app takes as true because they are handled outside it.
 - Certifying authority is per tool; a certifier's reach across the app is not.
   Holding the level on any tool opens the certification surfaces for all of them.  [Decision — deliberate limit]
 
+- Only the board changes the level of someone who holds the certifier level on
+  a tool, up or down. A certifier cannot change a fellow certifier's level.  [Decision]
+
+- Nobody sets a certification level for themself or anyone in their own
+  household, on any tool, whatever their role. Someone outside the household
+  must.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]

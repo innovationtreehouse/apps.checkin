@@ -82,3 +82,22 @@ export async function emailBoardMembers(subject: string, html: string, errorLabe
         logger.error(errorLabel, e);
     }
 }
+
+/**
+ * Email every FINANCE holder with an address on file, or the board when no one
+ * holds FINANCE, so a finance control flag always reaches a person. Resolve +
+ * fan-out; all errors logged and swallowed.
+ */
+export async function notifyFinanceAlert(subject: string, html: string, errorLabel: string): Promise<void> {
+    try {
+        const finance = await prisma.person.findMany({
+            where: { roles: { some: { role: "FINANCE" } }, email: { not: null }, ...LIVE_PERSON },
+            select: { email: true },
+        });
+        const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
+        if (emails.length === 0) return emailBoardMembers(subject, html, errorLabel);
+        await fanOutEmails(emails, subject, html);
+    } catch (e) {
+        logger.error(errorLabel, e);
+    }
+}

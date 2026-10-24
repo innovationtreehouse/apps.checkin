@@ -5,7 +5,11 @@ export type EntityType =
   | "transaction"
   | "account_map"
   | "uploaded_file"
-  | "comment_rule";
+  | "comment_rule"
+  | "qb_exclusion"
+  | "in_kind"
+  | "manual_in_kind"
+  | "donation_org_settings";
 
 export interface WorkflowEventInput {
   orgId: string;
@@ -19,8 +23,9 @@ export interface WorkflowEventInput {
   payload?: unknown;
 }
 
-export async function recordEvent(handle: DbOrTx, e: WorkflowEventInput): Promise<void> {
-  await handle.workflowEvent.create({
+export async function recordEvent(handle: DbOrTx, e: WorkflowEventInput): Promise<{ id: number; occurredAt: Date }> {
+  return handle.workflowEvent.create({
+    select: { id: true, occurredAt: true },
     data: {
       orgId: e.orgId,
       disbursementId: e.disbursementId ?? null,
@@ -60,5 +65,31 @@ export async function recordDonorDataRead(
     actorUsername: reader.actorUsername,
     correlationId: reader.correlationId,
     payload: { route: reader.route, ...read },
+  });
+}
+
+/** Audit donor names shown on individual records: one DONOR_DATA_READ row per record, written in one batch. */
+export async function recordDonorDataReads(
+  handle: DbOrTx,
+  orgId: string,
+  entityType: EntityType,
+  reader: DonorReadContext,
+  entityIds: string[],
+): Promise<void> {
+  if (entityIds.length === 0) return;
+  const occurredAt = new Date();
+  const payload = JSON.stringify({ route: reader.route });
+  await handle.workflowEvent.createMany({
+    data: entityIds.map((entityId) => ({
+      orgId,
+      entityType,
+      entityId,
+      eventType: "DONOR_DATA_READ",
+      actorUserId: reader.actorUserId,
+      actorUsername: reader.actorUsername ?? null,
+      correlationId: reader.correlationId ?? null,
+      payload,
+      occurredAt,
+    })),
   });
 }

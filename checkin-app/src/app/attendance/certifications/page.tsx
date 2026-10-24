@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense, useCallback, useMemo } from "react";
+import { useState, Suspense, useCallback, useMemo, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -32,6 +32,14 @@ type Tool = {
 // Cert levels shown in the legend; the dot colors come from the regulated ToolLevelBadge.
 const LEGEND_LEVELS: ToolStatusLevel[] = ["BASIC", "CERTIFIED", "DOF", "INSTRUCTOR", "MAY_CERTIFY_OTHERS"];
 
+const subscribeToClock = (onTick: () => void) => {
+  const timer = setInterval(onTick, 1000);
+  return () => clearInterval(timer);
+};
+const currentMinute = () => Math.floor(Date.now() / 60000);
+// The server render and hydration show no clock, so the time never mismatches.
+const noMinute = () => null;
+
 export default function KioskCertificationsDisplay() {
   return (
     <Suspense fallback={<PageLoader minHeight="100vh" />}>
@@ -48,13 +56,13 @@ function KioskCertificationsInner() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setCurrentTime(new Date());
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  // The kiosk proxy answers 204 while the building is known empty.
+  const [kioskResting, setKioskResting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+  const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
+  const currentTime = minute === null ? null : new Date(minute * 60000);
 
   const fetchData = useCallback(async () => {
     try {
@@ -71,10 +79,17 @@ function KioskCertificationsInner() {
       }
 
       const res = await fetch(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, { headers });
+      setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.participants && data.tools) {
+        setLoaded(true);
         setParticipants(data.participants);
         setTools(data.tools);
+        setPresenceConfirmed(data.building?.reachable === true);
         setError(null);
         if (sigParam) {
           setIsKioskMode(true);
@@ -91,8 +106,8 @@ function KioskCertificationsInner() {
   }, [searchParams, limitToPresent]);
 
   // Visibility gate only, NO idle-stop: this is an unattended wall display, so
-  // idle-stop would freeze it. It's also cookieless (kiosk signature, not a
-  // session), so it can't wake a slept env and can't defeat the overnight curfew.
+  // idle-stop would freeze it. On the kiosk, the Pi's proxy answers these polls
+  // itself (204) while the building is known empty.
   usePolling(fetchData, 10000);
 
   const getColorForLevel = (level: ToolStatusLevel | undefined) =>
@@ -177,7 +192,11 @@ function KioskCertificationsInner() {
             <Group align="center" wrap="wrap">
               <Title order={1} fz="clamp(1.5rem, 4vw, 2rem)">Live Certifications</Title>
               <Badge color={limitToPresent ? 'teal' : 'gray'} variant="light" size="lg">
-                {limitToPresent ? `${participants.length} People Present` : `${participants.length} Total Members`}
+                {!limitToPresent
+                  ? `${participants.length} Total Members`
+                  : isKioskMode || presenceConfirmed
+                    ? `${participants.length} People Present`
+                    : `${participants.length} Checked In (unconfirmed)`}
               </Badge>
             </Group>
             <Group gap="sm" align="center">
@@ -205,6 +224,8 @@ function KioskCertificationsInner() {
           <Center py="xl"><Loader /></Center>
         ) : error ? (
           <Alert color="red">{error}</Alert>
+        ) : !loaded && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : participants.length === 0 || tools.length === 0 ? (
           <Center py="xl"><Text c="dimmed">No {limitToPresent ? "active people" : "people"} found.</Text></Center>
         ) : (

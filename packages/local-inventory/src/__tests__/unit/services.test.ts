@@ -9,15 +9,13 @@ import { db } from "../../lib/db/index";
 import { createLocationRepository } from "../../lib/repositories/locationRepository";
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
-import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createLocationService } from "../../lib/services/locationService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
 import { createInventoryService } from "../../lib/services/inventoryService";
-import { ServiceError } from "../../lib/services/serviceError";
-import { useIntegrationSetup } from "../helpers/setup";
+import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
 
-useIntegrationSetup();
+setupIntegrationDb();
 
 // ── Shared factory helpers ────────────────────────────────────────────────────
 
@@ -32,8 +30,7 @@ function makeInventoryService() {
 function makeReceiveQueueService() {
   return createReceiveQueueService({
     receiveQueueRepo: createReceiveQueueRepository(db),
-    provisionalRepo: createProvisionalItemRepository(db),
-    inventoryService: makeInventoryService(),
+    db,
   });
 }
 
@@ -69,7 +66,7 @@ describeDb("LocationService", () => {
   it("throws 404 updating a non-existent location", async () => {
     const svc = makeLocationService();
     await expect(svc.updateLocation(9999, TEST_ORG_ID, "X", 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -78,7 +75,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID_2, "Other org loc", 1);
     const [loc] = await svc.listLocations(TEST_ORG_ID_2);
     await expect(svc.updateLocation(loc.id, TEST_ORG_ID, "Hack", 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -93,7 +90,7 @@ describeDb("LocationService", () => {
   it("throws 404 deleting a non-existent location", async () => {
     const svc = makeLocationService();
     await expect(svc.deleteLocation(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
@@ -102,7 +99,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID, "A", 1);
     const [loc] = await svc.listLocations(TEST_ORG_ID);
     await expect(svc.reassignLocation(loc.id, loc.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
   });
 
@@ -111,7 +108,7 @@ describeDb("LocationService", () => {
     await svc.createLocation(TEST_ORG_ID, "Source", 1);
     const [source] = await svc.listLocations(TEST_ORG_ID);
     await expect(svc.reassignLocation(source.id, 9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 });
@@ -135,7 +132,7 @@ describeDb("InventoryService", () => {
     const svc = makeInventoryService();
     await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000002" }, 1);
     await expect(svc.createItem(TEST_ORG_ID, { gtin13: "1000000000002" }, 1)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
@@ -149,28 +146,54 @@ describeDb("InventoryService", () => {
   it("updates existing quantity and logs the change", async () => {
     const svc = makeInventoryService();
     await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000004", existingQuantity: 5 }, 1);
-    const updated = await svc.updateItem(TEST_ORG_ID, "1000000000004", { existingQuantity: 15 }, 1);
+    const updated = await svc.updateItem(TEST_ORG_ID, "1000000000004", { existingQuantity: 15, expectedQuantity: 5 }, 1);
     expect(updated?.existingQuantity).toBe(15);
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: "1000000000004", valueBefore: "5" } });
+    expect(log).toMatchObject({ fieldChanged: "existingQuantity", valueAfter: "15", changeType: "manual" });
+  });
+
+  it("refuses a count whose expected quantity is stale and leaves stock unchanged", async () => {
+    const svc = makeInventoryService();
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000008", existingQuantity: 5 }, 1);
+    await svc.applyQtyChange(TEST_ORG_ID, "1000000000008", 2, { userId: null, changeType: "received", receiptId: "r-8" });
+    await expect(
+      svc.updateItem(TEST_ORG_ID, "1000000000008", { existingQuantity: 3, desiredQuantity: 9, expectedQuantity: 5 }, 1),
+    ).rejects.toMatchObject({ status: 409, message: "Stock changed since you loaded this page; recount." });
+    const item = await svc.getItem(TEST_ORG_ID, "1000000000008");
+    expect(item).toMatchObject({ existingQuantity: 7, desiredQuantity: 0 });
+    expect(await db.inventoryLog.count({ where: { gtin13: "1000000000008", changeType: "manual", valueBefore: { not: null } } })).toBe(0);
+  });
+
+  it("requires the expected quantity with a count", async () => {
+    const svc = makeInventoryService();
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000009", existingQuantity: 5 }, 1);
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000009", { existingQuantity: 3 }, 1)).rejects.toMatchObject({
+      status: 400,
+    });
   });
 
   it("throws 404 updating a non-existent item", async () => {
     const svc = makeInventoryService();
-    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { existingQuantity: 1 }, 1)).rejects.toMatchObject({
-      statusCode: 404,
+    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { desiredQuantity: 1 }, 1)).rejects.toMatchObject({
+      status: 404,
     });
   });
 
-  it("deletes an org item", async () => {
+  it("deletes an org item and logs the removed row with its actor", async () => {
     const svc = makeInventoryService();
-    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000005" }, 1);
-    await svc.deleteItem(TEST_ORG_ID, "1000000000005");
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000005", existingQuantity: 4, desiredQuantity: 6 }, 1);
+    await svc.deleteItem(TEST_ORG_ID, "1000000000005", 42, "manager");
     expect(await svc.getItem(TEST_ORG_ID, "1000000000005")).toBeNull();
+
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: "1000000000005", fieldChanged: "deleted" } });
+    expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: 42, username: "manager", valueAfter: null });
+    expect(JSON.parse(log?.valueBefore ?? "{}")).toMatchObject({ existingQuantity: 4, desiredQuantity: 6 });
   });
 
   it("throws 404 deleting a non-existent item", async () => {
     const svc = makeInventoryService();
-    await expect(svc.deleteItem(TEST_ORG_ID, "9999999999998")).rejects.toMatchObject({
-      statusCode: 404,
+    await expect(svc.deleteItem(TEST_ORG_ID, "9999999999998", 1)).rejects.toMatchObject({
+      status: 404,
     });
   });
 
@@ -246,7 +269,7 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
     });
   });
 
@@ -254,30 +277,45 @@ describeDb("ReceiveQueueService", () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID_2);
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
-      statusCode: 404,
+      status: 404,
     });
   });
 
-  it("cancel removes an unfulfilled item", async () => {
+  it("cancel keeps the line, stamped with its actor, and logs it", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID);
-    const list = await svc.listQueue(TEST_ORG_ID, true);
-    expect(list.find((i) => i.id === item.id)).toBeUndefined();
+    await svc.cancel(item.id, TEST_ORG_ID, 42, "manager");
+
+    expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(0);
+    const kept = (await svc.listQueue(TEST_ORG_ID, true)).find((i) => i.id === item.id);
+    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", fulfilledAt: null });
+    expect(kept?.cancelledAt).not.toBeNull();
+    expect(await db.inventoryLog.findFirst({ where: { gtin13: item.gtin13 } })).toMatchObject({
+      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled",
+    });
+  });
+
+  it("a cancelled line cannot be fulfilled or cancelled again", async () => {
+    const svc = makeReceiveQueueService();
+    const item = await seedQueueItem();
+    await svc.cancel(item.id, TEST_ORG_ID, 1);
+    await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
+    expect(await db.orgItem.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 
   it("throws 409 cancelling a fulfilled item", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
-    await expect(svc.cancel(item.id, TEST_ORG_ID)).rejects.toMatchObject({
-      statusCode: 409,
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
+      status: 409,
     });
   });
 
   it("throws 404 cancelling a non-existent item", async () => {
     const svc = makeReceiveQueueService();
-    await expect(svc.cancel(9999, TEST_ORG_ID)).rejects.toMatchObject({
-      statusCode: 404,
+    await expect(svc.cancel(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
+      status: 404,
     });
   });
 });

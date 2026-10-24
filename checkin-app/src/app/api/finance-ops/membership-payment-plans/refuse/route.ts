@@ -10,13 +10,13 @@ import { fromWhere } from "@/lib/membership/lifecycle";
 // of POST /api/finance-ops/membership-payment-plans (approve) that membership
 // previously lacked, so a declined request had no board action and sat
 // PENDING_PAYMENT on the queue indefinitely. This gives the board a dedicated
-// deny control (docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5 item 4).
+// deny control (docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5 item 4).
 //
 // Silent by design, like every other board decision (approve on both sides,
 // program deny): sends NO automatic applicant email — the Scholarship Review
 // Team communicates the outcome manually. Denial is purely clearing
 // isPaymentPlanRequested back to false: the process stays PENDING_PAYMENT and
-// the household returns to normal "pay your dues to activate". Membership holds
+// the household returns to normal "pay your membership fee to activate". Membership holds
 // no Shopify seat and has no grace-expiry cron (grace is program-only), so there
 // is no seat to release and no paymentPlanDeniedAt to stamp — OrgMembershipProcess
 // has no such column and needs none; the cleared flag is the whole of denial state.

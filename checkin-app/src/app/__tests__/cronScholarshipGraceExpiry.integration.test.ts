@@ -13,6 +13,8 @@
  */
 import { GET } from '@/app/api/cron/scholarship-grace-expiry/route';
 import prisma from '@/lib/prisma';
+import type { Prisma } from '@/generated/prisma/client';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (d: number) => new Date(Date.now() - d * DAY_MS - DAY_MS / 2); // half-day offset keeps boundaries stable
@@ -27,7 +29,7 @@ function mkReq(auth?: string) {
 describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
     let programId: number;
     const ids: Record<string, number> = {};
-    let prevGraceDays: number | null | undefined;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const mkParticipant = async (key: string) => {
         const p = await prisma.person.create({
@@ -45,12 +47,11 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         await prisma.program.deleteMany({ where: { name: { contains: 'Grace Cron Test' } } });
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-grace-cron' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-grace-cron' },
         });
         programId = program.id;
 
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevGraceDays = existing?.scholarshipDenialGraceDays ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
 
         await mkParticipant('inside'); // denied 3 days ago — inside a 7-day grace window
         await mkParticipant('outside'); // denied 10 days ago — past a 7-day grace window
@@ -63,7 +64,7 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.person.deleteMany({ where: { id: { in: idList } } });
         await prisma.program.deleteMany({ where: { id: programId } });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipDenialGraceDays: prevGraceDays } });
+        await restoreBoardSettings();
     });
 
     describe('auth', () => {
@@ -141,13 +142,26 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
             // Force one row's removal to fail, simulating any per-row error (DB
             // hiccup, concurrent removal, etc.) without it blocking the rest of
             // the sweep.
-            const originalDelete = prisma.programParticipant.delete.bind(prisma.programParticipant);
-            const deleteSpy = jest.spyOn(prisma.programParticipant, 'delete').mockImplementation((args: Parameters<typeof originalDelete>[0]) => {
-                if (args?.where?.programId_personId?.personId === ids.gone) {
-                    throw new Error('simulated per-row failure');
-                }
-                return originalDelete(args);
+            // The delete runs inside the stock writer's transaction, so the failure is injected on the tx client.
+            type TxFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
+            const originalTx = prisma.$transaction.bind(prisma) as unknown as (fn: TxFn) => Promise<unknown>;
+            const failGone = (tx: Prisma.TransactionClient): Prisma.TransactionClient => new Proxy(tx, {
+                get(target, key, receiver) {
+                    const delegate = Reflect.get(target, key, receiver) as Prisma.TransactionClient['programParticipant'];
+                    if (key !== 'programParticipant') return delegate;
+                    return new Proxy(delegate, {
+                        get(d, k, r) {
+                            if (k !== 'delete') return Reflect.get(d, k, r);
+                            return (args: Prisma.ProgramParticipantDeleteArgs) => args.where.programId_personId?.personId === ids.gone
+                                ? Promise.reject(new Error('simulated per-row failure'))
+                                : d.delete(args);
+                        },
+                    });
+                },
             });
+            const deleteSpy = jest.spyOn(prisma, '$transaction').mockImplementation(
+                ((fn: TxFn) => originalTx((tx) => fn(failGone(tx)))) as unknown as typeof prisma.$transaction,
+            );
 
             try {
                 const res = await GET(mkReq('Bearer test-secret'));

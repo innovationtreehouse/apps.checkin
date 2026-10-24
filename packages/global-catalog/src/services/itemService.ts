@@ -5,7 +5,7 @@ import type { UsageBehavior } from "../db/schema";
 
 const catalogRepo = createCatalogRepository(db);
 import { buildGtin13 } from "../lib/gtin";
-import { ServiceError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
 
 type Tx = Prisma.TransactionClient;
 

@@ -28,6 +28,12 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 
 const EMAIL_TAG = 'manual-checkin-concurrency-test';
 
@@ -45,6 +51,8 @@ async function openVisitCount(participantId: number) {
 describe('POST /api/attendance MANUAL_CHECKIN concurrency (advisory lock)', () => {
     let subjectId: number;
     let householdId: number;
+    let anchorId: number;
+    let anchorHouseholdId: number;
 
     beforeAll(async () => {
         // Clean any leaked state from a prior run.
@@ -59,20 +67,28 @@ describe('POST /api/attendance MANUAL_CHECKIN concurrency (advisory lock)', () =
         await prisma.person.deleteMany({ where: { id: { in: leakedIds } } });
         await prisma.household.deleteMany({ where: { id: { in: leakedHouseholdIds } } });
 
-        // Keyholder so the facility-open guard passes: this suite exercises the
-        // advisory lock, not the keyholder-first rule (covered separately below).
         const subject = await prisma.person.create({
-            data: { email: `subject-${EMAIL_TAG}@example.com`, name: 'Manual Checkin Concurrency Subject', isKeyholder: true, household: { create: { name: "Test HH" } } },
+            data: { email: `subject-${EMAIL_TAG}@example.com`, name: 'Manual Checkin Concurrency Subject', household: { create: { name: "Test HH" } } },
         });
         subjectId = subject.id;
         householdId = subject.householdId;
+
+        // A keyholder inside, so the facility-open guard passes: this suite
+        // exercises the advisory lock, not the keyholder-first rule (covered
+        // separately below).
+        const anchor = await prisma.person.create({
+            data: { email: `anchor-${EMAIL_TAG}@example.com`, name: 'Manual Checkin Concurrency Keyholder', isKeyholder: true, household: { create: { name: "Test HH" } } },
+        });
+        anchorId = anchor.id;
+        anchorHouseholdId = anchor.householdId;
+        await prisma.visit.create({ data: { personId: anchorId, arrivedAt: new Date(), arrivedVia: 'WEB' } });
     });
 
     afterAll(async () => {
-        await prisma.visit.deleteMany({ where: { personId: subjectId } });
+        await prisma.visit.deleteMany({ where: { personId: { in: [subjectId, anchorId] } } });
         await prisma.auditLog.deleteMany({ where: { actorId: subjectId } });
-        await prisma.person.deleteMany({ where: { id: subjectId } });
-        await prisma.household.deleteMany({ where: { id: householdId } });
+        await prisma.person.deleteMany({ where: { id: { in: [subjectId, anchorId] } } });
+        await prisma.household.deleteMany({ where: { id: { in: [householdId, anchorHouseholdId] } } });
     });
 
     it('two concurrent MANUAL_CHECKINs → exactly one open visit, no 500', async () => {
@@ -143,6 +159,15 @@ describe('POST /api/attendance MANUAL_CHECKIN keyholder-first guard', () => {
         const res = await (POST(checkinRequest(nonKeyholderId)) as Promise<Response>);
         expect(res.status).toBe(403);
         expect(await openVisitCount(nonKeyholderId)).toBe(0);
+    });
+
+    it('a keyholder into an empty building → 403, no visit: only a badge at the door opens it', async () => {
+        await prisma.visit.deleteMany({ where: { personId: { in: [nonKeyholderId, keyholderId] } } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: keyholderId, isKeyholder: true } });
+
+        const res = await (POST(checkinRequest(keyholderId)) as Promise<Response>);
+        expect(res.status).toBe(403);
+        expect(await openVisitCount(keyholderId)).toBe(0);
     });
 
     it('non-keyholder with a keyholder present → 200', async () => {

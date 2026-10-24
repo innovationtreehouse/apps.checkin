@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Card, Group, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { FACILITY_AGGREGATE_ROLES } from "@/lib/facilityNav";
+import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type PeriodType = "week" | "month" | "quarter" | "year";
@@ -35,7 +35,6 @@ const SOURCE_LABELS: Record<string, string> = {
   LEAD_MARKED: "Staff-Marked",
   FACILITY_CLOSE: "Facility Close",
   AUTO_CLOSE: "Auto Close",
-  SYSTEM: "System (legacy)",
   UNSPECIFIED: "Unspecified",
 };
 

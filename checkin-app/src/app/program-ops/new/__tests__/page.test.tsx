@@ -41,7 +41,7 @@ describe("CreateProgramPage", () => {
     fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
     expect(nameInput).toHaveValue("FRC Robotics 2026");
 
-    // Create button starts disabled: no lead mentor picked yet.
+    // Create button starts disabled: no program leader picked yet.
     expect(screen.getByRole("button", { name: "Create Program" })).toBeDisabled();
 
     // Unchecking "free" reveals the price inputs.
@@ -98,7 +98,7 @@ describe("CreateProgramPage", () => {
     expect(screen.getByRole("button", { name: "Create Program" })).toBeDisabled();
   });
 
-  it("searches for and selects a lead mentor, then clears the selection", async () => {
+  it("searches for and selects a program leader, then clears the selection", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/people/search": { people: [mentor] } });
     renderWithProviders(<CreateProgramPage />);

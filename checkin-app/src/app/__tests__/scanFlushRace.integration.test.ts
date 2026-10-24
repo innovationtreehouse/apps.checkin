@@ -2,14 +2,14 @@
  * @jest-environment node
  */
 /**
- * A PARKED_CLOSED flush runs under the facility lock only, so it can project
- * an open visit for a person whose own scan already read "no open visit" and
- * is waiting on that lock. The scan must then park as a double IN — never hit
+ * A scan reads "no open visit" before it takes the facility lock, so another
+ * check-in for the same person can open a visit while it waits on that lock.
+ * The scan must then park as a double IN — never hit
  * the one-open-visit index and be acked as a duplicate with its rows rolled
  * back (docs/rules/attendance-checkin.md: a touch is never lost).
  *
- * The race is made deterministic by inserting the open visit (as the flush
- * would) the moment the scan first acquires the facility lock.
+ * The race is made deterministic by inserting the open visit the moment the
+ * scan first acquires the facility lock.
  */
 import { POST } from "@/app/api/scan/route";
 import prisma from "@/lib/prisma";
@@ -52,7 +52,7 @@ function scanReq(body: Record<string, unknown>) {
     }) as unknown as import("next/server").NextRequest;
 }
 
-describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
+describe("Scan racing another check-in for the same person (real DB)", () => {
     let keyholder: Person;
     let member: Person;
     const householdIds: number[] = [];
@@ -71,7 +71,7 @@ describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
 
     beforeEach(async () => {
         await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: new Date(0), arrivedVia: "SCANNER" } });
-        // What the flush projects for the member while their scan waits on the lock.
+        // The visit another check-in opens while the member's scan waits on the lock.
         onFirstFacilityLock = async () => {
             await prisma.visit.create({ data: { personId: member.id, arrivedAt: new Date(), arrivedVia: "SCANNER" } });
         };
@@ -92,7 +92,7 @@ describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
     it.each([
         ["intent IN", { intent: "IN" }],
         ["legacy toggle", {}],
-    ])("%s parks as a double IN and keeps the touch", async (_label, extra) => {
+    ])("%s parks as a double IN, keeps the touch, and queues it for review", async (_label, extra) => {
         const clientEventId = `evt-race-${_label.replace(/\s/g, "-")}`;
         const res = await POST(scanReq({ participantId: member.id, clientEventId, ...extra }));
         expect(res.status).toBe(200);
@@ -102,7 +102,8 @@ describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
 
         const open = await prisma.visit.findMany({ where: { personId: member.id, departedAt: null } });
         expect(open).toHaveLength(1);
-        expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId } })).not.toBeNull();
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId } });
+        expect(log?.reviewReason).toBe("conflict_double_in");
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_DOUBLE_IN);
     });

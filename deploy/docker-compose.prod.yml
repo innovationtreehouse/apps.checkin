@@ -21,10 +21,41 @@ services:
     restart: unless-stopped
     expose:
       - "4000"
+    # App secrets only. Database passwords live in deploy/.env, which compose
+    # reads for ${...} interpolation; web receives only the DML URLs below.
     env_file:
       - ../.env
     environment:
+      DATABASE_URL: postgresql://checkin_dml:${CHECKIN_DML_DB_PASSWORD}@db:5432/checkmein?schema=public
+      # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database, as its DML role.
+      CATALOG_DATABASE_URL: postgresql://catalog_dml:${CATALOG_DML_DB_PASSWORD}@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_dml:${LOCAL_INVENTORY_DML_DB_PASSWORD}@db:5432/local_inventory?schema=public
+      BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_dml:${BULK_DONATION_DML_DB_PASSWORD}@db:5432/bulk_donation?schema=public
+      EXPENSE_DATABASE_URL: postgresql://expense_dml:${EXPENSE_DML_DB_PASSWORD}@db:5432/expense?schema=public
+      WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_dml:${WORKFLOW_MAPPING_DML_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
+      INCOME_DATABASE_URL: postgresql://income_dml:${INCOME_DML_DB_PASSWORD}@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_dml:${RECEIPT_DML_DB_PASSWORD}@db:5432/receipt?schema=public
+    depends_on:
+      - db
+
+  # Migrations, as each library's owner role and, for checkin, the bootstrap
+  # user that owns its tables (the app connects as DML):
+  #   docker compose --profile migrate run --rm migrate
+  migrate:
+    profiles: [migrate]
+    build:
+      context: ..
+      dockerfile: checkin-app/Dockerfile
+    environment:
       DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/checkmein?schema=public
+      CATALOG_DATABASE_URL: postgresql://catalog_owner:${CATALOG_OWNER_DB_PASSWORD}@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_owner:${LOCAL_INVENTORY_OWNER_DB_PASSWORD}@db:5432/local_inventory?schema=public
+      BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_owner:${BULK_DONATION_OWNER_DB_PASSWORD}@db:5432/bulk_donation?schema=public
+      EXPENSE_DATABASE_URL: postgresql://expense_owner:${EXPENSE_OWNER_DB_PASSWORD}@db:5432/expense?schema=public
+      WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_owner:${WORKFLOW_MAPPING_OWNER_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
+      INCOME_DATABASE_URL: postgresql://income_owner:${INCOME_OWNER_DB_PASSWORD}@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_owner:${RECEIPT_OWNER_DB_PASSWORD}@db:5432/receipt?schema=public
+    command: ["sh", "-c", "scripts/each-library.sh exec --no -- prisma migrate deploy && cd checkin-app && npx --no-install prisma migrate deploy"]
     depends_on:
       - db
 
@@ -35,8 +66,28 @@ services:
       POSTGRES_USER: prisma
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: checkmein
+      # Role passwords, read by prod-initdb.
+      CHECKIN_DML_DB_PASSWORD: ${CHECKIN_DML_DB_PASSWORD}
+      CATALOG_OWNER_DB_PASSWORD: ${CATALOG_OWNER_DB_PASSWORD}
+      CATALOG_DML_DB_PASSWORD: ${CATALOG_DML_DB_PASSWORD}
+      LOCAL_INVENTORY_OWNER_DB_PASSWORD: ${LOCAL_INVENTORY_OWNER_DB_PASSWORD}
+      LOCAL_INVENTORY_DML_DB_PASSWORD: ${LOCAL_INVENTORY_DML_DB_PASSWORD}
+      BULK_DONATION_OWNER_DB_PASSWORD: ${BULK_DONATION_OWNER_DB_PASSWORD}
+      BULK_DONATION_DML_DB_PASSWORD: ${BULK_DONATION_DML_DB_PASSWORD}
+      EXPENSE_OWNER_DB_PASSWORD: ${EXPENSE_OWNER_DB_PASSWORD}
+      EXPENSE_DML_DB_PASSWORD: ${EXPENSE_DML_DB_PASSWORD}
+      WORKFLOW_MAPPING_OWNER_DB_PASSWORD: ${WORKFLOW_MAPPING_OWNER_DB_PASSWORD}
+      WORKFLOW_MAPPING_DML_DB_PASSWORD: ${WORKFLOW_MAPPING_DML_DB_PASSWORD}
+      INCOME_OWNER_DB_PASSWORD: ${INCOME_OWNER_DB_PASSWORD}
+      INCOME_DML_DB_PASSWORD: ${INCOME_DML_DB_PASSWORD}
+      RECEIPT_OWNER_DB_PASSWORD: ${RECEIPT_OWNER_DB_PASSWORD}
+      RECEIPT_DML_DB_PASSWORD: ${RECEIPT_DML_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Creates checkin's DML role and each library's database and roles on
+      # first init; re-run by hand on an existing volume (idempotent).
+      - ./prod-initdb:/docker-entrypoint-initdb.d:ro
+      - ../checkin-app/libraries.json:/libraries.json:ro
 
 volumes:
   postgres_data:

@@ -11,8 +11,9 @@ import { PageLoader } from "@/components/ui/PageLoader";
 type UserProgram = {
   programId: number;
   personId: number;
-  status: 'PENDING' | 'ACTIVE';
-  isPaymentPlanRequested: boolean;
+  // Absent unless the viewer may see payment status (lib/programs/paymentVisibility).
+  status?: 'PENDING' | 'ACTIVE';
+  isPaymentPlanRequested?: boolean;
   person: { id: number; name: string | null };
   program: {
     id: number;
@@ -22,27 +23,20 @@ type UserProgram = {
   };
 };
 
-// Payment pill: ACTIVE (paid/free) shows nothing; a still-owed enrollment is
-// either the household's to pay (theme-primary, actionable) or waiting on finance to
-// approve a payment plan (gray, not actionable — don't imply it's settled).
-// ponytail: "Payment due" reads more like a warning than a success state — mechanical
-// off-palette-sweep target is theme-primary green; a maintainer may prefer gray/yellow here.
-function paymentPill(status: string, planRequested: boolean, viewerIsYouth: boolean) {
-  if (status === 'ACTIVE') return null;
-  // A youth is shown no payment state at all — "Awaiting confirmation" is true
-  // whoever owes it (docs/rules/programs.md, "What a youth sees of money").
-  if (viewerIsYouth) return <Badge color="gray" variant="filled">Awaiting confirmation</Badge>;
+// Payment pill: only a still-owed enrollment shows one — either the household's to
+// pay (theme-primary, actionable) or waiting on finance to approve a payment plan
+// (gray, not actionable — don't imply it's settled). The API sends no status to a
+// viewer who may not see it, so youth and non-lead members get no pill.
+function paymentPill(status: string | undefined, planRequested: boolean | undefined) {
+  if (status !== 'PENDING') return null;
   return planRequested
     ? <Badge color="gray" variant="filled">Awaiting finance approval</Badge>
-    : <Badge variant="filled">Payment due</Badge>;
+    : <Badge variant="filled">Not paid yet</Badge>;
 }
 
 export default function MyProgramsDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
-
-  // See docs/rules/programs.md — a youth sees no payment state.
-  const viewerIsYouth = (session?.user as { ageBand?: string } | undefined)?.ageBand === 'youth';
 
   const [enrollments, setEnrollments] = useState<UserProgram[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,12 +102,18 @@ export default function MyProgramsDashboard() {
                 {showMembers && (
                   <Badge variant="light">{person.name ?? 'Member'}</Badge>
                 )}
-                {paymentPill(enrollStatus, isPaymentPlanRequested, viewerIsYouth)}
+                {paymentPill(enrollStatus, isPaymentPlanRequested)}
               </Group>
               <Title order={4} mb="sm">{program.name}</Title>
               <Text c="dimmed" style={{ flex: 1 }}>
                 {formatDateOnly(program.startAt)} - {formatDateOnly(program.endAt)}
               </Text>
+              {/* The program page's enroll button resumes the existing checkout. */}
+              {enrollStatus === 'PENDING' && !isPaymentPlanRequested && (
+                <Button component={Link} href={`/programs/${program.id}`} fullWidth mt="md">
+                  Pay now
+                </Button>
+              )}
               <Button component={Link} href={`/programs/${program.id}`} variant="light" fullWidth mt="md">
                 View Details
               </Button>

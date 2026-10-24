@@ -1,0 +1,39 @@
+name: Start Postgres
+description: >
+  Pull and start a throwaway Postgres container named `postgres`
+  (testuser/testpassword) and wait until it answers over TCP. Runs as a step,
+  not a service container: services start before any step, so their pull
+  can't use an ECR Public login.
+
+inputs:
+  image:
+    description: "Postgres image to run"
+    default: public.ecr.aws/docker/library/postgres:15
+  db:
+    description: "POSTGRES_DB to create"
+    required: true
+  port:
+    description: "Host port to publish 5432 on"
+    default: "5432"
+
+runs:
+  using: composite
+  steps:
+    - name: Start Postgres
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DB: ${{ inputs.db }}
+        PORT: ${{ inputs.port }}
+      run: |
+        bash scripts/ci-pull-image.sh "$IMAGE"
+        docker run -d --name postgres -p "$PORT:5432" \
+          -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB="$DB" \
+          "$IMAGE"
+        # Probe over TCP: the image's first-start init server listens only on
+        # the unix socket, so a TCP answer means the post-init restart is done.
+        for _ in $(seq 1 30); do
+          pg_isready -q -h localhost -p "$PORT" && exit 0
+          sleep 2
+        done
+        docker logs postgres; exit 1

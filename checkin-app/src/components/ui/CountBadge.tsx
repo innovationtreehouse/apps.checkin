@@ -1,11 +1,11 @@
 "use client";
 
 import { Badge, type BadgeProps } from '@mantine/core';
+import type { NavBadge } from '@/components/navBadges';
 
 /**
- * Centralized numeric count badge. The three intent looks below were previously
- * hand-repeated across AppFrame, the section layouts, TodoCard, and Notifications
- * (see docs/designs/BADGE_AUDIT.md); routing them through here keeps them matched.
+ * Centralized numeric count badge. AppFrame, the section layouts, TodoCard, and
+ * Notifications all route through here so the three intent looks stay matched.
  *
  * - action = treehouseGreen fill + black text (needs-attention counts)
  * - info   = gray.2 fill + gray-8 text (informational counts; solid gray so it
@@ -47,4 +47,14 @@ export function CountBadge({
 }: { intent: 'action' | 'info' | 'alert' } & Omit<BadgeProps, 'color' | 'variant' | 'c'>) {
   const { color, c } = INTENT[intent];
   return <Badge size={size} color={color} variant="filled" c={c} {...badgeProps} />;
+}
+
+/** A section-tab pill from a navBadges NavBadge; renders nothing for null. */
+export function TabBadge({ badge }: { badge: NavBadge | null }) {
+  if (!badge) return null;
+  return (
+    <CountBadge intent={badgeIntentFor(badge.color) ?? 'info'} aria-label={badge.label}>
+      {badge.count}
+    </CountBadge>
+  );
 }
