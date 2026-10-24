@@ -126,7 +126,7 @@ export function createExpenseRepository(db: Db) {
           status: "pending",
           ownerId: null,
           expenseId: { not: excludeExpenseId },
-          lineItem: { gtin13, expense: { orgId } },
+          lineItem: { gtin13, nonInventory: false, expense: { orgId } },
         },
         select: { id: true, expenseId: true, lineItemId: true, expense: { select: { submitterId: true, reimburseePersonId: true } } },
       });
@@ -139,7 +139,7 @@ export function createExpenseRepository(db: Db) {
           expenseId,
           ownerId: null,
           id: { not: excludeApprovalId },
-          lineItem: { gtin13 },
+          lineItem: { gtin13, nonInventory: false },
         },
         select: { id: true, lineItemId: true },
       });

@@ -49,6 +49,17 @@ describeDb("initFinancialFlow", () => {
     expect(await stateOf(id)).toBe("owner_approval");
   });
 
+  it("sends a non-inventory line to assign_ownership even when its GTIN has a mapped owner", async () => {
+    const id = await seedExpense({ state: "pending" });
+    await seedLineItem(id, { gtin13: "0000000000017", nonInventory: true });
+    await seedPartOwner({ gtin13: "0000000000017", ownerId: 100 });
+
+    await initFinancialFlow(id, ORG);
+
+    expect(await stateOf(id)).toBe("assign_ownership");
+    expect(await db.lineItemOwnerApproval.findMany({ where: { expenseId: id } })).toMatchObject([{ ownerId: null, status: "pending" }]);
+  });
+
   it("goes to assign_ownership when an owner cannot be resolved", async () => {
     const id = await seedExpense({ state: "pending" });
     await seedLineItem(id, { gtin13: "0000000000024" }); // no part-owner row

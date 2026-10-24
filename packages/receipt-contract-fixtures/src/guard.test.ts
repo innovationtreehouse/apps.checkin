@@ -44,7 +44,7 @@ describe("contract fixture corpus", () => {
         "non-inventory-present",
         "finance-approved-tax",
       ],
-      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional", "finance-approved-tax"],
+      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional", "finance-approved-tax", "has-non-inventory"],
       "S3-inventory-delta": ["recognized-only", "with-provisional"],
       "S4-catalog-submissions": ["item-reference-proposal", "reference-conflict", "items-lookup"],
       "S5-org-events": [
