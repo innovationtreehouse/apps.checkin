@@ -4,8 +4,8 @@
  * Real HTTP against the running dev server and the seeded workflow-mapping DB
  * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
  *
- * X3 (catalog reads), X4 and X5 are bound, so a pushed receipt resolves; the
- * catalog submissions port is inert, so propose answers 502.
+ * X3 (catalog reads), X4, X5 and X8 (catalog submissions) are bound, so a pushed
+ * receipt resolves and propose reaches the catalog, which validates what it is sent.
  */
 import { loginAs, api, type Session } from "./helpers";
 
