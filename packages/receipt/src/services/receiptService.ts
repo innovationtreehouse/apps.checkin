@@ -15,6 +15,7 @@ import {
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
+import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
@@ -677,10 +678,10 @@ export const receiptService = {
     return receiptRepo.list({ orgId: (await getOrg()).id });
   },
 
-  /** An unknown state matches no rows. */
-  async listByState(state: string) {
+  /** The org's receipts narrowed by `filter`; an unknown state matches no rows. */
+  async list(filter: ReceiptListFilter) {
     await requireActor();
-    return receiptRepo.list({ orgId: (await getOrg()).id, details: { state } });
+    return receiptRepo.list(listFilterWhere((await getOrg()).id, filter));
   },
 
   /** How many of the org's receipts wait on FINANCE, for the host's nav pill. */

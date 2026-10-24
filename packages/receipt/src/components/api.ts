@@ -67,14 +67,14 @@ export interface Loaded<T> {
   reload: () => void;
 }
 
-/** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
+/** Load `path` on mount and on reload(); null loads nothing. A stale response never overwrites a newer one. */
 export function useLoad<T>(path: string | null): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   useEffect(() => {
-    if (!path) return;
+    if (path === null) return;
     const mine = ++seq.current;
     api<T>(path)
       .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
