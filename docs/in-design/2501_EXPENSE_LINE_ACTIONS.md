@@ -43,9 +43,10 @@ buttons come from the same rule the server enforces.
   by the same function that refuses a click. The page draws only those actions,
   and every other open seat shows as "Awaiting Treasurer" and the like (3.15,
   #2433).
-- **Submitters sign at submission** (recommended): an attestation on the receipt
-  form, recorded as the submitter seat on every line when the expense is
-  created (#2432).
+- **A reimbursement's submitter signs by confirming the receipt as read**
+  (decided): a required check-off of the lines and amounts, before the receipt
+  goes to finance, whatever the intake path. A card charge takes no submitter
+  signature (#2432).
 - **Approve All comes back**, as one all-or-nothing request (3.13). Lines waiting
   on the viewer are bold with an arrow (3.14). A required comment is marked, and
   Confirm stays disabled until it's written (3.16). The page returns to the
@@ -56,13 +57,12 @@ buttons come from the same rule the server enforces.
   approval, so it meets the program-approver requirement. The proposal keeps
   it with the written reason it already needs, and bars the finance holder who
   gives it from the Treasurer seat on that line.
-- **What doesn't change**: three signatures from three people in three
-  households; the conflict rules; the Board stand-in limits; the Board's
+- **What doesn't change**: each signer is a different person from a different
+  household; the conflict rules; the Board stand-in limits; the Board's
   authorization and the $2,000 hold; the approval row's statuses and finance's
   exception queue (#2482).
 - **Cost**: one boundary PR and seven feature PRs, one of them the C′ change
-  with a data-only migration. No schema change, unless the submitter
-  attestation is stored, which needs one column.
+  with a data-only migration. No schema change.
 
 ## Rules this relies on or changes
 
@@ -73,12 +73,12 @@ adds are marked as proposed.
 | --- | --- | --- |
 | Spending sign-off is governed by Financial Policy Arts. IX and XII and Procurement Policy Art. IV | **Policy** | Unchanged. Every line below cites it, so check each change against the policy on Drive |
 | A conflicted person may not approve a line, raise an exception, sign any seat, or record Board authorization | Procedure, `[Decision — Policy: Ethics Policy Art. III §III.5]` | Text unchanged. Approving also takes the seat's refusals, so it gets stricter (C′.2) |
-| Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes in wording**: the program approver's part is the line's approval, not a seat signature. Still three people, three households (C′.1) |
+| Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. Open question 2 asks you to confirm §IX.3 allows the card-charge case |
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says the approval is the program approver's sign-off |
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. A FINANCE override is an approval, so it counts (open question 3, decided by C′) |
 | When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes in wording**: the Board member approves the line. Reworded below |
 | Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes** (decided): the program approver is chosen as for any line, and the reimbursement also takes a later Board member's approval, in a Board seat signed after the line is approved. The §IX.2 citation stays. This changes the app's reading of the policy, not the policy: §IX.2 requires Board approval and doesn't stop the program approver approving too |
-| The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | Affirmed by the recommended S2 and reworded below; S1 rewords it differently |
+| The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the submitter's confirmation of a reimbursement's receipt, and a card charge has no submitter seat. Reworded below |
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
 | Proposed in #2224: a line in an org-wide bucket takes a Board member as program approver; at most two Board substitutions on a reimbursement line, one on a card charge | Procedure, `[Decision]` | Consistent. The org-level line's Board member approves the line instead of signing a seat, so the line is no longer pre-approved at intake (C′.4) |
 
@@ -86,10 +86,10 @@ No Policy-tier line changes. Four Procedure lines that cite a policy are
 touched. The conflict line, the three-signatures line and the
 Treasurer-conflict line keep their substance; approving gets stricter. The
 non-member line changes the app's reading of Financial Policy Art. IX §IX.2, as
-you decided, and keeps its citation. The submitter line depends on how
-open question 2 is answered: whether an attestation at submission is a signature
-in the sense of Financial Policy Art. IX §IX.3 is for you to check against the
-policy itself.
+you decided, and keeps its citation. The three-signatures line also drops the
+submitter's signature from card charges, as you decided; it cites Financial
+Policy Art. IX §IX.3, so open question 2 asks you to confirm that article's
+wording allows it.
 
 #2483 proposes corrections to the same section: the program approver is "an
 owner or treasurer of the line's bucket", and the Board stand-in wording. This
@@ -286,31 +286,42 @@ them the same `actions` field.
 
 ### 3. The submitter's seat (#2432)
 
-Each line needs the submitter's signature, and the submitter never sees the
-expense page. There are two options:
+You decided this by the kind of line. The submitter never sees the expense
+page, so in both cases the decision happens on the receipt.
 
-- **S1. A sign step afterwards.** Once the receipt becomes an expense, the
-  submitter's receipt page shows "Sign for these purchases", and one button
-  signs every line. The submitter has to come back, and until they do the
-  expense can't post. The receipt library can't import the expense library, so
-  the host composes the step.
-- **S2. Submission is the signature (recommended).** The submit form carries an
-  attestation the submitter ticks: "I made these purchases for the Treehouse,
-  and this receipt is accurate." When the expense is created from the receipt,
-  the app records the submitter seat on every line, signed by the submitter, and
-  the audit row cites the submission. The submitter acts once, at a moment they
-  are already acting. This matches the rule's own words, "that seat is filled
-  from the receipt".
+**A reimbursement: the submitter confirms the receipt as read.** The signature
+is the submitter's check-off of the receipt's lines and amounts as the app
+holds them, after OCR or entry and before the receipt goes to finance. It is
+required every time, whatever the intake path; submitting alone doesn't count,
+because OCR can misread a receipt, and the submitter's own money depends on it.
 
-Finance's later changes don't void the submitter seat; the seat-voiding already
-leaves it alone. A submitter's own correction of tax or date sends the receipt
-to finance review. The attestation covers the receipt as submitted, and whether
-that is a signature in the sense of Financial Policy Art. IX §IX.3 is for you to
-check (open question 2).
+The receipt library already has this step. A receipt read by OCR or mailed in
+waits for its uploader's review, and the receipt machine sends every
+reimbursement there too, whatever the path (audit finding 1.14). So a manual
+upload reaches the same confirmation: after the submitter enters the receipt,
+it waits in submitter review until they confirm it, as an OCR-read one does.
+The review screen becomes the signature:
 
-A backfilled expense takes no sign-off, so it records no seat. Expenses already
-waiting with an empty submitter seat predate any attestation; open question 2
-asks how to clear them.
+- It shows the lines and amounts as read, and the confirm button reads "These
+  lines and amounts are right" in place of a plain Confirm.
+- Only the uploader confirms; the confirm already admits only them.
+- The confirmation records who confirmed and when. The receipt-to-expense
+  contract carries it, alongside the review outcome theme 2 adds, and when the
+  expense is created the app records the submitter seat on every line, signed
+  by the submitter and citing that confirmation.
+
+Finance's later changes don't void the submitter seat; the seat voiding already
+leaves it alone. Whether a change to a reimbursement's amounts after the
+submitter confirmed should send it back to them is open question 2.
+
+**A card charge: no submitter signature.** A card charge doesn't touch the
+submitter's money, so finance may correct the receipt and the submitter
+approves nothing. The submitter seat isn't required on a card-charge line, and
+the line takes the program approver and the Treasurer. A mailed or OCR-read card
+charge still waits for its uploader's review, as today, because that step also
+asks for details the read can't supply, but confirming it fills no seat.
+
+A backfilled expense takes no sign-off, so it records no seat.
 
 ### 4. Approve All (3.13)
 
@@ -434,10 +445,19 @@ from your decisions; the last two wait on open questions 2 and 5:
   What counts is the person reimbursed, not whoever submitted the receipt, and a
   card charge is not a reimbursement. *(replaces the existing line; keeps*
   `[Decision — Policy: Financial Policy, Art. IX §IX.2]`*)*
-- The submitter signs the submitter seat by attesting the receipt when they
-  submit it; the seat is recorded on every line when the expense is created.
-  *(replaces "since that seat is filled from the receipt" in the audience line;
-  same tag; waits on open question 2)*
+- A reimbursement reaches the books only once each of its lines is signed by
+  the submitter, a program approver, and the Treasurer. A card charge reaches
+  them once each line is signed by a program approver and the Treasurer. Every
+  signer is a different person from a different household. *(replaces the
+  three-signatures line; keeps* `[Decision — Policy: Financial Policy, Art. IX §IX.3]`*;
+  your decision, waiting on your confirmation in open question 2)*
+- The submitter signs a reimbursement by confirming its receipt as read, its
+  lines and amounts, before the receipt goes to finance, whatever the intake
+  path. Submitting the receipt is not the signature. Finance may correct a card
+  charge's receipt without the submitter. *(new line)* `[Decision — owner]`
+- *(audience line)* replace "since that seat is filled from the receipt" with
+  "since that seat is filled by their confirmation of a reimbursement's
+  receipt". *(same tag)*
 - The override rule in §7.
 
 ## Routes and the security registry
@@ -449,7 +469,7 @@ from your decisions; the last two wait on open questions 2 and 5:
 | `POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs` | Refuses `PROGRAM_APPROVER`, which leaves the seat list; the route and its registry entry are unchanged |
 | `POST /api/expense/expenses/[id]/approve-lines` | New, for Approve All; `expense-approver`, with the library checking each line |
 | `GET /api/expense/queue`, `GET /api/expense/expenses` | Accept the `awaiting_me` view; no new route |
-| Receipt submit | Under S2, carries the attestation; the receipt-to-expense contract gains it, alongside the review outcome theme 2 adds |
+| Receipt submitter review | The confirm records who confirmed; the receipt-to-expense contract gains the confirmation, alongside the review outcome theme 2 adds. No new route |
 
 The new fields on `ExpenseLineSignoffStatus` change a synthetic
 classification, and the new route needs a registry entry. Both ship in one
@@ -480,9 +500,10 @@ Each PR is based on `main`, not stacked.
    (§8). After #2500 merges.
 6. **Back to the queue PR** (3.12): after #2482's expense detail PR, so the two
    share one helper.
-7. **Submitter seat PR** (#2432): after open question 2. The attestation, the
-   seat recorded at expense creation, the rule edit, and whatever you decide for
-   expenses already waiting.
+7. **Submitter seat PR** (#2432): the confirmation on the reimbursement
+   review screen, carried to expense; the seat recorded at expense creation; no
+   submitter seat on card-charge lines; the rule edits. The rule edit to the
+   three-signatures line waits on open question 2.
 8. **Override rule** (3.17): the rule text, in step 3's PR or on its own. Code
    changes beyond step 3's Treasurer refusal only if you retire it instead.
 
@@ -498,7 +519,7 @@ Each PR is based on `main`, not stacked.
 | 3.17 | Only FINANCE overrides; no rule | Proposed rule: keep, with a reason; the override is the program-approver sign-off (§7) | 3 or own |
 | 3.25 | Pill counts seats, page opens on approval | Approval is the sign-off, so one count, and a "Waiting on you" view (§8) | 3, 5 |
 | 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.8) | 2, 3 |
-| #2432 | Submitter can't sign | Submission attestation fills the seat (§3) | 7 |
+| #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a card charge takes no submitter seat (§3) | 7 |
 | #2433 | Sign-as shown to people who can't sign | Same as 3.15; other seats show as status (§1) | 2 |
 | #1272 | No rule for the override | As 3.17 | 3 or own |
 
@@ -507,12 +528,14 @@ Each PR is based on `main`, not stacked.
 1. **One act or two?** *Decided:* the line's approval is the program-approver
    sign-off (C′), and a non-member reimbursement takes the program approver as
    for any line plus a later Board member's approval (C′.6).
-2. **The submitter's seat.** S2 makes submission the signature, through an
-   attestation on the receipt form. Does an attestation at submission satisfy
-   Financial Policy Art. IX §IX.3's signature, checked against the policy on
-   Drive? And for expenses already waiting with an empty submitter seat: should
-   each submitter sign once from their receipt page (S1, for those only), or do
-   you have another way in mind?
+2. **The submitter's seat.** *Decided:* a reimbursement's submitter signs by
+   confirming the receipt as read, every time; a card charge takes no submitter
+   signature (§3). Two questions remain:
+   - Does the wording of Financial Policy Art. IX §IX.3 allow a card charge to
+     reach the books without the submitter's signature? The rule line cites
+     that article, so please confirm against the policy on Drive.
+   - If finance changes a reimbursement's amounts after the submitter
+     confirmed, must the submitter confirm again?
 3. **The override and the Treasurer seat.** *Settled by C′:* an override is an
    approval, so the finance holder who gives it is barred from the Treasurer
    seat on that line, as any approver is. Do you accept that finance may stand
