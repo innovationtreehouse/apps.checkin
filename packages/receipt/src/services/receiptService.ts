@@ -506,11 +506,20 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
+  /**
+   * Under finance access, discarding a suspected original decides each duplicate flagged
+   * against it, so a party to any of those is refused, and each one's log records the discard.
+   */
   async discard(id: string, access: Access) {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
-    await writeAccess(row, access, actor, "discard");
+    const flaggedAgainst =
+      (await writeAccess(row, access, actor, "discard")) === "finance"
+        ? await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } })
+        : [];
+    for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "discard the suspected original");
     await step(row, { type: "DISCARD" }, "discarded", {}, actor, "discarded");
+    for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_discarded", valueAfter: row.id });
     return load(id, access, actor);
   },
 
