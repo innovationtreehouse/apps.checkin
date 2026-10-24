@@ -2,9 +2,10 @@
  * Non-Prisma response models the expense library ships through handler()
  * (the catalogSyntheticClassifications.ts pattern).
  *
- * Counts, the injected bucket list, per-line sign-off status, the capital-seed
- * result and QuickBooks match candidates are not Prisma models, and handler()'s
- * stripper drops any bag key that isn't a known model. Who is reimbursed is `pii`
+ * Counts, the injected bucket list, the line approvals the caller may decide,
+ * per-line sign-off status, the capital-seed result and QuickBooks match
+ * candidates are not Prisma models, and handler()'s stripper drops any bag key
+ * that isn't a known model. Who is reimbursed is `pii`
  * wherever it appears: a candidate's `vendorRef` (on a Bill the vendor is the
  * reimbursee), a QuickBooks Vendor's name, and the reimbursee's id and name.
  * Everything else is `internal`. No shape names a signer.
@@ -33,6 +34,11 @@ export const classifications = {
     id: "internal",
     name: "internal",
     archivedAt: "internal",
+  },
+  // A pending line approval the caller may decide right now; `financeOverride` when only as FINANCE.
+  ExpenseApprovalAction: {
+    approvalId: "internal",
+    financeOverride: "internal",
   },
   // Per line: seats filled, missing and blocked (seat names only, no signer).
   ExpenseLineSignoffStatus: {

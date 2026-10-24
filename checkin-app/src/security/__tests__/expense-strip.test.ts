@@ -158,6 +158,12 @@ describe('expense stripper', () => {
         expect(strip('ExpenseReimburseeView', reimbursee, FINANCE_VIEW)).toEqual(reimbursee);
     });
 
+    it('an internal-only view keeps the line approvals the caller may decide', () => {
+        const action = { approvalId: 10, financeOverride: false };
+        expect(strip('ExpenseApprovalAction', action, INTERNAL_ONLY)).toEqual(action);
+        expect(strip('ExpenseApprovalAction', action, ['public'])).toEqual({});
+    });
+
     it('a donated capital line reaches FINANCE whole, hides its reviewer from internal-only views and drops any donor field', () => {
         const line = {
             id: 1, orgId: 'treehouse', giftSource: 'IN_KIND', giftId: 3, giftLineId: 4, description: 'Table saw',

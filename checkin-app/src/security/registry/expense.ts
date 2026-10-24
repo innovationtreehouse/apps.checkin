@@ -39,7 +39,7 @@ const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', '
 defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/count', authorize: 'expense-approver', envelope: null, returns: ['ExpenseListCount'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView'], orderedView: APPROVER_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView', 'ExpenseApprovalAction'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/signoffs', authorize: 'expense-approver', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
