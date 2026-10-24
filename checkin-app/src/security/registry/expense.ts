@@ -32,7 +32,7 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['authenticated', ['everyones:internal']],
 ];
 
-const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'FinanceQueueReasons'] as const;
+const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'ExpenseQueueReason'] as const;
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
@@ -83,6 +83,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/resolve-unknown', authorize: 'finance', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
+// Finance approves the tax on an expense that no receipt approval covered; the note is optional.
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/tax-approval', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 // The people finance may name as reimbursee: the uploader's live record, or none.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee/options', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeView'], orderedView: FINANCE_VIEW });

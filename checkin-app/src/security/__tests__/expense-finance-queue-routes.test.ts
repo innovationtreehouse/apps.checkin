@@ -3,14 +3,14 @@
  */
 /**
  * Admission and view for the finance queue's expense tabs (registry/expense.ts):
- * GET /api/expense/finance-queue and its counts admit FINANCE and BOARD only, and
- * the expense detail carries the open queue reasons. Auth runs through the real
- * authenticateRequest; only next-auth's getServerSession is stubbed (jest.setup.js
- * mocks it).
+ * GET /api/expense/finance-queue and its counts admit FINANCE and BOARD only, the
+ * expense detail carries the open queue reasons, and finance alone approves tax.
+ * Auth runs through the real authenticateRequest; only next-auth's
+ * getServerSession is stubbed (jest.setup.js mocks it).
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { getRoute } from '@/security/core';
+import { getRoute, type Token } from '@/security/core';
 import type { CallerContext } from '@/security/access-resolvers';
 import { handler } from '@/security/handler';
 import { stripValue } from '@/security/stripper';
@@ -139,14 +139,37 @@ describe('expense detail reasons', () => {
         activeVisitorIds: new Set(),
         ledHouseholdMemberIds: new Set(),
     };
-    const reasons = { reasons: ['reimbursee_to_name', 'qb_post_failed'] };
+    const reason = {
+        code: 'qb_post_failed',
+        tab: 'quickbooks',
+        audience: 'FINANCE',
+        actionable: true,
+        amountCents: null,
+        detail: 'Vendor Pat Doe is inactive',
+    };
+    const FULL: readonly Token[] = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'];
 
     it('is part of the detail response', () => {
-        expect(getRoute('GET /api/expense/expenses/[id]')?.returns).toContain('FinanceQueueReasons');
+        expect(getRoute('GET /api/expense/expenses/[id]')?.returns).toContain('ExpenseQueueReason');
     });
 
-    it('keeps the reason codes for an internal view and strips them from a public one', () => {
-        expect(stripValue('FinanceQueueReasons', reasons, ['everyones:internal', 'public'], ctx)).toEqual(reasons);
-        expect(stripValue('FinanceQueueReasons', reasons, ['public'], ctx)).toEqual({});
+    it('gives FINANCE and the Board the whole reason', () => {
+        expect(stripValue('ExpenseQueueReason', [reason], FULL, ctx)).toEqual([reason]);
+    });
+
+    it("keeps an internal view's reason codes and strips the error text", () => {
+        const { detail: _detail, ...codes } = reason;
+        expect(stripValue('ExpenseQueueReason', reason, ['everyones:internal', 'public'], ctx)).toEqual(codes);
+        expect(stripValue('ExpenseQueueReason', reason, ['public'], ctx)).toEqual({});
+    });
+});
+
+describe('expense tax approval', () => {
+    it('admits finance only, on the finance view', () => {
+        const route = getRoute('POST /api/expense/expenses/[id]/tax-approval');
+        expect(route?.authorize).toBe('finance');
+        expect(route?.envelope).toBeNull();
+        expect(route?.returns).toEqual(['Expense']);
+        expect(route?.orderedView.map(([role]) => role)).toEqual(['isFinance']);
     });
 });

@@ -89,7 +89,7 @@ export const classifications = {
     reviewedAt: "internal",
   },
   // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
-  // The finance queue's shapes hold reason codes, money, dates and counts, never a person.
+  // The queue's row and counts hold reason codes, money, dates and counts, never a person.
   FinanceQueueRow: {
     expenseId: "internal",
     vendorName: "internal",
@@ -107,9 +107,16 @@ export const classifications = {
     quickbooks: "internal",
     board: "internal",
   },
-  // GET /api/expense/expenses/[id]: the expense's open queue reasons, as codes.
-  FinanceQueueReasons: {
-    reasons: "internal",
+  // GET /api/expense/expenses/[id]: one open queue reason on the expense, for the
+  // viewer. `detail` can carry QuickBooks' last error text, so it is `personal`,
+  // matching the flag detail it comes from.
+  ExpenseQueueReason: {
+    code: "internal",
+    tab: "internal",
+    audience: "internal",
+    actionable: "internal",
+    amountCents: "internal",
+    detail: "personal",
   },
 } as const;
 
