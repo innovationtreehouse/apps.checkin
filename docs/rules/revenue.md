@@ -130,6 +130,11 @@ Things the app takes as true because they are handled outside it.
   arrives. An order that falls short enrolls nobody, because it cannot say who
   it was for, and is raised for the board.  [Decision]
 
+- A program order edited at the store, after it enrolled people, to pay for
+  fewer seats than the people still enrolled on it is raised for the board. The
+  app removes nobody, because the order cannot say whose seat it dropped.
+  [Decision — *Principle: people decide about people*]
+
 - A paid program order with seats no waiting enrollment uses is raised for the
   board, which settles the money and the seat; the app changes neither. That
   covers a child who was comped, approved, withdrew, expired or already paid,

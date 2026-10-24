@@ -389,6 +389,7 @@ export async function reconcileReversals(): Promise<number> {
             raised++;
         }
     }
+    const unreversed = new Map<string, MirrorOrder>();
     for (const e of enrolls) {
         const o = byLegacy.get(e.shopifyOrderId!);
         if (!o) continue;
@@ -400,7 +401,56 @@ export async function reconcileReversals(): Promise<number> {
         if (kind) {
             await raisePaymentException(kind, { shopifyOrderId: e.shopifyOrderId, programId: e.programId, personId: e.personId });
             raised++;
+        } else {
+            unreversed.set(e.shopifyOrderId!, o);
         }
+    }
+    raised += await raiseUnderSeatedOrders(enrolls.filter((e) => unreversed.has(e.shopifyOrderId!)), unreversed);
+    return raised;
+}
+
+/**
+ * An unreversed program order edited down to fewer seats than the people ACTIVE on
+ * it: someone holds a seat the order no longer pays for. Raised once per order and
+ * program as AMOUNT_MISMATCH, against its lowest-id holder; nobody is removed, as the
+ * order cannot say which seat it dropped. An order with no mirrored line variant ids
+ * carries no seat evidence and is not judged.
+ */
+async function raiseUnderSeatedOrders(
+    enrolls: { programId: number; personId: number; shopifyOrderId: string | null }[],
+    orders: Map<string, MirrorOrder>,
+): Promise<number> {
+    if (enrolls.length === 0) return 0;
+    const lines = await mirror.incomeOrderLines([...orders.values()].map((o) => o.orderGid));
+    const linesByGid = new Map<string, { variantId: string; currentQuantity: number }[]>();
+    for (const l of lines) {
+        if (!l.variantId) continue;
+        linesByGid.set(l.orderGid, [...(linesByGid.get(l.orderGid) ?? []), { variantId: l.variantId, currentQuantity: l.currentQuantity }]);
+    }
+    const programs = await prisma.program.findMany({
+        where: { id: { in: [...new Set(enrolls.map((e) => e.programId))] } },
+        select: { id: true, shopifyVariantId: true, claimantShopifyVariantId: true },
+    });
+    const variantsByProgram = new Map(programs.map((p) => [p.id, new Set(programVariantIds(p))]));
+
+    const holders = new Map<string, { orderId: string; programId: number; personIds: number[] }>();
+    for (const e of enrolls) {
+        const key = `${e.shopifyOrderId}:${e.programId}`;
+        const group = holders.get(key) ?? { orderId: e.shopifyOrderId!, programId: e.programId, personIds: [] };
+        group.personIds.push(e.personId);
+        holders.set(key, group);
+    }
+
+    let raised = 0;
+    for (const { orderId, programId, personIds } of holders.values()) {
+        const orderLines = linesByGid.get(orders.get(orderId)!.orderGid);
+        if (!orderLines) continue;
+        const variants = variantsByProgram.get(programId) ?? new Set<string>();
+        const seats = orderLines.filter((l) => variants.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
+        if (seats >= personIds.length) continue;
+        logger.warn(`[reconcile] program order ${orderId} pays for ${seats} seat(s) of program ${programId} but ${personIds.length} people hold them — raised, nobody removed`);
+        await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: orderId, programId, personId: Math.min(...personIds) });
+        raised++;
     }
     return raised;
 }
