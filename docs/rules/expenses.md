@@ -32,7 +32,7 @@ Things the app takes as true because they are handled outside it.
 - Finance pays reimbursements in the accounting system. The app records what is
   owed and reads the payment back; it never pays anyone.
 
-- The Board appoints only adults as bucket treasurers, as corporate policy
+- The Board appoints only adults as program treasurers, as corporate policy
   requires.
 
 - The Treasurer enforces the limits on a signed note in place of a receipt
@@ -75,9 +75,8 @@ Things the app takes as true because they are handled outside it.
   receipt settings.
   [Decision — *Principle: least privilege*]
 
-- Only finance and the Board see every expense. A bucket's owner and treasurers
-  see only the lines in their bucket, without the names of who submitted,
-  signed or is reimbursed.
+- Only finance and the Board see every expense. A program's leader and
+  treasurers see only the lines in their program's bucket.
   [Decision — *Principle: least privilege*]
 
 ### Receipts
@@ -97,8 +96,8 @@ Things the app takes as true because they are handled outside it.
 
 - A conflicted person also may not reject a receipt, change its tax or date as
   finance, name the person reimbursed, or check off its flags. A Board member
-  standing in for the Treasurer is reviewed by someone outside the households
-  of everyone who signed.
+  standing in for someone is reviewed by someone outside the households of
+  everyone who signed.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A person conflicted on an expense may not choose which QuickBooks entry it is
@@ -146,11 +145,12 @@ Things the app takes as true because they are handled outside it.
 
 - A bucket's owner and treasurers are set by the board alone, because they come
   from the board-approved budget. Nobody sets, replaces or removes themself or
-  anyone in their own household.
+  anyone in their own household. Treasurers are adult-only by corporate policy,
+  and the app does not check that.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Finance decides which bucket each line is charged to, before the program
-  approver signs it. Moving a line to another bucket voids its sign-offs.
+  approver signs it.
   [Decision]
 
 ### Expenses
@@ -165,9 +165,8 @@ Things the app takes as true because they are handled outside it.
 
 - The app flags an expense for review when it crosses a dollar threshold,
   includes capital equipment, has no known person to reimburse, has a Board
-  member standing in for the Treasurer, is held for want of a Board stand-in,
-  or fails to reach the books. Every check-off records who made it. A flag
-  never holds money back by itself.
+  member standing in for someone, or fails to reach the books. Every check-off
+  records who made it. A flag never holds money back by itself.
   [Decision — *Principle: accountability*]
 
 - Tax is decided in the receipt's finance review, and an expense respects that
@@ -184,7 +183,7 @@ Things the app takes as true because they are handled outside it.
 ### Spending sign-off
 
 Each line of a reimbursement or card charge has three sign-off seats: the
-submitter, a program approver (an owner or treasurer of the line's bucket), and
+submitter, a program approver (the program's leader or a Program Treasurer), and
 the Treasurer.
 
 - A reimbursement or card charge reaches the books only once each of its lines
