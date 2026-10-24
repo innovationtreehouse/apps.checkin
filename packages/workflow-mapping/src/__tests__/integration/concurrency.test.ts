@@ -65,6 +65,9 @@ describeDb("§4 S1 concurrent first deliveries", () => {
         checkReferences: async () => {
           throw new Error("unused");
         },
+        getActiveItem: async () => {
+          throw new Error("unused");
+        },
       },
     });
     const payload = buildReceiptPayload();

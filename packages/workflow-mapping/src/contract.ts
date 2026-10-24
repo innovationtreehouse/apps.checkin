@@ -57,6 +57,9 @@ export const refCheckResultSchema = z.object({
 });
 export type RefCheckResult = z.infer<typeof refCheckResultSchema>;
 
+export const activeCatalogItemSchema = z.object({ gtin13: z.string(), name: z.string() }).nullable();
+export type ActiveCatalogItem = z.infer<typeof activeCatalogItemSchema>;
+
 export const createdIdSchema = z.object({ id: z.number().int() });
 export const gtin13Schema = z.string().min(1);
 
@@ -64,6 +67,8 @@ export const gtin13Schema = z.string().min(1);
 export interface CatalogReader {
   lookupItems(retailer: string, lookups: CatalogItemsLookup["lookups"]): Promise<CatalogLookupResult[]>;
   checkReferences(fields: CatalogCheckReferences): Promise<RefCheckResult>;
+  /** The approved, non-archived item with this GTIN, or null. Gates an association, so it fails closed. */
+  getActiveItem(gtin13: string): Promise<ActiveCatalogItem>;
 }
 
 /** Catalog writes. The adapter stamps the injected org; `localUserId` is the acting Person.id. */
@@ -123,6 +128,7 @@ function notWired(port: string): never {
 export const inertCatalogReader: CatalogReader = {
   lookupItems: async () => [],
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
+  getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
 };
 
 export const inertCatalogSubmissions: CatalogSubmissions = {

@@ -14,6 +14,7 @@ const catalog = {
   catalogReader: {
     lookupItems: async () => [],
     checkReferences: async () => ({ mfr_part: noRef, retailer_part: noRef, mfr_desc: noRef, wouldCreateNewReference: true }),
+    getActiveItem: async (gtin13: string) => ({ gtin13, name: "Hex bolt" }),
   },
   catalogSubmissions: {
     proposeItemReference: async () => ({ id: 1 }),
