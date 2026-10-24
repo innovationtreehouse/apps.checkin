@@ -215,7 +215,7 @@ describeDb("an inventory leg that applied but lost its stamp", () => {
 
     expect(await receiptService.apply(r.id)).toEqual({
       state: "apply_failed",
-      error: "This source was already applied with a different inventory delta.",
+      error: "Inventory: This source was already applied with a different inventory delta.",
     });
     expect(await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({
       state: "apply_failed",
