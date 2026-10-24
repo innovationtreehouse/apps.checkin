@@ -97,7 +97,7 @@ export default function ReceiptDetailPage() {
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
-  const act = async (path: string, method: string, body: unknown, success: string, decides = false, failed?: string) => {
+  const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
     if (await send(`/${id}${path}`, method, body, success, failed)) {
       if (decides && fromReview) {
         router.push(back.href);
@@ -110,6 +110,7 @@ export default function ReceiptDetailPage() {
     }
   };
   const discardOriginal = async () => {
+    if (!suspectId) return;
     if (await send(`/${suspectId}/discard`, "POST", {}, "The original is discarded", "Couldn't discard the original")) {
       receipt.reload();
       original.reload();
@@ -127,6 +128,7 @@ export default function ReceiptDetailPage() {
         ...(edit.receiptTotal === undefined ? {} : { receiptTotal: Number(edit.receiptTotal) }),
       },
       "Saved",
+      "Couldn't save the details",
     );
 
   return (
@@ -150,8 +152,8 @@ export default function ReceiptDetailPage() {
           originalHref={originalHref}
           isFinance={isFinance}
           own={own}
-          onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", true, "Couldn't clear the duplicate flag")}
-          onDiscardReceipt={() => void act("/discard", "POST", {}, "Discarded", true, "Couldn't discard this receipt")}
+          onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}
+          onDiscardReceipt={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}
           onDiscardOriginal={() => void discardOriginal()}
         />
       )}
@@ -184,7 +186,7 @@ export default function ReceiptDetailPage() {
                   <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
                   <Table.Td>
                     {EDITABLE.has(r.state) && r.lineItems.length > 1 && (
-                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => void act(`/line-items/${l.id}`, "DELETE", undefined, "Item removed")}>Remove</Button>
+                      <Button size="compact-xs" variant="subtle" color="red" onClick={() => void act(`/line-items/${l.id}`, "DELETE", undefined, "Item removed", "Couldn't remove the item")}>Remove</Button>
                     )}
                   </Table.Td>
                 </Table.Tr>
@@ -209,22 +211,22 @@ export default function ReceiptDetailPage() {
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" onClick={() => void act("/submitter-confirm", "POST", {}, "Confirmed")}>Confirm</Button>
+                <Button size="xs" onClick={() => void act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt")}>Confirm</Button>
                 {isAdult && !r.isInKind && (
-                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated")}>
+                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
                   </Button>
                 )}
               </>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
             )}
             {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted", true)}>Resubmit</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/resubmit", "POST", {}, "Resubmitted", "Couldn't resubmit this receipt", true)}>Resubmit</Button>
             )}
             {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
+              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
 
@@ -236,28 +238,28 @@ export default function ReceiptDetailPage() {
                   <>
                     <Textarea label="Note (required when the reason is tax)" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
                     <Group gap="xs">
-                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved", true)}>Approve</Button>
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected", true)}>Reject</Button>
+                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
+                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
                     </Group>
                   </>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
                 {r.state === "duplicate_flagged" && !comparing && !own && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", true, "Couldn't clear the duplicate flag")}>Not a duplicate</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}>Not a duplicate</Button>
                 )}
                 {r.state === "flow_error" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", true)}>Restart</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
                 {r.state === "discarded" && (
                   <Group align="end">
                     <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
-                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on")}>
+                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on", "Couldn't ignore this file")}>
                       Ignore this file from now on
                     </Button>
                   </Group>
                 )}
                 {r.state === "receipt_finalized" && !r.pushedAt && (
-                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent")}>Send downstream</Button>
+                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent", "Couldn't send this receipt downstream")}>Send downstream</Button>
                 )}
               </Stack>
             </Paper>

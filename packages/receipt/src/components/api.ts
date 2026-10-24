@@ -41,9 +41,9 @@ export function errorMessage(e: unknown): string {
 /**
  * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
  * host nav to refetch its pills, since a write can move a receipt into or out of the caller's hands.
- * A failure stays on screen until dismissed, titled with `failed` when given.
+ * A failure stays on screen until dismissed, titled `failed` with the server's reason below it.
  */
-export async function send(path: string, method: string, body: unknown, success: string, failed?: string): Promise<boolean> {
+export async function send(path: string, method: string, body: unknown, success: string, failed: string): Promise<boolean> {
   try {
     await api(path, { method, body: JSON.stringify(body) });
     window.dispatchEvent(new Event("nav-counts-mutated"));
