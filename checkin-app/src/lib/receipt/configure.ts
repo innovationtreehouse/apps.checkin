@@ -24,6 +24,7 @@ import {
 import { ingestReceipt } from "@checkin/workflow-mapping";
 import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg } from "@/lib/catalog/configure";
+import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 
 /**
@@ -50,8 +51,9 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
 }
 
 function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincipal {
-  const [firstName = "", ...rest] = name.trim().split(/\s+/);
-  return { id, name, firstName, lastName: rest.join(" "), isAdult };
+  const { given, surname } = parsePersonName(name);
+  const lastName = surname ? surname.particles + surname.core : "";
+  return { id, name, firstName: given, lastName, isAdult };
 }
 
 /**
