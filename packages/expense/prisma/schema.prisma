@@ -316,6 +316,9 @@ model LineItemOwnerApproval {
   decidedByUserId   Int?      @map("decided_by_user_id")
   /// @sensitivity:personal
   notes             String?
+  // Finance made the line's bucket final while settling an exception: no further exception is raised on it.
+  /// @sensitivity:internal
+  bucketFinal       Boolean   @default(false) @map("bucket_final")
 
   expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)

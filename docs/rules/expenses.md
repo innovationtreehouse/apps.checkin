@@ -112,6 +112,13 @@ Income and donation rules are in `revenue.md`.
   approves a line.
   [Decision — owner]
 
+- A bucket's approver may raise an exception on a line finance moved into their
+  bucket, until finance marks the line's bucket assignment final. After that,
+  no exception is raised on the line, and it still waits for its bucket's
+  approver or a Board member in their place. A final assignment is not an
+  approval. Making it final takes a note, which is recorded.
+  [Decision — owner]
+
 - A line's signatures are given in order: the submitter's confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it

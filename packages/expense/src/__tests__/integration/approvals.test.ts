@@ -162,6 +162,62 @@ describeDb("exceptions", () => {
   });
 });
 
+describeDb("the exception loop and a final bucket", () => {
+  const NEW_APPROVER = principal(4);
+
+  it("the new bucket's approver may raise another exception; finance moves the line again and its approver approves", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] } }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, id, approvalId, 101);
+
+    await raiseException(NEW_APPROVER, id, approvalId, "not ours either");
+    expect(await approval(approvalId)).toMatchObject({ status: "exception_raised", ownerId: 101 });
+    await financeAssign(FINANCE, id, approvalId, 100);
+    await approveLine(LEADER, id, approvalId);
+    expect(await state(id)).toBe("qb_pending");
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "exception_raised" } })).toBe(1);
+  });
+
+  it("making the bucket final takes a note, kept on the approval and audited", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] } }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await expect(financeAssign(FINANCE, id, approvalId, 101, true)).rejects.toMatchObject({ status: 400 });
+    await expect(financeAssign(FINANCE, id, approvalId, 101, true, "  ")).rejects.toMatchObject({ status: 400 });
+    expect(await approval(approvalId)).toMatchObject({ status: "exception_raised", bucketFinal: false });
+
+    await financeAssign(FINANCE, id, approvalId, 101, true, " Grant 12 pays for robotics kits ");
+
+    expect(await approval(approvalId)).toMatchObject({ status: "finance_assigned", ownerId: 101, bucketFinal: true, notes: "Grant 12 pays for robotics kits" });
+    const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "bucket_made_final" } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ userId: 3, valueAfter: "101", notes: "Grant 12 pays for robotics kits" });
+  });
+
+  it("no exception is raised on a final line; its approver approves it, or a Board member stands in", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, board: [5] }) });
+    const first = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, first.id, first.approvalId, 101, true, "budget line 4");
+    await expect(raiseException(NEW_APPROVER, first.id, first.approvalId, "still not ours")).rejects.toMatchObject({ status: 409 });
+    await expect(raiseException(FINANCE, first.id, first.approvalId, "x")).rejects.toMatchObject({ status: 409 });
+    expect(await approval(first.approvalId)).toMatchObject({ status: "finance_assigned" });
+    await approveLine(NEW_APPROVER, first.id, first.approvalId);
+    expect(await approval(first.approvalId)).toMatchObject({ status: "approved", decidedByUserId: 4 });
+
+    const second = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, second.id, second.approvalId, 101, true, "budget line 4");
+    await approveLine(BOARD, second.id, second.approvalId, "approver away");
+    expect(await approval(second.approvalId)).toMatchObject({ status: "approved", decidedByUserId: 5 });
+  });
+
+  it("a final assignment is not an approval: the expense waits for the bucket's approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] } }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, id, approvalId, 101, true, "budget line 4");
+    expect(await state(id)).toBe("owner_approval");
+    await expect(approveLine(FINANCE, id, approvalId)).rejects.toMatchObject({ status: 403 });
+  });
+});
+
 describeDb("assignOwner", () => {
   it("permanent assignment maps the part and assigns sibling lines in other expenses", async () => {
     const a = await lineInApproval(null);

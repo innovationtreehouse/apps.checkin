@@ -182,7 +182,10 @@ export const approve = approvalAction(
 );
 export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
-export const financeAssignOwner = approvalAction(ownerSchema, (p, e, a, b) => financeAssign(p, e, a, b.ownerId));
+export const financeAssignOwner = approvalAction(
+  ownerSchema.extend({ final: z.boolean().optional(), note: z.string().nullish() }),
+  (p, e, a, b) => financeAssign(p, e, a, b.ownerId, b.final ?? false, b.note),
+);
 export const assign = approvalAction(
   ownerSchema.extend({ permanent: z.boolean().optional() }),
   (p, e, a, b) => assignOwner(p, e, a, b.ownerId, b.permanent ?? false),

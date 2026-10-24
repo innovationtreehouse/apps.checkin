@@ -117,6 +117,7 @@ export const classifications = {
         decidedAt: 'internal',
         decidedByUserId: 'pii',
         notes: 'personal',
+        bucketFinal: 'internal',
     },
     AccountMapping: {
         id: 'internal',

@@ -34,7 +34,7 @@ export interface LineActionsInput {
   caller: LineActionsCaller;
   expense: LineActionsExpense;
   /** The line's bucket approval row; null when the line has none. */
-  approval: { status: string; ownerId: number | null } | null;
+  approval: { status: string; ownerId: number | null; bucketFinal?: boolean } | null;
   facts: SignoffFacts;
   filled: FilledSeat[];
   /** The line's unfilled seats, then the Board's approval when the expense needs it. */
@@ -83,7 +83,7 @@ function callerActs(input: LineActionsInput): LineAction[] {
   if (approval && !conflicted) {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
-    if (deciding && approval.status === "pending" && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
+    if (deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
       add("reject-exception", { noteRequired: true });
@@ -140,6 +140,7 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   if (expense.backfill) return ["Booked before the app; no sign-off"];
   if (CLOSED_STATES.has(expense.state)) return [];
   const out: string[] = [];
+  if (approval?.bucketFinal && APPROVABLE.has(approval.status)) out.push("Finance made this bucket final");
   if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
     const approver = facts.approvers.some((id) => id !== input.caller.id && approvesAsApprover(input, id));
     out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");

@@ -31,7 +31,7 @@ interface Case {
   state?: string;
   backfill?: boolean;
   reimburseeUnknown?: boolean;
-  approval?: { status: string; ownerId: number | null } | null;
+  approval?: { status: string; ownerId: number | null; bucketFinal?: boolean } | null;
   /** Who approved the line when its approval is `approved`; the bucket owner unless given. */
   approver?: number;
   boardApproval?: boolean;
@@ -71,8 +71,16 @@ describe("acts per role", () => {
     expect(acts({ caller: 2, ...APPROVED })).toEqual([]);
   });
 
-  it("an approver of the bucket finance moved the line to approves it", () => {
-    expect(acts({ caller: 2, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual(["*approve"]);
+  it("an approver of the bucket finance moved the line to approves it, or raises another exception", () => {
+    expect(acts({ caller: 2, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual(["*approve", "raise-exception"]);
+  });
+
+  it("on a line whose bucket finance made final, the approver's only act is Approve", () => {
+    const approval = { status: "finance_assigned", ownerId: 7, bucketFinal: true };
+    expect(acts({ caller: 2, approval })).toEqual(["*approve"]);
+    expect(acts({ caller: 3, approval })).toEqual([]);
+    expect(run({ caller: 2, approval }).awaiting).toContain("Finance made this bucket final");
+    expect(acts({ caller: 2, approval: { ...approval, status: "pending" } })).toEqual(["*approve"]);
   });
 
   it("FINANCE outside the bucket has no approve act, and signs as Treasurer only once the line is approved", () => {
@@ -98,6 +106,7 @@ describe("acts per role", () => {
     it("leaves a line with no main act, so it does not wait on the Board member, while a bucket approver can approve", () => {
       expect(primaries({ caller: 5 })).toEqual([]);
       expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual([]);
+      expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7, bucketFinal: true } })).toEqual([]);
       expect(primaries({ caller: 5, facts: { approvers: [2, 4], conflicted: [1, 2, 8] } })).toEqual([]);
     });
 
