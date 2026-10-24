@@ -8,6 +8,7 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 
@@ -228,7 +229,7 @@ export default function MembershipSettingsPage() {
                 rightSectionWidth={36}
                 inputMode="numeric"
                 w={200}
-                error={(!bgRecheckMonths || parseInt(bgRecheckMonths, 10) <= 0) ? "Required — not configured." : undefined}
+                error={!isRecheckPolicySet(parseInt(bgRecheckMonths, 10)) ? "Required — not configured." : undefined}
                 value={bgRecheckMonths}
                 onChange={(e) => setBgRecheckMonths(e.currentTarget.value)}
               />
@@ -245,11 +246,12 @@ export default function MembershipSettingsPage() {
               />
             </Group>
 
-            {(!bgRecheckMonths || parseInt(bgRecheckMonths, 10) <= 0) && (
+            {!isRecheckPolicySet(parseInt(bgRecheckMonths, 10)) && (
               <Alert color="red" variant="light" mt="md">
                 ⛔ Background-check interval is <strong>not set</strong>. Until the board enters the
-                policy value (in months), every renewal will be sent back for a fresh background
-                review. Enter the real Treehouse re-check interval above.
+                policy value (in months), every background check counts as expired: every renewal
+                is sent back for a fresh background review, and no one counts as a supervising
+                adult in the two-deep check. Enter the real Treehouse re-check interval above.
               </Alert>
             )}
 

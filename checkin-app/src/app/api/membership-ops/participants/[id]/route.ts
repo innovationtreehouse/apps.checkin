@@ -8,6 +8,7 @@ import { apiError, apiJson } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
@@ -17,9 +18,9 @@ import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
  */
 async function bgCoversComingYear(date: Date | null): Promise<{ fresh: boolean; boundary: Date | null }> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
-    const recheckMonths = settings?.bgRecheckMonths ?? 0;
+    const recheckMonths = settings?.bgRecheckMonths;
     const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    if (!date || !boundary || recheckMonths <= 0) return { fresh: false, boundary };
+    if (!date || !boundary || !isRecheckPolicySet(recheckMonths)) return { fresh: false, boundary };
     return { fresh: date.getTime() >= monthsBefore(boundary, recheckMonths).getTime(), boundary };
 }
 

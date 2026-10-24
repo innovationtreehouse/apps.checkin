@@ -56,7 +56,7 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
     const db = {
         // The facility advisory lock is a no-op against a fake client.
         $executeRaw: jest.fn().mockResolvedValue(0),
-        boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 }) },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)), bgRecheckMonths: 120 }) },
         visit: {
             findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),

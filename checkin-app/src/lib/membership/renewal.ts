@@ -7,6 +7,7 @@ import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, grantableRenewalWhere, handledThi
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { personActor, systemActor } from "@/lib/auditActor";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -85,7 +86,7 @@ export function bgValidUntilBoundary(
     lastBackgroundCheck: Date | null,
     settings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number },
 ): Date | null {
-    if (!lastBackgroundCheck || settings.bgRecheckMonths <= 0 || !settings.orgMembershipYearBoundary) {
+    if (!lastBackgroundCheck || !isRecheckPolicySet(settings.bgRecheckMonths) || !settings.orgMembershipYearBoundary) {
         return null;
     }
     const rawExpiry = monthsAfter(lastBackgroundCheck, settings.bgRecheckMonths);
@@ -276,7 +277,7 @@ export async function beginRenewal(processId: number, actorId: number) {
     // A still-valid background check ⇒ stamp bgClearedAt now: the external card
     // shows "no new background check needed" and the signature alone opens
     // payment. Reviewers are pinged by the advance, once consent is recorded.
-    const clearNow = await householdBgIsFresh(membership.householdId, boundary, settings?.bgRecheckMonths ?? 0);
+    const clearNow = await householdBgIsFresh(membership.householdId, boundary, settings?.bgRecheckMonths);
 
     const refusal = await prisma.$transaction(async (tx) => {
         const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
@@ -396,8 +397,8 @@ export async function beginRenewalForUser(userId: number) {
  * null boundary (no membership year configured) — means nothing counts as fresh; renewals
  * re-run review rather than measuring freshness against an invented boundary.
  */
-export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number): Promise<boolean> {
-    if (recheckMonths <= 0 || !boundary) return false;
+export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number | null | undefined): Promise<boolean> {
+    if (!isRecheckPolicySet(recheckMonths) || !boundary) return false;
     const threshold = monthsBefore(boundary, recheckMonths);
     const fresh = await prisma.person.findFirst({
         where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold }, ...LIVE_PERSON },
