@@ -2,6 +2,7 @@
  * Unsaved edits to a receipt on its detail page, and the writes that save them. Amounts are kept
  * as the dollar strings a person typed; the routes take dollars as numbers.
  */
+import { MAX_LINE_ITEMS } from "../lib/schemas";
 
 export interface ServerLine {
   id: number;
@@ -130,6 +131,14 @@ export function calculatedCents(lines: DraftLine[], header: Header): number | nu
   return (parts as number[]).reduce((a, b) => a + b, 0) - discount;
 }
 
+/**
+ * Whether one more line fits under the server's cap. Lines are added before removals are saved,
+ * so the saved lines count in full until then.
+ */
+export function canAddLine(r: ServerReceipt, draft: Draft): boolean {
+  return r.lineItems.length + draft.added.length < MAX_LINE_ITEMS;
+}
+
 /** Why the draft cannot be saved, or null when it can. */
 export function draftProblem(r: ServerReceipt, draft: Draft): string | null {
   const header = draftHeader(r, draft);
@@ -140,6 +149,7 @@ export function draftProblem(r: ServerReceipt, draft: Draft): string | null {
     return "Shipping, tax, discount and total must be dollar amounts.";
   }
   if (lines.length === 0) return "A receipt keeps at least one line.";
+  if (r.lineItems.length + draft.added.length > MAX_LINE_ITEMS) return `A receipt holds at most ${MAX_LINE_ITEMS} lines; save the removals first.`;
   if (lines.some((l) => !l.description.trim())) return "Every line needs a description.";
   if (lines.some((l) => parseQuantity(l.quantity) === null)) return "Every quantity must be a positive number.";
   if (lines.some((l) => parseCents(l.unitPrice) === null)) return "Every unit price must be a dollar amount.";

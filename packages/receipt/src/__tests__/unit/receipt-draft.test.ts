@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculatedCents,
+  canAddLine,
   draftHeader,
   draftLines,
   draftProblem,
@@ -101,6 +102,15 @@ describe("draftProblem", () => {
 
   it("refuses a receipt left with no lines", () => {
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, removed: [1, 2] })).toMatch(/at least one line/);
+  });
+
+  it("refuses more lines than the server holds, counting saved lines until removals save", () => {
+    const many = { ...receipt, lineItems: Array.from({ length: 199 }, (_, i) => line(i + 1, 1, 100)) };
+    const one = { ...EMPTY_LINE, key: 1, description: "Glue" };
+    expect(canAddLine(many, EMPTY_DRAFT)).toBe(true);
+    expect(canAddLine(many, { ...EMPTY_DRAFT, added: [one] })).toBe(false);
+    expect(draftProblem(many, { ...EMPTY_DRAFT, added: [one] })).toBeNull();
+    expect(draftProblem(many, { ...EMPTY_DRAFT, removed: [1], added: [one, { ...one, key: 2 }] })).toMatch(/at most 200/);
   });
 
   it("refuses a blank description or a bad quantity", () => {

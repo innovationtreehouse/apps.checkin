@@ -99,10 +99,58 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  it("saves part number, manufacturer, quantity and backordered on a line", async () => {
+    wrap();
+    type("Line 1 part number", "SC-8");
+    type("Line 1 manufacturer", "Fastco");
+    type("Line 1 quantity", "3");
+    fireEvent.click(screen.getByLabelText("Line 1 backordered"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledTimes(1));
+    expect(mockApi.mock.calls[0][0]).toBe("/r1/line-items/11");
+    expect(JSON.parse((mockApi.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      partNumber: "SC-8",
+      manufacturer: "Fastco",
+      quantity: 3,
+      isDelayed: true,
+    });
+  });
+
+  it("posts a new line once, however many times Save and resubmit is clicked", async () => {
+    let finish: (v: unknown) => void = () => {};
+    mockApi.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add line" }));
+    type("Line 3 description", "Glue");
+    const resubmit = screen.getByRole("button", { name: "Save and resubmit" });
+    fireEvent.click(resubmit);
+    fireEvent.click(resubmit);
+    finish({});
+    await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1));
+    expect(mockApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("is read-only once the receipt was sent to receiving", () => {
+    mockReceipt = { ...receipt, pushedAt: "2026-10-02T00:00:00Z" };
+    wrap();
+    expect(screen.queryByText("Correct the receipt")).not.toBeInTheDocument();
+  });
+
   it("is read-only once the receipt leaves the editable states", () => {
     mockReceipt = { ...receipt, state: "financial_review" };
     wrap();
     expect(screen.queryByText("Correct the receipt")).not.toBeInTheDocument();
     expect(screen.getByText("Screws")).toBeInTheDocument();
+  });
+});
+
+describe("reviewing an OCR-read receipt", () => {
+  it("saves the uploader's corrections, then confirms", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    wrap();
+    type("Retailer", "Acme Hardware");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed"));
+    expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ retailer: "Acme Hardware" }) });
   });
 });

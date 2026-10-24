@@ -1,7 +1,9 @@
 "use client";
 import { Button, Checkbox, Divider, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
+import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   calculatedCents,
+  canAddLine,
   draftHeader,
   EMPTY_LINE,
   lineCents,
@@ -119,7 +121,11 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
             </Table.Tbody>
           </Table>
         </Table.ScrollContainer>
-        <Button size="xs" variant="subtle" w="fit-content" onClick={addLine}>+ Add line</Button>
+        {canAddLine(receipt, draft) ? (
+          <Button size="xs" variant="subtle" w="fit-content" onClick={addLine}>+ Add line</Button>
+        ) : (
+          <Text size="xs" c="dimmed">A receipt holds at most {MAX_LINE_ITEMS} lines; save any removals to make room.</Text>
+        )}
 
         <Divider />
         <Stack gap={6} align="flex-end">

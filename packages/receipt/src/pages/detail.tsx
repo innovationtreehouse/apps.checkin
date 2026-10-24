@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -47,6 +47,9 @@ export default function ReceiptDetailPage() {
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
   const [note, setNote] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [saving, setSaving] = useState(false);
+  // A ref, not state: a second click in the same tick must see the first save already running.
+  const busy = useRef(false);
 
   const r = receipt.data;
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
@@ -71,7 +74,7 @@ export default function ReceiptDetailPage() {
       audit.reload();
     }
   };
-  const editing = EDITABLE.has(r.state) && (own || isFinance);
+  const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
@@ -99,14 +102,28 @@ export default function ReceiptDetailPage() {
     audit.reload();
     return true;
   };
-  const save = async () => {
-    if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
+  /** Runs `work` unless a save is already running, so a double click never posts a new line twice. */
+  const exclusive = async (work: () => Promise<void>) => {
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    try {
+      await work();
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
   };
+  const save = () =>
+    exclusive(async () => {
+      if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
+    });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
-  const afterSave = async (run: () => Promise<void>) => {
-    if (dirty && !(await saveDraft())) return;
-    await run();
-  };
+  const afterSave = (run: () => Promise<void>) =>
+    exclusive(async () => {
+      if (dirty && !(await saveDraft())) return;
+      await run();
+    });
 
   return (
     <Stack>
@@ -151,7 +168,7 @@ export default function ReceiptDetailPage() {
 
           {editing && (
             <Group gap="xs">
-              <Button size="xs" disabled={!dirty} onClick={() => void save()}>Save changes</Button>
+              <Button size="xs" disabled={!dirty} loading={saving} onClick={() => void save()}>Save changes</Button>
               {dirty && (
                 <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
@@ -161,7 +178,7 @@ export default function ReceiptDetailPage() {
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed"))}>Confirm</Button>
+                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed"))}>Confirm</Button>
                 {isAdult && !r.isInKind && (
                   <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
@@ -173,7 +190,7 @@ export default function ReceiptDetailPage() {
               <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
             )}
             {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", true))}>
+              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", true))}>
                 {dirty ? "Save and resubmit" : "Resubmit"}
               </Button>
             )}
