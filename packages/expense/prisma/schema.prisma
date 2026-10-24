@@ -193,6 +193,7 @@ model Expense {
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
   receiptReview      ExpenseReceiptReview?
+  taxApproval        ExpenseTaxApproval?
 
   @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
@@ -222,6 +223,25 @@ model ExpenseReceiptReview {
   expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 
   @@map("expense_receipt_reviews")
+}
+
+// Finance's approval of the expense's tax, for tax the receipt's finance review did not cover. It
+// covers the amount approved only. A sibling table, so routes returning Expense rows never carry the note.
+model ExpenseTaxApproval {
+  /// @sensitivity:internal
+  expenseId        String   @id @map("expense_id")
+  /// @sensitivity:internal
+  taxCents         Int      @map("tax_cents")
+  /// @sensitivity:pii
+  approvedByUserId Int      @map("approved_by_user_id")
+  /// @sensitivity:personal
+  note             String?
+  /// @sensitivity:internal
+  approvedAt       DateTime @default(now()) @map("approved_at")
+
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@map("expense_tax_approvals")
 }
 
 model ExpenseLineItem {
@@ -657,9 +677,8 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
-// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
-// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
+// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: one of FLAG_KINDS in
+// src/lib/flags.ts. audience: FINANCE | BOARD.
 model ExpenseFlag {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())
