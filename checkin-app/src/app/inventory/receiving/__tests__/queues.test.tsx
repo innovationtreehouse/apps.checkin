@@ -22,6 +22,8 @@ const mockLoads: Record<string, unknown> = {
   "/receipts?state=applying": [row(2, "applying", "Pushing Lumber")],
 };
 
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: true } } }) }));
+
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
   useLoad: (path: string) => ({ data: mockLoads[path] ?? [], error: null, reload: jest.fn() }),
