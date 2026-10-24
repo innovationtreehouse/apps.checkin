@@ -71,7 +71,11 @@ describe("View descriptions on the expense list", () => {
   it.each([
     ["all", "Every expense you can see, newest first. Open one to act on it."],
     ["assign_ownership", "Expenses with lines that have no owner yet. FINANCE assigns each line an owner."],
+    ["resolve_ownership", "Lines the submitter marked as owner unknown. FINANCE picks an owner for each."],
     ["owner_approval", "Lines waiting on their bucket's approval. The bucket owner or a treasurer approves each or raises an exception."],
+    ["owner_exception", "Lines an approver raised an exception on. FINANCE settles each one."],
+    ["capital_review", "Expenses at or over the capital thresholds. FINANCE decides which lines are capital assets."],
+    ["set_depreciation_cycle", "Capital expenses with no depreciation schedule yet. FINANCE sets the cycle and owner bucket."],
     ["qb_pending", "Signed-off expenses waiting for the app to post them to QuickBooks. Nobody needs to act."],
   ])("the %s view says what it lists and who acts", (view, description) => {
     renderList(`view=${view}`);
