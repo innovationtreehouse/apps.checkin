@@ -27,19 +27,20 @@ export const HOLD_FLAGS: ReadonlyMap<string, string> = new Map<FlagKind, string>
   ["REIMBURSEE_UNKNOWN", "Set the reimbursee to clear this flag"],
 ]);
 
-interface TaxReviewInput {
-  taxCents: number;
-  taxReviewRequired?: boolean;
-  financeReview?: { reasons: readonly string[]; taxCents?: number } | null;
+/** The expense's stored receipt review (ExpenseReceiptReview), or null when the receipt sent none. */
+export interface StoredReceiptReview {
+  taxReviewRequired: boolean | null;
+  reasons: readonly string[];
+  approvedTaxCents: number | null;
 }
 
 /**
  * Tax waits on finance when the receipt org's settings hold it for review and no receipt finance
- * approval covers that amount. A sender that does not say whether review applies is held.
+ * approval covers that amount. A receipt that did not say whether review applies is held.
  */
-export function taxNeedsFinance({ taxCents, taxReviewRequired, financeReview }: TaxReviewInput): boolean {
-  if (taxCents <= 0 || taxReviewRequired === false) return false;
-  return !(financeReview?.reasons.includes("tax") && financeReview.taxCents === taxCents);
+export function taxNeedsFinance(taxCents: number, review: StoredReceiptReview | null): boolean {
+  if (taxCents <= 0 || review?.taxReviewRequired === false) return false;
+  return !(review?.reasons.includes("tax") && review.approvedTaxCents === taxCents);
 }
 
 /**
@@ -47,7 +48,9 @@ export function taxNeedsFinance({ taxCents, taxReviewRequired, financeReview }: 
  * and NON_EVERYDAY are raised by hand.
  */
 export function detectIntakeFlags(
-  expense: TaxReviewInput & {
+  expense: {
+    taxCents: number;
+    receiptReview?: StoredReceiptReview | null;
     receiptTotalCents: number;
     lineItems: { unitPriceCents: number; totalPriceCents: number }[];
     needsReimbursement?: boolean;
@@ -57,7 +60,7 @@ export function detectIntakeFlags(
   settings: Pick<ExpenseSettings, "boardReviewTotalCents" | "capitalEquipmentUnitCents">,
 ): FlagKind[] {
   const flags: FlagKind[] = [];
-  if (taxNeedsFinance(expense)) flags.push("TAX_ATTACHED");
+  if (taxNeedsFinance(expense.taxCents, expense.receiptReview ?? null)) flags.push("TAX_ATTACHED");
   // The Board-review total is the receipt's total, never a single line's.
   if (expense.receiptTotalCents >= settings.boardReviewTotalCents) flags.push("THRESHOLD_CROSSED");
   if (expense.lineItems.some((li) => li.unitPriceCents >= settings.capitalEquipmentUnitCents)) flags.push("CAPITAL_EQUIPMENT");

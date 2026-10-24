@@ -5,7 +5,7 @@ import { assertOrg, getExpenseRuntime } from "../../runtime";
 import { inertOutbound, inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
-import { detectIntakeFlags, FLAG_AUDIENCE, taxNeedsFinance } from "../../lib/flags";
+import { detectIntakeFlags, FLAG_AUDIENCE, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
 describe("callerId", () => {
@@ -77,33 +77,37 @@ describe("flags", () => {
 });
 
 describe("tax waits on finance", () => {
-  const approved = (taxCents: number, reasons = ["tax"]) => ({ reasons, taxCents });
+  const review = (over: Partial<StoredReceiptReview> = {}): StoredReceiptReview => ({
+    taxReviewRequired: true,
+    reasons: ["tax"],
+    approvedTaxCents: 125,
+    ...over,
+  });
 
   it("not when receipt finance review approved that tax", () => {
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: approved(125) })).toBe(false);
+    expect(taxNeedsFinance(125, review())).toBe(false);
   });
 
   it("never when the receipt org's settings do not hold tax for review", () => {
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: false })).toBe(false);
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: false, financeReview: null })).toBe(false);
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: false, reasons: [], approvedTaxCents: null }))).toBe(false);
   });
 
   it("when the tax differs from the amount finance approved", () => {
-    expect(taxNeedsFinance({ taxCents: 150, taxReviewRequired: true, financeReview: approved(125) })).toBe(true);
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: { reasons: ["tax"] } })).toBe(true);
+    expect(taxNeedsFinance(150, review())).toBe(true);
+    expect(taxNeedsFinance(125, review({ approvedTaxCents: null }))).toBe(true);
   });
 
   it("when review applies and no approval covers tax", () => {
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true })).toBe(true);
-    expect(taxNeedsFinance({ taxCents: 125, taxReviewRequired: true, financeReview: approved(125, ["old_date"]) })).toBe(true);
+    expect(taxNeedsFinance(125, review({ reasons: [], approvedTaxCents: null }))).toBe(true);
+    expect(taxNeedsFinance(125, review({ reasons: ["old_date"] }))).toBe(true);
   });
 
-  it("when the sender does not say whether review applies, unless finance approved that tax", () => {
-    expect(taxNeedsFinance({ taxCents: 125 })).toBe(true);
-    expect(taxNeedsFinance({ taxCents: 125, financeReview: approved(125) })).toBe(false);
+  it("when the receipt did not say whether review applies, unless finance approved that tax", () => {
+    expect(taxNeedsFinance(125, null)).toBe(true);
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: null }))).toBe(false);
   });
 
   it("never on a receipt with no tax", () => {
-    expect(taxNeedsFinance({ taxCents: 0, taxReviewRequired: true })).toBe(false);
+    expect(taxNeedsFinance(0, review({ reasons: [], approvedTaxCents: null }))).toBe(false);
   });
 });

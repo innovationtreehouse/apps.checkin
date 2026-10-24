@@ -4,7 +4,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { FLAG_AUDIENCE, HOLD_FLAGS, type FlagAudience, type FlagKind } from "../lib/flags";
+import { FLAG_AUDIENCE, HOLD_FLAGS, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
@@ -19,6 +19,15 @@ export async function raiseFlag(expenseId: string, kind: FlagKind, detail: strin
   const reopen = await client.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
   if (reopen.count > 0) return;
   await client.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
+}
+
+/** Whether the stored expense's tax still waits on finance, from its stored receipt review. */
+export async function storedTaxNeedsFinance(expenseId: string, client: Db = db): Promise<boolean> {
+  const { taxCents, receiptReview } = await client.expense.findUniqueOrThrow({
+    where: { id: expenseId },
+    select: { taxCents: true, receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } } },
+  });
+  return taxNeedsFinance(taxCents, receiptReview);
 }
 
 function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {
