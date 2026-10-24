@@ -73,8 +73,14 @@ describe("associateGtin GTIN check", () => {
   });
 
   it("502 when the catalog read fails, never treating it as not found", async () => {
-    getActiveItem.mockRejectedValue(new Error("catalog down"));
-    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 502 });
+    getActiveItem.mockRejectedValue(new Error("CatalogReader.getActiveItem not wired"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({
+      status: 502,
+      message: "The catalog couldn't be reached; try again",
+    });
+    expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "CatalogReader.getActiveItem not wired" }));
+    logged.mockRestore();
     expect(updateEditableLine).not.toHaveBeenCalled();
   });
 

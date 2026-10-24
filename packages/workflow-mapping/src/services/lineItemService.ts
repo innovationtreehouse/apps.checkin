@@ -35,12 +35,13 @@ export function normalizeDescription(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Run a catalog call; any failure surfaces as 502. */
+/** Run a catalog call; any failure is logged and surfaces as a plain 502. */
 async function viaCatalog<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    throw httpError(502, err instanceof Error ? err.message : "Catalog call failed");
+    console.error("[workflow-mapping] catalog call failed", err);
+    throw httpError(502, "The catalog couldn't be reached; try again");
   }
 }
 
