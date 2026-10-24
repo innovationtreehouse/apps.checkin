@@ -73,7 +73,7 @@ adds are marked as proposed.
 | --- | --- | --- |
 | Spending sign-off is governed by Financial Policy Arts. IX and XII and Procurement Policy Art. IV | **Policy** | Unchanged. Every line below cites it, so check each change against the policy on Drive |
 | A conflicted person may not approve a line, raise an exception, sign any seat, or record Board authorization | Procedure, `[Decision — Policy: Ethics Policy Art. III §III.5]` | Text unchanged. Approving also takes the seat's refusals, so it gets stricter (C′.2) |
-| Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. Open question 2 asks you to confirm §IX.3 allows the card-charge case |
+| Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. The line splits in two: reimbursements keep the §IX.3 citation, which covers reimbursements only, and card charges become `[Decision — owner]` |
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says the approval is the program approver's sign-off |
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. A FINANCE override is an approval, so it counts (open question 3, decided by C′) |
 | When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes in wording**: the Board member approves the line. Reworded below |
@@ -86,10 +86,10 @@ No Policy-tier line changes. Four Procedure lines that cite a policy are
 touched. The conflict line, the three-signatures line and the
 Treasurer-conflict line keep their substance; approving gets stricter. The
 non-member line changes the app's reading of Financial Policy Art. IX §IX.2, as
-you decided, and keeps its citation. The three-signatures line also drops the
-submitter's signature from card charges, as you decided; it cites Financial
-Policy Art. IX §IX.3, so open question 2 asks you to confirm that article's
-wording allows it.
+you decided, and keeps its citation. The three-signatures line splits in two.
+Financial Policy Art. IX §IX.3 covers reimbursements only, so the
+reimbursement line keeps that citation, and the card-charge line, which takes no
+submitter signature, is your decision and cites no policy.
 
 #2483 proposes corrections to the same section: the program approver is "an
 owner or treasurer of the line's bucket", and the Board stand-in wording. This
@@ -446,11 +446,18 @@ from your decisions; the last two wait on open questions 2 and 5:
   card charge is not a reimbursement. *(replaces the existing line; keeps*
   `[Decision — Policy: Financial Policy, Art. IX §IX.2]`*)*
 - A reimbursement reaches the books only once each of its lines is signed by
-  the submitter, a program approver, and the Treasurer. A card charge reaches
-  them once each line is signed by a program approver and the Treasurer. Every
-  signer is a different person from a different household. *(replaces the
-  three-signatures line; keeps* `[Decision — Policy: Financial Policy, Art. IX §IX.3]`*;
-  your decision, waiting on your confirmation in open question 2)*
+  the submitter, by confirming the receipt; by a program approver, who is an
+  owner or treasurer of the line's bucket, or, for a line outside a
+  Board-approved program budget (an org-level bucket), a Board member without a
+  conflict who is not the Treasurer; and by the Treasurer. Every signer is a
+  different person from a different household. *(replaces the
+  three-signatures line for reimbursements)*
+  `[Decision — Policy: Financial Policy, Art. IX §IX.3]`
+- A card charge reaches the books only once each of its lines is signed by a
+  program approver, chosen as for a reimbursement, and the Treasurer, two
+  different people from different households. The submitter does not sign a
+  card charge. *(replaces the three-signatures line for card charges; the
+  policy does not address card charges)* `[Decision — owner]`
 - The submitter signs a reimbursement by confirming its receipt as read, its
   lines and amounts, before the receipt goes to finance, whatever the intake
   path. Submitting the receipt is not the signature. Finance may correct a card
@@ -502,8 +509,7 @@ Each PR is based on `main`, not stacked.
    share one helper.
 7. **Submitter seat PR** (#2432): the confirmation on the reimbursement
    review screen, carried to expense; the seat recorded at expense creation; no
-   submitter seat on card-charge lines; the rule edits. The rule edit to the
-   three-signatures line waits on open question 2.
+   submitter seat on card-charge lines; the rule edits.
 8. **Override rule** (3.17): the rule text, in step 3's PR or on its own. Code
    changes beyond step 3's Treasurer refusal only if you retire it instead.
 
@@ -530,12 +536,10 @@ Each PR is based on `main`, not stacked.
    for any line plus a later Board member's approval (C′.6).
 2. **The submitter's seat.** *Decided:* a reimbursement's submitter signs by
    confirming the receipt as read, every time; a card charge takes no submitter
-   signature (§3). Two questions remain:
-   - Does the wording of Financial Policy Art. IX §IX.3 allow a card charge to
-     reach the books without the submitter's signature? The rule line cites
-     that article, so please confirm against the policy on Drive.
-   - If finance changes a reimbursement's amounts after the submitter
-     confirmed, must the submitter confirm again?
+   signature (§3). Financial Policy Art. IX §IX.3 covers reimbursements only,
+   so it allows the card-charge case; that rule is your decision. One question
+   remains: if finance changes a reimbursement's amounts after the submitter
+   confirmed, must the submitter confirm again?
 3. **The override and the Treasurer seat.** *Settled by C′:* an override is an
    approval, so the finance holder who gives it is barred from the Treasurer
    seat on that line, as any approver is. Do you accept that finance may stand
