@@ -277,7 +277,6 @@ export interface ReimbursementStatus {
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
   capitalLineItemThresholdCents: number;
-  capitalEquipmentUnitCents: number;
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
