@@ -266,7 +266,6 @@ The expense detail page gains what the receipt detail page has had since #2447:
 
   | Action | Note |
   | --- | --- |
-  | Approve a line outside one's own buckets (FINANCE override) | Required. The approvals response says per row whether the caller's approval is an override, so the page knows before Confirm |
   | Raise exception, reject exception | Required |
   | Record Board authorization | Required (it is the authorization text) |
   | Mark a review reviewed or handled (the three kept kinds) | Required (decided): each is a finance to-do, and the note says what finance did. The server refuses a blank one |
@@ -368,7 +367,6 @@ one app, a receipt that failed to become an expense is an Expenses-tab row, and
 | `POST /api/expense/flags/[id]/check-off` | Kept; called from the expense page's Reviews panel. The service refuses the retired kinds and a blank note |
 | `GET /api/expense/expense-holds` | Removed with the holds page. Set account and Resubmit stay and are called from the expense page |
 | `GET /api/expense/finance-queue?tab=…`, `GET /api/expense/finance-queue/counts` | New; `finance-or-board`. Rows are a synthetic `FinanceQueueRow` (vendor, date, amount, currency, reason codes, waiting since, expense id for the link) |
-| `GET /api/expense/expenses/[id]/line-item-approvals` | Gains `overrideRequired` per row |
 | `GET /api/expense/expenses/[id]` | Gains `reasons` (the open queue reasons) and the three review kinds in place of `flags` |
 | Expense nav counts (`expenseOpsCounts`, served through `/api/nav/todo-counts`) | `holds` and `openFlags` go when the nav pill moves to the new counts, in step 5 |
 | `GET /api/expense/counts` (`ExpenseCounts`) | Its `expense_holds` field goes once nothing reads it. Removing one field is not a whole-entry removal, so it needs its own boundary PR (step 7) |
@@ -376,8 +374,8 @@ one app, a receipt that failed to become an expense is an Expenses-tab row, and
 Every registry change ships in its own PR, before the route PR, on `main` and
 not stacked (AGENTS.md, "Boundary isolation rule"). The new routes need a
 registry PR with the `FinanceQueueRow` synthetic classification before the
-feature PR that mounts them. The shape changes to the detail and approvals
-responses need their new fields classified in the same boundary PR. Removing the
+feature PR that mounts them. The shape change to the detail response needs
+its new field classified in the same boundary PR. Removing the
 two GET routes is a decommission: the registry entries go with the route files,
 under the decommission exception, once nothing calls them.
 
@@ -436,8 +434,7 @@ Each PR is based on `main`. None is stacked on another's branch.
    expense, with #2479 storing the approved tax amount and
    `taxReviewRequired`), #2465.
 2. **Registry PR A** (boundary only): `finance-queue` and `finance-queue/counts`
-   entries, `FinanceQueueRow`, and the new `reasons` and `overrideRequired`
-   fields.
+   entries, `FinanceQueueRow`, and the new `reasons` field.
 3. **Expense detail PR** (3.1, 3.4, 3.9, 3.10, 3.12, 3.16): the derived-reason
    service, the reasons alert and field marks, the Reviews panel, required notes,
    return to the queue, and Retry and Set reimbursee clearing their reasons.
@@ -545,7 +542,7 @@ session correcting #2224 should know.
 | 3.9 | QB flag and its fix apart; retry doesn't close it | Exhausted posts are derived from `qbMatchState`; Retry clears it (§2, §4) | step 3 |
 | 3.10 | `REIMBURSEE_UNKNOWN` can't be checked off; fix elsewhere | Derived reason; Set reimbursee clears it in place (§2) | step 3 |
 | 3.12 | Page reloads in place after the last decision | Returns to the queue tab it came from (§4) | step 3 |
-| 3.16 | Override comment required only on the server | `overrideRequired` per row; required mark; Confirm disabled while blank (§4) | steps 2, 3 |
+| 3.16 | Override comment required only on the server | There is no FINANCE override (decided on #2503). Raise exception and reject exception show a required mark, with Confirm disabled while blank (§4) | step 3 |
 | 3.20 | Set account on no-match lines does nothing | Processor honours a manual account on every hold reason (§5) | step 4 |
 | 3.21 | Holds lost lookup context and rule list; raw reason | Plain reasons, lookup context, matched rules listed (§5) | step 4 |
 | 3.22 | Resubmit not disabled while a line lacks an account | Disabled with the reason shown (§5) | step 4 |
