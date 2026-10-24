@@ -43,7 +43,6 @@ const ROUTES: Route[] = [
   ["POST", `${E}/line-items/0/signoffs`, "signoff", {}],
   ["GET", "/api/expense/queue?view=all", "approver"],
   ["GET", "/api/expense/counts", "approver"],
-  ["GET", "/api/expense/expense-holds", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping/catalog", "financeOrBoard"],
   ["GET", "/api/expense/qb-accounts", "financeOrBoard"],
@@ -56,7 +55,6 @@ const ROUTES: Route[] = [
   ["GET", "/api/expense/qb-exclusions", "financeOrBoard"],
   ["GET", "/api/expense/org-settings", "financeOrBoard"],
   ["PUT", "/api/expense/org-settings", "financeOrBoard", { unknownField: 1 }],
-  ["GET", "/api/expense/flags", "financeOrBoard"],
   ["POST", "/api/expense/flags/0/check-off", "financeOrBoard", {}],
   ["POST", `${E}/line-item-approvals/0/reject`, "finance", {}],
   ["POST", `${E}/line-item-approvals/0/assign-owner`, "finance", {}],
@@ -246,17 +244,18 @@ describe("expense — FINANCE journey", () => {
     expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "approved" });
 
     // Holds: set an account on the held line, then resubmit.
-    const holds = await api<{ expenseId: string; lineItemId: number }[]>(f, "/api/expense/expense-holds");
-    const hold = holds.json.find((h) => h.expenseId === HELD_EXPENSE)!;
+    const held = await api<{ Expense: { holds: { lineItemId: number }[] } }>(f, `/api/expense/expenses/${HELD_EXPENSE}`);
+    const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
     expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
     // Flags: the reimbursee flag stays open while the hold applies; the tax flag checks off.
-    const flags = await api<{ id: number; kind: string; expenseId: string }[]>(f, "/api/expense/flags");
-    const unknown = flags.json.find((x) => x.kind === "REIMBURSEE_UNKNOWN")!;
-    const tax = flags.json.find((x) => x.kind === "TAX_ATTACHED")!;
+    type Flagged = { Expense: { flags: { id: number; kind: string; checkedOffAt: string | null }[] } };
+    const flagsOf = async (id: string) => (await api<Flagged>(f, `/api/expense/expenses/${id}`)).json.Expense.flags;
+    const unknown = (await flagsOf(REIMBURSEMENT_EXPENSE)).find((x) => x.kind === "REIMBURSEE_UNKNOWN")!;
+    const tax = (await flagsOf(HELD_EXPENSE)).find((x) => x.kind === "TAX_ATTACHED")!;
     expect((await send(f, "POST", `/api/expense/flags/${unknown.id}/check-off`, {})).status).toBe(409);
     expect((await send(f, "POST", `/api/expense/flags/${tax.id}/check-off`, { notes: "seen" })).status).toBe(200);
 
@@ -270,15 +269,15 @@ describe("expense — FINANCE journey", () => {
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });
     expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
-    const open = await api<{ kind: string }[]>(f, "/api/expense/flags");
-    expect(open.json.some((x) => x.kind === "REIMBURSEE_UNKNOWN")).toBe(false);
+    const open = await flagsOf(REIMBURSEMENT_EXPENSE);
+    expect(open.some((x) => x.kind === "REIMBURSEE_UNKNOWN" && x.checkedOffAt === null)).toBe(false);
 
     // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
-    const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
+    const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
     expect(candidates.status).toBe(200);
     expect(candidates.json).toEqual([]);
   });

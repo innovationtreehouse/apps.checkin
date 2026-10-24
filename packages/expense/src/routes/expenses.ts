@@ -117,11 +117,8 @@ export const counts: ExpenseRouteHandler = async () => {
   const base = scopedExpenses(await getOrgId(), scope);
   const n = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { AND: [base, where] } });
   const views = QUEUE_VIEWS.filter((v) => v !== "all");
-  const [values, holds] = await Promise.all([
-    Promise.all(views.map((v) => n(viewWhere(v, scope)))),
-    n({ holds: { some: { status: "PENDING" } } }),
-  ]);
-  return { ExpenseCounts: { ...Object.fromEntries(views.map((v, i) => [v, values[i]])), expense_holds: holds } };
+  const values = await Promise.all(views.map((v) => n(viewWhere(v, scope))));
+  return { ExpenseCounts: Object.fromEntries(views.map((v, i) => [v, values[i]])) };
 };
 
 export const detail: ExpenseRouteHandler = async ({ params }) => {
