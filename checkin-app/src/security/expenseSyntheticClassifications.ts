@@ -115,6 +115,7 @@ export const classifications = {
     tab: "internal",
     actionable: "internal",
     amountCents: "internal",
+    count: "internal",
     detail: "personal",
   },
 } as const;

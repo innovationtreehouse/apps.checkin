@@ -144,6 +144,7 @@ describe('expense detail reasons', () => {
         tab: 'quickbooks',
         actionable: true,
         amountCents: null,
+        count: 1,
         detail: 'Vendor Pat Doe is inactive',
     };
     const FULL: readonly Token[] = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'];
