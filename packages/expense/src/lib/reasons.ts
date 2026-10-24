@@ -18,6 +18,7 @@ export type ReasonCode =
   | "QB_POST_FAILED"
   | "QB_AWAITING_MATCH"
   | "QB_VENDOR_MISSING"
+  | "QB_NO_CLASS"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -60,6 +61,11 @@ export interface ReasonFacts {
   signerHeld: boolean;
   /** The error of the post that used up the retries. */
   lastPostError: string | null;
+  /**
+   * An outboxed expense the drain stops because a line's bucket has no QuickBooks Class: that
+   * bucket's name, or null for a line with no bucket. Undefined when nothing stops it for a Class.
+   */
+  missingClass?: { bucketName: string | null };
   /** Whether the reimbursee has a linked QuickBooks Vendor; null when there is no reimbursee. */
   reimburseeVendorLinked: boolean | null;
   openReviews: { kind: ReviewKind; detail: string | null }[];
@@ -103,6 +109,7 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
     if (e.qbMatchState === "AMBIGUOUS") {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
+    if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 

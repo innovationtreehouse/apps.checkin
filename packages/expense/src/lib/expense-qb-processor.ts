@@ -9,7 +9,6 @@ import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
-import { closeAnsweredFlag } from "../services/flagService";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -175,6 +174,11 @@ async function resolveAccountsForExpense(
   const conflicts: ConflictItem[] = [];
 
   for (const li of lineItems) {
+    // An account finance set by hand on a held line wins over every rule, whatever the hold reason.
+    if (li.manualQbAccount) {
+      resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
+      continue;
+    }
     if (!resolvesThroughCatalog(li)) continue;
 
     const info = itemInfoByItemId.get(li.id);
@@ -201,13 +205,9 @@ async function resolveAccountsForExpense(
 
   if (conflicts.length === 0) {
     for (const li of lineItems) {
-      if (resolvesThroughCatalog(li)) continue;
-      if (li.manualQbAccount) {
-        resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
-      } else {
-        const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
-        conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
-      }
+      if (resolvesThroughCatalog(li) || li.manualQbAccount) continue;
+      const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
+      conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
     }
   }
 
@@ -521,7 +521,6 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     return true;
   });
   if (!rearmed) return false;
-  const outcome = await postExpenseToQb(orgId, expenseId);
-  if (outcome === "posted" || outcome === "matched") await closeAnsweredFlag(db, expenseId, "QB_POST_FAILED", actor, "retry posted");
+  await postExpenseToQb(orgId, expenseId);
   return true;
 }

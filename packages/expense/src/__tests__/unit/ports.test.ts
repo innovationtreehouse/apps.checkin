@@ -5,7 +5,7 @@ import { assertOrg, getExpenseRuntime } from "../../runtime";
 import { inertOutbound, inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
-import { detectIntakeFlags, FLAG_AUDIENCE, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
+import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
 describe("callerId", () => {
@@ -57,22 +57,11 @@ describe("X12 reimbursementStatus", () => {
 });
 
 describe("flags", () => {
-  const LIMITS = { boardReviewTotalCents: 200_000, capitalEquipmentUnitCents: 50_000 };
-  const line = (unitPriceCents: number, totalPriceCents = unitPriceCents) => ({ unitPriceCents, totalPriceCents });
-
-  it("raises tax, $2,000 review and $500 equipment flags; threshold and COI go to the board", () => {
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual([]);
-    const reimbursement = { taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)], needsReimbursement: true };
-    expect(detectIntakeFlags(reimbursement, LIMITS)).toEqual(["REIMBURSEE_UNKNOWN"]);
-    expect(detectIntakeFlags({ ...reimbursement, reimburseePersonId: 9 }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ ...reimbursement, backfill: true }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ taxCents: 1, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual(["TAX_ATTACHED"]);
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 199_999, lineItems: [line(49_999)] }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 200_000, lineItems: [line(100)] }, LIMITS)).toEqual(["THRESHOLD_CROSSED"]);
-    // A line's total does not cross the Board-review total; only the receipt's does.
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
-    expect(FLAG_AUDIENCE.COI).toBe("BOARD");
-    expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
+  it("keeps three finance review kinds and retires the rest", () => {
+    expect(FLAG_KINDS).toEqual(["QB_DUPLICATE_TO_VOID", "QB_DRIFT", "QB_POST_HELD"]);
+    expect(Object.values(FLAG_AUDIENCE)).toEqual(["FINANCE", "FINANCE", "FINANCE"]);
+    expect(isFlagKind("QB_DRIFT")).toBe(true);
+    for (const kind of RETIRED_FLAG_KINDS) expect(isFlagKind(kind)).toBe(false);
   });
 });
 

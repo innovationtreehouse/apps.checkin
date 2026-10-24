@@ -140,12 +140,12 @@ describeDb("flags are checked off independently", () => {
   it("a party to the expense, or their household, cannot check off its flags", async () => {
     bindPorts({ signoff: directory({ households: [[1, 6]] }) });
     const id = await seedExpense({ submitterId: 1 });
-    await raiseFlag(id, "COI", "conflict");
+    await raiseFlag(id, "QB_DRIFT", "amount");
     const flag = (await db.expenseFlag.findFirst({ where: { expenseId: id } }))!;
 
-    await expect(checkOffFlag(principal(1, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
-    await expect(checkOffFlag(principal(6, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
-    await checkOffFlag(BOARD, flag.id);
+    await expect(checkOffFlag(principal(1, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
+    await expect(checkOffFlag(principal(6, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
+    await checkOffFlag(FINANCE, flag.id, "seen");
   });
 });
 

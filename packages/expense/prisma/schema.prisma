@@ -678,8 +678,8 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: one of FLAG_KINDS in
-// src/lib/flags.ts. audience: FINANCE | BOARD.
+// A finance review: a judgment no other decision records, checked off with a note. kind:
+// QB_DUPLICATE_TO_VOID | QB_DRIFT | QB_POST_HELD; rows of retired kinds stay checked off. audience: FINANCE.
 model ExpenseFlag {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())

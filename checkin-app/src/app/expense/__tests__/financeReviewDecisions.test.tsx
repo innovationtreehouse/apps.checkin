@@ -114,10 +114,10 @@ describe("the Reviews panel", () => {
     expect(screen.getByRole("row", { name: "amount $10.00 $15.00" })).toBeInTheDocument();
   });
 
-  it("names a duplicate to void and a closed expense never posted, and hides other flags", () => {
+  it("names a duplicate to void and a closed expense never posted, and hides a retired kind", () => {
     load(expense({
       flags: [
-        { id: 1, kind: "QB_POST_FAILED", audience: "FINANCE", detail: "the entry posted for this expense needs voiding", checkedOffAt: null },
+        { id: 1, kind: "QB_DUPLICATE_TO_VOID", audience: "FINANCE", detail: "the entry posted for this expense needs voiding", checkedOffAt: null },
         { id: 2, kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted: a line is missing a sign-off seat", checkedOffAt: null },
         { id: 3, kind: "QB_POST_FAILED", audience: "FINANCE", detail: "Account is inactive", checkedOffAt: null },
       ],

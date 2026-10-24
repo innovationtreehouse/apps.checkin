@@ -75,6 +75,13 @@ describe("deriveReasons", () => {
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }, reimburseeVendorLinked: true }))).toEqual(["QB_AWAITING_MATCH"]);
   });
 
+  it("reads a bucket with no QuickBooks Class as a QuickBooks reason naming the bucket", () => {
+    expect(deriveReasons(facts({ missingClass: { bucketName: "Facility" } }))).toEqual([
+      { code: "QB_NO_CLASS", tab: "qb", amountCents: null, count: null, detail: "Facility" },
+    ]);
+    expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
+  });
+
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
     const closed = facts({
       expense: { state: "qb_complete", qbMatchState: "NEEDS_FINANCE", taxCents: 100, needsReimbursement: true },
@@ -105,34 +112,9 @@ describe("deriveReasons", () => {
 });
 
 describe("reviewKindOf", () => {
-  it("names the three reviews, and a QB_POST_FAILED only when its entry needs voiding", () => {
-    for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind, detail: null })).toBe(kind);
-    expect(reviewKindOf({ kind: "QB_POST_FAILED", detail: "x; the entry posted for this expense needs voiding" })).toBe("QB_DUPLICATE_TO_VOID");
-    expect(reviewKindOf({ kind: "QB_POST_FAILED", detail: "Account is inactive" })).toBeNull();
-    expect(reviewKindOf({ kind: "TAX_ATTACHED", detail: null })).toBeNull();
-  });
-});
-
-describe("reasonText", () => {
-  const r = (over: Partial<QueueReason>): QueueReason => ({ code: "CAPITAL_REVIEW", tab: "expenses", actionable: true, amountCents: null, count: null, detail: null, ...over });
-
-  it("words each reason without a code or id", () => {
-    expect(reasonText(r({ code: "TAX_NOT_REVIEWED", amountCents: 1240 }), "USD")).toBe("Tax $12.40 not reviewed on the receipt");
-    expect(reasonText(r({ code: "BOARD_APPROVAL", amountCents: 234_000 }), "USD")).toBe("Board approval of a $2,340.00 purchase not recorded");
-    expect(reasonText(r({ code: "QB_POST_FAILED", count: 5, detail: "Account is inactive" }), "USD")).toBe("Posting failed 5 times: Account is inactive");
-    expect(reasonText(r({ code: "QB_DRIFT", detail: "amount, accounts" }), "USD")).toBe("Changed in QuickBooks after posting: amount, account");
-    expect(reasonText(r({ code: "QB_POST_HELD", detail: "closed but not posted: a line is missing a sign-off seat" }), "USD"))
-      .toBe("Closed but not posted: a line is missing a sign-off seat");
-    expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 1 }), "USD")).toBe("1 line has no account rule");
-    expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
-  });
-});
-
-describe("backToQueue", () => {
-  it("returns to the queue only when the page came from one and nothing is left for the viewer", () => {
-    expect(backToQueue("/finance/review?queue=qb", false)).toBe("/finance/review?queue=qb");
-    expect(backToQueue("/finance/review?queue=qb", true)).toBeNull();
-    expect(backToQueue(undefined, false)).toBeNull();
-    expect(backToQueue(null, false)).toBeNull();
+  it("names the three reviews, and nothing for a retired kind", () => {
+    for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind })).toBe(kind);
+    expect(reviewKindOf({ kind: "QB_POST_FAILED" })).toBeNull();
+    expect(reviewKindOf({ kind: "TAX_ATTACHED" })).toBeNull();
   });
 });

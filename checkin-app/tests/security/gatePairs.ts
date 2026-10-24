@@ -9,7 +9,7 @@ import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { PAGES } from '@/components/pageRegistry';
 import type { NavSection } from '@/lib/nav/types';
 import { linkGate } from '@/lib/nav/gates';
-import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
+import { FINANCE } from '@/lib/nav/sections/finance';
 import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
 import { canSeeCatalog, canSubmitReceipts } from '@/lib/volunteer';
@@ -146,7 +146,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
-    { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
+    { name: 'Finance section', client: (u) => FINANCE.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
     { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
@@ -159,12 +159,12 @@ export const GATE_PAIRS: GatePair[] = [
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),
         token: 'expense-approver',
-        // FINANCE and BOARD approve from Expense Ops, not Programs I Lead.
+        // FINANCE and BOARD approve from Finance, not Programs I Lead.
         differsFor: ['board', 'finance'],
     },
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
     { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
-    { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
+    { name: 'page /finance/review', client: page('/finance/review'), token: 'finance-or-board' },
     { name: 'counts:receipt', client: counts('receipt'), token: 'receipt-submitter' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },

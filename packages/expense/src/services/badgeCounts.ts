@@ -1,6 +1,6 @@
-// Counts for the host's nav pills: Expense Ops (holds + open flags), "Expense approvals" (lines
-// awaiting the caller's approval, the program approver's sign-off), and each expense list view's
-// items the caller can act on. Each reads only the caller's own scope.
+// Counts for the host's nav pills: "Expense approvals" (lines awaiting the caller's approval, the
+// program approver's sign-off) and each expense list view's items the caller can act on. The
+// finance queue counts itself (financeQueueService). Each reads only the caller's own scope.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
@@ -10,21 +10,7 @@ import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
 import { approvalRefusal, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
-import { listOpenFlags } from "./flagService";
 import { APPROVABLE_STATUSES } from "./approvalService";
-
-/**
- * Expenses with a pending account hold, for FINANCE only (only FINANCE sets the account and
- * resubmits), and flags open to the caller's audience (FINANCE, Board).
- */
-export async function expenseOpsCounts(principal: ExpensePrincipal): Promise<{ holds: number; openFlags: number }> {
-  if (!principal.isFinance && !principal.isBoard) return { holds: 0, openFlags: 0 };
-  const [holds, flags] = await Promise.all([
-    principal.isFinance ? db.expense.count({ where: { orgId: await getOrgId(), holds: { some: { status: "PENDING" } } } }) : 0,
-    listOpenFlags(principal),
-  ]);
-  return { holds, openFlags: flags.length };
-}
 
 /** The most open expenses one badge poll examines, so a poll costs a fixed amount of work. */
 export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
@@ -63,7 +49,7 @@ type Parties = { submitterId: number; reimburseePersonId: number | null };
 const PARTIES = { submitterId: true, reimburseePersonId: true } as const;
 
 /** Whether the caller is conflicted on an expense's parties, asking conflictedParties once per distinct pair. */
-function conflictCheck(me: number): (e: Parties) => Promise<boolean> {
+export function conflictCheck(me: number): (e: Parties) => Promise<boolean> {
   const seen = new Map<string, Promise<boolean>>();
   return (e) => {
     const key = `${e.submitterId}:${e.reimburseePersonId}`;

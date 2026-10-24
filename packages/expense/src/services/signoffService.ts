@@ -13,7 +13,6 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, r
 import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
-import { closeAnsweredFlag, raiseFlag } from "./flagService";
 import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -46,21 +45,10 @@ function seatTaken(err: unknown): never {
   throw err;
 }
 
-/** After the seats commit: the Board stand-in and held flags, the catalog snapshot, and the drain once every line is signed. */
+/** After the seats commit: the catalog snapshot of each fully signed line, and the drain once every line is signed. */
 async function afterSigning(actor: Actor, expense: Expense, signed: SignedLine[]): Promise<void> {
-  const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
   for (const { lineItemId, seat, facts, filled } of signed) {
-    const nowFilled = [...filled, { seat, signerUserId: actor.userId }];
-    if (seat === "TREASURER" && !facts.finance.includes(actor.userId)) {
-      await raiseFlag(expense.id, "COI", "no FINANCE holder could sign; a Board member took the Treasurer seat");
-    }
-    const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
-    const blocked = blockedSeats(nowFacts, nowFilled);
-    if (blocked.some((s) => s !== "BOARD")) {
-      await raiseFlag(expense.id, "COI", `${facts.kind === "card_charge" ? "a card charge needs a second" : "a reimbursement needs a third"} Board substitution; held`);
-    }
-    if (blocked.includes("BOARD")) await raiseFlag(expense.id, "COI", "no Board member without a conflict can take the Board seat; held");
-    if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
+    if (missingSeats(facts, [...filled, { seat, signerUserId: actor.userId }]).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
   }
   if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
     await drainExpense(expense.orgId, expense.id);
@@ -180,7 +168,6 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
     });
     // Any seat signed while the payee was unknown is signed again for the payee.
     await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
-    await closeAnsweredFlag(tx, expenseId, "REIMBURSEE_UNKNOWN", actor, "reimbursee set");
     return current.state;
   });
 
@@ -209,7 +196,7 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
   const actor = actorOf(principal);
   const text = authorization.trim();
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
-  const { state, byFinance } = await db.$transaction(async (tx) => {
+  const state = await db.$transaction(async (tx) => {
     const expense = await openExpense(tx, expenseId);
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
     const facts = [...(await signoffFactsByLine(tx, expense)).values()];
@@ -224,10 +211,8 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
       data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
     });
     await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
-    await closeAnsweredFlag(tx, expenseId, "THRESHOLD_CROSSED", actor, "Board authorization recorded");
-    return { state: expense.state, byFinance: facts[0].finance.includes(actor.userId) };
+    return expense.state;
   });
-  if (!byFinance) await raiseFlag(expenseId, "COI", "no FINANCE holder could record it; a Board member recorded the Board authorization");
   if (state === "qb_pending") await drainExpense(await getOrgId(), expenseId);
 }
 
