@@ -158,7 +158,7 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
   });
 
-  it("a non-member FINANCE names as reimbursee takes a Board member in the program-approver seat", async () => {
+  it("FINANCE names a non-member adult as reimbursee; a Board member takes the program-approver seat", async () => {
     // submitter 1 is a member; 12, named by FINANCE 3, is not · owner 2 · board 5
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [12] }) });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true });
@@ -296,6 +296,13 @@ describeDb("sign-off seats", () => {
       // 7 sits outside every conflicted household.
       await setReimbursee(ORG, id, 7, FINANCE);
       expect((await db.expense.findFirst({ where: { id } }))!).toMatchObject({ submitterId: 1, reimburseePersonId: 7 });
+    });
+
+    it("FINANCE cannot name a minor as reimbursee", async () => {
+      const { id } = await unknownReimbursee();
+      bindPorts({ signoff: directory({ finance: [3], minors: [7] }) });
+      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ status: 400, message: "Only an adult can be named as reimbursee" });
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
     it("a FINANCE holder cannot name themself or anyone in their household as reimbursee", async () => {

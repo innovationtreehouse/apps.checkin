@@ -315,14 +315,15 @@ export async function discardBodyCopy(id: string, siblingIds: string[]): Promise
   });
 }
 
-/** The person the uploader names as reimbursee: themselves unless they picked a live person. */
+/** The person the uploader names as reimbursee: themselves unless they picked a live adult. */
 async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undefined): Promise<ReimburseeOption> {
   if (personId === undefined || personId === actor.id) {
     return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
   }
   const person = await ports().reimbursees.byId(personId);
   if (!person) throw new ServiceError(400, "The person to reimburse was not found");
-  return person;
+  if (!person.isAdult) throw new ServiceError(400, `${person.name} cannot be reimbursed: only an adult can be`);
+  return { id: person.id, name: person.name };
 }
 
 /** At most this many people answer one reimbursee search. */
