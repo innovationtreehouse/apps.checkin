@@ -314,12 +314,20 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   const [loadFailed, setLoadFailed] = useState(false);
   const [people, setPeople] = useState<PersonOption[]>([]);
   const [newTreasurer, setNewTreasurer] = useState<string | null>(null);
+  const [ownerPick, setOwnerPick] = useState<string | null>(null);
+  const [savingOwner, setSavingOwner] = useState(false);
+
+  const applyApprovers = useCallback((data: Approver[]) => {
+    setApprovers(data);
+    const saved = data.find((a) => a.role === "OWNER");
+    setOwnerPick(saved ? String(saved.personId) : null);
+  }, []);
 
   useEffect(() => {
     let live = true;
     void request<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then((result) => {
       if (!live) return;
-      if (result.ok) { setApprovers(result.data); setLoadFailed(false); clearError("Approvers not loaded"); return; }
+      if (result.ok) { applyApprovers(result.data); setLoadFailed(false); clearError("Approvers not loaded"); return; }
       showError("Approvers not loaded", result.error);
       setLoadFailed(true);
     });
@@ -330,15 +338,22 @@ function ApproversModal({ bucket, canEdit, onClose }: {
       });
     }
     return () => { live = false; };
-  }, [bucket.id, canEdit]);
+  }, [bucket.id, canEdit, applyApprovers]);
 
   const change = async (url: string, method: string, body?: unknown) => {
     clearError("Approvers not changed");
     const result = await request<Approver[]>(url, method, body);
-    if (result.ok) setApprovers(result.data); else showError("Approvers not changed", result.error);
+    if (result.ok) applyApprovers(result.data); else showError("Approvers not changed", result.error);
+  };
+
+  const saveOwner = async () => {
+    setSavingOwner(true);
+    await change(`/api/budget-owners/${bucket.id}/owner`, "PUT", { personId: ownerPick ? Number(ownerPick) : null });
+    setSavingOwner(false);
   };
 
   const owner = approvers?.find((a) => a.role === "OWNER") ?? null;
+  const savedOwner = owner ? String(owner.personId) : null;
   const treasurers = approvers?.filter((a) => a.role === "TREASURER") ?? [];
   const options = people.map((p) => ({ value: String(p.id), label: p.name }));
 
@@ -356,15 +371,21 @@ function ApproversModal({ bucket, canEdit, onClose }: {
         ) : (
           <>
             {canEdit ? (
-              <Select
-                label="Owner"
-                placeholder="No owner"
-                clearable
-                searchable
-                data={options}
-                value={owner ? String(owner.personId) : null}
-                onChange={(v) => void change(`/api/budget-owners/${bucket.id}/owner`, "PUT", { personId: v ? Number(v) : null })}
-              />
+              <Group align="flex-end">
+                <Select
+                  label="Owner"
+                  placeholder="No owner"
+                  clearable
+                  searchable
+                  data={options}
+                  value={ownerPick}
+                  onChange={setOwnerPick}
+                  style={{ flex: 1 }}
+                />
+                <Button disabled={ownerPick === savedOwner} loading={savingOwner} onClick={() => void saveOwner()}>
+                  Save
+                </Button>
+              </Group>
             ) : (
               <Text size="sm">Owner: {owner?.name ?? <Text span c="dimmed">none</Text>}</Text>
             )}

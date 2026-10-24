@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl")
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
 
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import BudgetsPage from "../page";
@@ -225,5 +225,69 @@ describe("budgets page write errors", () => {
       autoClose: false,
     })));
     expect(await screen.findByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+});
+
+describe("budgets approvers owner", () => {
+  const people = async () => jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }, { id: 11, name: "Olive Owner" }]);
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+
+  async function pickOwner(name: string) {
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("textbox", { name: "Owner" }));
+    fireEvent.click(await screen.findByRole("option", { name }));
+    return dialog;
+  }
+
+  it("sends nothing when a name is picked", async () => {
+    mockServer(ok, { approverOptions: people });
+    const dialog = await pickOwner("Olive Owner");
+
+    expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner");
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("disables Save until the pick differs from the saved owner", async () => {
+    mockServer(ok, { approverOptions: people });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(await within(dialog).findByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("saves the picked owner with one PUT and shows the saved owner", async () => {
+    mockServer(async () => jsonResponse(200, [
+      { budgetOwnerId: 7, personId: 11, name: "Olive Owner", role: "OWNER" },
+      { budgetOwnerId: 7, personId: 9, name: "Tess Treasurer", role: "TREASURER" },
+    ]), { approverOptions: people });
+    const dialog = await pickOwner("Olive Owner");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled());
+    expect(writes()).toEqual([[
+      "/api/budget-owners/7/owner",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ personId: 11 }) }),
+    ]]);
+    expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner");
+  });
+
+  it("keeps the pick and shows a red chip when the save fails", async () => {
+    mockServer(async () => jsonResponse(403, { error: "You can't set a role or flag on yourself or anyone in your own household." }), {
+      approverOptions: people,
+    });
+    const dialog = await pickOwner("Olive Owner");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Approvers not changed",
+      message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
+      autoClose: false,
+    })));
+    expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled());
   });
 });
