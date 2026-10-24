@@ -28,7 +28,7 @@ Board items get a Board tab on the same screen. The Board's approval of a large
 purchase is one decision recorded in one place, the Record Board authorization
 panel on the expense, and the `THRESHOLD_CROSSED` flag that duplicated it goes.
 
-No schema change is needed. The work ships as two boundary PRs and five
+One schema change: the `capital_equipment_unit_cents` setting column is dropped (3.7). The work ships as two boundary PRs and five
 feature PRs, in the order under "Rollout".
 
 ## What finance works from today
@@ -94,10 +94,10 @@ every screen, and are decided on the expense page with a note.
 | --- | --- | --- | --- | --- | --- |
 | `TAX_ATTACHED` | At intake, any tax above zero; #2479 narrows it to tax the receipt's settings hold for review that no receipt approval covers | Goes away where receipt finance review decided it. The remainder, after #2479, becomes a derived reason | Expenses: "Tax $12.40 not reviewed on the receipt" | Expense page; tax marked in the money block (theme 3 restores the field, 3.11) | Approve tax, note optional, matching receipt approval after #2465 |
 | `THRESHOLD_CROSSED` | At intake, total at or over the Board-review total | Goes away; repeats the Board-approval hold (3.6) | Board: "Board approval of a $2,340.00 purchase not recorded" (derived from `needsBoardApproval`) | Expense page, Board authorization panel | Record Board authorization (text required, as today) |
-| `CAPITAL_EQUIPMENT` | At intake, a unit price at or over `capitalEquipmentUnitCents` | Goes away; repeats the `capital_review` state, finance's capital decision. See open question 3 on the two thresholds (3.7) | Expenses: "Capital review" | Expense page, Capital review panel | Submit capital review |
+| `CAPITAL_EQUIPMENT` | At intake, a unit price at or over `capitalEquipmentUnitCents` | **Decided: removed** (3.7). Capital review, where finance designates each line, is the only capital check, using `classifyCapital`'s two thresholds. The `capitalEquipmentUnitCents` setting goes with it | Expenses: "Capital review" | Expense page, Capital review panel | Submit capital review |
 | `MISSING_RECEIPT` | Never (no caller) | Goes away. Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
 | `NON_EVERYDAY` | Never (no caller) | Goes away. The amounts decide Everyday (#2437), and a non-Everyday card charge already takes a Board seat | none | none | none |
-| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 5 |
+| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 4 |
 | `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
@@ -251,7 +251,7 @@ under the decommission exception, once nothing calls them.
 
 ### 9. Data and migrations
 
-No schema change. `ExpenseFlag` keeps its columns. The four kept kinds use
+The only schema change is dropping `capital_equipment_unit_cents` from the expense settings (3.7). `ExpenseFlag` keeps its columns. The four kept kinds use
 them as they do today, and the retired kinds' rows stay as history. A query
 filters the list to the kept kinds, so old open rows of a retired kind drop out
 of every screen and count the moment that code ships, with nothing to migrate.
@@ -290,8 +290,26 @@ Each PR is based on `main`. None is stacked on another's branch.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
    `GET /api/expense/flags` and `GET /api/expense/expense-holds` with their
    route files, and drop `openFlags` and `holds` from `/api/expense/counts`.
+8. **Capital setting removal** (3.7), in two releases. Expand-and-contract, as
+   #2441 did for the "not Everyday" marks
+   (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`):
+   - Release 1, with step 3: stop reading and writing `capitalEquipmentUnitCents`.
+     Remove it from `ExpenseSettings`, `THRESHOLD_RULES`, the settings schema
+     and the Settings page, and mark the field `@ignore` in
+     `packages/expense/prisma/schema.prisma`. Bulk donation's `largeValueCents`
+     (`checkin-app/src/lib/bulkDonation/configure.ts`) reads the same setting, so
+     it moves to `capitalLineItemThresholdCents`. That threshold compares with
+     `>` where the old one used `>=`, and finance may switch it off, so the
+     bulk-donation behaviour at exactly the threshold, and when it's off, has to
+     be checked in that PR. The classification in
+     `security/generated/expense-classifications.ts` is regenerated, so the
+     settings route returns one field fewer.
+   - Release 2, once release 1 is live in prod: a migration dropping
+     `capital_equipment_unit_cents` from `org_settings` (`ExpenseOrgSettings`), wrapped in
+     `BEGIN;`/`COMMIT;`. The column has a default, so release 1's inserts don't
+     need it during the drain window.
 
-Rolling deploys are safe at each step: nothing reads a removed column, and the
+Rolling deploys are safe at each step: the column drop waits a release behind the code that stops reading it, and the
 GET routes outlive the pages that called them by a release.
 
 ## Rules
@@ -329,6 +347,7 @@ session correcting #2224 should know.
 | 3.4 | Check-off never asks for the note | Kept reviews require a note, asked for on the page (§4) | step 3 |
 | 3.5 | Raw kind code and expense id | Rows show date, vendor, amount, plain reason (§3) | step 5 |
 | 3.6 | Board decision in two places | `THRESHOLD_CROSSED` goes; the Board-approval hold is the one Board tab item, recorded on the expense (§2) | steps 3, 5 |
+| 3.7 | `CAPITAL_EQUIPMENT` and capital review use different thresholds and don't interact | Decided: the flag and `capitalEquipmentUnitCents` go; capital review is the only capital check (§2) | steps 3, 8 |
 | 3.9 | QB flag and its fix apart; retry doesn't close it | Exhausted posts are derived from `qbMatchState`; Retry clears it (§2, §4) | step 3 |
 | 3.10 | `REIMBURSEE_UNKNOWN` can't be checked off; fix elsewhere | Derived reason; Set reimbursee clears it in place (§2) | step 3 |
 | 3.12 | Page reloads in place after the last decision | Returns to the queue tab it came from (§4) | step 3 |
@@ -336,7 +355,7 @@ session correcting #2224 should know.
 | 3.20 | Set account on no-match lines does nothing | Processor honours a manual account on every hold reason (§5) | step 4 |
 | 3.21 | Holds lost lookup context and rule list; raw reason | Plain reasons, lookup context, matched rules listed (§5) | step 4 |
 | 3.22 | Resubmit not disabled while a line lacks an account | Disabled with the reason shown (§5) | step 4 |
-| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 7 (§6) | step 5 |
+| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 6 (§6) | step 5 |
 
 ## Open questions
 
@@ -347,32 +366,27 @@ session correcting #2224 should know.
    resolve ownership, exceptions, capital review and depreciation into the
    Expenses tab, because otherwise finance still works from two places. Your
    decision named only the flags. Do you want these folded too?
-3. **Capital thresholds (3.7).** `CAPITAL_EQUIPMENT` uses
-   `capitalEquipmentUnitCents`; `capital_review` uses
-   `capitalTotalThresholdCents` and `capitalLineItemThresholdCents`. Dropping the
-   flag is safe only if `capital_review` catches every expense the flag caught.
-   Should capital review fire on either test, or should one setting go?
-4. **Who records the Board's approval, and whose tab counts it.** The rules have
+3. **Who records the Board's approval, and whose tab counts it.** The rules have
    a FINANCE holder without a conflict record it, and a Board member only when
    there is none. The design shows it in the Board tab to both, counted green
    for FINANCE and gray for the Board unless no FINANCE holder can record it.
    Is that right, or should Board members see it green as a prompt to take it to
    a meeting?
-5. **A held expense no one can sign.** When every Board member is conflicted, the
+4. **A held expense no one can sign.** When every Board member is conflicted, the
    expense is held with no in-app way forward. The design shows it in the Board
    tab and offers no action. Is that what the Board wants, or should finance be
    able to close it with a note, as with a closed expense that never posted?
-6. **Required notes on reviews.** Today a check-off note is optional on the
+5. **Required notes on reviews.** Today a check-off note is optional on the
    server. The design makes it required for the four kept kinds, since the note
    is the record of the judgment. Agreed?
-7. **Expense events and Provisional items (3.27).** The design restores failed
+6. **Expense events and Provisional items (3.27).** The design restores failed
    intake only. Expense events shows the QuickBooks outbox, which the QuickBooks
    tab now covers. Provisional items belongs with the line (theme 3). Do you want
    either screen back as it was?
-8. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
+7. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
    over-cap expense alone. Should finance still see each one in the QuickBooks
    tab, for awareness, until someone marks it seen?
-9. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
+8. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
    waits in `AMBIGUOUS` for a manual match (`qb-candidates`, `qb-match`), and no
    screen calls those routes. That sits outside the twelve kinds, but it is
    finance's work. Should the QuickBooks tab list it, with a match picker on the
