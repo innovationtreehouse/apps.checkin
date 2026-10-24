@@ -5,15 +5,13 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import type { Expense } from "../generated/prisma/client";
 import { getOrgId } from "../runtime";
-import { callerId } from "../lib/caller";
 import { FLAG_KINDS, taxNeedsFinance } from "../lib/flags";
 import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
 import type { QueueReason } from "../lib/reasons";
 import { reasonText } from "../lib/reasonWords";
-import { CLOSED_STATES, availableSigners, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
-import { filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
+import { CLOSED_STATES } from "../lib/signoff";
 import { readExpenseSettings } from "./settingsService";
-import { SIGNOFF_BADGE_EXPENSE_CAP, conflictCheck } from "./badgeCounts";
+import { signaturesWaiting } from "./signoffService";
 import { expenseReasons } from "./reasonService";
 import {
   FINANCE_QUEUE_REASONS,
@@ -74,12 +72,6 @@ function payloadFacts(payloadJson: string) {
   }
 }
 
-/** A seat this viewer signs as a Board member: the Board seat, or a Treasurer seat no FINANCE holder can fill. */
-function boardSignature(f: SignoffFacts, seats: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">, me: number): boolean {
-  if (!f.board.includes(me)) return false;
-  return seat === "BOARD" || availableSigners(f, seats, seat).length === 0;
-}
-
 /** The ids of expenses any expense-page reason may hold for, so each is read once. */
 async function candidateIds(orgId: string): Promise<string[]> {
   const open = { orgId, state: { notIn: [...CLOSED_STATES] } };
@@ -125,14 +117,11 @@ function queueReason(r: QueueReason, currency: string): FinanceQueueReason {
 /**
  * Every item waiting on finance or the Board, for this viewer. FINANCE and the Board read every
  * item; an item is actionable only when the viewer may take its action, never on a record the
- * viewer is conflicted on. Signatures read at most SIGNOFF_BADGE_EXPENSE_CAP QB-pending expenses,
- * newest first, as the sign-off badges do.
+ * viewer is conflicted on. Signatures come from signaturesWaiting.
  */
 export async function financeQueueItems(principal: ExpensePrincipal): Promise<Item[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
-  const me = callerId(principal);
   const orgId = await getOrgId();
-  const conflicted = conflictCheck(me);
   const items: Item[] = [];
 
   const ids = await withContext("finding the expenses that may wait on finance", () => candidateIds(orgId));
@@ -167,28 +156,13 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
     });
   }
 
-  // Treasurer signatures for To sign, and Board signatures, from the QB-pending expenses' open seats.
-  const pending = await db.expense.findMany({ where: { orgId, state: "qb_pending", backfill: false }, orderBy: { submittedAt: "desc" }, take: SIGNOFF_BADGE_EXPENSE_CAP });
-  for (const e of pending) {
-    if (reimburseeUnknown(e) || (await conflicted(e))) continue;
-    const [facts, filled] = await withContext(`reading the open seats of expense ${e.id}`, () =>
-      Promise.all([signoffFactsByLine(db, e, { readOnly: true }), filledSeatsByLine(db, e.id)]),
-    );
-    let treasurer = 0;
-    let board = 0;
-    for (const [lineId, f] of facts) {
-      const seats = filled.get(lineId) ?? [];
-      for (const seat of missingSeats(f, seats)) {
-        if (seat === "SUBMITTER" || signoffRefusal(f, seats, seat, me) !== null) continue;
-        if (seat === "TREASURER" && f.finance.includes(me)) treasurer++;
-        else if (boardSignature(f, seats, seat, me)) board++;
-      }
-    }
+  // Treasurer signatures for To sign, and Board signatures, from the line-actions function.
+  for (const { expense: e, toSign, board } of await withContext("reading the signatures waiting on you", () => signaturesWaiting(principal))) {
     const row = { id: e.id, vendorName: e.vendorName, receiptDate: e.receiptDate, submittedAt: e.submittedAt, receiptTotalCents: e.receiptTotalCents, currency: e.currency };
     const sign = (tab: FinanceQueueTabKey, code: "TREASURER_SIGNATURE" | "BOARD_SIGNATURE", text: string, units: number) =>
       items.push({ tab, expense: row, reason: { code, text }, waitingSince: e.submittedAt, actionable: true, units });
-    if (treasurer > 0) sign("toSign", "TREASURER_SIGNATURE", `${plural(treasurer, "line", "lines")} to sign as Treasurer`, treasurer);
-    if (board > 0) sign("board", "BOARD_SIGNATURE", `${plural(board, "Board signature", "Board signatures")} to give`, board);
+    if (toSign.length > 0) sign("toSign", "TREASURER_SIGNATURE", `${plural(toSign.length, "line", "lines")} to sign as Treasurer`, toSign.length);
+    if (board.length > 0) sign("board", "BOARD_SIGNATURE", `${plural(board.length, "Board signature", "Board signatures")} to give`, board.length);
   }
   return items;
 }

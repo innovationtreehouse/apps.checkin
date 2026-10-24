@@ -207,6 +207,25 @@ describe("the expense tabs", () => {
     expect(screen.queryByText("BOARD_APPROVAL")).not.toBeInTheDocument();
   });
 
+  it("puts Sign all N as Treasurer on a To sign row, opening the expense with the tab", () => {
+    mockSearch = new URLSearchParams("queue=to_sign");
+    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, toSign: tab(2) });
+    mockExpenseLoads["/finance-queue?tab=to_sign"] = { data: [row("e1", [{ code: "TREASURER_SIGNATURE", text: "2 lines to sign as Treasurer" }])], error: null };
+    const treasurer = { act: "sign", seat: "TREASURER", primary: true, noteRequired: false };
+    mockExpenseLoads["/expenses/e1/signoffs"] = { data: [{ lineItemId: 1, actions: [treasurer] }, { lineItemId: 2, actions: [treasurer] }], error: null };
+    wrap();
+    expect(screen.getByRole("button", { name: "Sign all 2 as Treasurer" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "2026-10-01" })).toHaveAttribute("href", `/expense/expenses/e1?queue=to_sign&from=${encodeURIComponent("/finance/review?queue=to_sign")}`);
+  });
+
+  it("draws no Sign all on a Board row", () => {
+    mockSearch = new URLSearchParams("queue=board");
+    counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, board: tab(1) });
+    mockExpenseLoads["/finance-queue?tab=board"] = { data: [row("e1", [{ code: "BOARD_SIGNATURE", text: "1 Board signature to give" }])], error: null };
+    wrap();
+    expect(screen.queryByRole("button", { name: /^Sign all/ })).not.toBeInTheDocument();
+  });
+
   it("splits a tab by reason with a chip per reason that rides in the URL", () => {
     mockSearch = new URLSearchParams("queue=expenses");
     counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(3, 3, { REIMBURSEE_TO_NAME: 1, CAPITAL_REVIEW: 2 }) });
