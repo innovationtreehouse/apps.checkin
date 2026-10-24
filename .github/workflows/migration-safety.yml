@@ -431,10 +431,11 @@ jobs:
             echo "::group::$NAME ($PKG)"
             psql -v ON_ERROR_STOP=1 -h localhost -U testuser -d checkmein_migtest -c "CREATE DATABASE \"$NAME\";"
             export "$(echo "$NAME" | tr '[:lower:]' '[:upper:]')_DATABASE_URL=postgresql://testuser:testpassword@localhost:5432/$NAME"
+            # Address the base workspace by path: its package name may differ (renamed since).
             if [ -d "$BASE_TREE/$DIR/prisma/migrations" ]; then
-              (cd "$BASE_TREE" && npm -w "$PKG" exec -- prisma migrate deploy)
+              (cd "$BASE_TREE" && npm -w "$DIR" exec -- prisma migrate deploy)
               if node -e 'process.exit(require(process.argv[1]).scripts?.["db:seed"] ? 0 : 1)' "$BASE_TREE/$DIR/package.json"; then
-                (cd "$BASE_TREE" && npm -w "$PKG" run db:seed)
+                (cd "$BASE_TREE" && npm -w "$DIR" run db:seed)
               else
                 echo "[$NAME] base package has no db:seed — base migrations only"
               fi
@@ -556,6 +557,8 @@ jobs:
           FAILED=0
           while read -r f; do
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
+            # Already on main unchanged (a rel/* sync): main's own lint ran, or it predates the rule.
+            git diff --quiet origin/main HEAD -- "$f" 2>/dev/null && continue
             grep -qE '^[[:space:]]*--[[:space:]]*no-transaction:[[:space:]]*[^[:space:]]' "$f" && continue
             SQL=$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$f" | grep -vE '^[[:space:]]*(--.*)?$' || true)
             if ! head -n1 <<<"$SQL" | grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' ||
