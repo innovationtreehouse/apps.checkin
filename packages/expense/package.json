@@ -15,6 +15,10 @@
       "types": "./src/pages/*.tsx",
       "import": "./src/pages/*.tsx"
     },
+    "./components/*": {
+      "types": "./src/components/*.tsx",
+      "import": "./src/components/*.tsx"
+    },
     "./nav": {
       "types": "./src/nav.ts",
       "import": "./src/nav.ts"

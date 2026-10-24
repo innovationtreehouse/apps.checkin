@@ -193,6 +193,7 @@ model Expense {
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
   receiptReview      ExpenseReceiptReview?
+  taxApproval        ExpenseTaxApproval?
 
   @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
@@ -222,6 +223,25 @@ model ExpenseReceiptReview {
   expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 
   @@map("expense_receipt_reviews")
+}
+
+// Finance's approval of the expense's tax, for tax the receipt's finance review did not cover. It
+// covers the amount approved only. A sibling table, so routes returning Expense rows never carry the note.
+model ExpenseTaxApproval {
+  /// @sensitivity:internal
+  expenseId        String   @id @map("expense_id")
+  /// @sensitivity:internal
+  taxCents         Int      @map("tax_cents")
+  /// @sensitivity:pii
+  approvedByUserId Int      @map("approved_by_user_id")
+  /// @sensitivity:personal
+  note             String?
+  /// @sensitivity:internal
+  approvedAt       DateTime @default(now()) @map("approved_at")
+
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@map("expense_tax_approvals")
 }
 
 model ExpenseLineItem {
@@ -630,10 +650,11 @@ model ExpenseReimburseeVendor {
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
-// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER | BOARD; a Board member may fill the middle two
-// when nobody eligible can. BOARD is the extra Board signer on a non-Everyday card-charge line
-// without written Board authorization. The two uniques make a seat fillable once and a person
-// able to fill one seat per line.
+// seat: SUBMITTER | TREASURER | BOARD; the program approver signs by approving the line. A Board
+// member may fill the Treasurer seat when nobody eligible can. BOARD is the extra Board signer on
+// a non-Everyday card-charge line without written Board authorization, or on a reimbursement owed
+// to a non-member. The two uniques make a seat fillable once and a person able to fill one seat
+// per line.
 model ExpenseLineSignoff {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -657,9 +678,8 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
-// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
-// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
+// A finance review: a judgment no other decision records, checked off with a note. kind:
+// QB_DUPLICATE_TO_VOID | QB_DRIFT | QB_POST_HELD; rows of retired kinds stay checked off. audience: FINANCE.
 model ExpenseFlag {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())

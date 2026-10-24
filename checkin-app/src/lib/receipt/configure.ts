@@ -10,7 +10,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
 import { z } from "zod";
-import { reimbursementStatus } from "@checkin/expense";
+import { reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
   createAnthropicOcr,
@@ -19,6 +19,7 @@ import {
   type MailboxReader,
   type ReceiptAlerts,
   type ReceiptPrincipal,
+  type ReimburseeOption,
 } from "@checkin/receipt";
 import { ingestReceipt } from "@checkin/workflow-mapping";
 import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
@@ -45,7 +46,7 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;
-  return toPrincipal(user.id, person.name, isKnownAdult(person));
+  return { ...toPrincipal(user.id, person.name, isKnownAdult(person)), isBoardMember: user.isBoardMember === true };
 }
 
 function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincipal {
@@ -86,6 +87,40 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   if (claims.denied || !canSubmitReceipts(claims)) return null;
   const leadsActiveProgram = person.programsLed.some((p) => p.phase !== "FINISHED");
   return { ...toPrincipal(person.id, person.name, isKnownAdult(person)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
+}
+
+/** Live people whose name contains the query, by name. */
+const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true } as const;
+
+/** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
+async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const matches = await prisma.person.findMany({
+    where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+    select: AGE_FIELDS,
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+  });
+  return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
+}
+
+async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: AGE_FIELDS });
+  return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
+}
+
+/** Whether a live person has an account to sign in with. */
+async function reimburseeHasAccount(personId: number): Promise<boolean> {
+  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return (await prisma.person.count({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
 /** Re-ask the refresher this long before the token it handed out expires. */
@@ -148,9 +183,11 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount },
     alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,
+    submitterConfirmations,
     receiptSink: { ingestReceipt },
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance

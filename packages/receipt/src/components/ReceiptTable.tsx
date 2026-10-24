@@ -3,20 +3,24 @@ import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
 import { dollars, STATE_LABELS, type ReceiptListRow } from "./api";
 import { SUBMITTER_ACTION_STATES } from "../nav";
+import { confirmedByReimbursee } from "./ConfirmationList";
 
 /**
  * One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement
- * column; `flagMine` marks the rows that wait on their uploader.
+ * column; `flagMine` marks the rows that wait on their uploader; `delivery` adds each
+ * undelivered receipt's latest push failure and whether catch-up has given up on it.
  */
 export default function ReceiptTable({
   rows,
   paid = false,
   flagMine = false,
+  delivery = false,
   detailHref = (id) => `/receipts/${id}`,
 }: {
   rows: ReceiptListRow[];
   paid?: boolean;
   flagMine?: boolean;
+  delivery?: boolean;
   detailHref?: (id: string) => string;
 }) {
   if (rows.length === 0) return <Text c="dimmed">No receipts.</Text>;
@@ -30,6 +34,7 @@ export default function ReceiptTable({
             <Table.Th>Total</Table.Th>
             <Table.Th>State</Table.Th>
             {paid && <Table.Th>Reimbursement</Table.Th>}
+            {delivery && <Table.Th>Delivery to receiving</Table.Th>}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -42,13 +47,25 @@ export default function ReceiptTable({
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
                 {STATE_LABELS[r.state] ?? r.state}
-                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && (
+                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && !(r.state === "submitter_review" && confirmedByReimbursee(r)) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}
               </Table.Td>
               {paid && (
                 <Table.Td>
                   {r.reimbursement ? (r.reimbursement.paidOn ? `Paid on ${r.reimbursement.paidOn}` : "Not yet paid") : "—"}
+                </Table.Td>
+              )}
+              {delivery && (
+                <Table.Td>
+                  {r.pushGivenUp && <Badge size="sm" color="red" mr="xs">Catch-up stopped: re-send by hand</Badge>}
+                  {r.lastPushFailure ? (
+                    <Text size="sm" span>
+                      Failed{r.lastPushFailedAt ? ` ${new Date(r.lastPushFailedAt).toLocaleString()}` : ""}: {r.lastPushFailure}
+                    </Text>
+                  ) : (
+                    <Text size="sm" c="dimmed" span>No failed attempt recorded</Text>
+                  )}
                 </Table.Td>
               )}
             </Table.Tr>

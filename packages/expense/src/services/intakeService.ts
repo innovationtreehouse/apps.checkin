@@ -6,13 +6,13 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
-import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
 import { withinEverydayLimits } from "../lib/signoff";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
+import { recordSubmitterSeats } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function receiveCompletedReceipt(
@@ -102,13 +102,10 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
-  const unresolvedDetail =
-    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     const settings = await readExpenseSettings(tx, receipt.orgId);
     const review = receiptReviewOf(receipt);
-    const { receiptReview } = await tx.expense.create({
-      include: { receiptReview: true },
+    await tx.expense.create({
       data: {
         id: receipt.receiptId,
         orgId: receipt.orgId,
@@ -138,8 +135,9 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
       },
     });
 
+    const lineItemIds: number[] = [];
     for (const li of receipt.lineItems) {
-      await tx.expenseLineItem.create({
+      const { id } = await tx.expenseLineItem.create({
         data: {
           expenseId: receipt.receiptId,
           receiptLineItemId: li.receiptLineItemId,
@@ -156,18 +154,15 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           nonInventory: li.nonInventory ?? false,
         },
       });
+      lineItemIds.push(id);
     }
 
-    await tx.expenseFlag.createMany({
-      data: detectIntakeFlags({ ...receipt, reimburseePersonId, receiptReview }, settings).map((kind) => ({
-        orgId: receipt.orgId,
-        expenseId: receipt.receiptId,
-        kind,
-        audience: FLAG_AUDIENCE[kind],
-        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
-      })),
-      skipDuplicates: true,
-    });
+    // The person reimbursed's confirmation signs every line: theirs, or a Board member's on their behalf.
+    const confirmation = receipt.submitterConfirmation;
+    if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
+      const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt, reason: confirmation.onBehalfReason });
+    }
   });
 }
 

@@ -154,3 +154,20 @@ describe("reviewing an OCR-read receipt", () => {
     expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ retailer: "Acme Hardware" }) });
   });
 });
+
+describe("the submitter's confirmation of a reimbursement", () => {
+  it("asks the uploader to confirm its lines and amounts", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null, needsReimbursement: true, reimburseePersonId: 1 };
+    wrap();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
+  });
+
+  it("for someone else's reimbursement, leaves the confirmation to the person reimbursed", () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null, needsReimbursement: true, reimburseePersonId: 2 };
+    wrap();
+    expect(screen.queryByRole("button", { name: "These lines and amounts are right" })).not.toBeInTheDocument();
+    expect(screen.getByText("The person reimbursed confirms the lines and amounts.")).toBeInTheDocument();
+  });
+});

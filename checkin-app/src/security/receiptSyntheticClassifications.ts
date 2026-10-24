@@ -36,6 +36,16 @@
  * Counts only, no record field. Receiving and the time are `public`, matching
  * WorkflowReceiptCount; receipts and expenses are `internal`.
  *
+ * ReceiptConfirmationView — a reimbursement waiting for the confirmation that
+ * signs it, as the person reimbursed (or a Board member on their behalf) reads
+ * it to confirm: the receipt's date, vendor, money and lines, its state, the
+ * reimbursee's id the row is scoped by, whether a Board member confirms it on
+ * the reimbursee's behalf (`onBehalf`), and, once the expense exists, the names
+ * of the fields a finance change touched (`changedFields`). No uploader, file,
+ * donor or note field. All `internal`. ReceiptConfirmationLineView — a line,
+ * stamped with the receipt's `reimburseePersonId` as ReceiptLineView is with the
+ * uploader; a line without the stamp fails closed.
+ *
  * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
  * Person's `id` and `name`, both `public` on Person, so any receipt submitter
  * reads them.
@@ -79,6 +89,8 @@ export const classifications = {
     validationNotes: "personal",
     approvedAt: "internal",
     reviewedAt: "internal",
+    reviewedByUserId: "internal",
+    reviewedOnBehalfReason: "personal",
     qbTxnId: "internal",
     qbEntity: "internal",
     importSourceId: "internal",
@@ -97,6 +109,30 @@ export const classifications = {
     description: "internal",
     partNumber: "internal",
     manufacturer: "internal",
+    quantity: "internal",
+    unitPriceCents: "internal",
+    totalPriceCents: "internal",
+    isDelayed: "internal",
+  },
+  ReceiptConfirmationView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    state: "internal",
+    retailer: "internal",
+    receiptDate: "internal",
+    currency: "internal",
+    shippingCents: "internal",
+    taxCents: "internal",
+    discountCents: "internal",
+    receiptTotalCents: "internal",
+    onBehalf: "internal",
+    changedFields: "internal",
+  },
+  ReceiptConfirmationLineView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    lineNumber: "internal",
+    description: "internal",
     quantity: "internal",
     unitPriceCents: "internal",
     totalPriceCents: "internal",
@@ -140,5 +176,8 @@ export const classifications = {
 export const relations = {
   ReceiptView: {
     lineItems: { model: "ReceiptLineView", isList: true },
+  },
+  ReceiptConfirmationView: {
+    lineItems: { model: "ReceiptConfirmationLineView", isList: true },
   },
 } as const;

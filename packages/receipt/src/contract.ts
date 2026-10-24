@@ -17,6 +17,8 @@ export interface ReceiptPrincipal {
   isAdult: boolean;
   /** Mailed receipts get the raised daily limit (a program lead or Board member); set by the sender lookup. */
   raisedMailLimit?: boolean;
+  /** A Board member, who confirms a reimbursement on behalf of a reimbursee with no account. */
+  isBoardMember?: boolean;
 }
 
 export interface ReceiptAuth {
@@ -69,6 +71,30 @@ export type ReimbursementAsk = { receiptId: string; qbEntity: string | null; qbT
 /** X12. QuickBooks is the system of record; a receipt missing from the answer is not yet paid. */
 export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
+}
+
+// ── Submitter confirmations ← expense ──────────────────────────────────────
+
+/** A reimbursement whose expense waits for the person reimbursed to confirm its receipt. */
+export interface AwaitedConfirmation {
+  receiptId: string;
+  reimburseePersonId: number;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+}
+
+/**
+ * The submitter's signature on a reimbursement whose expense exists, given by the person
+ * reimbursed. Finance changing what was claimed or is paid clears it there, and it is given again.
+ */
+export interface SubmitterConfirmations {
+  /** The org's reimbursements whose expense waits for the confirmation. */
+  awaiting(): Promise<AwaitedConfirmation[]>;
+  /**
+   * Records the confirmation on every line of the receipt's expense still waiting for it, signed by
+   * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.
+   */
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
@@ -125,6 +151,22 @@ export interface ReceiptPeople {
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
 }
 
+/** A person the uploader may name as reimbursee. `id` is the Person.id. */
+export interface ReimburseeOption {
+  id: number;
+  name: string;
+}
+
+/** The host's people an uploader may name as reimbursee. Only an adult is reimbursed. */
+export interface ReceiptReimbursees {
+  /** Live adults whose name contains `query`, at most `limit` of them. */
+  search(query: string, limit: number): Promise<ReimburseeOption[]>;
+  /** The live person with this id and whether they are a known adult, else null. */
+  byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
+  /** Whether this person has an account to sign in with, and so confirms for themself. */
+  hasAccount(personId: number): Promise<boolean>;
+}
+
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
   z.object({
     mimeType: z.string(),
@@ -176,9 +218,11 @@ export interface ReceiptConfig {
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
+  submitterConfirmations?: SubmitterConfirmations;
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;

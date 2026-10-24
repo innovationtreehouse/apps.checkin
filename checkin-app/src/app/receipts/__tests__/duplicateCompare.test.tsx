@@ -13,7 +13,6 @@ let mockErrors: Record<string, string> = {};
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "r1" }),
-  usePathname: () => "/receipts/review/r1",
   useSearchParams: () => new URLSearchParams("queue=duplicate_flagged"),
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
@@ -59,7 +58,7 @@ beforeEach(() => {
   mockSend.mockResolvedValue(true);
 });
 
-const wrap = () => render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
+const wrap = () => render(<MantineProvider><ReceiptDetailPage queueBase="/finance/review" /></MantineProvider>);
 /** The compare row whose first cell is `label`, with or without its "Same" badge. */
 function row(label: string): HTMLElement {
   const found = screen.getAllByRole("row").find((r) => within(r).queryAllByRole("cell")[0]?.textContent?.replace(/Same$/, "") === label);
@@ -90,14 +89,14 @@ describe("a suspected duplicate's detail page", () => {
 
   it("links to the original under the review queue", () => {
     wrap();
-    expect(screen.getByRole("link", { name: "Open the suspected original" })).toHaveAttribute("href", "/receipts/review/r0?queue=duplicate_flagged");
+    expect(screen.getByRole("link", { name: "Open the suspected original" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
     expect(screen.getByRole("link", { name: "View its file" })).toHaveAttribute("href", "/api/receipts/r0/file");
   });
 
   it("clears the flag and returns to the queue", async () => {
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Not a duplicate" }));
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/receipts/review?queue=duplicate_flagged"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=duplicate_flagged"));
     expect(mockSend).toHaveBeenCalledWith("/r1/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag");
   });
 
@@ -158,7 +157,7 @@ describe("a suspected duplicate's detail page", () => {
   it("links the original once the flag is cleared", () => {
     mockLoads["/r1"] = { ...flagged, state: "submitter_review", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
     wrap();
-    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/review/r0?queue=duplicate_flagged");
+    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
     expect(screen.getByText(/and cleared as not a duplicate/)).toBeInTheDocument();
     expect(screen.queryByText("Possible duplicate", { selector: "h5" })).toBeNull();
   });

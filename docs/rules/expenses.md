@@ -40,7 +40,8 @@ Income and donation rules are in `revenue.md`.
   their own receipts, without donor or reimbursee names, and approval stays with
   FINANCE, so the audience exposes no other person's data and moves no money on
   its own. The same audience may reach an expense sign-off for the submitter
-  seat, since that seat is filled from the receipt. Widening it to any signed-in
+  seat, since that seat is filled by their confirmation of a reimbursement's
+  receipt. Widening it to any signed-in
   adult, narrowing it to the catalog audience, or adding a background-check leg
   is a decision on the record.
   [Decision — owner]
@@ -97,10 +98,74 @@ Income and donation rules are in `revenue.md`.
 
 ### Spending sign-off
 
-- A reimbursement or card charge reaches the books only once each of its lines
-  is signed by the submitter, a program approver, and the Treasurer — three
-  different people from three different households.
+- A reimbursement reaches the books only once each of its lines is signed by
+  the submitter, by confirming the receipt; by a program approver, who is an
+  owner or treasurer of the line's bucket, or, for a line outside a
+  Board-approved program budget (an org-level bucket), a Board member without a
+  conflict who is not the Treasurer; and by the Treasurer. Every signer is a
+  different person from a different household.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3*]
+
+- A card charge reaches the books only once each of its lines is signed by a
+  program approver, chosen as for a reimbursement, and the Treasurer, two
+  different people from different households. The submitter does not sign a
+  card charge.
+  [Decision — owner]
+
+- The submitter signs a reimbursement by confirming its receipt as read, its
+  lines and amounts, before the receipt goes to finance, whatever the intake
+  path. Submitting the receipt is not the signature. Finance may correct a card
+  charge's receipt without the submitter.
+  [Decision — owner]
+
+- The person reimbursed gives the submitter's signature on a reimbursement, by
+  confirming its receipt, whoever uploaded it. When they have no account in the
+  app, a Board member without a conflict confirms on their behalf, giving the
+  reason, and the record names both and keeps the reason.
+  [Decision — owner]
+
+- Once the submitter has confirmed a reimbursement, a change finance makes to
+  what the submitter claimed or what they are paid voids the submitter's
+  signature: its line items, a line's quantity or unit price, tax, shipping,
+  discount, the total, the currency, the receipt date, or the person
+  reimbursed. The reimbursement does not reach the books until the person
+  reimbursed confirms it again. Finance's bookkeeping does not void it: a
+  line's bucket, the accounting-system account set on a hold, or the capital
+  or depreciation designation; nor does correcting the retailer. The void and
+  the new confirmation are both recorded.
+  [Decision — owner]
+
+- A line's program approver signs it by approving it: the approval records who
+  approved and when, and no separate signature is taken. Whoever may not hold a
+  seat on the expense may not approve the line, and whoever approved a line
+  does not sign its Treasurer seat.
+  [Decision — owner]
+
+- Only a bucket approver, or a Board member without a conflict in their place,
+  approves a line.
+  [Decision — owner]
+
+- A line's signatures are given in order: the submitter's confirmation on a
+  reimbursement, then the line's approval, then the Treasurer, then any Board
+  signature the line takes. A signature is refused until the ones before it
+  exist; a Board signature waits for the Treasurer's.
+  [Decision — owner]
+
+- Nobody signs off a reimbursement line, its approval included, until the
+  person reimbursed is known.
+  [Decision — owner]
+
+- When an earlier step on a line is cleared or has to be given again, every
+  later signature on that line is cleared, and they are given again in order.
+  Each clearing is recorded.
+  [Decision — owner]
+
+- When an expense goes back to an earlier step, every later step's result is
+  cleared too and done again in order: the capital review, the depreciation
+  cycle and its assets, and the QuickBooks step, as for later signatures. None
+  is skipped, even when nothing it depends on changed. Each clearing is
+  recorded.
+  [Decision — owner]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
@@ -116,15 +181,15 @@ Income and donation rules are in `revenue.md`.
   nobody decides on a receipt they are conflicted on.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
 
-- When every owner and treasurer of a line's bucket is conflicted or
-  unavailable, a Board member without a conflict signs the program-approver
-  seat. The policy names no one for this case; the app fills
-  the gap rather than leave the line held for good.
+- A Board member without a conflict may approve any line in place of its
+  bucket approvers, giving the reason.
   [Decision — owner]
 
-- Reimbursing someone who is not a Treehouse Member takes a Board member in the
-  program-approver seat. What counts is the person reimbursed, not whoever
-  submitted the receipt, and a card charge is not a reimbursement.
+- Reimbursing someone who is not a Treehouse Member takes the program approver
+  chosen as for any line, and then a Board member's approval. A Board member
+  without a conflict signs a Board seat on each line once the line is approved.
+  What counts is the person reimbursed, not whoever submitted the receipt, and a
+  card charge is not a reimbursement.
   [Decision — *Policy: Financial Policy, Art. IX §IX.2*]
 
 - Whoever named the person reimbursed does not sign as Treasurer on that

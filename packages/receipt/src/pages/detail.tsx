@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
+import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
@@ -53,14 +54,15 @@ const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 /**
- * /receipts/[id] and /receipts/review/[id] — one receipt: its file, details and lines, and the
- * actions its state allows the caller. Opened from a review queue, a decision returns to that queue.
+ * /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the
+ * caller. Opened from the host's finance queue at `queueBase` (`?queue=` present), a decision
+ * returns to that queue.
  */
-export default function ReceiptDetailPage() {
+export default function ReceiptDetailPage({ queueBase }: { queueBase?: string }) {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queueParam = useSearchParams().get("queue");
-  const fromReview = usePathname().startsWith("/receipts/review/");
+  const fromReview = queueParam !== null && queueBase !== undefined;
   const { data: session } = useSession();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
@@ -83,7 +85,7 @@ export default function ReceiptDetailPage() {
   if (!r) return <Text>Loading…</Text>;
 
   const back = fromReview
-    ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
+    ? { href: reviewHref(queueBase, returnQueue(queueParam, r.state)), label: "Finance review" }
     : { href: "/receipts", label: "My receipts" };
 
   const reasons = r.financialReviewReasons;
@@ -91,6 +93,7 @@ export default function ReceiptDetailPage() {
   const taxFlagged = reasons.includes("tax");
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
+  const reimburseeConfirms = confirmedByReimbursee(r);
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
   const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
     if (await send(`/${id}${path}`, method, body, success, failed)) {
@@ -238,7 +241,13 @@ export default function ReceiptDetailPage() {
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>Confirm</Button>
+                {reimburseeConfirms ? (
+                  <Text size="sm" c="dimmed">The person reimbursed confirms the lines and amounts.</Text>
+                ) : (
+                  <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>
+                    {r.needsReimbursement ? CONFIRM_AS_READ : "Confirm"}
+                  </Button>
+                )}
                 {isAdult && !r.isInKind && (
                   <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}

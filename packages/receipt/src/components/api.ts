@@ -73,14 +73,14 @@ export interface Loaded<T> {
   reload: () => void;
 }
 
-/** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
+/** Load `path` on mount and on reload(); null loads nothing. A stale response never overwrites a newer one. */
 export function useLoad<T>(path: string | null): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   useEffect(() => {
-    if (!path) return;
+    if (path === null) return;
     const mine = ++seq.current;
     api<T>(path)
       .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
@@ -107,6 +107,28 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
+  reimburseePersonId?: number | null;
+  /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */
+  pushGivenUp?: boolean;
+  lastPushFailedAt?: string | null;
+  lastPushFailure?: string | null;
+}
+
+/** A reimbursement waiting for the caller's confirmation, as the person reimbursed or a Board member on their behalf. */
+export interface ReceiptConfirmation {
+  id: string;
+  state: string;
+  retailer: string | null;
+  receiptDate: string | null;
+  currency: string;
+  shippingCents: number;
+  taxCents: number;
+  discountCents: number;
+  receiptTotalCents: number | null;
+  onBehalf: boolean;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+  lineItems: Array<{ id: number; lineNumber: number; description: string; quantity: number; totalPriceCents: number; isDelayed: boolean }>;
 }
 
 export { STATE_LABELS } from "../lib/stateLabels";

@@ -1,7 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
-import HoldsPage from "@checkin/expense/pages/holds";
 
 let mockLoads: Record<string, unknown> = {};
 
@@ -46,7 +45,9 @@ async function openAssignDialog(line: { gtin13: string | null; nonInventory: boo
       approvals: [],
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: null, status: "pending" }],
-    "/expenses/e1/signoffs": [],
+    "/expenses/e1/signoffs": [
+      { lineItemId: 1, filled: [], missing: [], blocked: [], actions: [{ act: "assign-bucket", primary: true, noteRequired: false }], awaiting: [], mayRecordBoardAuthorization: false },
+    ],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Assign bucket" }));
@@ -74,20 +75,5 @@ describe("Assign bucket on a line without a GTIN", () => {
   it("offers Always use this bucket for a line with a GTIN", async () => {
     await openAssignDialog({ gtin13: "0000000000017", nonInventory: false });
     expect(screen.getByLabelText(ALWAYS)).toBeInTheDocument();
-  });
-});
-
-describe("Holds row for a non-inventory line", () => {
-  it("shows the line as Non-inventory", () => {
-    mockLoads = {
-      "/expense-holds?page=1": [{
-        id: 5, expenseId: "e1", lineItemId: 1, reason: "NON_INVENTORY",
-        lineItem: { description: "Pizza", partNumber: "PZ-LG", totalPriceCents: 1000, manualQbAccount: null, nonInventory: true },
-        expense: { vendorName: "Pizza Place", receiptDate: null, currency: "USD" },
-      }],
-      "/qb-accounts": [],
-    };
-    render(<MantineProvider><HoldsPage /></MantineProvider>);
-    expect(screen.getByText("Non-inventory")).toBeInTheDocument();
   });
 });

@@ -46,6 +46,18 @@ export const CompletedReceiptFinanceReviewSchema = z.object({
   decidedAt: z.string().datetime(),
 });
 
+// The confirmation of a reimbursement's receipt as read, its lines and amounts: the submitter's
+// signature on every line, given by the person reimbursed.
+export const CompletedReceiptSubmitterConfirmationSchema = z.object({
+  // The person reimbursed, whose signature it is (checkin Person.id).
+  confirmedByPersonId: z.number().int().positive(),
+  // The Board member who confirmed on their behalf, when the person reimbursed has no account.
+  onBehalfByPersonId: z.number().int().positive().optional(),
+  // That Board member's reason.
+  onBehalfReason: z.string().optional(),
+  confirmedAt: z.string().datetime(),
+});
+
 export const CompletedReceiptSchema = z.object({
   receiptId: z.string(),
   orgId: z.string(),
@@ -74,6 +86,8 @@ export const CompletedReceiptSchema = z.object({
   isInKind: z.boolean().optional().default(false),
   // Absent when the receipt never waited on finance review.
   financeReview: CompletedReceiptFinanceReviewSchema.optional(),
+  // Absent on a card charge, and on a reimbursement nobody confirmed (a backfill).
+  submitterConfirmation: CompletedReceiptSubmitterConfirmationSchema.optional(),
   // The receipt org's settings hold this receipt's tax for finance review (tax-exempt org,
   // review-with-tax on, tax above zero, not in-kind).
   taxReviewRequired: z.boolean().optional(),
@@ -83,3 +97,4 @@ export const CompletedReceiptSchema = z.object({
 export type CompletedReceiptLineItem = z.infer<typeof CompletedReceiptLineItemSchema>;
 export type CompletedReceipt = z.infer<typeof CompletedReceiptSchema>;
 export type CompletedReceiptFinanceReview = z.infer<typeof CompletedReceiptFinanceReviewSchema>;
+export type CompletedReceiptSubmitterConfirmation = z.infer<typeof CompletedReceiptSubmitterConfirmationSchema>;

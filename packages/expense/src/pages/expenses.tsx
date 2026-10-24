@@ -1,4 +1,5 @@
 "use client";
+import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Anchor, Badge, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
@@ -35,9 +36,18 @@ export default function ExpensesPage() {
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Expense Ops and the approver's Programs I Lead tab.
+ * same list serves Finance and the approver's Programs I Lead tab. `viewBadge` is the host's
+ * pill beside a view's label: what the viewer can act on there.
  */
-export function ExpenseList({ detailBase, defaultView }: { detailBase: string; defaultView: string }) {
+export function ExpenseList({
+  detailBase,
+  defaultView,
+  viewBadge,
+}: {
+  detailBase: string;
+  defaultView: string;
+  viewBadge?: (view: string) => ReactNode;
+}) {
   // The view and page ride in the URL, so an expense opened from here returns to the same slice.
   const router = useRouter();
   const params = useSearchParams();
@@ -51,7 +61,9 @@ export function ExpenseList({ detailBase, defaultView }: { detailBase: string; d
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
-    return n ? `${v.label} (${n})` : v.label;
+    const text = n ? `${v.label} (${n})` : v.label;
+    const badge = viewBadge?.(v.value);
+    return badge ? <Group gap={6} wrap="nowrap" justify="center">{text}{badge}</Group> : text;
   };
 
   return (
