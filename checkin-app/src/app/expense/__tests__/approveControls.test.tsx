@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
@@ -27,9 +27,7 @@ beforeAll(() => {
       }) as unknown as MediaQueryList);
 });
 
-const HINT = "Waiting for Finance to assign a budget bucket";
-
-function load(ownerId: number | null) {
+function load(status: string) {
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000, currency: "USD", state: "owner_approval",
@@ -37,23 +35,28 @@ function load(ownerId: number | null) {
       lineItems: [{ id: 1, lineNumber: 1, description: "Bolts", partNumber: null, quantity: 1, totalPriceCents: 1000, isCapital: false, depreciationYears: null, capitalOwnerId: null }],
       approvals: [],
     },
-    "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId, status: "pending" }],
-    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: [], missing: ["PROGRAM_APPROVER", "TREASURER"], blocked: [] }],
+    "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status }],
+    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: [], missing: ["SUBMITTER", "TREASURER"], blocked: [] }],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
 
-describe("Sign as Program approver on a line's budget bucket", () => {
-  it("is disabled with a hint while the line has no bucket; other seats stay enabled", () => {
-    load(null);
-    expect(screen.getByRole("button", { name: "Sign as Program approver" })).toBeDisabled();
-    expect(screen.getByText(HINT)).toBeInTheDocument();
+describe("approving a line is the program approver's sign-off", () => {
+  it("offers no program-approver seat to sign", () => {
+    load("pending");
+    expect(screen.queryByRole("button", { name: "Sign as Program approver" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign as Treasurer" })).toBeEnabled();
   });
 
-  it("is enabled once the line has a bucket", () => {
-    load(3);
-    expect(screen.getByRole("button", { name: "Sign as Program approver" })).toBeEnabled();
-    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+  it("asks for a Board stand-in's reason, not a finance override comment", async () => {
+    load("pending");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(await screen.findByLabelText("Reason (required when a Board member approves in place of the bucket's approvers)")).toBeInTheDocument();
+    expect(screen.queryByText(/FINANCE approves outside its own buckets/)).not.toBeInTheDocument();
+  });
+
+  it("offers Approve on a line finance moved to another bucket", () => {
+    load("finance_assigned");
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 });
