@@ -30,7 +30,7 @@ beforeAll(() => {
 
 beforeEach(() => mockSend.mockClear());
 
-type Act = { act: string; seat?: string; primary: boolean; noteRequired: boolean; standIn?: boolean };
+type Act = { act: string; seat?: string; primary: boolean; noteRequired: boolean };
 interface LineSpec { actions?: Act[]; awaiting?: string[]; status?: string }
 
 const line = (id: number) => ({
@@ -71,14 +71,21 @@ describe("only the acts the server returns are drawn (3.15, #2433)", () => {
   });
 
   it("draws one main act on the line and the rest under More", async () => {
-    load([{ actions: [APPROVE, RAISE, SIGN_T] }]);
+    load([{ actions: [APPROVE, RAISE] }]);
     const row = within(rowOf(1));
     expect(row.getByRole("button", { name: "Approve as Program approver" })).toBeInTheDocument();
     expect(row.queryByRole("button", { name: "Raise exception" })).not.toBeInTheDocument();
-    expect(row.queryByRole("button", { name: "Sign as Treasurer" })).not.toBeInTheDocument();
     await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
     expect(await screen.findByRole("menuitem", { name: "Raise exception" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Sign as Treasurer" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Sign as Treasurer" })).not.toBeInTheDocument();
+  });
+
+  it("a Board stand-in's approval goes under More while a bucket approver can approve", async () => {
+    load([{ actions: [{ ...SIGN_T, primary: true }, { act: "approve", primary: false, noteRequired: true }] }]);
+    const row = within(rowOf(1));
+    expect(row.getByRole("button", { name: "Sign as Treasurer" })).toBeInTheDocument();
+    await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
+    expect(await screen.findByRole("menuitem", { name: "Approve as Board (program approver)" })).toBeInTheDocument();
   });
 
   it("a main sign act signs its seat", async () => {
@@ -128,11 +135,16 @@ describe("required notes (3.16)", () => {
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/raise-exception", "POST", { notes: "Wrong bucket" }, "Raise exception done");
   });
 
-  it("marks a Board stand-in's reason required when the server requires it", async () => {
-    load([{ actions: [{ act: "approve", primary: true, noteRequired: true, standIn: true }] }]);
+  it("marks a Board stand-in's reason required and sends it", async () => {
+    load([{ actions: [{ act: "approve", primary: true, noteRequired: true }] }]);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as Board (program approver)" })); });
-    expect(await screen.findByRole("textbox", { name: /Reason/ })).toBeRequired();
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    const reason = await screen.findByRole("textbox", { name: /Reason/ });
+    expect(reason).toBeRequired();
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "Leader away all month" } });
+    await act(async () => { fireEvent.click(confirm); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: "Leader away all month" }, "Approve as Board (program approver) done");
   });
 
   it("asks no note of an approval the server takes without one", async () => {
