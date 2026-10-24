@@ -312,8 +312,10 @@ A receipt whose expense leg failed is finance's concern, because the purchase
 never reaches the books. 3.27 found that finance can no longer see these. The
 Expenses tab lists each failed `ReceivedExpensePayload` as "Receipt didn't
 become an expense: {failure reason}", linking to the receipt in receiving. The
-Expense events and Provisional items screens are not restored here; see open
-question 7.
+Expense events and Provisional items screens are not restored (decided). They
+were integration screens for separate prototype apps exchanging messages; in
+one app, a receipt that failed to become an expense is an Expenses-tab row, and
+#2502's status page shows counts by state.
 
 ### 7. Counts
 
@@ -519,7 +521,7 @@ session correcting #2224 should know.
 | 3.20 | Set account on no-match lines does nothing | Processor honours a manual account on every hold reason (§5) | step 4 |
 | 3.21 | Holds lost lookup context and rule list; raw reason | Plain reasons, lookup context, matched rules listed (§5) | step 4 |
 | 3.22 | Resubmit not disabled while a line lacks an account | Disabled with the reason shown (§5) | step 4 |
-| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 7 (§6) | step 5 |
+| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; Expense events and Provisional items screens not restored (decided, §6) | step 5 |
 
 ## Open questions
 
@@ -527,6 +529,5 @@ Numbers are fixed; decided questions are dropped from this table.
 
 | # | Question | Design's default |
 | --- | --- | --- |
-| 7 | Bring back the Expense events or Provisional items screens (3.27)? | No |
 | 8 | Show over-cap posts (`QB_OVER_CAP`) in the QuickBooks tab until marked seen? | No; audit note only |
 | 9 | List `AMBIGUOUS` posts in the QuickBooks tab with a match picker, now or in a follow-up? | Follow-up |
