@@ -45,7 +45,7 @@ function load(link: { qbVendorId: string } | null) {
       needsReimbursement: true, reimburseePersonId: 9, backfill: false, lineItems: [], approvals: [],
     },
     "/expenses/e1/line-item-approvals": [],
-    "/expenses/e1/signoffs": { ExpenseLineSignoffStatus: [], ExpenseSignoffViewer: { mayRecordBoardAuthorization: false } },
+    "/expenses/e1/signoffs": [],
     "/expenses/e1/reimbursee-vendor": { ExpenseReimburseeVendor: link, ExpenseReimburseeView: { personId: 9, name: "Pat Lee" } },
     [OPTIONS]: [{ id: "55", displayName: "Pat Lee" }],
   };

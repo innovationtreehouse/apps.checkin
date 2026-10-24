@@ -44,7 +44,7 @@ function loadExpense(overrides: Record<string, unknown> = {}, lineItems: unknown
       needsReimbursement: false, backfill: false, lineItems, approvals: [], ...overrides,
     },
     "/expenses/e1/line-item-approvals": [],
-    "/expenses/e1/signoffs": { ExpenseLineSignoffStatus: [], ExpenseSignoffViewer: { mayRecordBoardAuthorization: false } },
+    "/expenses/e1/signoffs": [],
   };
 }
 

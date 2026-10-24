@@ -195,9 +195,8 @@ export async function signoffStatus(expenseId: string) {
 }
 
 /**
- * Sign-off status as the caller sees it: each line also carries the acts the caller may take there
- * and what it waits on otherwise, and the expense says whether the caller may record the Board
- * authorization.
+ * Sign-off status as the caller sees it: each line also carries the acts the caller may take there,
+ * what it waits on otherwise, and whether the caller may record the expense's Board authorization.
  */
 export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
@@ -211,17 +210,16 @@ export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: s
   const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
   const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
   const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
-  const lines = [...facts].map(([lineItemId, f]) => {
-    const seats = filled.get(lineItemId) ?? [];
-    const holds = lineHolds(approvalNeeded, f, seats);
-    const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
-    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting };
-  });
   const mayRecord = mayRecordBoardAuthorization({
     callerId: caller.id,
     expense: { ...held, boardAuthorization: expense.boardAuthorization },
     factsByLine: [...facts.values()],
     boardApprovalNeeded: approvalNeeded,
   });
-  return { lines, mayRecordBoardAuthorization: mayRecord };
+  return [...facts].map(([lineItemId, f]) => {
+    const seats = filled.get(lineItemId) ?? [];
+    const holds = lineHolds(approvalNeeded, f, seats);
+    const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
+    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord };
+  });
 }

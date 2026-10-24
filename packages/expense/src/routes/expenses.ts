@@ -201,10 +201,7 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
     (await db.expenseLineItem.findMany({ where: { expenseId: params.id, ...scopedLines(scope) }, select: { id: true } })).map((l) => l.id),
   );
   const status = await mapServiceErrors(() => signoffStatusFor(principal, params.id));
-  return {
-    ExpenseLineSignoffStatus: seatsOnly(status.lines.filter((s) => visible.has(s.lineItemId))),
-    ExpenseSignoffViewer: { mayRecordBoardAuthorization: status.mayRecordBoardAuthorization },
-  };
+  return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 
 /**

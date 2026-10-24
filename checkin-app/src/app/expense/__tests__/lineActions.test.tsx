@@ -47,12 +47,10 @@ function load(specs: LineSpec[]) {
       approvals: [],
     },
     "/expenses/e1/line-item-approvals": specs.map((s, i) => ({ id: 10 + i, lineItemId: i + 1, ownerId: 3, status: s.status ?? "pending" })),
-    "/expenses/e1/signoffs": {
-      ExpenseLineSignoffStatus: specs.map((s, i) => ({
-        lineItemId: i + 1, filled: [], missing: ["PROGRAM_APPROVER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
-      })),
-      ExpenseSignoffViewer: { mayRecordBoardAuthorization: false },
-    },
+    "/expenses/e1/signoffs": specs.map((s, i) => ({
+      lineItemId: i + 1, filled: [], missing: ["PROGRAM_APPROVER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
+      mayRecordBoardAuthorization: false,
+    })),
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }

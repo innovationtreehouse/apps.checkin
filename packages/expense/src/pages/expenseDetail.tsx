@@ -74,10 +74,8 @@ interface SignoffStatus {
   blocked: string[];
   actions: LineAction[];
   awaiting: string[];
-}
-interface Signoffs {
-  ExpenseLineSignoffStatus: SignoffStatus[];
-  ExpenseSignoffViewer: { mayRecordBoardAuthorization: boolean };
+  /** Same on every line: whether the caller may record the expense's Board authorization. */
+  mayRecordBoardAuthorization: boolean;
 }
 interface Bucket {
   id: number;
@@ -189,7 +187,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const { isFinance, isBoard } = useRoles();
   const expense = useLoad<Expense>(base);
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
-  const signoffs = useLoad<Signoffs>(`${base}/signoffs`);
+  const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
   const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
   const bucketOptions = useBuckets(isFinance || isBoard);
   const [dialog, setDialog] = useState<{ action: LineAction; approval: Approval } | null>(null);
@@ -205,7 +203,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
   const bucketNames = new Map((Array.isArray(approvalBag) ? [] : approvalBag?.ExpenseBucketView ?? []).map((b) => [b.id, b.name]));
-  const statusOf = new Map((signoffs.data?.ExpenseLineSignoffStatus ?? []).map((s) => [s.lineItemId, s]));
+  const statusOf = new Map((signoffs.data ?? []).map((s) => [s.lineItemId, s]));
 
   async function runAction() {
     if (!dialog) return;
@@ -373,7 +371,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
-      {signoffs.data?.ExpenseSignoffViewer.mayRecordBoardAuthorization && (
+      {(signoffs.data ?? []).some((s) => s.mayRecordBoardAuthorization) && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Board authorization</Text>
           <Textarea
