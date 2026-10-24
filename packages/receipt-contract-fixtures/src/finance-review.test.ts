@@ -13,7 +13,7 @@ describe("CompletedReceipt.financeReview", () => {
     expect(parsed.financeReview).toBeUndefined();
   });
 
-  it("carries finance's approval, reasons, approver, note, approved tax and time", () => {
+  it("carries finance's approval, reasons, approver, approved tax and time", () => {
     expect(CompletedReceiptSchema.parse(approved).financeReview).toEqual(review);
   });
 
@@ -22,9 +22,9 @@ describe("CompletedReceipt.financeReview", () => {
     expect(CompletedReceiptSchema.parse(raw("S1-completed-receipt/with-tax-shipping-discount")).taxReviewRequired).toBeUndefined();
   });
 
-  it("parses an approval with no note", () => {
-    const { note: _note, ...noNote } = review;
-    expect(CompletedReceiptSchema.parse({ ...approved, financeReview: noNote }).financeReview).toEqual(noNote);
+  it("parses an approval whose note is null or a string", () => {
+    expect(CompletedReceiptSchema.parse(withReview({ note: null })).financeReview?.note).toBeNull();
+    expect(CompletedReceiptSchema.parse(withReview({ note: "seen" })).financeReview?.note).toBe("seen");
   });
 
   it.each([

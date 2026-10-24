@@ -515,17 +515,15 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
-  /** Finance sign-off. A note is required when the reason is tax; no conflicted party can decide. */
-  async approveFinancial(id: string, note?: string | null) {
+  /** Finance sign-off; no conflicted party can decide. */
+  async approveFinancial(id: string) {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "approve");
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
-    const trimmed = note?.trim() || null;
-    if (reasons.includes("tax") && !trimmed) throw new ServiceError(400, "A note explaining the tax is required");
     const now = new Date();
-    const set = { core: recordFinanceReview("approved", row, reasons, actor, trimmed, now), detail: { approvedAt: now } };
-    await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved", trimmed);
+    const set = { core: recordFinanceReview("approved", row, reasons, actor, null, now), detail: { approvedAt: now } };
+    await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
   },

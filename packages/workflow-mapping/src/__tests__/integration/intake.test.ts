@@ -73,7 +73,6 @@ describeDb("S1 — replay and org", () => {
       outcome: "approved" as const,
       reasons: ["tax" as const],
       decidedByPersonId: 12,
-      note: "Vendor would not honor the exemption certificate",
       decidedAt: "2026-06-02T09:30:00.000Z",
     };
     const res = await ingestReceipt({ ...buildReceiptPayload(), financeReview });

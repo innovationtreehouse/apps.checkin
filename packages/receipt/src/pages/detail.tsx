@@ -58,6 +58,7 @@ export default function ReceiptDetailPage() {
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
   const [note, setNote] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   // A ref, not state: a second click in the same tick must see the first save already running.
@@ -84,6 +85,7 @@ export default function ReceiptDetailPage() {
         return;
       }
       setNote("");
+      setRejectReason("");
       setDraft(EMPTY_DRAFT);
       receipt.reload();
       audit.reload();
@@ -222,10 +224,10 @@ export default function ReceiptDetailPage() {
                 <Text fw={500} size="sm">Finance</Text>
                 {r.state === "financial_review" && !own && (
                   <>
-                    <Textarea label="Note (required when the reason is tax)" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
-                    <Group gap="xs">
-                      <Button size="xs" color="green" onClick={() => void act("/approve", "POST", { note: note || null }, "Approved", true)}>Approve</Button>
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: note || null }, "Rejected", true)}>Reject</Button>
+                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", true)}>Approve</Button>
+                    <Group align="end" gap="xs">
+                      <Textarea label="Reason (optional)" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
+                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", true)}>Reject</Button>
                     </Group>
                   </>
                 )}
