@@ -195,6 +195,12 @@ export const inertQbRefs: QbRefs = {
   vendorIdFor: async () => null,
 };
 
+/** The reimbursee shown on an expense: their person id and name. */
+export interface ReimburseeView {
+  personId: number;
+  name: string | null;
+}
+
 /** A QuickBooks Vendor offered to finance for a reimbursee. */
 export interface QbVendorOption {
   id: string;

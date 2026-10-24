@@ -6,6 +6,7 @@ import {
 import { formatCents } from "@checkin/money";
 import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reimburseeUnknown } from "../lib/signoff";
+import type { ReimburseeView } from "../contract";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 
@@ -90,10 +91,6 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   return [];
 }
 
-interface ReimburseeView {
-  personId: number;
-  name: string | null;
-}
 interface VendorLink {
   ExpenseReimburseeVendor: { qbVendorId: string } | null;
   ExpenseReimburseeView: ReimburseeView | null;

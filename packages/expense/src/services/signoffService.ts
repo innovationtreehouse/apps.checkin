@@ -2,7 +2,7 @@
 // principal; a line with an unfilled seat holds its expense out of the QB outbox.
 import type { Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
-import type { ExpensePrincipal, SetReimbursee } from "../contract";
+import type { ExpensePrincipal, ReimburseeView, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
@@ -12,7 +12,6 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, r
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
-import type { ReimburseeView } from "./reimburseeVendorService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
