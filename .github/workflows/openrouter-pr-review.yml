@@ -70,7 +70,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@c6a735e984ff61feb5a7a7c60df46edf61eadba1 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4, #7, #8) + opt-in approve (fork #5, off) + credit fixes (fork #6) + judge pick mode (fork #10)
+        uses: innovationtreehouse/openrouter-pr-review-action@f7fa08ae3e5f90ca104a27aeabcb934586dc10f5 # fork main: pick mode (#10) + error-body scrub (#11)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
@@ -112,7 +112,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@c6a735e984ff61feb5a7a7c60df46edf61eadba1 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4, #7, #8) + opt-in approve (fork #5, off) + credit fixes (fork #6) + judge pick mode (fork #10)
+        uses: innovationtreehouse/openrouter-pr-review-action@f7fa08ae3e5f90ca104a27aeabcb934586dc10f5 # fork main: pick mode (#10) + error-body scrub (#11)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
