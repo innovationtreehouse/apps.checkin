@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
-import { SectionTabs } from "@/components/ui/SectionTabs";
+import { SectionTabs, activeTab } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { visibleLinks } from "@/lib/nav/gates";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
@@ -16,6 +16,7 @@ import { TabBadge } from "@/components/ui/CountBadge";
 export default function CatalogLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
   const counts = useTodoCounts(status === "authenticated");
   const links = visibleLinks(INVENTORY, session?.user, counts);
   // Admitted as a catalog viewer, or as a library tab's own audience (e.g.
@@ -41,13 +42,22 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
 
   if (!authorized) return null;
 
+  const subLinks = activeTab(links, pathname)?.subLinks;
   return (
     <PageContainer>
       <SectionTabs
         links={links}
-        mb="md"
+        mb={subLinks ? "xs" : "md"}
         badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
       />
+      {subLinks && (
+        <SectionTabs
+          links={subLinks}
+          mb="md"
+          variant="pills"
+          badgeFor={(href) => <TabBadge badge={sectionTabBadge(subLinks, href, counts)} />}
+        />
+      )}
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );
