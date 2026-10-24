@@ -28,11 +28,14 @@ jest.mock('@/lib/notifications', () => ({
 const TAG = 'supervision-test';
 const HOUR = 60 * 60 * 1000;
 const CLEARED = new Date('2026-06-01');
+/** A recheck policy under which CLEARED stays valid for years. */
+const POLICY = { bgRecheckMonths: 120, orgMembershipYearBoundary: new Date('2000-08-01') };
 
 describe('supervising adults (integration)', () => {
     const people: Record<string, Person> = {};
     const householdIds: number[] = [];
     const programIds: number[] = [];
+    let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
 
     /** A cleared adult of their own ACTIVE member household. */
     async function makeAdult(key: string, opts: { isKeyholder?: boolean; cleared?: boolean } = {}) {
@@ -76,6 +79,10 @@ describe('supervising adults (integration)', () => {
         prisma.visit.create({ data: { personId: people[key].id, arrivedAt: new Date() } });
 
     beforeAll(async () => {
+        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
+        await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...POLICY }, update: POLICY });
+
         await makeAdult('ann', { isKeyholder: true });
         await makeHouseholdMate('al', 'ann');
         await makeAdult('ben');
@@ -136,6 +143,12 @@ describe('supervising adults (integration)', () => {
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: householdIds } } });
         await prisma.person.deleteMany({ where: { id: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
+        // A row this suite created must go, or its policy leaks into suites that expect none.
+        if (savedSettings) {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        } else {
+            await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+        }
     });
 
     const count = async () => supervisingAdultCount(await supervisingAdultVisits());
@@ -169,6 +182,17 @@ describe('supervising adults (integration)', () => {
             await checkIn('fay');
 
             expect(await count()).toBe(1);
+        });
+
+        it('counts no one while the board has set no recheck policy', async () => {
+            await checkIn('ann');
+            await checkIn('ben');
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { bgRecheckMonths: 0 } });
+            try {
+                expect(await count()).toBe(0);
+            } finally {
+                await prisma.boardSettings.update({ where: { id: 1 }, data: POLICY });
+            }
         });
     });
 

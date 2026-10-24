@@ -203,7 +203,8 @@ person in front of it.
 
 - A clearance that is not recorded is not a clearance: someone with no background
   check on file, or one older than the board's recheck interval, is not one of the
-  supervising adults.  [Decision — *Principle: fail closed*]
+  supervising adults. While the board has set no recheck interval, every check
+  counts as expired, so no one is.  [Decision — *Principle: fail closed*]
 
 - Someone whose age is unknown counts as a youth in the supervision check: not
   one of the supervising adults, and one of the people needing cover.  [Decision — *Principle: fail closed*]
