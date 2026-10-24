@@ -19,6 +19,11 @@ export async function getItem(gtin13: string) {
   return item ? { gtin13: item.gtin13, name: item.name, categoryId: item.categoryId, subcategoryId: item.subcategoryId } : null;
 }
 
+/** The approved, non-archived item with this GTIN, or null. */
+export function getActiveItem(gtin13: string) {
+  return catalogRepo.findActiveItemByGtin13(gtin13);
+}
+
 /** Active items whose name or GTIN contains the query; a blank query matches nothing. */
 export async function searchItems(query: string) {
   const q = query.trim();

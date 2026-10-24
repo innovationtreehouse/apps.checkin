@@ -1,6 +1,6 @@
 import { visibleLinks } from "@/lib/nav/gates";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
-import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
+import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
@@ -53,9 +53,18 @@ describe("Inventory Receiving tab", () => {
     expect(tab?.badge?.(released)).toBeNull();
   });
 
-  it("runs the workflow-mapping count provider only for the tab's audience", () => {
+  it("runs the workflow-mapping count provider only for an inventory manager, the one role that maps or applies", () => {
     const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "workflow-mapping");
-    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, true, true, false]);
+    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
+  });
+
+  it("keeps the tab for FINANCE and Board while their nav payload carries no receiving count", async () => {
+    const providers = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "workflow-mapping");
+    for (const u of [finance, board]) {
+      expect(await collectLibraryCounts(u, [...LIBRARY_KEYS], providers)).toBeUndefined();
+      expect(tabs(u, released)).toContain("/inventory/receiving");
+    }
+    expect(await collectLibraryCounts(manager, [...LIBRARY_KEYS], providers)).toEqual({ "workflow-mapping": {} });
   });
 });
 

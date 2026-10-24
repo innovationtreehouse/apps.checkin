@@ -71,7 +71,9 @@ export const classifications = {
     },
     ExpenseReceiptReview: {
         expenseId: 'internal',
+        taxReviewRequired: 'internal',
         reasons: 'internal',
+        approvedTaxCents: 'internal',
         approvedByUserId: 'pii',
         note: 'personal',
         approvedAt: 'internal',
@@ -89,6 +91,7 @@ export const classifications = {
         totalPriceCents: 'internal',
         gtin13: 'internal',
         isDelayed: 'internal',
+        nonInventory: 'internal',
         isCapital: 'internal',
         capitalOwnerId: 'pii',
         depreciationYears: 'internal',

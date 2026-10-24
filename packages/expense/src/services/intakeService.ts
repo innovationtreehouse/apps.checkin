@@ -106,7 +106,9 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
     receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     const settings = await readExpenseSettings(tx, receipt.orgId);
-    await tx.expense.create({
+    const review = receiptReviewOf(receipt);
+    const { receiptReview } = await tx.expense.create({
+      include: { receiptReview: true },
       data: {
         id: receipt.receiptId,
         orgId: receipt.orgId,
@@ -132,14 +134,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         ),
         everydayTotalLimitCents: settings.everydayTotalLimitCents,
         everydayItemLimitCents: settings.everydayItemLimitCents,
-        receiptReview: receipt.financeReview && {
-          create: {
-            reasons: receipt.financeReview.reasons,
-            approvedByUserId: receipt.financeReview.decidedByPersonId,
-            note: receipt.financeReview.note,
-            approvedAt: new Date(receipt.financeReview.decidedAt),
-          },
-        },
+        receiptReview: review ? { create: review } : undefined,
       },
     });
 
@@ -155,14 +150,16 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           quantity: li.quantity,
           unitPriceCents: li.unitPriceCents,
           totalPriceCents: li.totalPriceCents,
-          gtin13: li.gtin13,
+          // A non-inventory line is no catalog part, so it keeps no GTIN to map an owner by.
+          gtin13: li.nonInventory ? null : li.gtin13,
           isDelayed: li.isDelayed,
+          nonInventory: li.nonInventory ?? false,
         },
       });
     }
 
     await tx.expenseFlag.createMany({
-      data: detectIntakeFlags({ ...receipt, reimburseePersonId }, settings).map((kind) => ({
+      data: detectIntakeFlags({ ...receipt, reimburseePersonId, receiptReview }, settings).map((kind) => ({
         orgId: receipt.orgId,
         expenseId: receipt.receiptId,
         kind,
@@ -172,6 +169,19 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
       skipDuplicates: true,
     });
   });
+}
+
+/** The receipt review to store with the expense, or null when the receipt sent neither part. */
+function receiptReviewOf({ taxReviewRequired, financeReview }: CompletedReceipt) {
+  if (taxReviewRequired === undefined && !financeReview) return null;
+  return {
+    taxReviewRequired: taxReviewRequired ?? null,
+    reasons: financeReview?.reasons ?? [],
+    approvedTaxCents: financeReview?.taxCents ?? null,
+    approvedByUserId: financeReview?.decidedByPersonId ?? null,
+    note: financeReview?.note ?? null,
+    approvedAt: financeReview ? new Date(financeReview.decidedAt) : null,
+  };
 }
 
 /** The receipt's reimbursee when it names a checkin Person; an unresolvable id is held as unknown. */

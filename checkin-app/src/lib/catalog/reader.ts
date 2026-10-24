@@ -4,8 +4,9 @@
  * structurally; each consumer parses the responses on its side.
  *
  * Display reads fall back to the consumer's inert result (empty / null) and log when
- * the catalog is unreachable. `checkReferences` gates a reference proposal, so it
- * fails closed: the error propagates and the line holds.
+ * the catalog is unreachable. `checkReferences` gates a reference proposal and
+ * `getActiveItem` gates an association, so both fail closed: the error propagates
+ * and the line holds.
  */
 import { readService, referenceMatchingService } from "@checkin/global-catalog";
 import { catalogCheckReferencesSchema, catalogLookupEntrySchema } from "@checkin/receipt-types";
@@ -39,6 +40,15 @@ export const catalogReader = {
       return await referenceMatchingService.checkReferences(catalogCheckReferencesSchema.parse(fields));
     } catch (err) {
       console.warn("[catalog-reader] checkReferences failed; the line holds", err);
+      throw err;
+    }
+  },
+
+  async getActiveItem(gtin13: string) {
+    try {
+      return await readService.getActiveItem(gtin13);
+    } catch (err) {
+      console.warn("[catalog-reader] getActiveItem failed; the line holds", err);
       throw err;
     }
   },

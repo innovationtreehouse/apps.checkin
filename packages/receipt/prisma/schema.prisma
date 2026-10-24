@@ -162,6 +162,9 @@ model ReceiptFinanceReview {
   decidedByUserId Int      @map("decided_by_user_id")
   /// @sensitivity:personal
   note            String?
+  // The receipt's tax when finance decided; a later change to the tax is not covered.
+  /// @sensitivity:internal
+  taxCents        Int?     @map("tax_cents")
   /// @sensitivity:internal
   decidedAt       DateTime @default(now()) @map("decided_at")
 

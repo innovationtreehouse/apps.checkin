@@ -10,11 +10,13 @@ import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/se
 import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 import { updateExpenseSettings } from "../../services/settingsService";
+import { storedTaxNeedsFinance } from "../../services/flagService";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
 const allRecognized = fixture<Receipt>("S2-expense-receipt/all-recognized-gtin");
 const hasProvisional = fixture<Receipt>("S2-expense-receipt/has-provisional");
+const hasNonInventory = fixture<Receipt>("S2-expense-receipt/has-non-inventory");
 const financeApproved = fixture<Receipt>("S2-expense-receipt/finance-approved-tax");
 
 async function snapshot(receiptId: string) {
@@ -34,6 +36,24 @@ describe("S2 intake — contract guard", () => {
 
   it("rejects a malformed payload", async () => {
     await expect(receiveCompletedReceipt({ receiptId: "x" })).rejects.toThrow();
+  });
+});
+
+describeDb("S2 intake — has-non-inventory fixture", () => {
+  it("stores the non-inventory mark on its line and leaves the line for FINANCE to assign", async () => {
+    await receiveCompletedReceipt(hasNonInventory);
+    const lines = await db.expenseLineItem.findMany({ where: { expenseId: hasNonInventory.receiptId }, orderBy: { lineNumber: "asc" } });
+    expect(lines.map((l) => l.nonInventory)).toEqual([false, true]);
+    const approval = await db.lineItemOwnerApproval.findFirst({ where: { lineItemId: lines[1].id } });
+    expect(approval!.ownerId).toBeNull();
+    expect((await db.expense.findFirst({ where: { id: hasNonInventory.receiptId } }))!.state).toBe("assign_ownership");
+  });
+
+  it("stores no GTIN on a non-inventory line, even when the payload carries one", async () => {
+    const lineItems = hasNonInventory.lineItems.map((li, i) => (i === 1 ? { ...li, gtin13: "0000000000017" } : li));
+    await receiveCompletedReceipt({ ...hasNonInventory, lineItems });
+    const line = await db.expenseLineItem.findFirst({ where: { expenseId: hasNonInventory.receiptId, nonInventory: true } });
+    expect(line!.gtin13).toBeNull();
   });
 });
 
@@ -102,6 +122,22 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(s.payloads[0]).toMatchObject({ status: "applied", failureReason: null });
   });
 
+  it("raises no TAX_ATTACHED when receipt finance review approved that tax", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await db.expenseFlag.count({ where: { expenseId: financeApproved.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises no TAX_ATTACHED when the receipt org does not hold tax for review", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, taxReviewRequired: false });
+    expect(await db.expenseFlag.count({ where: { expenseId: allRecognized.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises TAX_ATTACHED when the tax differs from the amount finance approved", async () => {
+    await receiveCompletedReceipt({ ...financeApproved, taxCents: 90, receiptTotalCents: 3090 });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: financeApproved.receiptId } });
+    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
+  });
+
   it("raises a TAX_ATTACHED flag for finance when the receipt carries tax", async () => {
     await receiveCompletedReceipt({ ...allRecognized, taxCents: 125 });
 
@@ -109,11 +145,13 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
   });
 
-  it("stores the receipt's finance approval with the expense; a receipt without one stores none", async () => {
+  it("stores the receipt's finance approval and review-required flag with the expense; a receipt with neither stores none", async () => {
     await receiveCompletedReceipt(financeApproved);
     expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: financeApproved.receiptId } })).toEqual({
       expenseId: financeApproved.receiptId,
+      taxReviewRequired: true,
       reasons: ["tax"],
+      approvedTaxCents: 80,
       approvedByUserId: 12,
       note: null,
       approvedAt: new Date("2026-06-02T09:30:00.000Z"),
@@ -121,6 +159,27 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
 
     await receiveCompletedReceipt(allRecognized);
     expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: allRecognized.receiptId } })).toBeNull();
+  });
+
+  it("stores the review-required flag when finance never approved", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, receiptTotalCents: 3125, taxReviewRequired: false });
+    expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: allRecognized.receiptId } })).toMatchObject({
+      taxReviewRequired: false,
+      reasons: [],
+      approvedTaxCents: null,
+      approvedByUserId: null,
+      approvedAt: null,
+    });
+  });
+
+  it("later checks read the tax decision from the stored expense", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await storedTaxNeedsFinance(financeApproved.receiptId)).toBe(false);
+    await db.expense.update({ where: { id: financeApproved.receiptId }, data: { taxCents: 90 } });
+    expect(await storedTaxNeedsFinance(financeApproved.receiptId)).toBe(true);
+
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, receiptTotalCents: 3125 });
+    expect(await storedTaxNeedsFinance(allRecognized.receiptId)).toBe(true);
   });
 
   it("freezes the Everyday amount check with the limits in force at intake", async () => {

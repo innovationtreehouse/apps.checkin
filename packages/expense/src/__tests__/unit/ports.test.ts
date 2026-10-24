@@ -5,7 +5,7 @@ import { assertOrg, getExpenseRuntime } from "../../runtime";
 import { inertOutbound, inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
-import { detectIntakeFlags, FLAG_AUDIENCE } from "../../lib/flags";
+import { detectIntakeFlags, FLAG_AUDIENCE, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
 describe("callerId", () => {
@@ -73,5 +73,41 @@ describe("flags", () => {
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
     expect(FLAG_AUDIENCE.COI).toBe("BOARD");
     expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
+  });
+});
+
+describe("tax waits on finance", () => {
+  const review = (over: Partial<StoredReceiptReview> = {}): StoredReceiptReview => ({
+    taxReviewRequired: true,
+    reasons: ["tax"],
+    approvedTaxCents: 125,
+    ...over,
+  });
+
+  it("not when receipt finance review approved that tax", () => {
+    expect(taxNeedsFinance(125, review())).toBe(false);
+  });
+
+  it("never when the receipt org's settings do not hold tax for review", () => {
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: false, reasons: [], approvedTaxCents: null }))).toBe(false);
+  });
+
+  it("when the tax differs from the amount finance approved", () => {
+    expect(taxNeedsFinance(150, review())).toBe(true);
+    expect(taxNeedsFinance(125, review({ approvedTaxCents: null }))).toBe(true);
+  });
+
+  it("when review applies and no approval covers tax", () => {
+    expect(taxNeedsFinance(125, review({ reasons: [], approvedTaxCents: null }))).toBe(true);
+    expect(taxNeedsFinance(125, review({ reasons: ["old_date"] }))).toBe(true);
+  });
+
+  it("when the receipt did not say whether review applies, unless finance approved that tax", () => {
+    expect(taxNeedsFinance(125, null)).toBe(true);
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: null }))).toBe(false);
+  });
+
+  it("never on a receipt with no tax", () => {
+    expect(taxNeedsFinance(0, review({ reasons: [], approvedTaxCents: null }))).toBe(false);
   });
 });

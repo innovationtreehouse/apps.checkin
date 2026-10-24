@@ -132,12 +132,13 @@ async function conflictedParties(row: Parties): Promise<number[]> {
 /** The receipt write that records finance's decision, replacing any earlier one. */
 function recordFinanceReview(
   outcome: "approved" | "rejected",
+  row: ReceiptRow,
   reasons: string[],
   actor: ReceiptPrincipal,
   note: string | null,
   decidedAt: Date,
 ): Prisma.ReceiptUncheckedUpdateInput {
-  const review = { outcome, reasons, decidedByUserId: actor.id, note, decidedAt };
+  const review = { outcome, reasons, decidedByUserId: actor.id, note, taxCents: row.taxCents, decidedAt };
   return { financeReview: { upsert: { create: review, update: review } } };
 }
 
@@ -525,11 +526,20 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
+  /**
+   * Under finance access, discarding a suspected original decides each duplicate flagged
+   * against it, so a party to any of those is refused, and each one's log records the discard.
+   */
   async discard(id: string, access: Access) {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
-    await writeAccess(row, access, actor, "discard");
+    const flaggedAgainst =
+      (await writeAccess(row, access, actor, "discard")) === "finance"
+        ? await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } })
+        : [];
+    for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "discard the suspected original");
     await step(row, { type: "DISCARD" }, "discarded", {}, actor, "discarded");
+    for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_discarded", valueAfter: row.id });
     return load(id, access, actor);
   },
 
@@ -540,7 +550,7 @@ export const receiptService = {
     await refuseSelfDecision(row, actor, "approve");
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const now = new Date();
-    const set = { core: recordFinanceReview("approved", reasons, actor, null, now), detail: { approvedAt: now } };
+    const set = { core: recordFinanceReview("approved", row, reasons, actor, null, now), detail: { approvedAt: now } };
     await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -552,7 +562,7 @@ export const receiptService = {
     await refuseSelfDecision(row, actor, "reject");
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const note = reason?.trim() || null;
-    const set = { core: recordFinanceReview("rejected", reasons, actor, note, new Date()), detail: { validationNotes: note } };
+    const set = { core: recordFinanceReview("rejected", row, reasons, actor, note, new Date()), detail: { validationNotes: note } };
     await step(row, { type: "REJECT" }, "rejected", set, actor, "reject_financial", note);
     return load(id, "finance", actor);
   },

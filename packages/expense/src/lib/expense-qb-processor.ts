@@ -87,14 +87,19 @@ function matchesRule(rule: AccountMapping, category: string, subcategory: string
 
 export type CatalogInfo = { gtin13: string; category: string; subcategory: string };
 
-type CatalogLine = Pick<ExpenseLineItem, "id" | "partNumber" | "manufacturer" | "description">;
+type CatalogLine = Pick<ExpenseLineItem, "id" | "partNumber" | "manufacturer" | "description" | "nonInventory">;
 
-/** Live catalog GTIN and category names for each part-numbered line; unmatched lines have no `info` entry. */
+/** A part-numbered inventory line resolves its account through the catalog; any other line takes finance's manual account. */
+function resolvesThroughCatalog(li: Pick<ExpenseLineItem, "partNumber" | "nonInventory">): boolean {
+  return !!li.partNumber && !li.nonInventory;
+}
+
+/** Live catalog GTIN and category names for each catalog-resolved line; unmatched lines have no `info` entry. */
 export async function lookupCatalogInfo(
   lines: CatalogLine[],
   vendorName: string,
 ): Promise<{ gtin13ByItemId: Map<number, string | null>; info: Map<number, CatalogInfo> }> {
-  const withPartNumbers = lines.filter((li) => li.partNumber);
+  const withPartNumbers = lines.filter(resolvesThroughCatalog);
   const info = new Map<number, CatalogInfo>();
   if (withPartNumbers.length === 0) return { gtin13ByItemId: new Map(), info };
 
@@ -169,7 +174,12 @@ async function resolveAccountsForExpense(
   const conflicts: ConflictItem[] = [];
 
   for (const li of lineItems) {
-    if (!li.partNumber) continue;
+    // An account finance set by hand on a held line wins over every rule, whatever the hold reason.
+    if (li.manualQbAccount) {
+      resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
+      continue;
+    }
+    if (!resolvesThroughCatalog(li)) continue;
 
     const info = itemInfoByItemId.get(li.id);
     if (!info) {
@@ -195,12 +205,9 @@ async function resolveAccountsForExpense(
 
   if (conflicts.length === 0) {
     for (const li of lineItems) {
-      if (li.partNumber) continue;
-      if (li.manualQbAccount) {
-        resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
-      } else {
-        conflicts.push({ lineItem: li, reason: HoldReason.NO_PART_NUMBER, matchedRows: [], category: null, subcategory: null });
-      }
+      if (resolvesThroughCatalog(li) || li.manualQbAccount) continue;
+      const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
+      conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
     }
   }
 

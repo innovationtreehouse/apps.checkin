@@ -24,7 +24,7 @@ export default function ReceiptSettingsPage() {
   const value = <K extends keyof Settings>(k: K): Settings[K] | undefined => edits[k] ?? settings.data?.[k];
 
   async function save() {
-    if (await send("/settings", "PUT", edits, "Settings saved")) {
+    if (await send("/settings", "PUT", edits, "Settings saved", "Couldn't save the settings")) {
       setEdits({});
       settings.reload();
     }

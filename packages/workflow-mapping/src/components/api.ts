@@ -64,9 +64,4 @@ export function formatCents(cents: number | null | undefined, currency = "USD"):
   return cents == null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 
-export const STATE_LABEL: Record<string, string> = {
-  pending_review: "Needs mapping",
-  applying: "Applying",
-  apply_failed: "Apply failed",
-  resolved: "Resolved",
-};
+export { STATE_LABEL } from "../lib/stateLabels";

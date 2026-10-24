@@ -59,6 +59,7 @@ export const classifications = {
         reasons: 'internal',
         decidedByUserId: 'internal',
         note: 'personal',
+        taxCents: 'internal',
         decidedAt: 'internal',
     },
     ReceiptLineItem: {
