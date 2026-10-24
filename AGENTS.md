@@ -250,7 +250,7 @@ The approval sequence for each PR:
 4. **Approval is a maintainer's.** A maintainer approves after reading the AI
    review and the other reviews. The AI review never submits an approval.
 
-To ask for a higher reviewer, add `ai-review:free`, `ai-review:mid`, `ai-review:high` or `ai-review:top`; the decision model grants it unless the change is trivial, and the label never lowers the tier the router chose.
+To ask for a stronger reviewer, say so in the PR description or a comment (for example "please use the Argon lane"); the decision model grants it unless the change is trivial, and never lowers the tier.
 
 Remove `ai-review` only to stop further reviews on a PR, for example while it
 is parked. Each run spends the OpenRouter key.
