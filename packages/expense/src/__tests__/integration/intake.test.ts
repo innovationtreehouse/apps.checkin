@@ -15,6 +15,7 @@ type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: 
 
 const allRecognized = fixture<Receipt>("S2-expense-receipt/all-recognized-gtin");
 const hasProvisional = fixture<Receipt>("S2-expense-receipt/has-provisional");
+const financeApproved = fixture<Receipt>("S2-expense-receipt/finance-approved-tax");
 
 async function snapshot(receiptId: string) {
   return {
@@ -106,6 +107,20 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
 
     const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId } });
     expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
+  });
+
+  it("stores the receipt's finance approval with the expense; a receipt without one stores none", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: financeApproved.receiptId } })).toEqual({
+      expenseId: financeApproved.receiptId,
+      reasons: ["tax"],
+      approvedByUserId: 12,
+      note: "Vendor would not honor the exemption certificate",
+      approvedAt: new Date("2026-06-02T09:30:00.000Z"),
+    });
+
+    await receiveCompletedReceipt(allRecognized);
+    expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: allRecognized.receiptId } })).toBeNull();
   });
 
   it("freezes the Everyday amount check with the limits in force at intake", async () => {
