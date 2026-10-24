@@ -71,7 +71,9 @@ export const classifications = {
     },
     ExpenseReceiptReview: {
         expenseId: 'internal',
+        taxReviewRequired: 'internal',
         reasons: 'internal',
+        approvedTaxCents: 'internal',
         approvedByUserId: 'pii',
         note: 'personal',
         approvedAt: 'internal',

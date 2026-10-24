@@ -10,6 +10,7 @@ import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/se
 import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 import { updateExpenseSettings } from "../../services/settingsService";
+import { storedTaxNeedsFinance } from "../../services/flagService";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -121,6 +122,22 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(s.payloads[0]).toMatchObject({ status: "applied", failureReason: null });
   });
 
+  it("raises no TAX_ATTACHED when receipt finance review approved that tax", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await db.expenseFlag.count({ where: { expenseId: financeApproved.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises no TAX_ATTACHED when the receipt org does not hold tax for review", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, taxReviewRequired: false });
+    expect(await db.expenseFlag.count({ where: { expenseId: allRecognized.receiptId, kind: "TAX_ATTACHED" } })).toBe(0);
+  });
+
+  it("raises TAX_ATTACHED when the tax differs from the amount finance approved", async () => {
+    await receiveCompletedReceipt({ ...financeApproved, taxCents: 90, receiptTotalCents: 3090 });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: financeApproved.receiptId } });
+    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
+  });
+
   it("raises a TAX_ATTACHED flag for finance when the receipt carries tax", async () => {
     await receiveCompletedReceipt({ ...allRecognized, taxCents: 125 });
 
@@ -128,11 +145,13 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
   });
 
-  it("stores the receipt's finance approval with the expense; a receipt without one stores none", async () => {
+  it("stores the receipt's finance approval and review-required flag with the expense; a receipt with neither stores none", async () => {
     await receiveCompletedReceipt(financeApproved);
     expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: financeApproved.receiptId } })).toEqual({
       expenseId: financeApproved.receiptId,
+      taxReviewRequired: true,
       reasons: ["tax"],
+      approvedTaxCents: 80,
       approvedByUserId: 12,
       note: null,
       approvedAt: new Date("2026-06-02T09:30:00.000Z"),
@@ -140,6 +159,27 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
 
     await receiveCompletedReceipt(allRecognized);
     expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: allRecognized.receiptId } })).toBeNull();
+  });
+
+  it("stores the review-required flag when finance never approved", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, receiptTotalCents: 3125, taxReviewRequired: false });
+    expect(await db.expenseReceiptReview.findUnique({ where: { expenseId: allRecognized.receiptId } })).toMatchObject({
+      taxReviewRequired: false,
+      reasons: [],
+      approvedTaxCents: null,
+      approvedByUserId: null,
+      approvedAt: null,
+    });
+  });
+
+  it("later checks read the tax decision from the stored expense", async () => {
+    await receiveCompletedReceipt(financeApproved);
+    expect(await storedTaxNeedsFinance(financeApproved.receiptId)).toBe(false);
+    await db.expense.update({ where: { id: financeApproved.receiptId }, data: { taxCents: 90 } });
+    expect(await storedTaxNeedsFinance(financeApproved.receiptId)).toBe(true);
+
+    await receiveCompletedReceipt({ ...allRecognized, taxCents: 125, receiptTotalCents: 3125 });
+    expect(await storedTaxNeedsFinance(allRecognized.receiptId)).toBe(true);
   });
 
   it("freezes the Everyday amount check with the limits in force at intake", async () => {

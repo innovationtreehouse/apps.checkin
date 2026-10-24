@@ -41,6 +41,8 @@ export const CompletedReceiptFinanceReviewSchema = z.object({
   // The approving checkin Person.id.
   decidedByPersonId: z.number().int().positive(),
   note: z.string().nullable().optional(),
+  // The receipt's tax when finance approved it; the approval covers that amount only.
+  taxCents: cents.optional(),
   decidedAt: z.string().datetime(),
 });
 
@@ -72,6 +74,9 @@ export const CompletedReceiptSchema = z.object({
   isInKind: z.boolean().optional().default(false),
   // Absent when the receipt never waited on finance review.
   financeReview: CompletedReceiptFinanceReviewSchema.optional(),
+  // The receipt org's settings hold this receipt's tax for finance review (tax-exempt org,
+  // review-with-tax on, tax above zero, not in-kind).
+  taxReviewRequired: z.boolean().optional(),
   lineItems: z.array(CompletedReceiptLineItemSchema).min(1),
 });
 
