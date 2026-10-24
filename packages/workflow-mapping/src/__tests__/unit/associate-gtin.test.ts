@@ -101,7 +101,6 @@ describe("associateGtin GTIN check", () => {
     expect(updateEditableLine).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ recognitionStatus: "recognized", assignedGtin13: ACTIVE }),
-      expect.anything(),
     );
   });
 });
