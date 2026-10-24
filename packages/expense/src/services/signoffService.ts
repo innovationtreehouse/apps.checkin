@@ -10,6 +10,7 @@ import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { lineActions, mayRecordBoardAuthorization } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
@@ -187,5 +188,35 @@ export async function signoffStatus(expenseId: string) {
   return [...facts].map(([lineItemId, f]) => {
     const seats = filled.get(lineItemId) ?? [];
     return { lineItemId, filled: seats, missing: lineHolds(approval, f, seats), blocked: blockedSeats(f, seats) };
+  });
+}
+
+/**
+ * Sign-off status as the caller sees it: each line also carries the acts the caller may take there,
+ * what it waits on otherwise, and whether the caller may record the expense's Board authorization.
+ */
+export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  const [facts, filled, approvalNeeded, approvals] = await Promise.all([
+    signoffFactsByLine(db, expense),
+    filledSeatsByLine(db, expenseId),
+    boardApprovalNeeded(db, expense),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, status: true, ownerId: true } }),
+  ]);
+  const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
+  const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
+  const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
+  const mayRecord = mayRecordBoardAuthorization({
+    callerId: caller.id,
+    expense: { ...held, boardAuthorization: expense.boardAuthorization },
+    factsByLine: [...facts.values()],
+    boardApprovalNeeded: approvalNeeded,
+  });
+  return [...facts].map(([lineItemId, f]) => {
+    const seats = filled.get(lineItemId) ?? [];
+    const holds = lineHolds(approvalNeeded, f, seats);
+    const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
+    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord };
   });
 }
