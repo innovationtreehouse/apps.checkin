@@ -22,7 +22,8 @@ import { LATE_CLOSE_SKEW_MS } from "@/lib/visitTimes";
  * - `{ kiosk: true }` (a signature-verified kiosk): a display-only roster —
  *   id, kiosk label, isKeyholder, isYouth, arrival time and the program badge.
  *   The label is resolved here (getKioskDisplayNames: nickname, else first name,
- *   a last initial only to tell two apart), so no last name reaches the device.
+ *   a last name shortened to at most two letters, only to tell two apart), so
+ *   no whole last name reaches the device.
  *   The kiosk is an UNATTENDED device in a public room, and it forwards whatever
  *   it receives into an iframe with a wildcard postMessage origin
  *   (`client/client.py`), so no `personal`/`pii` field may reach it. It renders
