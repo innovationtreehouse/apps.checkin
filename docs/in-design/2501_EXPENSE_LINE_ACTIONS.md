@@ -231,6 +231,22 @@ only before it is approved (bucket assignment, an unknown bucket, or an
 exception raised), no Treasurer or Board signature exists when a line moves. A
 move needs no seat voiding, and the conflict in open question 8 can't arise.
 
+**Going back clears what follows** (open question 12, decided). Whenever an
+earlier step on a line is cleared or has to be given again, every later
+signature on that line is cleared too, and they are given again in order:
+
+- A finance change to a confirmed reimbursement clears the submitter's
+  confirmation (§3), so the line's approval returns to pending and its
+  Treasurer and Board signatures are deleted.
+- An approval that reopens, for example when a line moves after an exception,
+  clears the Treasurer and Board signatures.
+
+Each clearing is audited, one row per cleared signature or approval, naming
+what cleared it. A Board authorization or the Board's recorded approval of a
+$2,000 purchase is a record, not a signature, so it stays. When a cleared
+approval belongs to an expense that has moved past owner approval, the expense
+returns to owner approval, which the state machine needs a new transition for.
+
 ### What is deleted, and what moves
 
 | Today | Under C′ |
@@ -362,7 +378,9 @@ Where the change lands depends on how far the receipt has gone:
   back to submitter review when finance approves it, as it does any
   reimbursement not yet confirmed.
 - **After the expense exists**, the change deletes the submitter seat on every
-  line. The posting gate then holds the expense, as for any missing seat, and
+  line, and with it every later signature: each line's approval returns to
+  pending, and its Treasurer and Board signatures are deleted (C′.9). The
+  posting gate then holds the expense, as for any missing seat, and
   the receipt shows on the submitter's My receipts page as "Finance changed
   this receipt; confirm it again", with the changed fields marked.
 
@@ -371,8 +389,9 @@ pill counts it: the pill counts receipts in submitter review today, and it also
 counts reimbursements whose expense is waiting for the submitter's new
 confirmation. Confirming again records the seat on every line, as at creation.
 
-Both acts are audited: the void as `signoff_voided` on each line, naming the
-finance holder, the change and the fields it touched, and the new confirmation
+Every act is audited: each void as `signoff_voided` on its line, naming the
+finance holder, the change and the fields it touched, with the cleared approval
+and later signatures audited the same way, and the new confirmation
 as its own audit row on the receipt and the seat on the expense. A card charge
 is unaffected; finance corrects it without the submitter.
 
@@ -576,6 +595,9 @@ from your decisions; the last two wait on open questions 2 and 5:
   signature the line takes. A signature is refused until the ones before it
   exist; a Board signature waits for the Treasurer's. *(new line)*
   `[Decision — owner]`
+- When an earlier step on a line is cleared or has to be given again, every
+  later signature on that line is cleared, and they are given again in order.
+  Each clearing is recorded. *(new line)* `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -611,7 +633,9 @@ Each PR is based on `main`, not stacked.
    org-level lines start pending; finance-assigned lines wait for the new
    bucket's approver; the Board seat on a non-member line, after approval. The
    sign-off service enforces the order of C′.9, where today it accepts any
-   seat at any time while the expense is open. The data-only migration and the
+   seat at any time while the expense is open, and clearing a step clears every
+   later one, with the state machine returning an expense to owner approval
+   when an approval reopens. The data-only migration and the
    rule edits ship in the same PR (C′.1 to C′.9).
 4. **Approve All PR** (3.13): the batch route and button. After steps 1 and 3.
 5. **Pill and landing PR** (3.25): the badge from the function and the "Waiting
@@ -644,11 +668,14 @@ Each PR is based on `main`, not stacked.
 | 3.17 | Only FINANCE overrides; no rule | No override: only bucket approvers, or a Board stand-in, approve (§7) | 8 |
 | 3.25 | Pill counts seats, page opens on approval | Approval is the sign-off, so one count, and a "Waiting on you" view (§8) | 3, 5 |
 | 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.9) | 2, 3 |
-| #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a card charge takes no submitter seat (§3) | 7 |
+| #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a finance change clears it and every later signature; a card charge takes no submitter seat (§3, C′.9) | 7 |
 | #2433 | Sign-as shown to people who can't sign | Same as 3.15; other seats show as status (§1) | 2 |
 | #1272 | No rule for the override | As 3.17 | 8 |
 
 ## Open questions
+
+All twelve are decided or closed. The list keeps its numbers so review threads
+still match.
 
 1. **One act or two?** *Decided:* the line's approval is the program-approver
    sign-off (C′), and a non-member reimbursement takes the program approver as
@@ -690,11 +717,9 @@ Each PR is based on `main`, not stacked.
     no policy clause.
 11. **The Board seat and the Treasurer.** *Decided:* the Board signature waits
     for the Treasurer's (C′.9).
-12. **Re-confirmation and the order.** A finance change to a confirmed
-    reimbursement voids the submitter's signature (§3). If the line is already
-    approved or signed by then, later signatures exist without the earlier one.
-    Should the re-confirmation also void the later signatures, so they are given
-    again in order, or do they stand?
+12. **Re-confirmation and the order.** *Decided:* going back to any earlier
+    step clears every later signature on the line, and they are given again in
+    order (C′.9).
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
