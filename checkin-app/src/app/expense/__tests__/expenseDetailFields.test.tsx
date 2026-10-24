@@ -86,13 +86,18 @@ describe("expense detail fields", () => {
   });
 
   it("shows the total, tax and submitted time in the header, and hides zero shipping and discount", () => {
+    // Pins the locale- and timezone-dependent formatter to one fixed rendering of the date.
+    const format = jest.spyOn(Date.prototype, "toLocaleString").mockImplementation(function (this: Date) {
+      return this.toISOString();
+    });
     loadExpense();
     wrap(<ExpenseDetailPage id="e1" />);
+    format.mockRestore();
     expect(screen.getByText("$11.80")).toBeInTheDocument();
     expect(screen.getByText("Tax")).toBeInTheDocument();
     expect(screen.getByText("$0.80")).toBeInTheDocument();
     expect(screen.getByText("Submitted")).toBeInTheDocument();
-    expect(screen.getByText(new Date("2026-10-02T15:30:00Z").toLocaleString())).toBeInTheDocument();
+    expect(screen.getByText("2026-10-02T15:30:00.000Z")).toBeInTheDocument();
     expect(screen.queryByText("Shipping")).not.toBeInTheDocument();
     expect(screen.queryByText("Discount")).not.toBeInTheDocument();
   });
