@@ -63,9 +63,14 @@ describeDb("manual upload", () => {
   });
 
   describe("naming someone else as reimbursee", () => {
+    // Bob is an adult; MINOR is not. Membership is never asked: a non-member adult is named like any adult.
+    const people = new Map([
+      [BOB.id, { id: BOB.id, name: "Bob Baker", isAdult: true }],
+      [MINOR.id, { id: MINOR.id, name: "Kit Kid", isAdult: false }],
+    ]);
     const reimbursees = {
       search: async () => [],
-      byId: async (id: number) => (id === BOB.id ? { id: BOB.id, name: "Bob Baker" } : null),
+      byId: async (id: number) => people.get(id) ?? null,
       hasAccount: async () => true,
     };
     beforeEach(() => configure({ receiptSink: ports.receiptSink, reimbursees }));
@@ -89,6 +94,13 @@ describeDb("manual upload", () => {
       await expect(
         receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: 4242 }),
       ).rejects.toMatchObject({ status: 400 });
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("refuses a minor as reimbursee, by name, and stores nothing", async () => {
+      await expect(
+        receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: MINOR.id }),
+      ).rejects.toMatchObject({ status: 400, message: "Kit Kid cannot be reimbursed: only an adult can be" });
       expect(await db.receipt.count()).toBe(0);
     });
 

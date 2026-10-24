@@ -26,8 +26,10 @@ const confirmations: SubmitterConfirmations = {
 
 const reimbursees: ReceiptReimbursees = {
   search: async () => [],
-  byId: async (id) =>
-    id === BOB.id ? { id: BOB.id, name: "Bob Baker" } : id === NO_ACCOUNT.id ? NO_ACCOUNT : id === LAPSED.id ? { id: LAPSED.id, name: "Lee Lapsed" } : null,
+  byId: async (id) => {
+    const name = new Map([[BOB.id, "Bob Baker"], [NO_ACCOUNT.id, NO_ACCOUNT.name], [LAPSED.id, "Lee Lapsed"]]).get(id);
+    return name ? { id, name, isAdult: true } : null;
+  },
   hasAccount: async (id) => id !== NO_ACCOUNT.id,
 };
 

@@ -273,6 +273,13 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!).toMatchObject({ submitterId: 1, reimburseePersonId: 7 });
     });
 
+    it("FINANCE cannot name a minor as reimbursee", async () => {
+      const { id } = await unknownReimbursee();
+      bindPorts({ signoff: directory({ finance: [3], minors: [7] }) });
+      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ status: 400, message: "Only an adult can be named as reimbursee" });
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+    });
+
     it("a FINANCE holder cannot name themself or anyone in their household as reimbursee", async () => {
       const { id } = await unknownReimbursee();
       // 9 and 10 hold FINANCE and share a household.

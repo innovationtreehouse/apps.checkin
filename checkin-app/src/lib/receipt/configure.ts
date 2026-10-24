@@ -90,19 +90,31 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
 }
 
 /** Live people whose name contains the query, by name. */
+const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true } as const;
+
+/** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
-  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return prisma.person.findMany({
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const matches = await prisma.person.findMany({
     where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
-    select: { id: true, name: true },
+    select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
-    take: limit,
   });
+  return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
 }
 
-async function reimburseeById(personId: number): Promise<ReimburseeOption | null> {
-  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { id: true, name: true } });
+async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: AGE_FIELDS });
+  return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
 }
 
 /** Whether a live person has an account to sign in with. */

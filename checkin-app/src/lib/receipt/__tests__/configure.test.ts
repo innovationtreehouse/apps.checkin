@@ -107,19 +107,38 @@ describe('receipt runtime: mail intake bindings', () => {
 describe('receipt runtime: reimbursee bindings', () => {
     afterEach(() => jest.clearAllMocks());
 
-    it('searches live people by name, returning only id and name', async () => {
-        prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 8, name: 'Sam Lee' }]);
-        expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }]);
-        expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
-            where: { mergedIntoId: null, name: { contains: 'sam', mode: 'insensitive' } },
-            select: { id: true, name: true },
-            take: 20,
-        });
+    const adult = { id: 8, name: 'Sam Lee', dateOfBirth: ADULT_DOB, isDeclaredAdult: false };
+    const minor = { id: 9, name: 'Sam Kid', dateOfBirth: new Date(), isDeclaredAdult: false };
+    const unknownAge = { id: 10, name: 'Sam Who', dateOfBirth: null, isDeclaredAdult: false };
+    // No household or membership is read: someone without an account is named like any adult.
+    const declaredNonMember = { id: 11, name: 'Sam Guest', dateOfBirth: null, isDeclaredAdult: true };
+
+    it('searches live people by name and offers only known adults, members or not, as id and name', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([adult, minor, unknownAge, declaredNonMember]);
+        expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }, { id: 11, name: 'Sam Guest' }]);
+        const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
+        expect(query).toMatchObject({ where: { mergedIntoId: null, name: { contains: 'sam', mode: 'insensitive' } } });
+        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['mergedIntoId', 'name']);
     });
 
-    it('names a reimbursee by id only while their record is live', async () => {
+    it('caps the search after dropping anyone not known to be an adult', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([minor, adult, declaredNonMember]);
+        expect(await boundConfig().reimbursees?.search('sam', 1)).toEqual([{ id: 8, name: 'Sam Lee' }]);
+    });
+
+    it.each([
+        ['an adult', adult, true],
+        ['a non-member declared adult', declaredNonMember, true],
+        ['a minor', minor, false],
+        ['someone of unknown age', unknownAge, false],
+    ])('names %s by id with whether they are an adult', async (_label, row, isAdult) => {
+        prisma.person.findFirst = jest.fn().mockResolvedValue(row);
+        expect(await boundConfig().reimbursees?.byId(row.id)).toEqual({ id: row.id, name: row.name, isAdult });
+    });
+
+    it('names nobody by id once their record is merged away', async () => {
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().reimbursees?.byId(8)).toBeNull();
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null }, select: { id: true, name: true } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null } });
     });
 });
