@@ -1,8 +1,7 @@
 # One finance exception queue, decided on the record
 
-Design for #2481. Theme 1 of the receipt-flow conversion audit
-(`docs/in-design/receipt-flow-conversion-audit.md`, branch
-`claude/receipt-flow-conversion-audit-85f095`).
+Design for #2481, theme 1 of the receipt-flow conversion audit. The audit's
+findings and their numbers are listed in #2481.
 
 ## Summary
 
