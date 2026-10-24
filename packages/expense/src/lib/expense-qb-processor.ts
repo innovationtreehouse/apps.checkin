@@ -174,6 +174,11 @@ async function resolveAccountsForExpense(
   const conflicts: ConflictItem[] = [];
 
   for (const li of lineItems) {
+    // An account finance set by hand on a held line wins over every rule, whatever the hold reason.
+    if (li.manualQbAccount) {
+      resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
+      continue;
+    }
     if (!resolvesThroughCatalog(li)) continue;
 
     const info = itemInfoByItemId.get(li.id);
@@ -200,13 +205,9 @@ async function resolveAccountsForExpense(
 
   if (conflicts.length === 0) {
     for (const li of lineItems) {
-      if (resolvesThroughCatalog(li)) continue;
-      if (li.manualQbAccount) {
-        resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
-      } else {
-        const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
-        conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
-      }
+      if (resolvesThroughCatalog(li) || li.manualQbAccount) continue;
+      const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
+      conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
     }
   }
 
@@ -497,7 +498,8 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
  * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
- * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once.
+ * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
+ * post that books closes the exhausted QB_POST_FAILED flag as answered by the retry.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
 export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
@@ -518,6 +520,7 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });
-  if (rearmed) await postExpenseToQb(orgId, expenseId);
-  return rearmed;
+  if (!rearmed) return false;
+  await postExpenseToQb(orgId, expenseId);
+  return true;
 }
