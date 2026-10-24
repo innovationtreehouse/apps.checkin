@@ -87,16 +87,23 @@ describe("bulk-donation wiring", () => {
     ]);
   });
 
-  it("binds the in-kind accept step's roles and buckets to the expense sign-off directory and its capital-equipment amount", async () => {
+  it("binds the in-kind accept step's roles and buckets to the expense sign-off directory and its capital review line threshold", async () => {
     const { inKind } = await config();
     signoff.financeHolders.mockResolvedValue([10]);
     signoff.bucketsApprovedBy.mockResolvedValue([4]);
-    getExpenseSettings.mockResolvedValue({ capitalEquipmentUnitCents: 50_000 });
+    getExpenseSettings.mockResolvedValue({ capitalLineItemThresholdCents: 50_000 });
 
     await expect(inKind!.financeHolders()).resolves.toEqual([10]);
     await expect(inKind!.bucketsApprovedBy(3)).resolves.toEqual([4]);
     await expect(inKind!.largeValueCents()).resolves.toBe(50_000);
     expect(getExpenseSettings).toHaveBeenCalledWith(ORG.id);
+  });
+
+  it("passes an off capital review line threshold through to bulk donation as 0", async () => {
+    const { inKind } = await config();
+    getExpenseSettings.mockResolvedValue({ capitalLineItemThresholdCents: 0 });
+
+    await expect(inKind!.largeValueCents()).resolves.toBe(0);
   });
 
   it("X11 refuses a receipt key and another org's delta", async () => {
