@@ -69,6 +69,9 @@ model ReceivedReceipt {
   // Lease held while one caller pushes; cleared when the push settles, reclaimable once stale.
   /// @sensitivity:public
   applyClaimedAt     DateTime? @map("apply_claimed_at")
+  // Sweep attempts in a row that left the receipt applying; the sweep moves it to apply_failed at the cap.
+  /// @sensitivity:public
+  applySweepAttempts Int       @default(0) @map("apply_sweep_attempts")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public

@@ -11,6 +11,8 @@ const finite = z.number().finite();
 const nonNegative = finite.nonnegative();
 const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
+/** An ISO 4217 code; money formatting throws on anything else. */
+export const CURRENCY_CODE = /^[A-Z]{3}$/;
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
 
 export const LineItemSchema = z.object({
@@ -27,7 +29,7 @@ export const ManualDetailsSchema = z.object({
   retailer: z.string().min(1).max(500),
   receiptDate: z.string().min(1).max(50),
   receiptTotal: dollarString,
-  currency: z.string().min(1).max(10).optional(),
+  currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
   shipping: dollarString.optional(),
   tax: dollarString.optional(),
   discount: dollarString.optional(),
