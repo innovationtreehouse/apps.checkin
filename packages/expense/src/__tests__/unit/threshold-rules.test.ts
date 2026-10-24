@@ -21,15 +21,16 @@ describe("boardOnlyChanges", () => {
     ]);
   });
 
-  it("switching a review threshold off is the Board's; switching it on is FINANCE's", () => {
-    expect(boardOnlyChanges(current, { capitalTotalThresholdCents: 0 })).toEqual(["capitalTotalThresholdCents"]);
-    expect(boardOnlyChanges(current, { capitalLineItemThresholdCents: 10_000 })).toEqual([]);
-  });
-
-  it("between two non-zero review values, lower is FINANCE's and higher is the Board's", () => {
-    expect(boardOnlyChanges(current, { capitalTotalThresholdCents: 400_000 })).toEqual([]);
-    expect(boardOnlyChanges(current, { capitalTotalThresholdCents: 600_000 })).toEqual(["capitalTotalThresholdCents"]);
-  });
+  it.each(["capitalTotalThresholdCents", "capitalLineItemThresholdCents"] as const)(
+    "%s: raising it is the Board's; lowering it, to 0 included, is FINANCE's",
+    (field) => {
+      const at = { ...DEFAULT_EXPENSE_SETTINGS, [field]: 500_000 };
+      expect(boardOnlyChanges(at, { [field]: 600_000 })).toEqual([field]);
+      expect(boardOnlyChanges({ ...at, [field]: 0 }, { [field]: 10_000 })).toEqual([field]);
+      expect(boardOnlyChanges(at, { [field]: 400_000 })).toEqual([]);
+      expect(boardOnlyChanges(at, { [field]: 0 })).toEqual([]);
+    },
+  );
 
   it("any change to an Everyday limit is the Board's, lowering included; resending the saved value is not a change", () => {
     expect(boardOnlyChanges(current, { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 })).toEqual([

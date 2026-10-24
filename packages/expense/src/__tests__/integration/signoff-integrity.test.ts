@@ -151,15 +151,15 @@ describeDb("flags are checked off independently", () => {
 });
 
 describeDb("threshold changes", () => {
-  it("FINANCE tightens and loosens within policy; past policy, or switching review off, is the Board's", async () => {
+  it("FINANCE tightens and loosens within policy; past policy, or raising a capital threshold, is the Board's", async () => {
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 200_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, BOARD);
 
-    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, FINANCE);
-    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE)).rejects.toMatchObject({ status: 403 });
-    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, BOARD);
+    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, BOARD);
+    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE);
 
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000_001 }, BOARD)).rejects.toThrow();
     const changes = await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } });
