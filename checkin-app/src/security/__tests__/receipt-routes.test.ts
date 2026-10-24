@@ -72,6 +72,8 @@ function signIn(id: unknown, flags: Flags = {}) {
 }
 
 const RECEIPT = /^[A-Z]+ \/api\/receipts(\/|$)/;
+/** The reimbursee's confirmation: any signed-in person is admitted, and the library decides. */
+const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -89,10 +91,10 @@ describe('receipt routes are registered', () => {
         expect(fileRoutes.sort()).toEqual(['GET /api/receipts/[id]/file', 'GET /api/receipts/mail-items/[id]/file']);
     });
 
-    it('never admits public, kiosk or plain authenticated callers', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes]) {
+    it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s confirmation', () => {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !CONFIRMATION_ROUTES.includes(e))) {
             const spec = getRoute(e) ?? getFileRoute(e);
-            expect(['receipt-submitter', 'expense-signer', 'finance', 'finance-or-board']).toContain(spec?.authorize);
+            expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
     });
 });
@@ -312,7 +314,6 @@ describe('the reimbursee options', () => {
 });
 
 describe('the confirmation that signs a reimbursement', () => {
-    const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
     const views = (e: string) => new Map(getRoute(e)!.orderedView);
     const line = { id: 1, reimburseePersonId: 9, lineNumber: 1, description: 'Arduino', quantity: 1, unitPriceCents: 6989, totalPriceCents: 6989, isDelayed: false };
     const row = {
@@ -321,9 +322,9 @@ describe('the confirmation that signs a reimbursement', () => {
         uploadedByUserId: 7, reimbursementFor: 'Sam Lee', validationNotes: 'note', lineItems: [line],
     };
 
-    it('admits the expense signer, and shows the Board everyone\'s and anyone else their own', () => {
+    it('admits any signed-in person, and shows the Board everyone\'s and anyone else their own', () => {
         for (const e of CONFIRMATION_ROUTES) {
-            expect(getRoute(e)?.authorize).toBe('expense-signer');
+            expect(getRoute(e)?.authorize).toBe('authenticated');
             expect(getRoute(e)?.orderedView).toEqual([['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]]);
         }
     });
@@ -346,6 +347,15 @@ describe('the confirmation that signs a reimbursement', () => {
         expect(out.onBehalf).toBe(true);
         expect(out.lineItems).toEqual([line]);
         expect(out).not.toHaveProperty('reimbursementFor');
+    });
+
+    it('admits a reimbursee whose membership lapsed, who is no receipt submitter', async () => {
+        const lapsed = { type: 'session', user: user(9, { ageBand: 'adult', isActiveOrgMember: false }) } as AuthResult;
+        for (const e of CONFIRMATION_ROUTES) {
+            const spec = getRoute(e)!;
+            expect((await resolveAccess('receipt-submitter', { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(false);
+            expect((await resolveAccess(spec.authorize, { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(true);
+        }
     });
 
     it('drops a line missing its reimbursee stamp (fails closed)', () => {

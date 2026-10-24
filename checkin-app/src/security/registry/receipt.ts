@@ -34,12 +34,14 @@ defineRoute({ endpoint: 'PUT /api/receipts/[id]/in-kind', authorize: 'receipt-su
 defineRoute({ endpoint: 'GET /api/receipts/reimbursee-options', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptReimburseeOption'], orderedView: [['authenticated', ['public']]] });
 
 // The confirmation that signs a reimbursement: the person reimbursed reads and
-// confirms their own (`their_own` on reimburseePersonId); a Board member reads
-// and confirms one whose reimbursee has no account. Admission is the expense
-// signer's; the library refuses anyone else.
+// confirms their own (`their_own` on reimburseePersonId), whatever their
+// membership or role; a Board member reads and confirms one whose reimbursee has
+// no account. Any signed-in person is admitted because the reimbursee can be
+// anyone named; the library refuses everyone but the reimbursee and that Board
+// member, and confirming grants nothing else.
 const CONFIRMATION_VIEW: readonly OrderedViewEntry[] = [['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]];
-defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'expense-signer', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
-defineRoute({ endpoint: 'POST /api/receipts/[id]/confirmation', authorize: 'expense-signer', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/confirmation', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
