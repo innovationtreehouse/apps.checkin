@@ -70,7 +70,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@f7fa08ae3e5f90ca104a27aeabcb934586dc10f5 # fork main: pick mode (#10) + error-body scrub (#11)
+        uses: innovationtreehouse/openrouter-pr-review-action@379257323534a6ea01a394f27d834f95ae3141b9 # fork main: pick mode (#10) + error scrub (#11) + pick hardening (#12)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
@@ -112,7 +112,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@f7fa08ae3e5f90ca104a27aeabcb934586dc10f5 # fork main: pick mode (#10) + error-body scrub (#11)
+        uses: innovationtreehouse/openrouter-pr-review-action@379257323534a6ea01a394f27d834f95ae3141b9 # fork main: pick mode (#10) + error scrub (#11) + pick hardening (#12)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
