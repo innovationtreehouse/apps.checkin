@@ -1,8 +1,10 @@
 "use client";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Alert, Anchor, Badge, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
-import { STATE_LABEL, formatCents, useLoad } from "../components/api";
+import { Alert, Anchor, Badge, Button, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 
 interface ReceiptRow {
   id: number;
@@ -36,6 +38,26 @@ export default function ReceivingPage() {
   const counts = useLoad<Counts>("/receipts/counts");
   const rows = useLoad<ReceiptRow[]>(`/receipts${QUEUES[queue] ? `?state=${QUEUES[queue]}` : ""}`);
   const c = counts.data;
+  const canRetry = useCanManage() && queue === "failed";
+  const [retrying, setRetrying] = useState<number | null>(null);
+
+  // Retry resets the receipt to applying, then applies it, as the receipt page's Retry apply does.
+  async function retry(id: number) {
+    setRetrying(id);
+    try {
+      await api(`/receipts/${id}/retry-apply`, { method: "POST" });
+      const res = await api<{ state?: string; validationNotes?: string | null }>(`/receipts/${id}/apply`, { method: "POST" });
+      if (res.state === "apply_failed") notifications.show({ message: res.validationNotes ?? "Apply failed", color: "red", autoClose: false });
+      else notifications.show({ message: "Applied", color: "green" });
+    } catch (err) {
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+    } finally {
+      setRetrying(null);
+      rows.reload();
+      counts.reload();
+      notifyNavCounts();
+    }
+  }
 
   return (
     <>
@@ -67,6 +89,7 @@ export default function ReceivingPage() {
                 <Table.Th>Lines</Table.Th>
                 <Table.Th>State</Table.Th>
                 <Table.Th>Notes</Table.Th>
+                {canRetry && <Table.Th>Actions</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -80,6 +103,13 @@ export default function ReceivingPage() {
                   <Table.Td>{r.lineItemCount}</Table.Td>
                   <Table.Td><Badge variant="light">{STATE_LABEL[r.state] ?? r.state}</Badge></Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{r.validationNotes ?? ""}</Text></Table.Td>
+                  {canRetry && (
+                    <Table.Td>
+                      <Button size="xs" variant="light" loading={retrying === r.id} onClick={() => void retry(r.id)}>
+                        Retry
+                      </Button>
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               ))}
             </Table.Tbody>
