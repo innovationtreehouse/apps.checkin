@@ -74,9 +74,10 @@ model Receipt {
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")
 
-  details   ReceiptDetail?
-  lineItems ReceiptLineItem[]
-  auditLogs ReceiptAuditLog[]
+  details       ReceiptDetail?
+  financeReview ReceiptFinanceReview?
+  lineItems     ReceiptLineItem[]
+  auditLogs     ReceiptAuditLog[]
 
   // NOT unique by design: a re-uploaded duplicate file must insert so the
   // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
@@ -143,6 +144,33 @@ model ReceiptDetail {
   @@unique([orgId, importSourceId], name: "receipt_details_org_import_source_unique")
   @@index([orgId, state])
   @@map("receipt_details")
+}
+
+// Finance's latest decision on a receipt in financial review. An approval travels downstream
+// in CompletedReceipt.financeReview.
+model ReceiptFinanceReview {
+  /// @sensitivity:internal
+  receiptId       String   @id @map("receipt_id")
+  // approved | rejected
+  /// @sensitivity:internal
+  outcome         String
+  // The FinancialReviewReason values that held when finance decided.
+  /// @sensitivity:internal
+  reasons         String[]
+  // The deciding Person.id.
+  /// @sensitivity:internal
+  decidedByUserId Int      @map("decided_by_user_id")
+  /// @sensitivity:personal
+  note            String?
+  // The receipt's tax when finance decided; a later change to the tax is not covered.
+  /// @sensitivity:internal
+  taxCents        Int?     @map("tax_cents")
+  /// @sensitivity:internal
+  decidedAt       DateTime @default(now()) @map("decided_at")
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@map("receipt_finance_reviews")
 }
 
 model ReceiptLineItem {

@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { describeDb, resetDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
-import { getItem, searchItems } from "../../services/readService";
+import { getActiveItem, getItem, searchItems } from "../../services/readService";
 
 beforeAll(async () => { await initDb(); });
 
@@ -27,6 +27,12 @@ describeDb("readService (X3/X10)", () => {
   it("getItem includes the name beside the category ids", async () => {
     expect(await getItem("0011111111116")).toMatchObject({ gtin13: "0011111111116", name: "Cordless Drill" });
     expect(await getItem("0000000000000")).toBeNull();
+  });
+
+  it("getActiveItem returns an approved item and null for an archived or unknown GTIN", async () => {
+    expect(await getActiveItem("0011111111116")).toEqual({ gtin13: "0011111111116", name: "Cordless Drill" });
+    expect(await getActiveItem("0033333333330")).toBeNull();
+    expect(await getActiveItem("0000000000000")).toBeNull();
   });
 
   it("searchItems matches active items by name (any case) or GTIN, returning gtin13 and name", async () => {

@@ -10,6 +10,8 @@ import { describeDb } from "../helpers/db";
 import { MANAGER, OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 const noRef = { exists: false, gtin13: null, id: null, conversionFactor: 1, conversionVersion: 1 };
+// The catalog's approved, non-archived items; an archived or unknown GTIN reads as null.
+const ACTIVE_GTINS = new Set(["0000000000017", "0000000000024"]);
 let refCheck: RefCheckResult;
 let submitted: {
   proposals: CatalogItemReferenceProposal[];
@@ -20,7 +22,11 @@ let sinks: ReturnType<typeof recordingSinks>;
 
 function catalog(): { catalogReader: CatalogReader; catalogSubmissions: CatalogSubmissions } {
   return {
-    catalogReader: { lookupItems: async () => [], checkReferences: async () => refCheck },
+    catalogReader: {
+      lookupItems: async () => [],
+      checkReferences: async () => refCheck,
+      getActiveItem: async (gtin13) => (ACTIVE_GTINS.has(gtin13) ? { gtin13, name: "Hex bolt" } : null),
+    },
     catalogSubmissions: {
       proposeItemReference: async (p) => (submitted.proposals.push(p), { id: 1 }),
       reportConflict: async (p) => (submitted.conflicts.push(p), { id: 2 }),
@@ -72,6 +78,18 @@ describeDb("associate (CI3, optimistic)", () => {
     const { r, lines } = await pendingWithLines();
     await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017" })).rejects.toMatchObject({ status: 502 });
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).recognitionStatus).toBe("unrecognized");
+  });
+
+  it.each([
+    ["malformed", "12345", 400, /not a GTIN-13/],
+    ["wrong check digit", "0000000000018", 400, /not a GTIN-13/],
+    ["unknown or archived", "0000000000031", 404, /No catalog item has GTIN 0000000000031/],
+  ])("%s GTIN: %i, nothing sent to the catalog, and the line unchanged", async (_case, gtin13, status, message) => {
+    const { r, lines } = await pendingWithLines();
+    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13 })).rejects.toMatchObject({ status, message: expect.stringMatching(message) });
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).recognitionStatus).toBe("unrecognized");
+    expect(submitted.proposals).toHaveLength(0);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(0);
   });
 
   it("404 for another org's receipt and for a line of another receipt", async () => {

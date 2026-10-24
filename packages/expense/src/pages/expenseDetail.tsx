@@ -8,14 +8,20 @@ import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import NonInventoryBadge from "../components/NonInventoryBadge";
 
 interface Line {
   id: number;
   lineNumber: number;
   description: string;
   partNumber: string | null;
+  manufacturer: string | null;
+  nonInventory?: boolean;
   quantity: number;
+  unitPriceCents: number;
   totalPriceCents: number;
+  gtin13: string | null;
+  isDelayed: boolean;
   isCapital: boolean;
   depreciationYears: number | null;
   capitalOwnerId: number | null;
@@ -39,7 +45,11 @@ interface Expense {
   vendorName: string | null;
   receiptDate: string | null;
   receiptTotalCents: number;
+  taxCents: number;
+  shippingCents: number;
+  discountCents: number;
   currency: string;
+  submittedAt: string;
   state: string;
   needsReimbursement: boolean;
   reimbursementFor?: string | null;
@@ -88,6 +98,15 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   if (a.status === "unknown") return ["resolve-unknown"];
   if (state === "assign_ownership" && a.ownerId === null) return ["assign-owner"];
   return [];
+}
+
+function Amount({ label, value }: { label: string; value: string }) {
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed">{label}</Text>
+      <Text size="sm">{value}</Text>
+    </Stack>
+  );
 }
 
 interface VendorLink {
@@ -195,6 +214,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
+  // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
+  const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
+  const canMapPart = dialog?.action === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
   // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
   const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD") || s.missing.includes("BOARD_APPROVAL"));
   const held = e.reimburseePersonId !== undefined
@@ -228,16 +250,28 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Group>
       )}
       <Text size="sm">
-        {e.receiptDate ?? "No receipt date"} · {formatCents(e.receiptTotalCents, e.currency)}
+        {e.receiptDate ?? "No receipt date"}
         {e.needsReimbursement && ` · Reimbursement${e.reimbursementFor ? ` for ${e.reimbursementFor}` : ""}`}
       </Text>
+      <Group gap="xl" align="start">
+        <Amount label="Total" value={formatCents(e.receiptTotalCents, e.currency)} />
+        <Amount label="Tax" value={formatCents(e.taxCents, e.currency)} />
+        {e.shippingCents !== 0 && <Amount label="Shipping" value={formatCents(e.shippingCents, e.currency)} />}
+        {e.discountCents !== 0 && <Amount label="Discount" value={`−${formatCents(e.discountCents, e.currency)}`} />}
+        <Amount label="Submitted" value={new Date(e.submittedAt).toLocaleString()} />
+      </Group>
 
       <Table>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>#</Table.Th>
             <Table.Th>Description</Table.Th>
-            <Table.Th>Total</Table.Th>
+            <Table.Th>Part #</Table.Th>
+            <Table.Th>Manufacturer</Table.Th>
+            <Table.Th ta="right">Qty</Table.Th>
+            <Table.Th ta="right">Unit</Table.Th>
+            <Table.Th ta="right">Total</Table.Th>
+            <Table.Th>GTIN-13</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
@@ -251,8 +285,21 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             return (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.lineNumber}</Table.Td>
-                <Table.Td>{l.description}{l.partNumber && <Text size="xs" c="dimmed">{l.partNumber}</Text>}</Table.Td>
-                <Table.Td>{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
+                <Table.Td>
+                  {l.description}{l.nonInventory && <NonInventoryBadge />}
+                  {(l.isDelayed || l.isCapital) && (
+                    <Group gap={4} mt={2}>
+                      {l.isDelayed && <Badge color="orange" size="xs">Delayed</Badge>}
+                      {l.isCapital && <Badge color="indigo" size="xs">Capital</Badge>}
+                    </Group>
+                  )}
+                </Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.partNumber ?? "—"}</Text></Table.Td>
+                <Table.Td><Text size="xs">{l.manufacturer ?? "—"}</Text></Table.Td>
+                <Table.Td ta="right">{l.quantity}</Table.Td>
+                <Table.Td ta="right">{formatCents(l.unitPriceCents, e.currency)}</Table.Td>
+                <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
                 <Table.Td>{a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}</Table.Td>
                 <Table.Td>
                   {a && <Badge variant="light">{a.status}</Badge>}
@@ -381,7 +428,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {needsBucket ? (
             <>
               <Select label="Bucket" data={bucketOptions} value={bucket} onChange={setBucket} searchable />
-              {dialog?.action === "assign-owner" && (
+              {canMapPart && (
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />
               )}
             </>

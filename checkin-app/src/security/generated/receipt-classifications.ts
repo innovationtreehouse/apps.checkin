@@ -53,6 +53,15 @@ export const classifications = {
         qbEntity: 'internal',
         importSourceId: 'internal',
     },
+    ReceiptFinanceReview: {
+        receiptId: 'internal',
+        outcome: 'internal',
+        reasons: 'internal',
+        decidedByUserId: 'internal',
+        note: 'personal',
+        taxCents: 'internal',
+        decidedAt: 'internal',
+    },
     ReceiptLineItem: {
         id: 'internal',
         receiptId: 'internal',
@@ -105,10 +114,14 @@ export const relations = {
     },
     Receipt: {
         details: { model: 'ReceiptDetail', isList: false },
+        financeReview: { model: 'ReceiptFinanceReview', isList: false },
         lineItems: { model: 'ReceiptLineItem', isList: true },
         auditLogs: { model: 'ReceiptAuditLog', isList: true },
     },
     ReceiptDetail: {
+        receipt: { model: 'Receipt', isList: false },
+    },
+    ReceiptFinanceReview: {
         receipt: { model: 'Receipt', isList: false },
     },
     ReceiptLineItem: {

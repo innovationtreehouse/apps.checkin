@@ -34,6 +34,7 @@ export * from "./services/reimbursementStatus";
 export * from "./services/reimburseeVendorService";
 export * from "./services/settingsService";
 export * from "./services/signoffService";
+export { expenseStateCounts, EXPENSE_STATES, type ExpenseStateCount } from "./services/stateCounts";
 export * from "./services/sweeps";
 
 export * as routes from "./routes";

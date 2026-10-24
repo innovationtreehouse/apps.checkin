@@ -1,4 +1,4 @@
-import { CompletedReceiptSchema } from "@checkin/receipt-types";
+import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
@@ -32,8 +32,6 @@ export function computeFinancialReviewFlags(
   const futureReview = diffDays < 0;
   return { taxReview, ageReview, futureReview, ageLimitDays, diffDays };
 }
-
-export type FinancialReviewReason = "tax" | "old_date" | "future_date" | "submitter_correction";
 
 /** Receipt fields that drive financial review; a submitter's change to one sends the receipt to finance. */
 export const SUBMITTER_CORRECTION_FIELDS: readonly string[] = ["taxCents", "receiptDate"];
@@ -122,6 +120,8 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
     const lineItems = await receiptRepo.listLineItems(receiptId);
+    const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
+    const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);
     const payload = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
       message: "receipt orgId does not match this org",
       path: ["orgId"],
@@ -145,6 +145,18 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
       // QB-linked ⇒ historical backfill: downstream skips the QB re-post.
       backfill: !!row.qbTxnId,
       isInKind: row.isInKind,
+      financeReview:
+        review?.outcome === "approved"
+          ? {
+              outcome: review.outcome,
+              reasons: review.reasons,
+              decidedByPersonId: review.decidedByUserId,
+              note: review.note,
+              taxCents: review.taxCents ?? undefined,
+              decidedAt: review.decidedAt.toISOString(),
+            }
+          : undefined,
+      taxReviewRequired: taxReview,
       lineItems: lineItems.map((li) => ({
         receiptLineItemId: li.id,
         lineNumber: li.lineNumber,

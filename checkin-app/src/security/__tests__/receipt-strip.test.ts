@@ -63,6 +63,9 @@ const receiptView = () => ({
     validationNotes: 'rejected: wrong store',
     lineItems: [{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }],
     reimbursement: { paidOn: null },
+    pushGivenUp: true,
+    lastPushFailedAt: '2026-10-20T00:00:00.000Z',
+    lastPushFailure: 'receiver timed out',
 });
 
 describe('receipt file bytes', () => {
@@ -108,13 +111,15 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.isInKind).toBe(true);
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
-        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes']) {
+        expect(out.pushGivenUp).toBe(true);
+        expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
+        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
             expect(out).not.toHaveProperty(f);
         }
     });
 
     it('the raw Receipt model strips the same names under an internal-only view', () => {
-        const row = omit(receiptView(), 'lineItems', 'reimbursement');
+        const row = omit(receiptView(), 'lineItems', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         const out = stripValue('Receipt', row, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.uploadedByUserId).toBe(7);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
@@ -128,6 +133,7 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.donorFirstName).toBe('Pat');
         expect(out.donorCompanyName).toBe('Doe Hardware');
         expect(out.validationNotes).toBe('rejected: wrong store');
+        expect(out.lastPushFailure).toBe('receiver timed out');
     });
 
     it('an internal-only view strips the audit actor name, values and the mail sender', () => {
@@ -142,7 +148,7 @@ describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob');
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 

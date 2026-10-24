@@ -95,15 +95,17 @@ describe("the Receipts split", () => {
     expect(list?.badge?.(counts)).toBeNull();
   });
 
-  it("Receipt Review holds review, settings and mail, for FINANCE or BOARD; mail for FINANCE alone", () => {
+  it("Receipt Review holds review, settings, mail and flow status, for FINANCE or BOARD; mail for FINANCE alone", () => {
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
       "/receipts/review",
       "/receipts/settings",
       "/receipts/mail",
+      "/receipt-flow",
     ]);
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.board, counts).map((l) => l.href)).toEqual([
       "/receipts/review",
       "/receipts/settings",
+      "/receipt-flow",
     ]);
     for (const name of ["member", "sysadmin", "operations"]) {
       expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);
@@ -118,6 +120,14 @@ describe("the Receipts split", () => {
       label: "1 receipt needs review",
     });
     expect(review?.badge?.(counts)).toBeNull();
+  });
+
+  it("Inventory shows Flow status to an inventory manager, not to a catalog viewer or FINANCE", () => {
+    const hrefs = (user: NavUser) => visibleLinks(INVENTORY, user, counts).map((l) => l.href);
+    expect(hrefs(PERSONAS.inventoryManager).at(-1)).toBe("/receipt-flow");
+    expect(hrefs(PERSONAS.keyholder)).toContain("/catalog/items");
+    expect(hrefs(PERSONAS.keyholder)).not.toContain("/receipt-flow");
+    expect(hrefs(PERSONAS.finance)).not.toContain("/receipt-flow");
   });
 });
 

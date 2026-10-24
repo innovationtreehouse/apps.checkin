@@ -192,9 +192,36 @@ model Expense {
   holds              ExpenseHold[]
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
+  receiptReview      ExpenseReceiptReview?
 
   @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
+}
+
+// The receipt's finance review as the receipt sent it: whether its org held the tax for review,
+// and finance's approval (CompletedReceipt.financeReview). Absent when the receipt said neither.
+model ExpenseReceiptReview {
+  /// @sensitivity:internal
+  expenseId         String    @id @map("expense_id")
+  // CompletedReceipt.taxReviewRequired; null when the receipt did not say.
+  /// @sensitivity:internal
+  taxReviewRequired Boolean?  @map("tax_review_required")
+  // The approval's FinancialReviewReason values: tax | old_date | future_date | submitter_correction.
+  /// @sensitivity:internal
+  reasons           String[]
+  // The receipt's tax when finance approved it; the approval covers that amount only.
+  /// @sensitivity:internal
+  approvedTaxCents  Int?      @map("approved_tax_cents")
+  /// @sensitivity:pii
+  approvedByUserId  Int?      @map("approved_by_user_id")
+  /// @sensitivity:personal
+  note              String?
+  /// @sensitivity:internal
+  approvedAt        DateTime? @map("approved_at")
+
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@map("expense_receipt_reviews")
 }
 
 model ExpenseLineItem {
@@ -222,6 +249,9 @@ model ExpenseLineItem {
   gtin13            String?
   /// @sensitivity:internal
   isDelayed         Boolean  @default(false) @map("is_delayed")
+  // Receiving marked the line non-inventory: finance picks its owner and account by hand each time.
+  /// @sensitivity:internal
+  nonInventory      Boolean  @default(false) @map("non_inventory")
   /// @sensitivity:internal
   isCapital         Boolean  @default(false) @map("is_capital")
   /// @sensitivity:pii
