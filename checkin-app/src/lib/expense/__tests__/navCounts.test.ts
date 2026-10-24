@@ -2,10 +2,11 @@ import { expenseLibraryCounts } from "../navCounts";
 
 const mockBuckets = jest.fn<Promise<number[]>, [number]>();
 const mockActionCounts = jest.fn();
+const mockOpsCounts = jest.fn();
 
 jest.mock("@checkin/expense", () => ({
   getExpenseRuntime: () => ({ signoff: { bucketsApprovedBy: (id: number) => mockBuckets(id) } }),
-  expenseOpsCounts: async () => ({ holds: 2, openFlags: 1 }),
+  expenseOpsCounts: () => mockOpsCounts(),
   signoffsAwaitingCount: async () => 4,
   expenseActionCounts: (p: unknown) => mockActionCounts(p),
 }));
@@ -22,6 +23,7 @@ const ACTIONS = {
 beforeEach(() => {
   mockBuckets.mockReset().mockResolvedValue([]);
   mockActionCounts.mockReset().mockResolvedValue(ACTIONS);
+  mockOpsCounts.mockReset().mockResolvedValue({ holds: 2, openFlags: 1 });
 });
 
 describe("expenseLibraryCounts", () => {
@@ -55,5 +57,28 @@ describe("expenseLibraryCounts", () => {
   it("asks nothing more of a viewer who approves no bucket and holds no role", async () => {
     expect(await expenseLibraryCounts({ id: 4 })).toEqual({ approver: 0 });
     expect(mockActionCounts).not.toHaveBeenCalled();
+  });
+
+  describe("when a count fails", () => {
+    beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
+    afterEach(() => jest.restoreAllMocks());
+
+    it("keeps the holds, flags and sign-off pills when the action counts fail", async () => {
+      mockBuckets.mockResolvedValue([100]);
+      mockActionCounts.mockRejectedValue(new Error("db down"));
+      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({ holds: 2, openFlags: 1, awaitingMySignoff: 4, approver: 1 });
+    });
+
+    it("keeps the action pills when the holds and flags counts fail", async () => {
+      mockOpsCounts.mockRejectedValue(new Error("db down"));
+      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toMatchObject({ "actionable:capital_review": 3, actionable: 7 });
+    });
+
+    it("leaves out a view the service could not count, and sums the rest", async () => {
+      mockActionCounts.mockResolvedValue({ assign_ownership: 1, capital_review: 3 });
+      const out = await expenseLibraryCounts({ id: 1, isFinance: true });
+      expect(out).toMatchObject({ "actionable:assign_ownership": 1, "actionable:capital_review": 3, actionable: 4 });
+      expect(out).not.toHaveProperty("actionable:qb_pending");
+    });
   });
 });

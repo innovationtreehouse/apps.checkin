@@ -54,6 +54,13 @@ describeDb("expense action counts", () => {
     expect(await counts(FINANCE)).toEqual(NONE);
   });
 
+  it("leaves out a view whose count fails and still counts the others", async () => {
+    await seedLine("capital_review", { ownerId: 100, status: "approved" });
+    const failing = directory({ finance: [3], board: [5] });
+    bindPorts({ signoff: { ...failing, bucketsApprovedBy: async () => { throw new Error("directory down"); } } });
+    expect(await counts(FINANCE)).toEqual({ assign_ownership: 0, owner_exception: 0, capital_review: 1, set_depreciation_cycle: 0, qb_pending: 0 });
+  });
+
   describe("assign ownership", () => {
     beforeEach(() => seedLine("assign_ownership", { ownerId: null }));
 
@@ -77,9 +84,15 @@ describeDb("expense action counts", () => {
       await seedLine("assign_ownership", { ownerId: 100 });
     });
 
-    it("counts pending lines in the viewer's own buckets", async () => {
+    it("counts expenses with a pending line in the viewer's own buckets", async () => {
       expect(await counts(APPROVER)).toEqual({ ...NONE, owner_approval: 2 });
       expect(await counts(OTHER_APPROVER)).toEqual({ ...NONE, owner_approval: 1 });
+    });
+
+    it("counts an expense with several pending lines once, as the list shows it", async () => {
+      const { id } = await seedLine("owner_approval", { ownerId: 200 });
+      await seedApproval(id, await seedLineItem(id), { ownerId: 200 });
+      expect(await counts(OTHER_APPROVER)).toEqual({ ...NONE, owner_approval: 2 });
     });
 
     it("leaves out lines the approver is conflicted on", async () => {
@@ -138,6 +151,14 @@ describeDb("expense action counts", () => {
       expect(await counts(FINANCE)).toEqual({ ...NONE, qb_pending: 1 });
       expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
       expect(await counts(BOARD)).toEqual(NONE);
+    });
+
+    it("freezes no Everyday check while counting", async () => {
+      const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
+      await sign(id, li, { SUBMITTER: 1 });
+      await counts(FINANCE);
+      await counts(BOARD);
+      expect((await db.expense.findUniqueOrThrow({ where: { id } })).everydayWithinLimits).toBeNull();
     });
 
     it("leaves out a fully signed expense and one where only the submitter seat is open", async () => {

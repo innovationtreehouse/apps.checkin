@@ -5,8 +5,9 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import type { Expense } from "../generated/prisma/client";
-import type { ExpenseActionView } from "../nav";
+import type { Expense, Prisma } from "../generated/prisma/client";
+import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
+import { logError } from "../lib/logger";
 import { CLOSED_STATES, availableSigners, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { listOpenFlags } from "./flagService";
@@ -57,7 +58,7 @@ export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promis
   });
   let count = 0;
   for (const expense of expenses) {
-    const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
+    const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense, { readOnly: true }), filledSeatsByLine(db, expense.id)]);
     for (const [lineId, f] of facts) {
       const seats = filled.get(lineId) ?? [];
       if (missingSeats(f, seats).includes("PROGRAM_APPROVER") && availableSigners(f, seats, "PROGRAM_APPROVER").includes(me)) count++;
@@ -84,43 +85,44 @@ async function countFree(rows: Parties[], conflicted: (e: Parties) => Promise<bo
 }
 
 /**
- * Per expense list view, what the caller can act on. Assigning buckets, settling exceptions,
- * capital review and depreciation are FINANCE steps; owner approval counts pending lines in the
- * caller's own buckets. Steps the server refuses a conflicted caller leave those expenses out;
- * capital review and depreciation are bookkeeping any FINANCE holder may do, so they keep them.
- * Expenses and lines a viewer can act on in QB pending are counted by qbPendingActionCount.
+ * Per expense list view, the expenses the caller can act on. Assigning buckets, settling
+ * exceptions, capital review and depreciation are FINANCE steps; owner approval counts expenses
+ * with a pending line in the caller's own buckets. Steps the server refuses a conflicted caller
+ * leave those expenses out; capital review and depreciation are bookkeeping any FINANCE holder
+ * may do, so they keep them. A view whose count fails is logged and left out, so the others
+ * still show.
  */
-export async function expenseActionCounts(principal: ExpensePrincipal): Promise<Record<ExpenseActionView, number>> {
+export async function expenseActionCounts(principal: ExpensePrincipal): Promise<Partial<Record<ExpenseActionView, number>>> {
   const me = callerId(principal);
   const orgId = await getOrgId();
   const conflicted = conflictCheck(me);
   const finance = principal.isFinance;
-  const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
-  const [assign, approval, exceptions, capital, depreciation, qbPending] = await Promise.all([
-    finance
-      ? db.expense.findMany({ where: { orgId, state: "assign_ownership", approvals: { some: { ownerId: null } } }, select: PARTIES })
-      : [],
-    buckets.length > 0
-      ? db.lineItemOwnerApproval.findMany({
-          where: { status: "pending", ownerId: { in: buckets }, expense: { orgId, state: "owner_approval" } },
-          select: { expense: { select: PARTIES } },
-        })
-      : [],
-    finance
-      ? db.expense.findMany({ where: { orgId, state: "owner_approval", approvals: { some: { status: "exception_raised" } } }, select: PARTIES })
-      : [],
-    finance ? db.expense.count({ where: { orgId, state: "capital_review" } }) : 0,
-    finance ? db.expense.count({ where: { orgId, state: "set_depreciation_cycle" } }) : 0,
-    finance || principal.isBoard ? qbPendingActionCount(principal) : 0,
-  ]);
-  return {
-    assign_ownership: await countFree(assign, conflicted),
-    owner_approval: await countFree(approval.map((a) => a.expense), conflicted),
-    owner_exception: await countFree(exceptions, conflicted),
-    capital_review: capital,
-    set_depreciation_cycle: depreciation,
-    qb_pending: qbPending,
+  const free = async (where: Prisma.ExpenseWhereInput) =>
+    countFree(await db.expense.findMany({ where: { orgId, ...where }, select: PARTIES }), conflicted);
+  const tasks: Record<ExpenseActionView, () => Promise<number>> = {
+    assign_ownership: async () => (finance ? free({ state: "assign_ownership", approvals: { some: { ownerId: null } } }) : 0),
+    owner_approval: async () => {
+      const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
+      if (buckets.length === 0) return 0;
+      return free({ state: "owner_approval", approvals: { some: { status: "pending", ownerId: { in: buckets } } } });
+    },
+    // An exception is not terminal, so it holds its expense in owner_approval, where FINANCE settles it.
+    owner_exception: async () => (finance ? free({ approvals: { some: { status: "exception_raised" } } }) : 0),
+    capital_review: async () => (finance ? db.expense.count({ where: { orgId, state: "capital_review" } }) : 0),
+    set_depreciation_cycle: async () => (finance ? db.expense.count({ where: { orgId, state: "set_depreciation_cycle" } }) : 0),
+    qb_pending: async () => (finance || principal.isBoard ? qbPendingActionCount(principal) : 0),
   };
+  const settled = await Promise.all(
+    EXPENSE_ACTION_VIEWS.map(async (view) => {
+      try {
+        return [view, await tasks[view]()] as const;
+      } catch (err) {
+        logError("expense_action_count_failed", { view }, err);
+        return null;
+      }
+    }),
+  );
+  return Object.fromEntries(settled.filter((r) => r !== null));
 }
 
 /**
@@ -145,7 +147,7 @@ export async function qbPendingActionCount(principal: ExpensePrincipal): Promise
 async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense): Promise<boolean> {
   if (reimburseeUnknown(expense)) return principal.isFinance && !(await conflictedParties(expense)).includes(me);
   const [facts, filled, approvalNeeded] = await Promise.all([
-    signoffFactsByLine(db, expense),
+    signoffFactsByLine(db, expense, { readOnly: true }),
     filledSeatsByLine(db, expense.id),
     boardApprovalNeeded(db, expense),
   ]);
