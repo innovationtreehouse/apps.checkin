@@ -31,7 +31,7 @@ beforeAll(() => {
 
 beforeEach(() => mockSend.mockClear());
 
-function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing?: string[]; expense?: Record<string, unknown> } = {}) {
+function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing?: string[]; mayRecord?: boolean; expense?: Record<string, unknown> } = {}) {
   mockRoles = { isFinance: roles.isFinance ?? false, isBoard: roles.isBoard ?? false };
   mockLoads = {
     "/expenses/e1": {
@@ -42,7 +42,10 @@ function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing
       ...opts.expense,
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "approved" }],
-    "/expenses/e1/signoffs": [{ lineItemId: 1, filled: ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"], missing: opts.missing ?? ["BOARD"], blocked: [] }],
+    "/expenses/e1/signoffs": [{
+      lineItemId: 1, filled: ["SUBMITTER", "TREASURER"], missing: opts.missing ?? ["BOARD"], blocked: [], actions: [], awaiting: [],
+      mayRecordBoardAuthorization: opts.mayRecord ?? false,
+    }],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
@@ -50,8 +53,8 @@ function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing
 const RECORD = { name: "Record Board authorization" };
 
 describe("Board authorization control", () => {
-  it.each([["FINANCE", { isFinance: true }], ["Board", { isBoard: true }]])("%s records it, and the text is required", async (_who, roles) => {
-    load(roles);
+  it.each([["FINANCE", { isFinance: true }], ["Board", { isBoard: true }]])("%s records it when the server allows, and the text is required", async (_who, roles) => {
+    load(roles, { mayRecord: true });
     const button = screen.getByRole("button", RECORD);
     expect(button).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/What the Board authorized/), { target: { value: "   " } });
@@ -61,13 +64,13 @@ describe("Board authorization control", () => {
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/board-authorization", "POST", { authorization: "Board vote, 2026-10-01" }, "Board authorization recorded");
   });
 
-  it("is not shown to anyone else", () => {
-    load({});
+  it("is not shown when the server says the caller may not record it, whatever their roles", () => {
+    load({ isFinance: true, isBoard: true }, { mayRecord: false });
     expect(screen.queryByRole("button", RECORD)).not.toBeInTheDocument();
   });
 
   it("is not shown once the authorization is recorded", () => {
-    load({ isFinance: true }, { missing: [] });
+    load({ isFinance: true }, { missing: [], mayRecord: false });
     expect(screen.queryByRole("button", RECORD)).not.toBeInTheDocument();
   });
 });

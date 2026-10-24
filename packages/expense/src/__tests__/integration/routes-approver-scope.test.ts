@@ -89,6 +89,18 @@ describeDb("approver routes filter to the caller's buckets", () => {
     await expect(call(expenses.approve, "/x", ids(), {})).rejects.toMatchObject({ status: 404 });
   });
 
+  it("POST …/approve-lines: 404", async () => {
+    as(OUTSIDER);
+    await expect(call(expenses.approveAll, "/x", ids(), { approvalIds: [approvalId] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("POST …/approve-lines: the bucket's approver approves and gets the rows back", async () => {
+    as(APPROVER);
+    expect(await call(expenses.approveAll, "/x", ids(), { approvalIds: [approvalId] })).toMatchObject({
+      LineItemOwnerApproval: [{ id: approvalId, status: "approved" }],
+    });
+  });
+
   it("POST …/raise-exception: 404", async () => {
     as(OUTSIDER);
     await expect(call(expenses.raise, "/x", ids(), { notes: "not mine" })).rejects.toMatchObject({ status: 404 });
@@ -97,12 +109,17 @@ describeDb("approver routes filter to the caller's buckets", () => {
   it("POST …/line-items/[lineItemId]/signoffs: the same 404 whatever the expense's state", async () => {
     as(OUTSIDER);
     const other = await seedExpense({ state: "owner_approval" });
-    await expect(call(expenses.sign, "/x", { ...ids(), id: other }, { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 404 });
-    await expect(call(expenses.sign, "/x", ids(), { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 404, message: "Line item not found" });
+    await expect(call(expenses.sign, "/x", { ...ids(), id: other }, { seat: "TREASURER" })).rejects.toMatchObject({ status: 404 });
+    await expect(call(expenses.sign, "/x", ids(), { seat: "TREASURER" })).rejects.toMatchObject({ status: 404, message: "Line item not found" });
     const closed = await seedExpense({ state: "rejected" });
     const closedLine = await seedLineItem(closed);
     await seedApproval(closed, closedLine, { ownerId: OWN_BUCKET });
     await expect(call(expenses.sign, "/x", { id: closed, lineItemId: String(closedLine) }, { seat: "SUBMITTER" })).rejects.toMatchObject({ status: 404, message: "Line item not found" });
+  });
+
+  it("POST …/line-items/[lineItemId]/signoffs: no program-approver seat to sign", async () => {
+    as(APPROVER);
+    await expect(call(expenses.sign, "/x", ids(), { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -113,18 +130,20 @@ describeDb("nav badge counts", () => {
     approvalId = await seedApproval(expenseId, lineItemId, { ownerId: OWN_BUCKET });
   });
 
-  it("counts a line awaiting the bucket approver's sign-off, and nothing for an outsider", async () => {
+  it("counts a line awaiting the bucket approver's approval, and nothing for an outsider", async () => {
     as(APPROVER);
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
     expect(await signoffsAwaitingCount(principal(OUTSIDER))).toBe(0);
   });
 
-  it("skips closed expenses and reimbursements with no reimbursee, and examines a capped number of expenses", async () => {
+  it("skips expenses out of owner approval, lines already approved, the caller's own, and reimbursements with no reimbursee, and examines a capped number of expenses", async () => {
     as(APPROVER);
-    for (const opts of [{ state: "rejected" }, { state: "owner_approval", needsReimbursement: true }]) {
-      const id = await seedExpense({ ...opts, submitterId: 1 });
+    for (const opts of [{ state: "rejected" }, { state: "qb_pending" }, { state: "owner_approval", submitterId: APPROVER }, { state: "owner_approval", needsReimbursement: true }]) {
+      const id = await seedExpense({ submitterId: 1, ...opts });
       await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET });
     }
+    const approved = await seedExpense({ state: "owner_approval", submitterId: 1 });
+    await seedApproval(approved, await seedLineItem(approved), { ownerId: OWN_BUCKET, status: "approved", decidedByUserId: 9 });
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
 
     for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) {
@@ -134,14 +153,20 @@ describeDb("nav badge counts", () => {
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
   });
 
-  it("older expenses already past the caller's seat do not crowd out a newer one awaiting it", async () => {
+  it("counts a line finance moved into the caller's bucket", async () => {
+    as(APPROVER);
+    const id = await seedExpense({ state: "owner_approval", submitterId: 1 });
+    await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET, status: "finance_assigned" });
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(2);
+  });
+
+  it("older expenses already past the caller's approval do not crowd out a newer one awaiting it", async () => {
     as(APPROVER);
     const old = new Date("2026-01-01");
     for (let i = 0; i <= SIGNOFF_BADGE_EXPENSE_CAP; i++) {
       const id = await seedExpense({ state: "qb_pending", submitterId: 1 });
       const line = await seedLineItem(id);
-      await seedApproval(id, line, { ownerId: OWN_BUCKET, status: "approved" });
-      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "PROGRAM_APPROVER", signerUserId: 9 } });
+      await seedApproval(id, line, { ownerId: OWN_BUCKET, status: "approved", decidedByUserId: 9 });
       await db.expense.update({ where: { id }, data: { submittedAt: old } });
     }
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);

@@ -630,10 +630,11 @@ model ExpenseReimburseeVendor {
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
-// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER | BOARD; a Board member may fill the middle two
-// when nobody eligible can. BOARD is the extra Board signer on a non-Everyday card-charge line
-// without written Board authorization. The two uniques make a seat fillable once and a person
-// able to fill one seat per line.
+// seat: SUBMITTER | TREASURER | BOARD; the program approver signs by approving the line. A Board
+// member may fill the Treasurer seat when nobody eligible can. BOARD is the extra Board signer on
+// a non-Everyday card-charge line without written Board authorization, or on a reimbursement owed
+// to a non-member. The two uniques make a seat fillable once and a person able to fill one seat
+// per line.
 model ExpenseLineSignoff {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())

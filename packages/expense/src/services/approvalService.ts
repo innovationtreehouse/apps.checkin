@@ -1,13 +1,14 @@
-// Per-line budget-owner approval: the approvers of the line's bucket approve or raise an
-// exception; FINANCE assigns buckets and settles exceptions.
+// Per-line budget-owner approval, the program approver's sign-off: the approvers of the line's
+// bucket, or a Board member in their place, approve; FINANCE assigns buckets and settles exceptions.
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket, liveBucketIds } from "../lib/financial-flow";
-import { conflictedParties, lockExpense, voidSignoffs } from "../lib/signoff-facts";
+import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
+import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
+import { approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -32,8 +33,6 @@ export async function requireLiveBuckets(ownerIds: number[]): Promise<void> {
   const live = await liveBucketIds();
   if (ownerIds.some((id) => !live.has(id))) throw new ServiceError(400, "Unknown or archived budget bucket");
 }
-
-const BUCKET_CHANGED = "the line's budget bucket changed";
 
 async function loadApproval(expenseId: string, approvalId: number, expectedState?: string) {
   const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
@@ -71,33 +70,104 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
   if (count === 0) throw new ServiceError(409, "This line changed; reload");
 }
 
-/** An approver approves; FINANCE may approve any line with an override comment (distinct audit action). */
+/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
+export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
+
+/**
+ * The program approver's sign-off on one line, inside a transaction holding the expense lock. A
+ * bucket approver approves; a Board member without a conflict may approve any line in place of its
+ * approvers, giving the reason, which is kept on the approval and its audit row. Whoever a seat on
+ * the line would refuse is refused. With `soleStandIn`, a Board stand-in is refused while a bucket
+ * approver could approve the line.
+ */
+async function approveLocked(
+  tx: Prisma.TransactionClient,
+  actor: ReturnType<typeof actorOf>,
+  expense: Awaited<ReturnType<typeof lockedInOwnerApproval>>,
+  approval: ApprovalRead & { lineItemId: number },
+  text: string | null,
+  soleStandIn = false,
+): Promise<void> {
+  if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
+  const facts = (await signoffFactsByLine(tx, expense)).get(approval.lineItemId)!;
+  const filled = (await filledSeatsByLine(tx, expense.id)).get(approval.lineItemId) ?? [];
+  const refusal = approvalRefusal(facts, filled, actor.userId);
+  if (refusal) throw new ServiceError(403, refusal);
+  const standIn = approvesAsStandIn(facts, actor.userId);
+  if (standIn && soleStandIn && facts.approvers.some((id) => approvalRefusal(facts, filled, id) === null)) {
+    throw new ServiceError(403, "A bucket approver can approve this line; a Board member approves it on its own, giving the reason");
+  }
+  if (standIn && !facts.orgLevel && !text) {
+    throw new ServiceError(400, "A Board member approving in place of the bucket's approvers gives the reason");
+  }
+  const notes = standIn ? text : null;
+  await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
+  await writeAudit(tx, actor, {
+    expenseId: expense.id,
+    action: standIn ? "line_item_approved_board_stand_in" : "line_item_approved",
+    lineItemId: approval.lineItemId,
+    notes,
+  });
+}
+
+/** Locks the expense and returns it, refused unless it waits for owner approval with its reimbursee known. */
+async function lockedInOwnerApproval(tx: Prisma.TransactionClient, expenseId: string) {
+  await lockExpense(tx, expenseId);
+  const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
+  return expense;
+}
+
+/** Approves one line; see approveLocked for who may. */
 export async function approveLine(
   principal: ExpensePrincipal,
   expenseId: string,
   approvalId: number,
-  overrideComment?: string | null,
+  reason?: string | null,
 ): Promise<void> {
   const actor = actorOf(principal);
-  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
-  requireStatus(approval, "pending");
-  await refuseConflicted(principal, expense);
+  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
 
-  let notes: string | null = null;
-  if (!(await isBucketApprover(principal, approval.ownerId))) {
-    if (!principal.isFinance) throw new ServiceError(403, "This line item is not in a bucket you approve");
-    notes = overrideComment?.trim() || null;
-    if (!notes) throw new ServiceError(400, "Override comment is required for finance approval");
-  }
+  // Facts are read under the expense row lock, so a seat or another approval cannot commit
+  // between the eligibility check and the write.
+  await db.$transaction(async (tx) => {
+    const expense = await lockedInOwnerApproval(tx, expenseId);
+    await approveLocked(tx, actor, expense, approval, reason?.trim() || null);
+  });
+
+  await checkApprovalAutoTransition(expenseId, actor);
+}
+
+/**
+ * Approve All: approves every listed line under one expense lock, each through the same checks as
+ * a single approval, or none of them. A Board stand-in is approved only on a line no bucket
+ * approver can approve. A refusal names the line by its number.
+ */
+export async function approveLines(principal: ExpensePrincipal, expenseId: string, approvalIds: number[]): Promise<void> {
+  const actor = actorOf(principal);
+  const ids = [...new Set(approvalIds)];
+  if (ids.length === 0) throw new ServiceError(400, "Name at least one line to approve");
 
   await db.$transaction(async (tx) => {
-    await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
-    await writeAudit(tx, actor, {
-      expenseId,
-      action: notes ? "line_item_approved_finance_override" : "line_item_approved",
-      lineItemId: approval.lineItemId,
-      notes,
+    const expense = await lockedInOwnerApproval(tx, expenseId);
+    const approvals = await tx.lineItemOwnerApproval.findMany({
+      where: { expenseId, id: { in: ids } },
+      include: { lineItem: { select: { lineNumber: true } } },
+      orderBy: { lineItem: { lineNumber: "asc" } },
     });
+    if (approvals.length !== ids.length) throw new ServiceError(404, "Approval record not found");
+    for (const approval of approvals) {
+      try {
+        // No reason: a stand-in line that needs one is refused, as a single approval without it is.
+        await approveLocked(tx, actor, expense, approval, null, true);
+      } catch (err) {
+        if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${approval.lineItem.lineNumber}: ${err.message}`);
+        throw err;
+      }
+    }
   });
 
   await checkApprovalAutoTransition(expenseId, actor);
@@ -149,6 +219,7 @@ export async function rejectException(
   await checkApprovalAutoTransition(expenseId, actor);
 }
 
+/** FINANCE settles an exception by moving the line to another bucket; it is not an approval, so the line waits for that bucket's approver. */
 export async function financeAssign(
   principal: ExpensePrincipal,
   expenseId: string,
@@ -165,7 +236,6 @@ export async function financeAssign(
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     await transition(tx, approval, { ownerId, status: "finance_assigned", decidedAt: new Date(), decidedByUserId: actor.userId });
-    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_assigned_exception",
@@ -211,15 +281,12 @@ export async function assignOwner(
   const conflicted = await Promise.all(listed.map(async (s) => (await conflictedParties(s)).includes(caller)));
   const siblings = listed.filter((_, i) => !conflicted[i]);
 
-  const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
-  const now = new Date();
-  const assigned = { ownerId, status, decidedAt: now, decidedByUserId: actor.userId };
+  const assigned = { ownerId, status: "pending", decidedAt: new Date(), decidedByUserId: actor.userId };
 
   await db.$transaction(async (tx) => {
     // Sorted, so two assignments touching the same expenses lock them in the same order.
     for (const id of [...new Set([expenseId, ...siblings.map((s) => s.expenseId)])].sort()) await lockExpense(tx, id);
     await transition(tx, approval, assigned);
-    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
       action: permanent ? "owner_assigned_permanent" : "owner_assigned_one_time",
@@ -232,7 +299,6 @@ export async function assignOwner(
       // A line assigned since it was listed keeps that assignment.
       const { count } = await tx.lineItemOwnerApproval.updateMany({ where: { id: s.approvalId, ownerId: null }, data: assigned });
       if (count === 0) continue;
-      await voidSignoffs(tx, actor, s.expenseId, [s.lineItemId], BUCKET_CHANGED);
       await writeAudit(tx, actor, {
         expenseId: s.expenseId,
         action: "owner_auto_assigned_permanent",
@@ -263,11 +329,9 @@ export async function resolveUnknown(
   requireStatus(approval, "unknown");
   await refuseConflicted(principal, expense);
 
-  const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
-    await transition(tx, approval, { ownerId, status, decidedAt: new Date(), decidedByUserId: actor.userId });
-    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
+    await transition(tx, approval, { ownerId, status: "pending", decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_resolved_unknown",
