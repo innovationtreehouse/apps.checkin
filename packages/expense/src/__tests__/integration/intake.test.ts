@@ -46,6 +46,13 @@ describeDb("S2 intake — has-non-inventory fixture", () => {
     expect(approval!.ownerId).toBeNull();
     expect((await db.expense.findFirst({ where: { id: hasNonInventory.receiptId } }))!.state).toBe("assign_ownership");
   });
+
+  it("stores no GTIN on a non-inventory line, even when the payload carries one", async () => {
+    const lineItems = hasNonInventory.lineItems.map((li, i) => (i === 1 ? { ...li, gtin13: "0000000000017" } : li));
+    await receiveCompletedReceipt({ ...hasNonInventory, lineItems });
+    const line = await db.expenseLineItem.findFirst({ where: { expenseId: hasNonInventory.receiptId, nonInventory: true } });
+    expect(line!.gtin13).toBeNull();
+  });
 });
 
 describeDb("S2 intake — all-recognized-gtin fixture", () => {

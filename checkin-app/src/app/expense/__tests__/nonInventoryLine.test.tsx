@@ -66,6 +66,11 @@ describe("Assign bucket on a line without a GTIN", () => {
     expect(screen.queryByLabelText(ALWAYS)).not.toBeInTheDocument();
   });
 
+  it("hides Always use this bucket for a non-inventory line that carries a GTIN", async () => {
+    await openAssignDialog({ gtin13: "0000000000017", nonInventory: true });
+    expect(screen.queryByLabelText(ALWAYS)).not.toBeInTheDocument();
+  });
+
   it("offers Always use this bucket for a line with a GTIN", async () => {
     await openAssignDialog({ gtin13: "0000000000017", nonInventory: false });
     expect(screen.getByLabelText(ALWAYS)).toBeInTheDocument();

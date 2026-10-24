@@ -198,8 +198,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
-  // "Always use this bucket" maps the line's GTIN, so a line without one never offers it.
-  const canMapPart = dialog?.action === "assign-owner" && !!e.lineItems.find((l) => l.id === dialog.approval.lineItemId)?.gtin13;
+  // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
+  const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
+  const canMapPart = dialog?.action === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
   // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
   const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD") || s.missing.includes("BOARD_APPROVAL"));
   const held = e.reimburseePersonId !== undefined
