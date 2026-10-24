@@ -154,6 +154,6 @@ describe('Receipt mail queue is listed to FINANCE only', () => {
     expect(entry.visible({ isFinance: true }, counts)).toBe(true);
     expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
     expect(entry.visible({ isSysadmin: true }, counts)).toBe(false);
-    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, counts)).toBe(true);
+    expect(entryFor('/finance/review').visible({ isBoardMember: true }, counts)).toBe(true);
   });
 });

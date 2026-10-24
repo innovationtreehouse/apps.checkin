@@ -14,6 +14,8 @@ import { actorOf } from "../lib/caller";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
+import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
+import { financeQueueTab } from "../financeQueue";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
 import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
@@ -271,6 +273,17 @@ export const checkOff: ExpenseRouteHandler = async ({ req, params }) => {
   await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null));
   return { ExpenseFlag: await db.expenseFlag.findFirst({ where: { id } }) };
 };
+
+// ── Finance queue ─────────────────────────────────────────────────────────────
+
+/** One expense tab of the finance queue; `?tab=` is the tab's queue value (expenses, to_sign, holds, qb, board). */
+export const financeQueue: ExpenseRouteHandler = async ({ req }) => {
+  const tab = financeQueueTab(query(req).get("tab"));
+  if (!tab) throw httpError(400, "tab must be one of: expenses, to_sign, holds, qb, board");
+  return { FinanceQueueRow: await financeQueueRows(await getPrincipal(), tab.key) };
+};
+
+export const financeQueueCounts: ExpenseRouteHandler = async () => ({ FinanceQueueCounts: await queueCounts(await getPrincipal()) });
 
 // ── Capital seed + QuickBooks matching ────────────────────────────────────────
 
