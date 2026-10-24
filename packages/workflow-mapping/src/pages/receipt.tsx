@@ -150,15 +150,15 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         </Alert>
       ))}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
+      {receipt.state === "applying" && (
+        <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>
+      )}
       {canManage && (
         <Group mb="md">
           {receipt.state === "pending_review" && (
             <Button loading={busy} onClick={() => act(`${base}/proceed`, undefined, "Proceeded")}>Proceed</Button>
           )}
-          {receipt.state === "applying" && (
-            <Button loading={busy} onClick={() => act(`${base}/apply`, undefined, "Applied")}>Apply</Button>
-          )}
-          {(receipt.state === "apply_failed" || receipt.state === "applying") && (
+          {receipt.state === "apply_failed" && (
             <Button
               variant="light"
               loading={busy}
