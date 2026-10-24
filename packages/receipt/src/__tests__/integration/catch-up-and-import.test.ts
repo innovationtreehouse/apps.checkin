@@ -98,9 +98,9 @@ describeDb("catch-up steps", () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
     actAs(FINANCE);
-    expect(await receiptService.queueCounts()).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 0 });
+    expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 0 });
     for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
-    expect(await receiptService.queueCounts()).toMatchObject({ notPushed: 2, pushGivenUp: 2 });
+    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 2, pushGivenUp: 2 });
   });
 
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {

@@ -123,5 +123,9 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(HOUSEMATE.id)).toEqual(counts(2, 2, 0));
+
+    // The review tabs match the pill for a FINANCE viewer, and stay org-wide for the Board.
+    expect((await receiptService.queueCounts(HOUSEMATE.id)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
+    expect((await receiptService.queueCounts(null)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
   });
 });

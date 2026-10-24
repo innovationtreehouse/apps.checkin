@@ -697,17 +697,24 @@ export const receiptService = {
     return rows.map((r) => ({ ...r, ...records.get(r.id) }));
   },
 
-  /** How many of the org's receipts each review queue holds, for the review screen's tabs. */
-  async queueCounts(): Promise<{ byState: Record<string, number>; notPushed: number; pushGivenUp: number }> {
+  /**
+   * How many of the org's receipts each review queue holds, for the review screen's tabs. For a
+   * FINANCE viewer the queues that wait on FINANCE leave out receipts the viewer is conflicted on,
+   * matching the nav pill; every other count is org-wide.
+   */
+  async queueCounts(financeViewerId: number | null): Promise<{ byState: Record<string, number>; notPushed: number; pushGivenUp: number }> {
     await requireActor();
     const orgId = (await getOrg()).id;
-    const [groups, undelivered] = await Promise.all([
+    const [groups, undelivered, finance] = await Promise.all([
       db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
       db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { id: true } }),
+      financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
     ]);
     const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
+    if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
     return {
-      byState: Object.fromEntries(groups.map((g) => [g.state, g._count._all])),
+      byState,
       notPushed: undelivered.length,
       pushGivenUp: stopped.size,
     };
