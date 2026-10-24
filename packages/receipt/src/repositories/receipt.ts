@@ -45,6 +45,15 @@ export const receiptRepo = {
 
   count: (where: Prisma.ReceiptWhereInput) => db.receipt.count({ where }),
 
+  /** Each matching receipt's uploader, reimbursee and state, for counts that apply the conflict rule. */
+  async listParties(where: Prisma.ReceiptWhereInput): Promise<Array<Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId" | "state">>> {
+    const rows = await db.receipt.findMany({
+      where,
+      select: { uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
+    });
+    return rows.flatMap((r) => (r.details ? [{ uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
+  },
+
   /** Writes both tables in one transaction; with `expectedState` it is a compare-and-set. */
   async update(id: string, set: ReceiptUpdate, expectedState?: string): Promise<void> {
     await db.$transaction(async (tx) => {
