@@ -3,7 +3,8 @@
 import { taxNeedsFinance, type ReviewKind, type StoredReceiptReview } from "./flags";
 import { CLOSED_STATES, reimburseeUnknown } from "./signoff";
 
-export type QueueTab = "expenses" | "accountHolds" | "quickbooks" | "board";
+/** The Finance review tab a reason sits in, as its `?queue=` value. */
+export type QueueTab = "expenses" | "holds" | "qb" | "board";
 
 export type ReasonCode =
   | "BUCKET_TO_ASSIGN"
@@ -94,16 +95,16 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
     if (e.state === "set_depreciation_cycle") out.push(reason("DEPRECIATION_CYCLE", "expenses"));
     if (reimburseeUnknown(e)) out.push(reason("REIMBURSEE_TO_NAME", "expenses"));
     if (taxWaitsOnFinance(e.taxCents, f.receiptReview, f.approvedTaxCents)) out.push(reason("TAX_NOT_REVIEWED", "expenses", { amountCents: e.taxCents }));
-    if (f.heldLines > 0) out.push(reason("ACCOUNT_HOLD", "accountHolds", { count: f.heldLines }));
+    if (f.heldLines > 0) out.push(reason("ACCOUNT_HOLD", "holds", { count: f.heldLines }));
   }
 
   if (!e.backfill && e.state !== "rejected") {
-    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "quickbooks", { count: e.qbPostAttempts, detail: f.lastPostError }));
+    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { count: e.qbPostAttempts, detail: f.lastPostError }));
     if (e.qbMatchState === "AMBIGUOUS") {
-      out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "quickbooks") : reason("QB_AWAITING_MATCH", "quickbooks"));
+      out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
   }
-  for (const r of f.openReviews) out.push(reason(r.kind, "quickbooks", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
+  for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 
   if (open) {
     if (f.boardApprovalNeeded) out.push(reason("BOARD_APPROVAL", "board", { amountCents: e.receiptTotalCents }));

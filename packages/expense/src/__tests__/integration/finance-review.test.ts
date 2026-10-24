@@ -120,7 +120,7 @@ describeDb("expense reasons", () => {
     await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
     await writeAudit(db, { userId: 0 }, { expenseId: id, action: "qb_needs_finance", notes: "attempt 5 of 5: Account is inactive" });
     expect(await expenseReasons(FINANCE, id)).toEqual([
-      { code: "QB_POST_FAILED", tab: "quickbooks", actionable: true, amountCents: null, count: 5, detail: "Account is inactive" },
+      { code: "QB_POST_FAILED", tab: "qb", actionable: true, amountCents: null, count: 5, detail: "Account is inactive" },
     ]);
   });
 

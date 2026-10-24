@@ -95,7 +95,7 @@ describe("the Reviews panel", () => {
   const drift = { id: 9, kind: "QB_DRIFT", audience: "FINANCE", detail: "amount", observed: JSON.stringify({ amount: 1500 }), checkedOffAt: null };
 
   it("keeps Accept the change disabled until the note says what finance did", async () => {
-    load(expense({ qbMatchState: "CREATED", flags: [drift] }), [reason("QB_DRIFT", { tab: "quickbooks", detail: "amount" })]);
+    load(expense({ qbMatchState: "CREATED", flags: [drift] }), [reason("QB_DRIFT", { tab: "qb", detail: "amount" })]);
     wrap(<ExpenseDetailPage id="e1" />);
     const accept = screen.getByRole("button", { name: "Accept the change" });
     expect(accept).toBeDisabled();
@@ -134,7 +134,7 @@ describe("the QuickBooks panel for a post waiting on finance", () => {
   const candidates = [{ id: "77", txnDate: "2026-10-02", totalCents: 234_000, accountRef: "Card", vendorRef: null }];
 
   it("says why it was not sent, and picks a matching entry", async () => {
-    load(expense({ qbMatchState: "AMBIGUOUS" }), [reason("QB_AWAITING_MATCH", { tab: "quickbooks" })], { "/expenses/e1/qb-candidates": candidates });
+    load(expense({ qbMatchState: "AMBIGUOUS" }), [reason("QB_AWAITING_MATCH", { tab: "qb" })], { "/expenses/e1/qb-candidates": candidates });
     wrap(<ExpenseDetailPage id="e1" />);
     expect(screen.getByText(/Not sent to QuickBooks: waiting for finance/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pick" }));
@@ -142,7 +142,7 @@ describe("the QuickBooks panel for a post waiting on finance", () => {
   });
 
   it("excludes an entry only with a reason", async () => {
-    load(expense({ qbMatchState: "AMBIGUOUS" }), [reason("QB_AWAITING_MATCH", { tab: "quickbooks" })], { "/expenses/e1/qb-candidates": candidates });
+    load(expense({ qbMatchState: "AMBIGUOUS" }), [reason("QB_AWAITING_MATCH", { tab: "qb" })], { "/expenses/e1/qb-candidates": candidates });
     wrap(<ExpenseDetailPage id="e1" />);
     fireEvent.click(screen.getByRole("button", { name: "Exclude" }));
     const confirm = screen.getByRole("button", { name: "Confirm exclusion" });
@@ -155,7 +155,7 @@ describe("the QuickBooks panel for a post waiting on finance", () => {
   });
 
   it("points a reimbursee without a vendor to the Reimbursee panel instead", () => {
-    load(expense({ qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }), [reason("QB_VENDOR_MISSING", { tab: "quickbooks" })]);
+    load(expense({ qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }), [reason("QB_VENDOR_MISSING", { tab: "qb" })]);
     wrap(<ExpenseDetailPage id="e1" />);
     expect(screen.getByText(/link one in the Reimbursee panel below/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pick" })).not.toBeInTheDocument();
@@ -164,7 +164,7 @@ describe("the QuickBooks panel for a post waiting on finance", () => {
 
 describe("back to the queue", () => {
   const retry = () => {
-    load(expense({ qbMatchState: "NEEDS_FINANCE" }), [reason("QB_POST_FAILED", { tab: "quickbooks", count: 5 })]);
+    load(expense({ qbMatchState: "NEEDS_FINANCE" }), [reason("QB_POST_FAILED", { tab: "qb", count: 5 })]);
   };
 
   it("returns to the queue tab when the decision leaves the viewer nothing to act on", async () => {

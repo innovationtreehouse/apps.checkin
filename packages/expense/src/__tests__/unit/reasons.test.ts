@@ -41,7 +41,7 @@ describe("deriveReasons", () => {
     expect(codes(facts({ expense: { state: "capital_review" } }))).toEqual(["CAPITAL_REVIEW"]);
     expect(codes(facts({ expense: { state: "set_depreciation_cycle" } }))).toEqual(["DEPRECIATION_CYCLE"]);
     expect(codes(facts({ expense: { needsReimbursement: true } }))).toEqual(["REIMBURSEE_TO_NAME"]);
-    expect(deriveReasons(facts({ heldLines: 2 }))).toEqual([{ code: "ACCOUNT_HOLD", tab: "accountHolds", amountCents: null, count: 2, detail: null }]);
+    expect(deriveReasons(facts({ heldLines: 2 }))).toEqual([{ code: "ACCOUNT_HOLD", tab: "holds", amountCents: null, count: 2, detail: null }]);
   });
 
   it("a known or backfilled reimbursee is no reason", () => {
@@ -68,7 +68,7 @@ describe("deriveReasons", () => {
 
   it("reads the QuickBooks reasons from qbMatchState, with the last error and the attempts", () => {
     expect(deriveReasons(facts({ expense: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 }, lastPostError: "Account is inactive" }))).toEqual([
-      { code: "QB_POST_FAILED", tab: "quickbooks", amountCents: null, count: 5, detail: "Account is inactive" },
+      { code: "QB_POST_FAILED", tab: "qb", amountCents: null, count: 5, detail: "Account is inactive" },
     ]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS" } }))).toEqual(["QB_AWAITING_MATCH"]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }, reimburseeVendorLinked: false }))).toEqual(["QB_VENDOR_MISSING"]);
