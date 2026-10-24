@@ -14,6 +14,7 @@ import { lineCents } from "../qb-write";
 import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
+import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
 
 interface Line {
   id: number;
@@ -22,6 +23,7 @@ interface Line {
   partNumber: string | null;
   manufacturer: string | null;
   nonInventory?: boolean;
+  manualQbAccount?: string | null;
   quantity: number;
   unitPriceCents: number;
   totalPriceCents: number;
@@ -73,6 +75,7 @@ interface Expense {
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
+  holds?: Hold[];
 }
 interface SignoffStatus {
   lineItemId: number;
@@ -567,6 +570,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           })}
         </Table.Tbody>
       </Table>
+
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} />
 
       {isFinance && reviews.length > 0 && <ReviewsPanel e={e} reviews={reviews} onDecided={() => void decided()} />}
 

@@ -153,6 +153,66 @@ describeDb("checkAndProcessExpense — non-inventory lines", () => {
   });
 });
 
+describeDb("checkAndProcessExpense — finance's account on every hold reason", () => {
+  const finance = principal(500, { isFinance: true });
+
+  async function holdThenSetAccount(id: string, li: number, reason: string) {
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(await holdsFor(id)).toMatchObject([{ reason, status: "PENDING", lineItemId: li }]);
+    await setHeldLineAccount(finance, id, li, "6100");
+    await resubmitHeldExpense(finance, id);
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await holdsFor(id)).map((h) => h.status)).toEqual(["RESOLVED"]);
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
+  }
+
+  it("books a NO_MATCH line to the account finance set", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await holdThenSetAccount(id, li, "NO_MATCH");
+  });
+
+  it("books a MULTIPLE_MATCHES line to the account finance set", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await seedAccountMapping({ category: "Hardware", qbAccount: "4100" });
+    await holdThenSetAccount(id, li, "MULTIPLE_MATCHES");
+  });
+
+  it("books a NO_PART_NUMBER line to the account finance set", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: null, totalPriceCents: 100 });
+    catalogResolvesAll({});
+    await holdThenSetAccount(id, li, "NO_PART_NUMBER");
+  });
+
+  it("books a NON_INVENTORY line to the account finance set", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PZ-LG", nonInventory: true, totalPriceCents: 100 });
+    catalogResolvesAll({});
+    await holdThenSetAccount(id, li, "NON_INVENTORY");
+  });
+
+  it("keeps finance's account when a matching rule is added before resubmit", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    await setHeldLineAccount(finance, id, li, "6100");
+    await seedAccountMapping({ qbAccount: "4000" });
+
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
+  });
+});
+
 describeDb("checkAndProcessExpense — idempotency & resolution", () => {
   it("is a no-op when a QB event already exists for the expense", async () => {
     const id = await seedExpense({ state: "qb_pending" });

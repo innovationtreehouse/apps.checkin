@@ -43,7 +43,7 @@ export const REASON_PLACE: Record<ReasonCode, string> = {
   DEPRECIATION_CYCLE: "Depreciation cycle panel",
   REIMBURSEE_TO_NAME: "Reimbursee panel",
   TAX_NOT_REVIEWED: "Approve tax, beside the tax",
-  ACCOUNT_HOLD: "Account holds screen",
+  ACCOUNT_HOLD: "Account holds panel",
   QB_POST_FAILED: "QuickBooks panel",
   QB_AWAITING_MATCH: "QuickBooks panel",
   QB_VENDOR_MISSING: "Reimbursee panel",
