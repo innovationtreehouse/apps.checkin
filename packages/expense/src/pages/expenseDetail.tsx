@@ -1,11 +1,10 @@
 "use client";
 import { useState } from "react";
 import {
-  Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
+  Anchor, Badge, Button, Checkbox, Group, Menu, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
-import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
@@ -61,11 +60,24 @@ interface Expense {
   approvals: Approval[];
   flags?: Flag[];
 }
+type Act = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
+interface LineAction {
+  act: Act;
+  seat?: string;
+  primary: boolean;
+  noteRequired: boolean;
+}
 interface SignoffStatus {
   lineItemId: number;
   filled: string[];
   missing: string[];
   blocked: string[];
+  actions: LineAction[];
+  awaiting: string[];
+}
+interface Signoffs {
+  ExpenseLineSignoffStatus: SignoffStatus[];
+  ExpenseSignoffViewer: { mayRecordBoardAuthorization: boolean };
 }
 interface Bucket {
   id: number;
@@ -79,25 +91,28 @@ const NOT_SENT: Record<string, string> = {
   NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
 };
 
-type Action = "approve" | "raise-exception" | "reject" | "finance-assign" | "assign-owner" | "resolve-unknown";
-const ACTION_LABEL: Record<Action, string> = {
-  approve: "Approve",
-  "raise-exception": "Raise exception",
-  reject: "Reject exception",
-  "finance-assign": "Assign bucket",
-  "assign-owner": "Assign bucket",
-  "resolve-unknown": "Resolve bucket",
-};
 const SEAT_LABEL: Record<string, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer", BOARD: "Board" };
 
-/** Which approval actions the caller may take on a row; the routes check again. */
-function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
-  if (a.status === "pending" && state === "owner_approval") return ["approve", "raise-exception"];
-  if (!isFinance) return [];
-  if (a.status === "exception_raised") return ["reject", "finance-assign"];
-  if (a.status === "unknown") return ["resolve-unknown"];
-  if (state === "assign_ownership" && a.ownerId === null) return ["assign-owner"];
-  return [];
+/** The button text, naming the role the caller acts in. */
+function actLabel(a: LineAction): string {
+  switch (a.act) {
+    case "approve": return a.noteRequired ? "Approve as FINANCE (override)" : "Approve as bucket approver";
+    case "sign": return `Sign as ${SEAT_LABEL[a.seat ?? ""] ?? a.seat}`;
+    case "raise-exception": return "Raise exception";
+    case "reject-exception": return "Reject exception";
+    case "assign-bucket": return "Assign bucket";
+    case "resolve-bucket": return "Resolve bucket";
+  }
+}
+
+/** The approval route an act posts to; Assign bucket settles an exception or fills an unassigned line. */
+function approvalRoute(act: Act, approval: Approval): string {
+  switch (act) {
+    case "reject-exception": return "reject";
+    case "assign-bucket": return approval.status === "exception_raised" ? "finance-assign" : "assign-owner";
+    case "resolve-bucket": return "resolve-unknown";
+    default: return act;
+  }
 }
 
 function Amount({ label, value }: { label: string; value: string }) {
@@ -174,10 +189,10 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const { isFinance, isBoard } = useRoles();
   const expense = useLoad<Expense>(base);
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
-  const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
+  const signoffs = useLoad<Signoffs>(`${base}/signoffs`);
   const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
   const bucketOptions = useBuckets(isFinance || isBoard);
-  const [dialog, setDialog] = useState<{ action: Action; approval: Approval } | null>(null);
+  const [dialog, setDialog] = useState<{ action: LineAction; approval: Approval } | null>(null);
   const [text, setText] = useState("");
   const [bucket, setBucket] = useState<string | null>(null);
   const [permanent, setPermanent] = useState(false);
@@ -190,16 +205,17 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
   const bucketNames = new Map((Array.isArray(approvalBag) ? [] : approvalBag?.ExpenseBucketView ?? []).map((b) => [b.id, b.name]));
-  const statusOf = new Map((signoffs.data ?? []).map((s) => [s.lineItemId, s]));
+  const statusOf = new Map((signoffs.data?.ExpenseLineSignoffStatus ?? []).map((s) => [s.lineItemId, s]));
 
   async function runAction() {
     if (!dialog) return;
     const { action, approval } = dialog;
+    const route = approvalRoute(action.act, approval);
     const body =
-      action === "approve" ? { overrideComment: text || null }
-      : action === "raise-exception" || action === "reject" ? { notes: text }
-      : { ownerId: Number(bucket), ...(action === "assign-owner" ? { permanent } : {}) };
-    if (await send(`${base}/line-item-approvals/${approval.id}/${action}`, "POST", body, `${ACTION_LABEL[action]} done`)) {
+      action.act === "approve" ? { overrideComment: text || null }
+      : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
+      : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
+    if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
       setDialog(null);
       reloadAll();
     }
@@ -209,18 +225,27 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
     if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) reloadAll();
   }
 
+  /** A seat signs at once; every other act opens the dialog for its note or bucket. */
+  function take(lineItemId: number, action: LineAction, approval: Approval | undefined) {
+    if (action.act === "sign") {
+      void sign(lineItemId, action.seat ?? "");
+      return;
+    }
+    if (!approval) return;
+    setText(""); setBucket(null); setPermanent(false);
+    setDialog({ action, approval });
+  }
+
   if (expense.error) return <LoadError what="the expense" message={expense.error} onRetry={expense.reload} />;
   if (!e) return <Text c="dimmed">Loading…</Text>;
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
-  const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
+  const needsBucket = dialog?.action.act === "assign-bucket" || dialog?.action.act === "resolve-bucket";
+  const takesNote = !needsBucket && dialog !== null && (dialog.action.act !== "approve" || dialog.action.noteRequired);
   // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
   const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
-  const canMapPart = dialog?.action === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
-  // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
-  const awaitingBoard = (signoffs.data ?? []).some((s) => s.missing.includes("BOARD") || s.missing.includes("BOARD_APPROVAL"));
-  const held = e.reimburseePersonId !== undefined
-    && reimburseeUnknown({ needsReimbursement: e.needsReimbursement, backfill: e.backfill, reimburseePersonId: e.reimburseePersonId });
+  const canMapPart = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
+  const waitingOnYou = e.lineItems.filter((l) => statusOf.get(l.id)?.actions.some((a) => a.primary)).length;
 
   return (
     <Stack>
@@ -261,6 +286,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         <Amount label="Submitted" value={new Date(e.submittedAt).toLocaleString()} />
       </Group>
 
+      {waitingOnYou > 0 && <Text size="sm" fw={600}>{waitingOnYou} of {e.lineItems.length} lines wait on you.</Text>}
       <Table>
         <Table.Thead>
           <Table.Tr>
@@ -275,16 +301,18 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
+            <Table.Th>Action</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {e.lineItems.map((l) => {
             const a = approvalRows.find((r) => r.lineItemId === l.id);
             const s = statusOf.get(l.id);
-            const noBucket = a?.ownerId == null;
+            const main = s?.actions.find((x) => x.primary);
+            const more = s?.actions.filter((x) => !x.primary) ?? [];
             return (
-              <Table.Tr key={l.id}>
-                <Table.Td>{l.lineNumber}</Table.Td>
+              <Table.Tr key={l.id} fw={main ? 700 : undefined} data-waiting-on-you={main ? true : undefined}>
+                <Table.Td>{main && <span aria-label="Waits on you">→ </span>}{l.lineNumber}</Table.Td>
                 <Table.Td>
                   {l.description}{l.nonInventory && <NonInventoryBadge />}
                   {(l.isDelayed || l.isCapital) && (
@@ -301,31 +329,33 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
                 <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
                 <Table.Td>{a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}</Table.Td>
-                <Table.Td>
-                  {a && <Badge variant="light">{a.status}</Badge>}
-                  <Group gap={4} mt={4}>
-                    {a && actionsFor(a, e.state, isFinance).map((action) => (
-                      <Button key={action} size="compact-xs" variant="light" onClick={() => { setText(""); setBucket(null); setPermanent(false); setDialog({ action, approval: a }); }}>
-                        {ACTION_LABEL[action]}
-                      </Button>
-                    ))}
-                  </Group>
-                </Table.Td>
+                <Table.Td>{a && <Badge variant="light">{a.status}</Badge>}</Table.Td>
                 <Table.Td>
                   {s ? (
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
-                      {s.missing.filter((seat) => seat !== "BOARD_APPROVAL").map((seat) => (
-                        <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
-                          Sign as {SEAT_LABEL[seat] ?? seat}
-                        </Button>
-                      ))}
-                      {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
-                      {noBucket && s.missing.includes("PROGRAM_APPROVER") && <Text size="xs" c="dimmed">Waiting for Finance to assign a budget bucket</Text>}
-                      {s.missing.includes("BOARD_APPROVAL") && <Text size="xs" c="dimmed">Held until the Board approval of this purchase is recorded</Text>}
-                      {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
+                      {s.awaiting.map((w) => <Text key={w} size="xs" c={w.startsWith("Held") ? "red" : "dimmed"}>{w}</Text>)}
                     </Stack>
                   ) : "—"}
+                </Table.Td>
+                <Table.Td>
+                  <Group gap={4} wrap="nowrap">
+                    {main && (
+                      <Button size="compact-xs" onClick={() => take(l.id, main, a)}>{actLabel(main)}</Button>
+                    )}
+                    {more.length > 0 && (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <Button size="compact-xs" variant="subtle">More</Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          {more.map((x) => (
+                            <Menu.Item key={`${x.act}-${x.seat ?? ""}`} onClick={() => take(l.id, x, a)}>{actLabel(x)}</Menu.Item>
+                          ))}
+                        </Menu.Dropdown>
+                      </Menu>
+                    )}
+                  </Group>
                 </Table.Td>
               </Table.Tr>
             );
@@ -343,7 +373,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
-      {(isFinance || isBoard) && awaitingBoard && (
+      {signoffs.data?.ExpenseSignoffViewer.mayRecordBoardAuthorization && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Board authorization</Text>
           <Textarea
@@ -423,7 +453,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
-      <Modal opened={dialog !== null} onClose={() => setDialog(null)} title={dialog ? ACTION_LABEL[dialog.action] : ""}>
+      <Modal opened={dialog !== null} onClose={() => setDialog(null)} title={dialog ? actLabel(dialog.action) : ""}>
         <Stack>
           {needsBucket ? (
             <>
@@ -432,14 +462,15 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />
               )}
             </>
-          ) : (
+          ) : takesNote && (
             <Textarea
-              label={dialog?.action === "approve" ? "Comment (required when FINANCE approves outside its own buckets)" : "Notes"}
+              label={dialog?.action.act === "approve" ? "Comment" : "Notes"}
+              required={dialog?.action.noteRequired}
               value={text}
               onChange={(ev) => setText(ev.currentTarget.value)}
             />
           )}
-          <Button onClick={() => void runAction()} disabled={needsBucket ? !bucket : dialog?.action !== "approve" && !text.trim()}>
+          <Button onClick={() => void runAction()} disabled={needsBucket ? !bucket : !!dialog?.action.noteRequired && !text.trim()}>
             Confirm
           </Button>
         </Stack>

@@ -1,0 +1,150 @@
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { MantineProvider } from "@mantine/core";
+import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
+
+let mockLoads: Record<string, unknown> = {};
+const mockSend: jest.Mock<Promise<boolean>, unknown[]> = jest.fn(async () => true);
+
+jest.mock("@checkin/expense/components/api", () => ({
+  useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
+  useRoles: () => ({ isFinance: true, isBoard: true }),
+  useBuckets: () => [],
+  send: (...args: unknown[]) => mockSend(...args),
+}));
+
+beforeAll(() => {
+  window.matchMedia =
+    window.matchMedia ||
+    ((query: string) =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList);
+});
+
+beforeEach(() => mockSend.mockClear());
+
+type Act = { act: string; seat?: string; primary: boolean; noteRequired: boolean };
+interface LineSpec { actions?: Act[]; awaiting?: string[]; status?: string }
+
+const line = (id: number) => ({
+  id, lineNumber: id, description: `Part ${id}`, partNumber: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000,
+  gtin13: null, isDelayed: false, isCapital: false, depreciationYears: null, capitalOwnerId: null,
+});
+
+function load(specs: LineSpec[]) {
+  mockLoads = {
+    "/expenses/e1": {
+      id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000 * specs.length, taxCents: 0, shippingCents: 0, discountCents: 0,
+      currency: "USD", submittedAt: "2026-10-01T00:00:00Z", state: "owner_approval", needsReimbursement: false, reimburseePersonId: null, backfill: false,
+      lineItems: specs.map((_, i) => line(i + 1)),
+      approvals: [],
+    },
+    "/expenses/e1/line-item-approvals": specs.map((s, i) => ({ id: 10 + i, lineItemId: i + 1, ownerId: 3, status: s.status ?? "pending" })),
+    "/expenses/e1/signoffs": {
+      ExpenseLineSignoffStatus: specs.map((s, i) => ({
+        lineItemId: i + 1, filled: [], missing: ["PROGRAM_APPROVER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
+      })),
+      ExpenseSignoffViewer: { mayRecordBoardAuthorization: false },
+    },
+  };
+  render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
+}
+
+const APPROVE: Act = { act: "approve", primary: true, noteRequired: false };
+const RAISE: Act = { act: "raise-exception", primary: false, noteRequired: true };
+const SIGN_PA: Act = { act: "sign", seat: "PROGRAM_APPROVER", primary: false, noteRequired: false };
+const rowOf = (n: number) => screen.getAllByRole("row")[n];
+
+describe("only the acts the server returns are drawn (3.15, #2433)", () => {
+  it("draws no act and no Sign-as button on a line with none, only its status", () => {
+    load([{ actions: [], awaiting: ["Awaiting approval", "Awaiting Program approver", "Awaiting Treasurer"] }]);
+    expect(screen.queryByRole("button", { name: /^Sign as/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
+    expect(screen.getByText("Awaiting Treasurer")).toBeInTheDocument();
+    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+  });
+
+  it("draws one main act on the line and the rest under More", async () => {
+    load([{ actions: [APPROVE, RAISE, SIGN_PA] }]);
+    const row = within(rowOf(1));
+    expect(row.getByRole("button", { name: "Approve as bucket approver" })).toBeInTheDocument();
+    expect(row.queryByRole("button", { name: "Raise exception" })).not.toBeInTheDocument();
+    expect(row.queryByRole("button", { name: "Sign as Program approver" })).not.toBeInTheDocument();
+    await act(async () => { fireEvent.click(row.getByRole("button", { name: "More" })); });
+    expect(await screen.findByRole("menuitem", { name: "Raise exception" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Sign as Program approver" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Sign as Treasurer" })).not.toBeInTheDocument();
+  });
+
+  it("a main sign act signs its seat", async () => {
+    load([{ actions: [{ act: "sign", seat: "TREASURER", primary: true, noteRequired: false }] }]);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Sign as Treasurer" })); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-items/1/signoffs", "POST", { seat: "TREASURER" }, "Signed as Treasurer");
+  });
+
+  it("Assign bucket on a line with an exception posts to finance's exception route", async () => {
+    load([{ status: "exception_raised", actions: [{ act: "assign-bucket", primary: true, noteRequired: false }, { act: "reject-exception", primary: false, noteRequired: true }] }]);
+    expect(screen.getByRole("button", { name: "Assign bucket" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject exception" })).not.toBeInTheDocument();
+  });
+});
+
+describe("lines waiting on the caller (3.14)", () => {
+  it("bolds a line with a main act, marks it with an arrow, and counts it in the heading", () => {
+    load([{ actions: [APPROVE] }, { actions: [], awaiting: ["Awaiting Treasurer"] }, { actions: [{ ...RAISE }] }]);
+    expect(screen.getByText("1 of 3 lines wait on you.")).toBeInTheDocument();
+    expect(rowOf(1)).toHaveAttribute("data-waiting-on-you", "true");
+    expect(within(rowOf(1)).getByLabelText("Waits on you")).toBeInTheDocument();
+    expect(rowOf(2)).not.toHaveAttribute("data-waiting-on-you");
+    expect(within(rowOf(2)).queryByLabelText("Waits on you")).not.toBeInTheDocument();
+    // An act under More alone does not make a line wait on the caller.
+    expect(rowOf(3)).not.toHaveAttribute("data-waiting-on-you");
+  });
+
+  it("shows no count when nothing waits on the caller", () => {
+    load([{ actions: [] }]);
+    expect(screen.queryByText(/wait on you/)).not.toBeInTheDocument();
+  });
+});
+
+describe("required notes (3.16)", () => {
+  it("marks a required note and keeps Confirm disabled while it is blank", async () => {
+    load([{ actions: [{ ...RAISE, primary: true }] }]);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Raise exception" })); });
+    const notes = await screen.findByRole("textbox", { name: /Notes/ });
+    expect(notes).toBeRequired();
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(notes, { target: { value: "   " } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(notes, { target: { value: "Wrong bucket" } });
+    expect(confirm).toBeEnabled();
+    await act(async () => { fireEvent.click(confirm); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/raise-exception", "POST", { notes: "Wrong bucket" }, "Raise exception done");
+  });
+
+  it("marks the FINANCE override comment required when the server requires it", async () => {
+    load([{ actions: [{ act: "approve", primary: true, noteRequired: true }] }]);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as FINANCE (override)" })); });
+    expect(await screen.findByRole("textbox", { name: /Comment/ })).toBeRequired();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  });
+
+  it("asks no note of an approval the server takes without one", async () => {
+    load([{ actions: [APPROVE] }]);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as bucket approver" })); });
+    const confirm = await screen.findByRole("button", { name: "Confirm" });
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(confirm).toBeEnabled();
+    await act(async () => { fireEvent.click(confirm); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { overrideComment: null }, "Approve as bucket approver done");
+  });
+});
