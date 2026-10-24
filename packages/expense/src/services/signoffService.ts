@@ -266,8 +266,9 @@ export interface SignaturesWaiting {
 }
 
 /**
- * The lines waiting for a Treasurer or Board signature this caller may give, from the line-actions
- * function, so a line is listed only once the steps before its signature are done. Reads at most
+ * The lines whose main act for this caller is a Treasurer or Board signature, from the line-actions
+ * function: a line is listed only once the steps before its signature are done, and a Board
+ * stand-in only where no one else can act. Reads at most
  * SIGNOFF_BADGE_EXPENSE_CAP open expenses with an approved line (newest first), as the sign-off
  * badges do; an expense with nothing for the caller is left out.
  */
@@ -289,10 +290,9 @@ export async function signaturesWaiting(principal: ExpensePrincipal): Promise<Si
   for (const expense of expenses) {
     const row: SignaturesWaiting = { expense, toSign: [], board: [] };
     for (const line of await callerLines(principal, expense, true)) {
-      for (const action of line.actions) {
-        const tab = signatureTab(line.facts, action, me);
-        if (tab) row[tab].push(line.lineItemId);
-      }
+      const main = line.actions.find((a) => a.primary);
+      const tab = main ? signatureTab(line.facts, main, me) : null;
+      if (tab) row[tab].push(line.lineItemId);
     }
     if (row.toSign.length + row.board.length > 0) out.push(row);
   }
