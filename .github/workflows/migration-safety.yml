@@ -431,13 +431,22 @@ jobs:
             echo "::group::$NAME ($PKG)"
             psql -v ON_ERROR_STOP=1 -h localhost -U testuser -d checkmein_migtest -c "CREATE DATABASE \"$NAME\";"
             export "$(echo "$NAME" | tr '[:lower:]' '[:upper:]')_DATABASE_URL=postgresql://testuser:testpassword@localhost:5432/$NAME"
-            if [ -d "$BASE_TREE/$DIR/prisma/migrations" ]; then
-              (cd "$BASE_TREE" && npm -w "$PKG" exec -- prisma migrate deploy)
-              if node -e 'process.exit(require(process.argv[1]).scripts?.["db:seed"] ? 0 : 1)' "$BASE_TREE/$DIR/package.json"; then
-                (cd "$BASE_TREE" && npm -w "$PKG" run db:seed)
+            # Find the library's base dir by NAME in the base's own list (package names and
+            # dirs may differ from HEAD); bases older than each-library.sh fall back to $DIR.
+            BDIR="$DIR"; LISTED=""
+            if [ -f "$BASE_TREE/scripts/each-library.sh" ]; then
+              BDIR=$(sh "$BASE_TREE/scripts/each-library.sh" --list | awk -v n="$NAME" '$1 == n {print $3}'); LISTED="$BDIR"
+            fi
+            if [ -n "$BDIR" ] && [ -d "$BASE_TREE/$BDIR/prisma/migrations" ]; then
+              (cd "$BASE_TREE" && npm -w "$BDIR" exec -- prisma migrate deploy)
+              if node -e 'process.exit(require(process.argv[1]).scripts?.["db:seed"] ? 0 : 1)' "$BASE_TREE/$BDIR/package.json"; then
+                (cd "$BASE_TREE" && npm -w "$BDIR" run db:seed)
               else
                 echo "[$NAME] base package has no db:seed — base migrations only"
               fi
+            elif [ -n "$LISTED" ]; then
+              echo "::error::[$NAME] base lists the library at $LISTED but it has no prisma/migrations there."
+              exit 1
             else
               echo "[$NAME] no migrations at base — applying the PR chain to an empty DB"
             fi

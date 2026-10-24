@@ -57,6 +57,21 @@ describeDb("manual upload", () => {
     expect(r.reimbursementFor).toBe(ALICE.name);
   });
 
+  it("stores the typed currency, discount, part #, manufacturer and backordered flag", async () => {
+    const details = manualDetails({
+      currency: "CAD",
+      receiptTotal: "18.00",
+      discount: "2.00",
+      lineItems: [{ description: "Bolt", partNumber: "B-100", manufacturer: "Fastenal", quantity: 2, unitPrice: 10, isDelayed: true }],
+    });
+    const r = await receiptService.upload(textFile(), "text/plain", { details });
+    expect(r.state).toBe("receipt_finalized");
+    const detail = await db.receiptDetail.findUnique({ where: { id: r.id } });
+    expect(detail).toMatchObject({ currency: "CAD", discountCents: 200, receiptTotalCents: 1800 });
+    const lines = await db.receiptLineItem.findMany({ where: { receiptId: r.id } });
+    expect(lines).toEqual([expect.objectContaining({ partNumber: "B-100", manufacturer: "Fastenal", isDelayed: true })]);
+  });
+
   it("rejects a caller-supplied reimbursee", async () => {
     await expect(
       receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: 5 }),

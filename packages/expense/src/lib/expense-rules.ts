@@ -38,6 +38,7 @@ export const HoldReason = {
   NO_MATCH:         "NO_MATCH",
   MULTIPLE_MATCHES: "MULTIPLE_MATCHES",
   NO_PART_NUMBER:   "NO_PART_NUMBER",
+  NON_INVENTORY:    "NON_INVENTORY",
 } as const;
 
 export type HoldReason = (typeof HoldReason)[keyof typeof HoldReason];

@@ -59,6 +59,24 @@ describe("Inventory Receiving tab", () => {
   });
 });
 
+describe("Inventory Receive Queue tab", () => {
+  const tab = () => INVENTORY.links.find((l) => l.href === "/inventory/receive-queue");
+
+  it("badges open backorders green", () => {
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { openBackorders: 3 } });
+    expect(tab()?.badge?.(c)).toEqual({ count: 3, color: "treehouseGreen", label: "3 backorders wait to be received" });
+    const one = counts([...LIBRARY_KEYS], { "local-inventory": { openBackorders: 1 } });
+    expect(tab()?.badge?.(one)?.label).toBe("1 backorder waits to be received");
+    expect(tab()?.badge?.(released)).toBeNull();
+  });
+
+  it("shows to FINANCE and Board, but runs the count provider only for an inventory manager", () => {
+    for (const u of [manager, finance, board]) expect(tabs(u, released)).toContain("/inventory/receive-queue");
+    const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "local-inventory");
+    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
+  });
+});
+
 describe("Inventory In-kind gifts tab", () => {
   const operations: SessionUser = { id: 5, isOperations: true };
 
