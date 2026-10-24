@@ -310,9 +310,42 @@ The review screen becomes the signature:
   expense is created the app records the submitter seat on every line, signed
   by the submitter and citing that confirmation.
 
-Finance's later changes don't void the submitter seat; the seat voiding already
-leaves it alone. Whether a change to a reimbursement's amounts after the
-submitter confirmed should send it back to them is open question 2.
+**A finance change sends a reimbursement back to the submitter** (decided).
+Once the submitter has confirmed a reimbursement, any change finance makes to
+the receipt or the expense voids the submitter's signature, and the submitter
+confirms again before the expense can post. The changes that count:
+
+- line items: adding, removing or editing a line;
+- amounts: a line's quantity, unit price or total, and the receipt total;
+- tax, shipping and discount;
+- the receipt date;
+- the reimbursee.
+
+Whether a bucket assignment, or finance's other bookkeeping (capital
+designation, depreciation, the account on a mapping hold), should count too is
+open question 9. The design leaves them out until you decide, because none of
+them changes what the submitter is paid.
+
+Where the change lands depends on how far the receipt has gone:
+
+- **Before the receipt is finalized** (finance review), the change clears the
+  submitter's confirmation, and the receipt machine's existing guard sends it
+  back to submitter review when finance approves it, as it does any
+  reimbursement not yet confirmed.
+- **After the expense exists**, the change deletes the submitter seat on every
+  line. The posting gate then holds the expense, as for any missing seat, and
+  the receipt shows on the submitter's My receipts page as "Finance changed
+  this receipt; confirm it again", with the changed fields marked.
+
+Either way the receipt is back in the submitter's queue, and their My receipts
+pill counts it: the pill counts receipts in submitter review today, and it also
+counts reimbursements whose expense is waiting for the submitter's new
+confirmation. Confirming again records the seat on every line, as at creation.
+
+Both acts are audited: the void as `signoff_voided` on each line, naming the
+finance holder, the change and the fields it touched, and the new confirmation
+as its own audit row on the receipt and the seat on the expense. A card charge
+is unaffected; finance corrects it without the submitter.
 
 **A card charge: no submitter signature.** A card charge doesn't touch the
 submitter's money, so finance may correct the receipt and the submitter
@@ -462,6 +495,11 @@ from your decisions; the last two wait on open questions 2 and 5:
   lines and amounts, before the receipt goes to finance, whatever the intake
   path. Submitting the receipt is not the signature. Finance may correct a card
   charge's receipt without the submitter. *(new line)* `[Decision — owner]`
+- Once the submitter has confirmed a reimbursement, any change finance makes to
+  its line items, amounts, tax, shipping, discount, date or reimbursee voids the
+  submitter's signature, and the reimbursement does not reach the books until
+  the submitter confirms it again. The void and the new confirmation are both
+  recorded. *(new line)* `[Decision — owner]`
 - *(audience line)* replace "since that seat is filled from the receipt" with
   "since that seat is filled by their confirmation of a reimbursement's
   receipt". *(same tag)*
@@ -509,7 +547,9 @@ Each PR is based on `main`, not stacked.
    share one helper.
 7. **Submitter seat PR** (#2432): the confirmation on the reimbursement
    review screen, carried to expense; the seat recorded at expense creation; no
-   submitter seat on card-charge lines; the rule edits.
+   submitter seat on card-charge lines; voiding the seat on a finance change to
+   a confirmed reimbursement, with the My receipts pill counting it; the rule
+   edits.
 8. **Override rule** (3.17): the rule text, in step 3's PR or on its own. Code
    changes beyond step 3's Treasurer refusal only if you retire it instead.
 
@@ -537,9 +577,9 @@ Each PR is based on `main`, not stacked.
 2. **The submitter's seat.** *Decided:* a reimbursement's submitter signs by
    confirming the receipt as read, every time; a card charge takes no submitter
    signature (§3). Financial Policy Art. IX §IX.3 covers reimbursements only,
-   so it allows the card-charge case; that rule is your decision. One question
-   remains: if finance changes a reimbursement's amounts after the submitter
-   confirmed, must the submitter confirm again?
+   so it allows the card-charge case; that rule is your decision. A finance
+   change to a confirmed reimbursement voids the submitter's signature, and they
+   confirm again (§3).
 3. **The override and the Treasurer seat.** *Settled by C′:* an override is an
    approval, so the finance holder who gives it is barred from the Treasurer
    seat on that line, as any approver is. Do you accept that finance may stand
@@ -565,6 +605,10 @@ Each PR is based on `main`, not stacked.
    if the new bucket's owner shares their household, which the Treasurer
    conflict rule forbids. Should a bucket move void the Treasurer seat in that
    case only?
+9. **Which finance changes send a reimbursement back.** The list in §3 covers
+   what the submitter is paid. Should a bucket assignment, or finance's other
+   bookkeeping (capital designation, depreciation, a mapping hold's account),
+   also void the submitter's signature?
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
