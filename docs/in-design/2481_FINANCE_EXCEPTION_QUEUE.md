@@ -98,7 +98,7 @@ every screen, and are decided on the expense page with a note.
 | `CAPITAL_EQUIPMENT` | At intake, a unit price at or over `capitalEquipmentUnitCents` | **Decided: removed** (3.7). Capital review, where finance designates each line, is the only capital check, using `classifyCapital`'s two thresholds. The `capitalEquipmentUnitCents` setting goes with it | Expenses: "Capital review" | Expense page, Capital review panel | Submit capital review |
 | `MISSING_RECEIPT` | Never (no caller) | **Decided: removed** (3.8). Every expense comes from a receipt, and the Treasurer handles notes in lieu of receipts outside the app (`docs/rules/expenses.md`, Assumptions) | none | none | none |
 | `NON_EVERYDAY` | Never (no caller) | **Decided: removed** (3.8). It is left over from the retired "not Everyday" mark (#2437, #2440, #2441). The amounts decide Everyday, and a non-Everyday card charge already takes a Board seat | none | none | none |
-| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 3 |
+| `COI`, "held" variants | A sign-off leaves a seat no one without a conflict can fill | Goes away as a row; becomes a derived reason from `blockedSeats` | Board: "No Board member without a conflict can sign; held" | Expense page, sign-off column | None in the app; see open question 5 |
 | `COI`, "stood in" variants | A Board member took the Treasurer seat, or recorded the Board authorization, because no FINANCE holder could | Stays as a stored review | Board: "A Board member stood in for the Treasurer; review it" | Expense page, Reviews panel | Mark reviewed, note required; refused to signers and their households (as today) |
 | `REIMBURSEE_UNKNOWN` | At intake, a reimbursement with no Person | Goes away; becomes a derived reason (3.10) | Expenses: "Reimbursee to name" | Expense page, Reimbursee panel, reimbursee marked | Set reimbursee; the reason clears in the same act |
 | `QB_POST_FAILED`, retries exhausted | Fifth failed post (`NEEDS_FINANCE`) | Goes away as a row; derived from `qbMatchState = NEEDS_FINANCE` (3.9) | QuickBooks: "Posting failed 5 times: {last error, plain words}" | Expense page, QuickBooks panel | Retry; success clears it, a refusal shows as a red chip that stays open |
@@ -372,35 +372,40 @@ session correcting #2224 should know.
 | 3.20 | Set account on no-match lines does nothing | Processor honours a manual account on every hold reason (§5) | step 4 |
 | 3.21 | Holds lost lookup context and rule list; raw reason | Plain reasons, lookup context, matched rules listed (§5) | step 4 |
 | 3.22 | Resubmit not disabled while a line lacks an account | Disabled with the reason shown (§5) | step 4 |
-| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 5 (§6) | step 5 |
+| 3.27 | Failed intake invisible to finance | Failed payloads are Expenses-tab rows; other two screens per open question 7 (§6) | step 5 |
 
 ## Open questions
 
-1. **Expense finance views in the queue.** The design folds assign ownership,
+1. **The URL and name.** Decided: the queue moves to `/finance/review`, and
+   the old paths are renamed outright with no redirects (§3).
+2. **Expense finance views in the queue.** The design folds assign ownership,
    resolve ownership, exceptions, capital review and depreciation into the
    Expenses tab, because otherwise finance still works from two places. Your
    decision named only the flags. Do you want these folded too?
-2. **Who records the Board's approval, and whose tab counts it.** The rules have
+3. **Capital thresholds (3.7).** Decided: `CAPITAL_EQUIPMENT` and
+   `capitalEquipmentUnitCents` go; capital review is the only capital check
+   (§2, rollout step 8).
+4. **Who records the Board's approval, and whose tab counts it.** The rules have
    a FINANCE holder without a conflict record it, and a Board member only when
    there is none. The design shows it in the Board tab to both, counted green
    for FINANCE and gray for the Board unless no FINANCE holder can record it.
    Is that right, or should Board members see it green as a prompt to take it to
    a meeting?
-3. **A held expense no one can sign.** When every Board member is conflicted, the
+5. **A held expense no one can sign.** When every Board member is conflicted, the
    expense is held with no in-app way forward. The design shows it in the Board
    tab and offers no action. Is that what the Board wants, or should finance be
    able to close it with a note, as with a closed expense that never posted?
-4. **Required notes on reviews.** Today a check-off note is optional on the
+6. **Required notes on reviews.** Today a check-off note is optional on the
    server. The design makes it required for the four kept kinds, since the note
    is the record of the judgment. Agreed?
-5. **Expense events and Provisional items (3.27).** The design restores failed
+7. **Expense events and Provisional items (3.27).** The design restores failed
    intake only. Expense events shows the QuickBooks outbox, which the QuickBooks
    tab now covers. Provisional items belongs with the line (theme 3). Do you want
    either screen back as it was?
-6. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
+8. **`QB_OVER_CAP` as a note.** Nothing waits on finance once the drain posts an
    over-cap expense alone. Should finance still see each one in the QuickBooks
    tab, for awareness, until someone marks it seen?
-7. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
+9. **AMBIGUOUS posts.** When several QuickBooks entries could match, the expense
    waits in `AMBIGUOUS` for a manual match (`qb-candidates`, `qb-match`), and no
    screen calls those routes. That sits outside the twelve kinds, but it is
    finance's work. Should the QuickBooks tab list it, with a match picker on the
