@@ -21,7 +21,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus, signoffStatusFor } from "../services/signoffService";
+import { recordBoardAuthorization, setReimbursee, signLine, signLines, signoffStatus, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
 import { approveTax } from "../services/taxApprovalService";
@@ -232,6 +232,15 @@ export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
   const status = await signoffStatus(params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };
+};
+
+/** Sign all as Treasurer: every listed line the caller may sign, or none; the response is those lines' status. */
+export const signAll: ExpenseRouteHandler = async ({ req, params }) => {
+  const { lineItemIds } = await parseBody(req, z.object({ lineItemIds: z.array(z.number().int().positive()).min(1, "Name at least one line to sign") }));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() => signLines(principal, params.id, lineItemIds));
+  const listed = new Set(lineItemIds);
+  return { ExpenseLineSignoffStatus: seatsOnly((await signoffStatusFor(principal, params.id)).filter((s) => listed.has(s.lineItemId))) };
 };
 
 /** The library decides who may record the Board authorization; the response is every line's status. */

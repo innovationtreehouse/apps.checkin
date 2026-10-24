@@ -1,7 +1,7 @@
 // Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI), signed in order around the
 // line's approval. The signer is always the principal; a line with an unfilled seat holds its
 // expense out of the QB outbox.
-import type { Prisma } from "../generated/prisma/client";
+import type { Expense, Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
@@ -9,12 +9,63 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
-import { lineActions, mayRecordBoardAuthorization } from "../lib/line-actions";
+import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
+import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { closeAnsweredFlag, raiseFlag } from "./flagService";
+import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
 import { ServiceError } from "@checkin/component-kit";
+
+type Actor = ReturnType<typeof actorOf>;
+type SignedLine = { lineItemId: number; seat: Seat; facts: SignoffFacts; filled: FilledSeat[] };
+
+/** Refuses an expense that takes no sign-off now. */
+function requireSignable(expense: { backfill: boolean; state: string; needsReimbursement: boolean; reimburseePersonId: number | null }): void {
+  if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
+  if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
+}
+
+/** Checks and records one seat, inside a transaction holding the expense lock. */
+async function signLocked(tx: Prisma.TransactionClient, actor: Actor, expense: Expense, lineItemId: number, seat: Seat): Promise<SignedLine> {
+  const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
+  const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
+  const refusal = signoffRefusal(facts, filled, seat, actor.userId);
+  if (refusal) throw new ServiceError(403, refusal);
+  await tx.expenseLineSignoff.create({
+    data: { expenseId: expense.id, lineItemId, seat, signerUserId: actor.userId, signerUsername: actor.username },
+  });
+  await writeAudit(tx, actor, { expenseId: expense.id, action: "signoff", lineItemId, fieldChanged: "seat", valueAfter: seat });
+  return { lineItemId, seat, facts, filled };
+}
+
+/** The seat or the signer was taken by a concurrent sign-off. */
+function seatTaken(err: unknown): never {
+  if (isUniqueConstraintError(err)) throw new ServiceError(409, "Seat already filled or signer already seated");
+  throw err;
+}
+
+/** After the seats commit: the Board stand-in and held flags, the catalog snapshot, and the drain once every line is signed. */
+async function afterSigning(actor: Actor, expense: Expense, signed: SignedLine[]): Promise<void> {
+  const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
+  for (const { lineItemId, seat, facts, filled } of signed) {
+    const nowFilled = [...filled, { seat, signerUserId: actor.userId }];
+    if (seat === "TREASURER" && !facts.finance.includes(actor.userId)) {
+      await raiseFlag(expense.id, "COI", "no FINANCE holder could sign; a Board member took the Treasurer seat");
+    }
+    const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
+    const blocked = blockedSeats(nowFacts, nowFilled);
+    if (blocked.some((s) => s !== "BOARD")) {
+      await raiseFlag(expense.id, "COI", `${facts.kind === "card_charge" ? "a card charge needs a second" : "a reimbursement needs a third"} Board substitution; held`);
+    }
+    if (blocked.includes("BOARD")) await raiseFlag(expense.id, "COI", "no Board member without a conflict can take the Board seat; held");
+    if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
+  }
+  if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
+    await drainExpense(expense.orgId, expense.id);
+  }
+}
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
   const actor = actorOf(principal);
@@ -26,47 +77,48 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
 
   // Facts are read under the expense row lock, so a reimbursee or bucket change cannot commit
   // between the eligibility check and the insert.
-  const signed = await db
+  const { expense, signed } = await db
     .$transaction(async (tx) => {
       await lockExpense(tx, line.expenseId);
       const expense = (await tx.expense.findUnique({ where: { id: line.expenseId } }))!;
-      if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
-      if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
-      if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
-
-      const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
-      const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
-      const refusal = signoffRefusal(facts, filled, seat, actor.userId);
-      if (refusal) throw new ServiceError(403, refusal);
-
-      await tx.expenseLineSignoff.create({
-        data: { expenseId: expense.id, lineItemId, seat, signerUserId: actor.userId, signerUsername: actor.username },
-      });
-      await writeAudit(tx, actor, { expenseId: expense.id, action: "signoff", lineItemId, fieldChanged: "seat", valueAfter: seat });
-      return { expense, facts, filled };
+      requireSignable(expense);
+      return { expense, signed: await signLocked(tx, actor, expense, lineItemId, seat) };
     })
-    .catch((err: unknown) => {
-      // The seat or the signer was taken by a concurrent sign-off.
-      if (isUniqueConstraintError(err)) throw new ServiceError(409, "Seat already filled or signer already seated");
-      throw err;
-    });
+    .catch(seatTaken);
+  await afterSigning(actor, expense, [signed]);
+}
 
-  const { expense, facts, filled } = signed;
-  const nowFilled = [...filled, { seat, signerUserId: actor.userId }];
-  if (seat === "TREASURER" && !facts.finance.includes(actor.userId)) {
-    await raiseFlag(expense.id, "COI", "no FINANCE holder could sign; a Board member took the Treasurer seat");
-  }
-  const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
-  const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
-  const blocked = blockedSeats(nowFacts, nowFilled);
-  if (blocked.some((s) => s !== "BOARD")) {
-    await raiseFlag(expense.id, "COI", `${facts.kind === "card_charge" ? "a card charge needs a second" : "a reimbursement needs a third"} Board substitution; held`);
-  }
-  if (blocked.includes("BOARD")) await raiseFlag(expense.id, "COI", "no Board member without a conflict can take the Board seat; held");
-  if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
-  if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
-    await drainExpense(expense.orgId, expense.id);
-  }
+/**
+ * Sign all as Treasurer: signs the Treasurer seat on every listed line of the expense under one
+ * expense lock, each through the same checks as a single signature, or none of them. A refusal
+ * names the line by its number.
+ */
+export async function signLines(principal: ExpensePrincipal, expenseId: string, lineItemIds: number[]): Promise<void> {
+  const actor = actorOf(principal);
+  const ids = [...new Set(lineItemIds)];
+  if (ids.length === 0) throw new ServiceError(400, "Name at least one line to sign");
+
+  const { expense, signed } = await db
+    .$transaction(async (tx) => {
+      await lockExpense(tx, expenseId);
+      const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+      if (!expense) throw new ServiceError(404, "Expense not found");
+      requireSignable(expense);
+      const lines = await tx.expenseLineItem.findMany({ where: { expenseId, id: { in: ids } }, select: { id: true, lineNumber: true }, orderBy: { lineNumber: "asc" } });
+      if (lines.length !== ids.length) throw new ServiceError(404, "Line item not found");
+      const signed: SignedLine[] = [];
+      for (const line of lines) {
+        try {
+          signed.push(await signLocked(tx, actor, expense, line.id, "TREASURER"));
+        } catch (err) {
+          if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${line.lineNumber}: ${err.message}`);
+          throw err;
+        }
+      }
+      return { expense, signed };
+    })
+    .catch(seatTaken);
+  await afterSigning(actor, expense, signed);
 }
 
 /**
@@ -197,11 +249,16 @@ export async function signoffStatus(expenseId: string) {
 export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
+  return (await callerLines(principal, expense)).map(({ facts: _facts, ...status }) => status);
+}
+
+/** Each line's status with its facts, for the caller; `readOnly` reads without taking a seat lock. */
+async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
   const [facts, filled, approvalNeeded, approvals] = await Promise.all([
-    signoffFactsByLine(db, expense),
-    filledSeatsByLine(db, expenseId),
+    signoffFactsByLine(db, expense, { readOnly }),
+    filledSeatsByLine(db, expense.id),
     boardApprovalNeeded(db, expense),
-    db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, status: true, ownerId: true } }),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, status: true, ownerId: true } }),
   ]);
   const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
   const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
@@ -216,6 +273,47 @@ export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: s
     const seats = filled.get(lineItemId) ?? [];
     const holds = lineHolds(approvalNeeded, f, seats);
     const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
-    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord };
+    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f };
   });
+}
+
+/** One expense's lines waiting for a signature the caller may give, by Finance review tab. */
+export interface SignaturesWaiting {
+  expense: Expense;
+  toSign: number[];
+  board: number[];
+}
+
+/**
+ * The lines waiting for a Treasurer or Board signature this caller may give, from the line-actions
+ * function, so a line is listed only once the steps before its signature are done. Reads at most
+ * SIGNOFF_BADGE_EXPENSE_CAP open expenses with an approved line (newest first), as the sign-off
+ * badges do; an expense with nothing for the caller is left out.
+ */
+export async function signaturesWaiting(principal: ExpensePrincipal): Promise<SignaturesWaiting[]> {
+  if (!principal.isFinance && !principal.isBoard) return [];
+  const me = actorOf(principal).userId;
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      state: { notIn: [...CLOSED_STATES] },
+      NOT: { needsReimbursement: true, reimburseePersonId: null },
+      approvals: { some: { status: "approved" } },
+    },
+    orderBy: { submittedAt: "desc" },
+    take: SIGNOFF_BADGE_EXPENSE_CAP,
+  });
+  const out: SignaturesWaiting[] = [];
+  for (const expense of expenses) {
+    const row: SignaturesWaiting = { expense, toSign: [], board: [] };
+    for (const line of await callerLines(principal, expense, true)) {
+      for (const action of line.actions) {
+        const tab = signatureTab(line.facts, action, me);
+        if (tab) row[tab].push(line.lineItemId);
+      }
+    }
+    if (row.toSign.length + row.board.length > 0) out.push(row);
+  }
+  return out;
 }

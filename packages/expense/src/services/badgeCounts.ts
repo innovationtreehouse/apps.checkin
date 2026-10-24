@@ -8,7 +8,7 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { approvalRefusal, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal } from "../lib/signoff";
+import { approvalRefusal, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { listOpenFlags } from "./flagService";
 import { APPROVABLE_STATUSES } from "./approvalService";
@@ -119,9 +119,9 @@ export async function expenseActionCounts(principal: ExpensePrincipal): Promise<
 
 /**
  * QB pending expenses the caller can move toward QuickBooks, across at most
- * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE), record
- * the Board authorization, or fill an open Treasurer or Board seat. The line's approval is
- * signoffsAwaitingCount's, and the submitter seat is the submitter's.
+ * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE) or record
+ * the Board authorization. Treasurer and Board signatures are the finance queue's To sign and
+ * Board counts; the line's approval is signoffsAwaitingCount's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
@@ -137,20 +137,8 @@ export async function qbPendingActionCount(principal: ExpensePrincipal): Promise
 
 async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense): Promise<boolean> {
   if (reimburseeUnknown(expense)) return principal.isFinance && !(await conflictedParties(expense)).includes(me);
-  const [facts, filled, approvalNeeded] = await Promise.all([
-    signoffFactsByLine(db, expense, { readOnly: true }),
-    filledSeatsByLine(db, expense.id),
-    boardApprovalNeeded(db, expense),
-  ]);
+  const [facts, approvalNeeded] = await Promise.all([signoffFactsByLine(db, expense, { readOnly: true }), boardApprovalNeeded(db, expense)]);
   const lines = [...facts.values()];
   const takesAuthorization = expense.boardAuthorization === null && (approvalNeeded || lines.some((f) => f.boardSeat));
-  if (takesAuthorization && boardAuthorizationRefusal(lines, me) === null) return true;
-  for (const [lineId, f] of facts) {
-    const seats = filled.get(lineId) ?? [];
-    for (const seat of missingSeats(f, seats)) {
-      if (seat === "SUBMITTER") continue;
-      if (signoffRefusal(f, seats, seat, me) === null) return true;
-    }
-  }
-  return false;
+  return takesAuthorization && boardAuthorizationRefusal(lines, me) === null;
 }

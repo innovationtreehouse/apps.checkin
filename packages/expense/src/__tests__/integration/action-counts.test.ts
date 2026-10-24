@@ -8,6 +8,7 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { db } from "../../db";
 import { expenseActionCounts } from "../../services/badgeCounts";
+import { signaturesWaiting } from "../../services/signoffService";
 import type { ExpensePrincipal } from "../../contract";
 import type { Seat } from "../../lib/signoff";
 
@@ -145,12 +146,11 @@ describeDb("expense action counts", () => {
       expect(await counts(BOARD)).toEqual(NONE);
     });
 
-    it("counts an open Treasurer seat for a FINANCE holder who may sign it, and not for the Board", async () => {
+    it("leaves an open Treasurer seat to the finance queue's To sign count, so it is counted once", async () => {
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
       await sign(id, li, { SUBMITTER: 1 });
-      expect(await counts(FINANCE)).toEqual({ ...NONE, qb_pending: 1 });
-      expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
-      expect(await counts(BOARD)).toEqual(NONE);
+      expect(await counts(FINANCE)).toEqual(NONE);
+      expect((await signaturesWaiting(FINANCE)).map((w) => [w.expense.id, w.toSign, w.board])).toEqual([[id, [li], []]]);
     });
 
     it("freezes no Everyday check while counting", async () => {
@@ -169,12 +169,13 @@ describeDb("expense action counts", () => {
       expect(await counts(FINANCE)).toEqual(NONE);
     });
 
-    it("counts a Board seat on an org-level card charge for the Board once the Treasurer has signed", async () => {
+    it("leaves a Board seat to the finance queue's Board count, and counts the Board authorization only for whoever may record it", async () => {
       bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
       const { id, li } = await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
-      expect(await counts(BOARD)).toEqual(NONE);
       await sign(id, li, { TREASURER: 3 });
-      expect(await counts(BOARD)).toEqual({ ...NONE, qb_pending: 1 });
+      expect(await counts(BOARD)).toEqual(NONE);
+      expect(await counts(FINANCE)).toEqual({ ...NONE, qb_pending: 1 });
+      expect((await signaturesWaiting(BOARD)).map((w) => [w.toSign, w.board])).toEqual([[[], [li]]]);
     });
 
     it("gives an approver who holds no role no QB pending count", async () => {
