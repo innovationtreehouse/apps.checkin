@@ -77,6 +77,25 @@ describe("a receipt opened from the review queue", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("names the finance review reasons in plain words", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["old_date", "submitter_correction"] };
+    wrap(<ReceiptDetailPage />);
+    expect(
+      screen.getByText("Finance review: the receipt is older than the age limit; the submitter changed the tax or date"),
+    ).toBeInTheDocument();
+  });
+
+  it("marks the date when its age sent the receipt to finance review", () => {
+    mockLoads["/r1"] = { ...receipt, financialReviewReasons: ["old_date"] };
+    const { container } = wrap(<ReceiptDetailPage />);
+    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["2026-10-01"]);
+  });
+
+  it("marks the tax when tax sent the receipt to finance review", () => {
+    const { container } = wrap(<ReceiptDetailPage />);
+    expect([...container.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["tax $0.00"]);
+  });
+
   it("without ?queue= returns to the queue the receipt's state is in", () => {
     mockSearch = new URLSearchParams();
     mockLoads["/r1"] = { ...receipt, state: "ocr_failed" };
