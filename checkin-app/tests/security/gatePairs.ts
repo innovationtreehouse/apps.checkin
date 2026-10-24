@@ -148,6 +148,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
+    { name: 'tab /inventory/receiving counts route', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
     { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('POST /api/workflow-mapping/receipts/[id]/apply') },
     { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
@@ -156,8 +157,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
     { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
     { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
+    { name: 'sub-tab /income/reconciliation count route', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'counts:income', client: counts('income'), token: routeToken('POST /api/income/reconciliation/[id]/resolve') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
+    { name: 'page /donations nav-counts route', client: page('/donations'), token: routeToken('GET /api/donations/nav-counts') },
     {
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),

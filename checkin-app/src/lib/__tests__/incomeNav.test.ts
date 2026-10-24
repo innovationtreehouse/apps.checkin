@@ -1,7 +1,7 @@
 import { visibleLinks } from "@/lib/nav/gates";
 import { FINANCE_NAV_LINKS, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import { sectionBadges, sectionTabBadge } from "@/components/navBadges";
-import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
+import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
@@ -117,5 +117,18 @@ describe("Revenue Ops Donations tab", () => {
     expect(names(visibleLinks(REVENUE_OPS, board, c))).toContain("Donations");
     const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "bulk-donation");
     expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false, false]);
+  });
+});
+
+describe("Revenue Ops counts in the nav payload", () => {
+  const providers = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "income" || p.library === "bulk-donation");
+
+  it("carries income and donation counts for FINANCE", async () => {
+    expect(Object.keys((await collectLibraryCounts(finance, [...LIBRARY_KEYS], providers)) ?? {}).sort()).toEqual(["bulk-donation", "income"]);
+  });
+
+  it("carries none for Board, which still sees the Income, Shopify and Donations tabs", async () => {
+    expect(await collectLibraryCounts(board, [...LIBRARY_KEYS], providers)).toBeUndefined();
+    expect(names(visibleLinks(REVENUE_OPS, board, released))).toEqual(expect.arrayContaining(["Income", "Shopify", "Donations"]));
   });
 });

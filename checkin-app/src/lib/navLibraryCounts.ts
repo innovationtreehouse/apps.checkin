@@ -31,7 +31,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "bulk-donation",
-    // Only FINANCE assigns a gift or resubmits a disbursement hold; BOARD only reads the queues.
+    // Only FINANCE assigns a gift or resubmits a disbursement hold.
     visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
@@ -42,7 +42,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "workflow-mapping",
-    // Only INVENTORY_MANAGER maps or applies a receipt; FINANCE and BOARD only read receiving.
+    // Only INVENTORY_MANAGER maps or applies a receipt.
     visible: (u) => u.isInventoryManager === true,
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
@@ -56,7 +56,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "income",
-    // Only FINANCE runs and resolves reconciliation; BOARD only reads income.
+    // Only FINANCE runs and resolves reconciliation.
     visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> =>
       process.env.INCOME_DATABASE_URL
