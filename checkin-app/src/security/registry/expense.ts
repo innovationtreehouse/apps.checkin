@@ -32,7 +32,7 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['authenticated', ['everyones:internal']],
 ];
 
-const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag'] as const;
+const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'ExpenseQueueReason'] as const;
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
@@ -52,7 +52,6 @@ defineRoute({ endpoint: 'GET /api/expense/counts', authorize: 'expense-approver'
 
 // FINANCE or BOARD: reads, settings, and flag checkoff (a flag carries a FINANCE
 // or BOARD audience; the library checks the caller holds it).
-defineRoute({ endpoint: 'GET /api/expense/expense-holds', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseHold', 'Expense', 'ExpenseLineItem'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/account-mapping', authorize: 'finance-or-board', envelope: null, returns: ['AccountMapping'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/account-mapping/catalog', authorize: 'finance-or-board', envelope: null, returns: ['Category', 'Subcategory'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/qb-accounts', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbAccount'], orderedView: FINANCE_OR_BOARD_VIEW });
@@ -67,7 +66,9 @@ defineRoute({ endpoint: 'GET /api/expense/org-settings', authorize: 'finance-or-
 defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Donated gift lines at or over the capital thresholds, in or past capital review.
 defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/flags', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
+// The finance queue's expense tabs: a tab's rows, and every tab's counts.
+defineRoute({ endpoint: 'GET /api/expense/finance-queue', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueRow'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/finance-queue/counts', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Records what the Board authorized. The record clears the BOARD seat on a
 // non-Everyday card charge's org-level lines, and the hold on any purchase (card
@@ -86,6 +87,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/resolve-unknown', authorize: 'finance', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
+// Finance approves the tax on an expense that no receipt approval covered; the note is optional.
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/tax-approval', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 // The people finance may name as reimbursee: the uploader's live record, or none.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee/options', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeView'], orderedView: FINANCE_VIEW });

@@ -12,7 +12,6 @@ import { isHouseholdLead } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
 import { MY_RECEIPTS } from '@/lib/nav/sections/myReceipts';
-import { RECEIPT_REVIEW } from '@/lib/nav/sections/receiptReview';
 import { PROGRAMS_I_LEAD } from '@/lib/nav/sections/programsILead';
 import { SHOP_OPS } from '@/lib/nav/sections/shopOps';
 import { INVENTORY } from '@/lib/nav/sections/inventory';
@@ -21,7 +20,7 @@ import { MEMBERSHIP_OPS, isMembershipOpsAdmin } from '@/lib/nav/sections/members
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
 import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
-import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
+import { FINANCE, FINANCE_REVIEW_PATH } from '@/lib/nav/sections/finance';
 import { SYSTEM_STATUS } from '@/lib/nav/sections/systemStatus';
 import { SETTINGS } from '@/lib/nav/sections/settings';
 
@@ -40,11 +39,11 @@ const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
 const REVENUE = (href: string): NavGate => linkGate(REVENUE_OPS, href);
-const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
-const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
-const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
-// FINANCE and BOARD reach it from Receipt Review, an inventory manager from Inventory.
-const RECEIPT_FLOW: NavGate = (u, c) => linkGate(RECEIPT_REVIEW, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
+const EXPENSES = linkGate(FINANCE, '/expense/expenses');
+const BUDGETS = linkGate(FINANCE, '/budgets');
+const FINANCE_REVIEW = linkGate(FINANCE, FINANCE_REVIEW_PATH);
+// FINANCE and BOARD reach it from Finance, an inventory manager from Inventory.
+const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
 const SYSTEM = SYSTEM_STATUS.visible;
@@ -133,13 +132,13 @@ export const PAGES: PageEntry[] = [
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: REVENUE('/income/items') },
   { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: REVENUE('/income/exclusions') },
 
-  // My Receipts — anyone who may upload; Receipt Review — finance.
+  // My Receipts — anyone who may upload; Finance — finance.
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
   { href: '/receipts/upload', label: 'Upload Receipt', section: 'My Receipts', keywords: 'receipt photo pdf purchase donation', visible: linkGate(MY_RECEIPTS, '/receipts/upload') },
-  { href: '/receipts/review', label: 'Receipts Review', section: 'Receipt Review', keywords: 'receipt finance tax duplicate', visible: RECEIPT_FINANCE },
-  { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Receipt Review', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
-  { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipt Review', keywords: 'tax exempt age limit', visible: linkGate(RECEIPT_REVIEW, '/receipts/settings') },
-  { href: '/receipt-flow', label: 'Receipt Flow Status', section: 'Receipt Review', keywords: 'receipt receiving expense state count applying status', visible: RECEIPT_FLOW },
+  { href: FINANCE_REVIEW_PATH, label: 'Finance Review', section: 'Finance', keywords: 'receipt expense finance tax duplicate queue flags holds quickbooks board sign treasurer', visible: FINANCE_REVIEW },
+  { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Finance', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(FINANCE, '/receipts/mail') },
+  { href: '/receipts/settings', label: 'Receipt Settings', section: 'Finance', keywords: 'tax exempt age limit', visible: linkGate(FINANCE, '/receipts/settings') },
+  { href: '/receipt-flow', label: 'Receipt Flow Status', section: 'Finance', keywords: 'receipt receiving expense state count applying status', visible: RECEIPT_FLOW },
 
   // Facility Ops — board, plus operations on the two aggregate tools. The index
   // redirects to the caller's first visible tab, so it is listed to anyone the
@@ -189,16 +188,14 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: REVENUE('/finance-ops/shopify-stock') },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: REVENUE('/finance-ops/payments') },
 
-  // Expense Ops — FINANCE or BOARD
-  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer approver quickbooks class', visible: BUDGETS },
-  { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
-  { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: EXPENSES },
-  { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: EXPENSES },
-  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: EXPENSES },
-  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
-  { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Expense Ops', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
-  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: EXPENSES },
-  { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: EXPENSES },
+  // Finance — FINANCE or BOARD
+  { href: '/budgets', label: 'Budgets', section: 'Finance', keywords: 'budget owner bucket treasurer approver quickbooks class', visible: BUDGETS },
+  { href: '/expense/expenses', label: 'Expenses', section: 'Finance', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
+  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Finance', keywords: 'quickbooks rule category', visible: EXPENSES },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Finance', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
+  { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Finance', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
+  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Finance', keywords: 'itfa capital register asset', visible: EXPENSES },
+  { href: '/expense/settings', label: 'Expense Settings', section: 'Finance', keywords: 'threshold capital board review note in lieu', visible: EXPENSES },
 
   // Donations — FINANCE or BOARD
   { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },

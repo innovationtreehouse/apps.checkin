@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// The Expense Ops "Expenses" tab lands on the queue.
+// The Finance "Expenses" tab lands on the list.
 export default function Page() {
   redirect("/expense/expenses");
 }

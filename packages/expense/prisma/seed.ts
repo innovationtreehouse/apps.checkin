@@ -25,7 +25,7 @@ interface SeedExpense {
   needsReimbursement?: boolean;
   approval: { ownerId: number | null; status: string };
   hold?: string;
-  flag?: { kind: string; audience: string };
+  taxCents?: number;
 }
 
 const EXPENSES: SeedExpense[] = [
@@ -33,7 +33,7 @@ const EXPENSES: SeedExpense[] = [
   { id: "seed-expense-program", state: "owner_approval", vendorName: "TEST-Lumber Co", totalCents: 4200, approval: { ownerId: PROGRAM_BUCKET, status: "pending" } },
   // A line no part map placed: FINANCE assigns its bucket.
   { id: "seed-expense-unassigned", state: "assign_ownership", vendorName: "TEST-Hardware Co", totalCents: 1500, approval: { ownerId: null, status: "pending" } },
-  // An org-level line held because no account rule matched; a tax flag for FINANCE.
+  // An org-level line held because no account rule matched, carrying tax no receipt approval covers.
   {
     id: "seed-expense-held",
     state: "qb_on_hold",
@@ -41,7 +41,7 @@ const EXPENSES: SeedExpense[] = [
     totalCents: 9900,
     approval: { ownerId: FACILITY_BUCKET, status: "approved" },
     hold: "NO_MATCH",
-    flag: { kind: "TAX_ATTACHED", audience: "FINANCE" },
+    taxCents: 640,
   },
   // A reimbursement whose receipt named no reimbursee: held until FINANCE sets one.
   {
@@ -51,7 +51,6 @@ const EXPENSES: SeedExpense[] = [
     totalCents: 2500,
     needsReimbursement: true,
     approval: { ownerId: null, status: "pending" },
-    flag: { kind: "REIMBURSEE_UNKNOWN", audience: "FINANCE" },
   },
 ];
 
@@ -73,6 +72,7 @@ async function main(): Promise<void> {
           submitterId: SUBMITTER,
           vendorName: e.vendorName,
           receiptTotalCents: e.totalCents,
+          taxCents: e.taxCents ?? 0,
           receiptDate: "2026-10-01",
           needsReimbursement: e.needsReimbursement ?? false,
           submittedAt: new Date("2026-10-02T12:00:00Z"),
@@ -95,7 +95,6 @@ async function main(): Promise<void> {
       if (e.hold) {
         await tx.expenseHold.create({ data: { orgId: ORG_ID, expenseId: e.id, lineItemId: line.id, reason: e.hold, matchedRows: "[]" } });
       }
-      if (e.flag) await tx.expenseFlag.create({ data: { orgId: ORG_ID, expenseId: e.id, ...e.flag } });
     });
   }
   console.log("Expense seed complete.");
