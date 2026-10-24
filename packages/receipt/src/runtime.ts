@@ -7,6 +7,7 @@ import type {
   ReceiptHouseholds,
   ReceiptAlerts,
   ReceiptPeople,
+  ReceiptReimbursees,
   ReceiptPrincipal,
   ReceiptSink,
   ReimbursementStatus,
@@ -47,6 +48,12 @@ export const inertPeople: ReceiptPeople = {
   submitterByEmail: async () => null,
 };
 
+/** Knows nobody: only the uploader can be reimbursed until the host binds its people. */
+export const inertReimbursees: ReceiptReimbursees = {
+  search: async () => [],
+  byId: async () => null,
+};
+
 /** Logs the alert: nothing reaches finance until the host binds alerts. */
 export const inertAlerts: ReceiptAlerts = {
   mailHoldCeilingReached: async (event) => {
@@ -80,6 +87,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
+    reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
   };
 }

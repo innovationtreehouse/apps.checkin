@@ -19,6 +19,7 @@ import {
   type MailboxReader,
   type ReceiptAlerts,
   type ReceiptPrincipal,
+  type ReimburseeOption,
 } from "@checkin/receipt";
 import { ingestReceipt } from "@checkin/workflow-mapping";
 import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
@@ -88,6 +89,22 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   return { ...toPrincipal(person.id, person.name, isKnownAdult(person)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
 }
 
+/** Live people whose name contains the query, by name. */
+async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
+  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return prisma.person.findMany({
+    where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+    select: { id: true, name: true },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    take: limit,
+  });
+}
+
+async function reimburseeById(personId: number): Promise<ReimburseeOption | null> {
+  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { id: true, name: true } });
+}
+
 /** Re-ask the refresher this long before the token it handed out expires. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
 
@@ -148,6 +165,7 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById },
     alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,

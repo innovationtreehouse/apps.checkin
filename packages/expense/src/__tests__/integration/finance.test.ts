@@ -158,6 +158,18 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
   });
 
+  it("a non-member FINANCE names as reimbursee takes a Board member in the program-approver seat", async () => {
+    // submitter 1 is a member; 12, named by FINANCE 3, is not · owner 2 · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [12] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+
+    await setReimbursee(ORG, id, 12, FINANCE);
+    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
+    await signLine(principal(5, { isBoard: true }), li, "PROGRAM_APPROVER");
+  });
+
   it("the non-member rule follows the reimbursee, not the submitter, and skips card charges", async () => {
     // submitter 11 is not a member; reimbursee 1 is; owner 2 · finance 3 · board 5
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [11, 12] }) });
@@ -279,15 +291,22 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(1);
     });
 
-    it("only the uploader is named as reimbursee, never anyone else", async () => {
+    it("FINANCE names someone other than the uploader", async () => {
       const { id } = await unknownReimbursee();
-      // 7 sits outside every conflicted household; 11 shares the uploader's household.
-      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ status: 403 });
-      await expect(setReimbursee(ORG, id, 11, FINANCE)).rejects.toMatchObject({ status: 403 });
+      // 7 sits outside every conflicted household.
+      await setReimbursee(ORG, id, 7, FINANCE);
+      expect((await db.expense.findFirst({ where: { id } }))!).toMatchObject({ submitterId: 1, reimburseePersonId: 7 });
+    });
+
+    it("a FINANCE holder cannot name themself or anyone in their household as reimbursee", async () => {
+      const { id } = await unknownReimbursee();
+      // 9 and 10 hold FINANCE and share a household.
+      await expect(setReimbursee(ORG, id, 9, principal(9, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
+      await expect(setReimbursee(ORG, id, 10, principal(9, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
-    it("a merged-away uploader is named through the person record they resolve to", async () => {
+    it("a merged-away person is not named; the record they were merged into is", async () => {
       const { id } = await unknownReimbursee();
       bindPorts({ signoff: directory({ finance: [3], merged: { 1: 12 } }) });
       await expect(setReimbursee(ORG, id, 1, FINANCE)).rejects.toMatchObject({ status: 404 });
