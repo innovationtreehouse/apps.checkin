@@ -32,32 +32,27 @@ export const ExpenseSettingsPatchSchema = z.object({
 }).partial().strict();
 
 /**
- * Which change to each threshold loosens a control. "up": a higher value. "up-or-off": a higher
- * non-zero value, or switching it off (non-zero → 0); switching it on (0 → non-zero) tightens.
+ * Which change to each threshold loosens a control. "up": a higher value; a lower one tightens.
+ * A capital review threshold of 0 sends every expense to review, so 0 is its tightest value.
  * FINANCE may tighten freely, and loosen only up to the policy value; past that, or for a
  * threshold with no policy value, loosening is the Board's. A `boardOnly` threshold is the
  * Board's to change in either direction. Every field must be listed here.
  */
-export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number; boardOnly?: true }> = {
+export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up"; policyCents?: number; boardOnly?: true }> = {
   capitalEquipmentUnitCents: { loosens: "up", policyCents: 50_000 },
   boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
   everydayTotalLimitCents: { loosens: "up", policyCents: 50_000, boardOnly: true },
   everydayItemLimitCents: { loosens: "up", policyCents: 25_000, boardOnly: true },
-  capitalTotalThresholdCents: { loosens: "up-or-off" },
-  capitalLineItemThresholdCents: { loosens: "up-or-off" },
+  capitalTotalThresholdCents: { loosens: "up" },
+  capitalLineItemThresholdCents: { loosens: "up" },
 };
-
-function loosens(field: keyof ExpenseSettings, from: number, to: number): boolean {
-  if (THRESHOLD_RULES[field].loosens === "up-or-off" && (from === 0 || to === 0)) return from !== 0 && to === 0;
-  return to > from;
-}
 
 /** Fields in the change that only the Board may make. */
 export function boardOnlyChanges(current: ExpenseSettings, changes: Partial<ExpenseSettings>): (keyof ExpenseSettings)[] {
   return (Object.keys(changes) as (keyof ExpenseSettings)[]).filter((field) => {
     const to = changes[field]!;
     if (THRESHOLD_RULES[field].boardOnly) return to !== current[field];
-    if (!loosens(field, current[field], to)) return false;
+    if (to <= current[field]) return false;
     const { policyCents } = THRESHOLD_RULES[field];
     return policyCents === undefined || to > policyCents;
   });
