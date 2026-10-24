@@ -223,8 +223,8 @@ The server refuses a later signature until the earlier ones exist, and the
 line-actions function offers only the next one. Today's sign-off service lets
 any seat be signed at any time while the expense is open; that changes. The
 Board's approval of a purchase of $2,000 or more is recorded, not signed, so it
-isn't a step in this order. Whether the Board seat comes after the Treasurer or
-may come before it is open question 11.
+isn't a step in this order. The order is strict, as you decided (open question
+11): a Board signature is refused until the Treasurer has signed the line.
 
 Because the approval comes before the Treasurer, and finance can move a line
 only before it is approved (bucket assignment, an unknown bucket, or an
@@ -481,7 +481,8 @@ decided). The signatures FINANCE and the Board give get screens of their own in
   viewer may sign, in one all-or-nothing request under the same per-line
   refusals as a single signature.
 - **Board tab:** lists the lines waiting for a Board signature this viewer may
-  give, again only once the earlier steps are complete: the Board seat on a non-Everyday card charge without Board
+  give, again only once the earlier steps are complete, so only after the
+  Treasurer has signed the line: the Board seat on a non-Everyday card charge without Board
   authorization, the Board seat on a non-member reimbursement once the line is
   approved, and the Treasurer seat when no finance holder without a conflict
   can sign it. The Board's approval of a purchase of $2,000 or more is
@@ -573,7 +574,8 @@ from your decisions; the last two wait on open questions 2 and 5:
 - A line's signatures are given in order: the submitter's confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
-  exist. *(new line)* `[Decision — owner]`
+  exist; a Board signature waits for the Treasurer's. *(new line)*
+  `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -686,9 +688,8 @@ Each PR is based on `main`, not stacked.
     letter in every case. You expect it to be very rare, and the required
     reason (§6) records each one. The rule is `[Decision — owner]` and cites
     no policy clause.
-11. **The Board seat and the Treasurer.** Must the Board seat (non-Everyday card
-    charge, non-member reimbursement) wait for the Treasurer's signature, or
-    may a Board member sign it once the line is approved? C′.9 leaves it open.
+11. **The Board seat and the Treasurer.** *Decided:* the Board signature waits
+    for the Treasurer's (C′.9).
 12. **Re-confirmation and the order.** A finance change to a confirmed
     reimbursement voids the submitter's signature (§3). If the line is already
     approved or signed by then, later signatures exist without the earlier one.
