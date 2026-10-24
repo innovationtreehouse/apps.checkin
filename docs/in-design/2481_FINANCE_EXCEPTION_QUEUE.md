@@ -181,7 +181,7 @@ The Receipts tabs are #2466's, unchanged. The Expenses and Board groups hold:
 | --- | --- | --- |
 | Expenses | Bucket to assign; bucket unknown; exception raised by a budget owner; capital review; depreciation cycle; reimbursee to name; tax not reviewed; failed intake (below) | FINANCE |
 | Account holds | One row per held expense: "2 lines have no account rule" | FINANCE |
-| QuickBooks | Posting failed after retries; duplicate to void; changed in QuickBooks; closed but not posted; bucket has no Class | FINANCE |
+| QuickBooks | Posting failed after retries; duplicate to void; changed in QuickBooks; closed but not posted; bucket has no Class; waiting for a match (`AMBIGUOUS`, below) | FINANCE |
 | Board | Board approval not recorded; held, no conflict-free signer | Board, and FINANCE for recording the authorization |
 
 Recording the Board's approval is finance's job (decided): FINANCE records what
@@ -279,6 +279,25 @@ The expense detail page gains what the receipt detail page has had since #2447:
   A partial decision, such as one line of three, or a record with another
   reason left for this viewer, reloads in place with the reasons alert
   updated. A page opened from elsewhere always reloads in place.
+- **Posts waiting for a match** (decided: in this rollout). The drain parks an
+  expense in `AMBIGUOUS` when it can't post on its own. It shows in the
+  QuickBooks tab, and the expense page's QuickBooks panel answers it:
+  - "Several QuickBooks entries match; pick one." The panel lists the
+    candidates from `GET /api/expense/expenses/[id]/qb-candidates`, and
+    picking one calls `POST /api/expense/expenses/[id]/qb-match`. An entry that
+    belongs to nothing can be excluded with a required reason, through the
+    existing `POST /api/expense/qb-exclusions`.
+  - "The reimbursee has no QuickBooks vendor yet; link one." For a
+    reimbursement whose reimbursee has no linked vendor, the reason points to
+    the vendor link in the Reimbursee panel. Linking the vendor already
+    re-queues the person's waiting reimbursements
+    (`reimburseeVendorService`), so the reason clears when the next drain
+    posts.
+
+  The "not sent" messages at the top of the page gain `AMBIGUOUS` beside the
+  three states they cover today. These routes exist and are registered, the
+  candidates response as `ExpenseQbCandidateView`, so no server or registry
+  work is needed.
 
 ### 5. Account holds on the expense page
 
@@ -422,7 +441,9 @@ Each PR is based on `main`. None is stacked on another's branch.
 3. **Expense detail PR** (3.1, 3.4, 3.9, 3.10, 3.12, 3.16): the derived-reason
    service, the reasons alert and field marks, the Reviews panel, required notes,
    return to the queue, and Retry and Set reimbursee clearing their reasons.
-   The `expense_tax_approvals` table and Approve tax ship here. Until step 5
+   The `expense_tax_approvals` table and Approve tax ship here, and so does the
+   QuickBooks panel's match picker and vendor pointer for `AMBIGUOUS` posts
+   (§4). Until step 5
    gives finance the queue tabs, `/expense/flags` stays finance's list, so this
    step keeps raising every kind. Its fixes close the matching row in the same
    act: a successful retry closes `QB_POST_FAILED`, and recording the Board's
@@ -452,7 +473,8 @@ Each PR is based on `main`. None is stacked on another's branch.
    (`packages/expense/src/lib/expense-qb-poster.ts`, `lib/flags.ts`). The count
    limits stay: `MAX_CREATES_PER_RUN` (25), `MAX_CREATES_PER_DAY` (50) and
    `MAX_POST_ATTEMPTS` (5). Finance is never without a list: the flags stop in
-   the release that brings the tabs. The sidebar's Expense Ops and Receipt
+   the release that brings the tabs. The QuickBooks tab lists `AMBIGUOUS`
+   posts. The sidebar's Expense Ops and Receipt
    Review sections become the one Finance section (§3), and #2500's pill on
    Expenses goes.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
@@ -531,8 +553,4 @@ session correcting #2224 should know.
 
 ## Open questions
 
-Numbers are fixed; decided questions are dropped from this table.
-
-| # | Question | Design's default |
-| --- | --- | --- |
-| 9 | List `AMBIGUOUS` posts in the QuickBooks tab with a match picker, now or in a follow-up? | Follow-up |
+No open questions remain.
