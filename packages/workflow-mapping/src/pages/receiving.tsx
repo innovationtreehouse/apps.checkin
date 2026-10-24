@@ -16,10 +16,11 @@ interface ReceiptRow {
 }
 type Counts = Record<"pending_review" | "apply_failed" | "applying", number>;
 
-// The apply-failed queue includes `applying`, so a receipt whose push never landed is still on a screen.
+// Apply failed needs a person; In progress (`applying`) is shown but needs no one.
 const QUEUES = {
   mapping: "pending_review",
-  failed: "apply_failed,applying",
+  failed: "apply_failed",
+  inProgress: "applying",
   all: "",
 } as const;
 type Queue = keyof typeof QUEUES;
@@ -27,7 +28,7 @@ type Queue = keyof typeof QUEUES;
 const isQueue = (q: string | null): q is Queue => q !== null && Object.hasOwn(QUEUES, q);
 const queueHref = (q: Queue) => `/inventory/receiving?queue=${q}`;
 
-/** /inventory/receiving — the receipt-mapping queue and the apply-failed queue. The queue rides in `?queue=`. */
+/** /inventory/receiving — the receipt-mapping, apply-failed and in-progress queues. The queue rides in `?queue=`. */
 export default function ReceivingPage() {
   const router = useRouter();
   const param = useSearchParams().get("queue");
@@ -48,7 +49,8 @@ export default function ReceivingPage() {
         onChange={(v) => { if (isQueue(v)) router.replace(queueHref(v), { scroll: false }); }}
         data={[
           { value: "mapping", label: `Needs mapping${c ? ` (${c.pending_review})` : ""}` },
-          { value: "failed", label: `Apply failed${c ? ` (${c.apply_failed + c.applying})` : ""}` },
+          { value: "failed", label: `Apply failed${c ? ` (${c.apply_failed})` : ""}` },
+          { value: "inProgress", label: `In progress${c ? ` (${c.applying})` : ""}` },
           { value: "all", label: "All" },
         ]}
       />
