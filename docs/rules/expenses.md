@@ -127,6 +127,13 @@ Income and donation rules are in `revenue.md`.
   Each clearing is recorded.
   [Decision — owner]
 
+- When an expense goes back to an earlier step, every later step's result is
+  cleared too and done again in order: the capital review, the depreciation
+  cycle and its assets, and the QuickBooks step, as for later signatures. None
+  is skipped, even when nothing it depends on changed. Each clearing is
+  recorded.
+  [Decision — owner]
+
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
   [Decision — owner]

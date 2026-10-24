@@ -6,6 +6,7 @@ import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApp
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
+import { ServiceError } from "@checkin/component-kit";
 
 type SignoffExpense = Pick<
   Expense,
@@ -163,12 +164,62 @@ export type ClearedStep = "SUBMITTER" | "APPROVAL" | "TREASURER";
 /** Open states past owner approval; an expense in one returns to owner approval when an approval reopens. */
 const PAST_OWNER_APPROVAL = new Set(["capital_review", "set_depreciation_cycle", "qb_pending", "qb_on_hold", "qb_error"]);
 
+/** QuickBooks match states once the entry is (or is being) booked; nothing before it reopens then. */
+const IN_QUICKBOOKS = new Set(["POSTING", "CREATED", "MATCHED"]);
+
+/**
+ * Clears what every step after owner approval decided, so each is done again in order: the
+ * capital review's designations, the depreciation cycles and the assets they minted, the
+ * QuickBooks step's open holds and its unposted outbox row. Each clearing is audited. An entry
+ * already in QuickBooks is corrected there, so the expense cannot go back.
+ */
+async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor: Actor, expenseId: string, reason: string): Promise<void> {
+  const expense = (await tx.expense.findUnique({ where: { id: expenseId }, select: { qbMatchState: true, qbTxnId: true } }))!;
+  if (IN_QUICKBOOKS.has(expense.qbMatchState) || expense.qbTxnId !== null) {
+    throw new ServiceError(409, "The expense is already in QuickBooks; correct it there");
+  }
+
+  const designated = await tx.expenseLineItem.findMany({
+    where: { expenseId, OR: [{ isCapital: true }, { capitalOwnerId: { not: null } }, { depreciationYears: { not: null } }] },
+    orderBy: { id: "asc" },
+  });
+  await tx.expenseLineItem.updateMany({ where: { id: { in: designated.map((l) => l.id) } }, data: { isCapital: false, capitalOwnerId: null, depreciationYears: null } });
+  for (const l of designated) {
+    await writeAudit(tx, actor, {
+      expenseId,
+      action: "capital_designation_cleared",
+      lineItemId: l.id,
+      valueBefore: `${l.isCapital ? "capital" : "non_capital"}/owner:${l.capitalOwnerId ?? "none"}/${l.depreciationYears ?? "none"}y`,
+      notes: reason,
+    });
+  }
+
+  const assets = await tx.capitalAsset.findMany({ where: { sourceExpenseId: expenseId, seeded: false }, orderBy: { id: "asc" } });
+  await tx.capitalAsset.deleteMany({ where: { id: { in: assets.map((a) => a.id) } } });
+  for (const a of assets) {
+    await writeAudit(tx, actor, { expenseId, action: "capital_asset_cleared", lineItemId: a.sourceLineItemId, valueBefore: a.assetNumber, notes: reason });
+  }
+
+  const holds = await tx.expenseHold.findMany({ where: { expenseId, status: "PENDING" }, orderBy: { id: "asc" } });
+  await tx.expenseHold.deleteMany({ where: { id: { in: holds.map((h) => h.id) } } });
+  for (const h of holds) {
+    await writeAudit(tx, actor, { expenseId, action: "hold_cleared", lineItemId: h.lineItemId, valueBefore: h.reason, notes: reason });
+  }
+
+  const outbox = await tx.expenseEvent.deleteMany({ where: { expenseId } });
+  if (outbox.count > 0) {
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "UNMATCHED", qbPostAttempts: 0 } });
+    await writeAudit(tx, actor, { expenseId, action: "qb_outbox_cleared", fieldChanged: "qbMatchState", valueBefore: expense.qbMatchState, valueAfter: "UNMATCHED", notes: reason });
+  }
+}
+
 /**
  * Clears `from` and every later step on the given lines (every line when `lineItemIds` is null):
  * deletes the seats, reopens an approved approval to pending, and clears those lines' catalog
  * snapshots, so each step is given again in order. Each cleared seat is audited as
  * `signoff_voided` and each reopened approval as `approval_cleared`, naming `reason`. An expense
- * past owner approval whose approval reopens returns to owner approval.
+ * past owner approval whose approval reopens returns to owner approval, and every step after it
+ * is cleared too.
  */
 export async function clearFrom(
   tx: Prisma.TransactionClient,
@@ -217,6 +268,7 @@ export async function clearFrom(
 
   const { state } = (await tx.expense.findUnique({ where: { id: expenseId }, select: { state: true } }))!;
   if (reopened.length > 0 && PAST_OWNER_APPROVAL.has(state)) {
+    await clearStepsAfterOwnerApproval(tx, actor, expenseId, reason);
     await advanceWorkflowInTx(tx, { expenseId, currentState: state, event: { type: "APPROVAL_REOPENED" }, actor, action: "state_transition", auditNotes: reason });
   }
 }
