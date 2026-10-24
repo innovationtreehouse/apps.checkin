@@ -1,14 +1,15 @@
 /**
  * A line's signatures in order (C′.9) against the real database: the Treasurer after the approval,
  * the Board after the Treasurer, and clearing a step clears every later one, audited, returning
- * an expense past owner approval to it.
+ * an expense past owner approval to it with every step after owner approval cleared and done again.
  */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { approveLine } from "../../services/approvalService";
+import { setDepreciationCycle, submitCapitalReview } from "../../services/capitalService";
 import { clearFrom, type ClearedStep } from "../../lib/signoff-facts";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -129,5 +130,65 @@ describeDb("clearing a step clears every later one", () => {
     await signLine(FINANCE, a, "TREASURER");
     await signLine(BOARD, a, "BOARD");
     expect(await seatsOf(a)).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
+  });
+});
+
+describeDb("going back clears every later step of the expense", () => {
+  // A capital card charge past depreciation: the line is designated, its asset minted, a hold
+  // was raised and an outbox row written; owner 2 approved, 1 and 3 signed.
+  async function capitalExpense(qbMatchState = "POST_FAILED") {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    await seedOrgSettings();
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 9000 });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbPostAttempts: 2 } });
+    const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000, isCapital: true, partNumber: null, manualQbAccount: "5000" });
+    await db.expenseLineItem.update({ where: { id: li }, data: { capitalOwnerId: 100, depreciationYears: 5 } });
+    const approvalId = await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+    await db.expenseLineSignoff.createMany({ data: [["SUBMITTER", 1], ["TREASURER", 3]].map(([seat, signerUserId]) => ({ expenseId: id, lineItemId: li, seat: seat as string, signerUserId: signerUserId as number })) });
+    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA90", description: "Lathe", status: "tracked", sourceExpenseId: id, sourceLineItemId: li, seeded: false } });
+    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA01", description: "Historical drill", status: "tracked", seeded: true } });
+    await db.expenseHold.create({ data: { orgId: ORG, expenseId: id, lineItemId: li, reason: "NO_MATCH", matchedRows: "[]" } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+    return { id, li, approvalId };
+  }
+  const reopen = (id: string, li: number) =>
+    db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "finance changed the receipt"));
+
+  it("clears the capital review, depreciation, holds and outbox, audited, and the expense repeats capital review and depreciation", async () => {
+    const { id, li, approvalId } = await capitalExpense();
+    await reopen(id, li);
+
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null });
+    expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(0);
+    expect(await db.capitalAsset.count({ where: { assetNumber: "ITFA01" } })).toBe(1);
+    expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
+    expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(0);
+    const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id }, orderBy: { id: "asc" } });
+    expect(audit.map((a) => a.action)).toEqual([
+      "approval_cleared", "signoff_voided",
+      "capital_designation_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
+      "state_transition",
+    ]);
+    expect(audit.find((a) => a.action === "capital_asset_cleared")).toMatchObject({ lineItemId: li, valueBefore: "ITFA90", notes: "finance changed the receipt" });
+
+    // Done again in order, with the same amounts: approval, capital review, depreciation.
+    await approveLine(principal(2), id, approvalId);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("capital_review");
+    await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] });
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("set_depreciation_cycle");
+    await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] });
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");
+    expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(1);
+  });
+
+  it("an expense already in QuickBooks does not go back, and nothing is cleared", async () => {
+    const { id, li } = await capitalExpense("CREATED");
+    await expect(reopen(id, li)).rejects.toMatchObject({ status: 409 });
+
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");
+    expect(await db.lineItemOwnerApproval.findFirstOrThrow({ where: { lineItemId: li } })).toMatchObject({ status: "approved" });
+    expect(await db.expenseLineSignoff.count({ where: { lineItemId: li } })).toBe(2);
+    expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(1);
   });
 });

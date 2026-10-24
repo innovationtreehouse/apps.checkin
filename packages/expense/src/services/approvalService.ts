@@ -8,7 +8,7 @@ import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
-import { approvalRefusal, approvesAsStandIn } from "../lib/signoff";
+import { approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -95,6 +95,7 @@ export async function approveLine(
     await lockExpense(tx, expenseId);
     const expense = (await tx.expense.findUnique({ where: { id: expenseId } }))!;
     if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+    if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
     const facts = (await signoffFactsByLine(tx, expense)).get(approval.lineItemId)!;
     const filled = (await filledSeatsByLine(tx, expenseId)).get(approval.lineItemId) ?? [];
     const refusal = approvalRefusal(facts, filled, actor.userId);

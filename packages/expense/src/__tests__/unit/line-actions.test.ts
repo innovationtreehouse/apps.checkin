@@ -11,6 +11,7 @@ const base: SignoffFacts = {
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
@@ -41,7 +42,7 @@ const APPROVED = { state: "qb_pending", approval: { status: "approved", ownerId:
 function run(c: Case) {
   const approval = c.approval === undefined ? { status: "pending", ownerId: 7 } : c.approval;
   const approved = approval?.status === "approved";
-  const facts = { ...base, approved, approver: approved ? (c.approver ?? 2) : null, ...c.facts };
+  const facts = { ...base, approved, approver: approved ? (c.approver ?? 2) : null, reimburseeUnknown: c.reimburseeUnknown ?? false, ...c.facts };
   const filled = c.filled ?? [];
   const input: LineActionsInput = {
     caller: { id: c.caller, isFinance: c.isFinance ?? facts.finance.includes(c.caller) },
@@ -89,6 +90,26 @@ describe("acts per role", () => {
   it("a Board stand-in's approval is the main act when no bucket approver can approve", () => {
     expect(acts({ caller: 5, facts: { conflicted: [1, 2, 8] } })).toEqual(["*approve"]);
     expect(run({ caller: 3, facts: { conflicted: [1, 2, 8] } }).awaiting).toContain("Awaiting a Board stand-in");
+  });
+
+  describe("a Board stand-in is secondary unless only the Board can act", () => {
+    const primaries = (c: Case) => run(c).actions.filter((x) => x.primary);
+
+    it("leaves a line with no main act, so it does not wait on the Board member, while a bucket approver can approve", () => {
+      expect(primaries({ caller: 5 })).toEqual([]);
+      expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual([]);
+      expect(primaries({ caller: 5, facts: { approvers: [2, 4], conflicted: [1, 2, 8] } })).toEqual([]);
+    });
+
+    it("is the main act when every bucket approver is conflicted or already seated through their household", () => {
+      expect(primaries({ caller: 5, facts: { conflicted: [1, 2, 8] } }).map((x) => x.act)).toEqual(["approve"]);
+      expect(primaries({ caller: 5, facts: { seatedHouseholds: [2] } }).map((x) => x.act)).toEqual(["approve"]);
+    });
+
+    it("the Board seat stays the Board member's main act", () => {
+      const facts = { reimburseeIsMember: false };
+      expect(primaries({ caller: 5, facts, ...APPROVED, filled: seats(["TREASURER", 3]) }).map((x) => x.seat)).toEqual(["BOARD"]);
+    });
   });
 
   it("an org-level line takes a Board member's approval, with no reason", () => {
@@ -182,6 +203,13 @@ describe("holds", () => {
     const r = run({ caller: 3, reimburseeUnknown: true, ...APPROVED });
     expect(r.actions).toEqual([]);
     expect(r.awaiting).toContain("Held until finance names the reimbursee");
+  });
+
+  it("nothing is approved while the reimbursee is unknown, not even by a Board member", () => {
+    for (const caller of [1, 2, 5]) expect(acts({ caller, reimburseeUnknown: true })).not.toContainEqual(expect.stringMatching(/approve|sign/));
+    const r = run({ caller: 3, reimburseeUnknown: true });
+    expect(r.awaiting).toContain("Held until finance names the reimbursee");
+    expect(r.awaiting).not.toContain("Awaiting approval");
   });
 
   it("nothing is approved before the line has a bucket", () => {
