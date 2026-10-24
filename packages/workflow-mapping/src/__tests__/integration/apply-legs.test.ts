@@ -1,11 +1,11 @@
-/** Per-leg applied state: a retry never re-sends an applied leg, and an edit after one applied is logged as late. */
+/** Per-leg applied state: a retry never re-sends an applied leg, and a receipt's lines lock once any leg applied. */
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { lineItemService } from "../../services/lineItemService";
 import { receiptService } from "../../services/receiptService";
 import { orgEventConsumer } from "../../services/orgEventConsumer";
 import { describeDb } from "../helpers/db";
-import { MANAGER, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
+import { TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 let sinks: ReturnType<typeof recordingSinks>;
 
@@ -55,56 +55,43 @@ describeDb("per-leg applied state", () => {
     expect(row.inventoryAppliedAt).toBeNull();
   });
 
-  async function lateRows(receiptId: number) {
-    const rows = await db.workflowAuditLog.findMany({ where: { receivedReceiptId: receiptId, eventType: "line_edited_late" } });
-    return rows.map((row) => JSON.parse(row.details ?? "null") as { appliedLegs: string[]; before: object; after: object });
+  const LOCKED = { status: 409, message: "Part of this receipt was already applied, so its lines are locked." };
+  const PROPOSAL = { proposedName: "W", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable" };
+
+  async function expectLocked(receiptId: number, lineId: number) {
+    const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lineId } });
+    const auditRows = await db.workflowAuditLog.count({ where: { receivedReceiptId: receiptId } });
+    await expect(lineItemService.associateGtin(receiptId, lineId, { gtin13: "0000000000024" })).rejects.toMatchObject(LOCKED);
+    await expect(lineItemService.proposeProvisionalItem(receiptId, lineId, PROPOSAL)).rejects.toMatchObject(LOCKED);
+    await expect(lineItemService.markNonInventory(receiptId, lineId)).rejects.toMatchObject(LOCKED);
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lineId } })).toEqual(before);
+    expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: receiptId } })).toBe(auditRows);
   }
 
-  it("allows a line edit once inventory applied, logged as late with before and after", async () => {
+  it("locks the lines once inventory applied", async () => {
     const { r, ls } = await failedAfterPartialApply("expense");
-    await lineItemService.markNonInventory(r.id, ls.id);
-    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).recognitionStatus).toBe("non_inventory");
-    expect(await lateRows(r.id)).toEqual([
-      {
-        appliedLegs: ["inventory"],
-        before: expect.objectContaining({ recognitionStatus: "recognized", assignedGtin13: "0000000000017" }),
-        after: expect.objectContaining({ recognitionStatus: "non_inventory", assignedGtin13: null }),
-      },
-    ]);
-    const late = await db.workflowAuditLog.findFirstOrThrow({ where: { eventType: "line_edited_late" } });
-    expect(late).toMatchObject({ actorUserId: MANAGER.id, lineStatusId: ls.id });
+    await expectLocked(r.id, ls.id);
   });
 
-  it("allows a line edit once the money leg applied, logged as late", async () => {
+  it("locks the lines once the money leg applied", async () => {
     const { r, ls } = await failedAfterPartialApply("inventory");
-    await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" });
-    expect(await lateRows(r.id)).toEqual([
-      expect.objectContaining({ appliedLegs: ["expense"], after: expect.objectContaining({ assignedGtin13: "0000000000024" }) }),
-    ]);
+    await expectLocked(r.id, ls.id);
   });
 
-  it("a late edit after only the donation leg applied is still logged, naming that leg", async () => {
+  it("locks the lines once only the donation leg applied", async () => {
     const { r, ls } = await failedAfterPartialApply("inventory", true);
-    await lineItemService.markNonInventory(r.id, ls.id);
-    expect(await lateRows(r.id)).toEqual([expect.objectContaining({ appliedLegs: ["donation"] })]);
+    await expectLocked(r.id, ls.id);
   });
 
-  it("a retry after a late edit sends the new lines to the failed leg only, never re-sending the applied one", async () => {
-    const { r, ls } = await failedAfterPartialApply("inventory");
-    await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" });
+  it("a retry after a partial apply sends the failed leg the stored lines, never re-sending the applied one", async () => {
+    const { r } = await failedAfterPartialApply("inventory");
+    const failedDelta = sinks.calls.inventory.at(-1);
     await receiptService.retryApply(r.id);
     expect(await receiptService.apply(r.id)).toEqual({ state: "resolved" });
     expect(sinks.calls.expense).toHaveLength(1);
-    expect(sinks.calls.inventory.at(-1)?.lineItems.map((li) => li.gtin13)).toEqual(["0000000000024"]);
-  });
-
-  it("an edit after inventory applied is not re-sent to inventory", async () => {
-    const { r, ls } = await failedAfterPartialApply("expense");
-    const inventoryCalls = sinks.calls.inventory.length;
-    await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" });
-    await receiptService.retryApply(r.id);
-    expect(await receiptService.apply(r.id)).toEqual({ state: "resolved" });
-    expect(sinks.calls.inventory).toHaveLength(inventoryCalls);
+    expect(sinks.calls.inventory).toHaveLength(2);
+    expect(sinks.calls.inventory[1]).toEqual(failedDelta);
+    expect(sinks.calls.inventory[1].lineItems.map((li) => li.gtin13)).toEqual(["0000000000017"]);
   });
 
   it("apply_failed with no leg applied stays editable", async () => {
@@ -115,7 +102,7 @@ describeDb("per-leg applied state", () => {
     expect((await receiptService.apply(r.id)).state).toBe("apply_failed");
     await lineItemService.markNonInventory(r.id, ls.id);
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).recognitionStatus).toBe("non_inventory");
-    expect(await lateRows(r.id)).toEqual([]);
+    expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType: "line_marked_non_inventory" } })).toBe(1);
   });
 
   it("names each leg that failed in the reason", async () => {
@@ -136,7 +123,7 @@ describeDb("per-leg applied state", () => {
     expect(sinks.calls.expense).toHaveLength(2);
   });
 
-  it("the S5 remap updates a partially applied receipt without a late-edit row", async () => {
+  it("the S5 remap leaves a partially applied receipt's provisional line alone", async () => {
     const r = await makeReceipt({ state: "applying" });
     const ls = await makeLineStatus(r.id, { recognitionStatus: "provisional", provisionalItemGtin13: "2000000000015" });
     sinks.fail.expense = true;
@@ -150,10 +137,11 @@ describeDb("per-leg applied state", () => {
       },
     ]);
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
-      recognitionStatus: "recognized",
-      assignedGtin13: "0000000000017",
+      recognitionStatus: "provisional",
+      provisionalItemGtin13: "2000000000015",
+      assignedGtin13: null,
     });
-    expect(await lateRows(r.id)).toEqual([]);
+    expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType: "line_remapped" } })).toBe(0);
   });
 });
 

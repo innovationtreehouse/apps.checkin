@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { APPLIED_LINES_LOCKED, lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
   id: number;
@@ -50,31 +51,7 @@ interface Detail {
   ReceivedReceiptLineStatus: LineStatus[];
 }
 
-interface AuditRow {
-  eventType: string;
-  lineStatusId?: number | null;
-  details?: unknown;
-}
-type Leg = "inventory" | "expense" | "donation";
-
 type Form = "associate" | "propose" | null;
-
-// The donation leg records only the receipt's total and date, which a line edit never changes.
-const LATE_EDIT_FIX: Partial<Record<Leg, string>> = {
-  inventory: "Stock was loaded from the old lines. Adjust it by hand in Inventory.",
-  expense: "The expense was sent with the old lines. Correct it by hand in Expenses.",
-};
-
-/** Lines edited after a leg applied, grouped by the leg that still holds the old lines. */
-function lateEdits(rows: AuditRow[] | null): Map<Leg, Set<number>> {
-  const byLeg = new Map<Leg, Set<number>>();
-  for (const row of rows ?? []) {
-    if (row.eventType !== "line_edited_late" || row.lineStatusId == null) continue;
-    const legs = (row.details as { appliedLegs?: Leg[] } | null)?.appliedLegs ?? [];
-    for (const leg of legs.filter((l) => LATE_EDIT_FIX[l])) byLeg.set(leg, (byLeg.get(leg) ?? new Set<number>()).add(row.lineStatusId));
-  }
-  return byLeg;
-}
 
 /**
  * /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls.
@@ -84,7 +61,6 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
-  const audit = useLoad<AuditRow[]>(`/audit-log?receiptId=${id}&limit=500`);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<{ lineId: number; form: Form }>({ lineId: 0, form: null });
 
@@ -106,7 +82,6 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
     } finally {
       setBusy(false);
       detail.reload();
-      audit.reload();
       notifyNavCounts();
     }
   }
@@ -114,14 +89,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   if (detail.error) return <Alert color="red" title="Couldn't load the receipt">{detail.error}</Alert>;
   if (!detail.data) return <Text c="dimmed">Loading…</Text>;
   const { ReceivedReceipt: receipt, WorkflowReceiptView: parsed, ReceivedReceiptLineStatus: lines } = detail.data;
-  const lineLegApplied = !!(receipt.inventoryAppliedAt || receipt.expenseAppliedAt);
-  const editable = canManage && ["pending_review", "apply_failed"].includes(receipt.state);
-  const late = lateEdits(audit.data);
-  // An edit after a leg applied never reaches that leg, so the manager confirms the manual fix first.
-  const editLine = (path: string, body?: unknown, message?: string) =>
-    (!lineLegApplied || window.confirm("Part of this receipt was already applied. This change won't reach it; you'll need to fix that part by hand. Save anyway?"))
-      ? act(path, body, message)
-      : Promise.resolve(false);
+  const lockReason = lineLockReason(receipt);
+  const editable = canManage && !lockReason;
   const base = `/receipts/${receipt.id}`;
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
 
@@ -143,15 +112,14 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Receipt id" value={parsed.receiptId ?? "—"} mono />
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
-      {[...late].map(([leg, lineIds]) => (
-        <Alert key={leg} color="yellow" mb="md" title="Needs a manual fix">
-          {LATE_EDIT_FIX[leg]} Changed after it applied: line{lineIds.size > 1 ? "s" : ""}{" "}
-          {lines.filter((ls) => lineIds.has(ls.id)).map((ls) => items.get(ls.receiptLineItemId)?.lineNumber ?? ls.id).join(", ")}.
-        </Alert>
-      ))}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && (
         <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>
+      )}
+      {canManage && lockReason === APPLIED_LINES_LOCKED && (
+        <Alert color="gray" mb="md" title="Lines locked">
+          {lockReason} Retry sends the part that failed with the same lines.
+        </Alert>
       )}
       {canManage && (
         <Group mb="md">
@@ -216,7 +184,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                         <Group gap={4} wrap="nowrap">
                           <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "associate" })}>Associate</Button>
                           <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "propose" })}>Propose</Button>
-                          <Button size="xs" variant="subtle" loading={busy} onClick={() => editLine(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
+                          <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
                             Not inventory
                           </Button>
                         </Group>
@@ -235,7 +203,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                             busy={busy}
                             onCancel={() => setOpen({ lineId: 0, form: null })}
                             onSubmit={async (body) => {
-                              if (await editLine(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
+                              if (await act(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
                             }}
                           />
                         </SimpleGrid>
