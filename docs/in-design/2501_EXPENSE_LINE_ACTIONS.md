@@ -193,6 +193,17 @@ and stays in the audit trail, but it stops counting as a finished approval.
 You decided this (open question 7): finance's assignment never counts as the
 approval.
 
+The new bucket's approver may raise "not mine" again on a moved line, and
+finance settles it as before. You also decided that finance may mark a bucket
+assignment **final**. After that, no further exception can be raised on the
+line, and the bucket's approver, or a Board stand-in, approves it. In your
+words: "At some point finance has to be able to say 'I don't care what the
+program owner thinks'." A final assignment is the last word on the bucket, not
+an approval: the line still waits for its approver, and the decision that
+finance never approves a line (§7) stands. Marking an assignment final is
+audited with the assignment, and Raise exception leaves the line's actions once
+it is final.
+
 **C′.6 Non-member reimbursement.** You decided that the Board's approval is
 added, not substituted, and comes after. The bucket approver approves the line
 as for any other line. Then a Board member without a conflict signs a Board
@@ -432,7 +443,9 @@ When the caller's main act is an approval on two or more lines of the expense,
 a button above the table reads "Approve all 4 as Program approver". It sends one request, which checks every line
 with the same function under the expense lock and approves all of them or none.
 If any line is refused, nothing changes and the error names the line. A partial
-batch would leave the approver unsure which lines still wait.
+batch would leave the approver unsure which lines still wait. A Board member's
+Approve All covers only lines where their approval is the main act: where the
+Board is the only one who can act (C1, §8).
 
 
 ### 5. Lines waiting on you (3.14)
@@ -511,6 +524,12 @@ org-level bucket). The line-actions function gives that condition. On the
 expense page a Board member still sees "Approve as Board (program approver)"
 in More on any line they may approve, and as the main act only on a line no
 bucket approver can approve.
+
+You decided this generally (C1): a Board member's stand-in approval is a
+secondary act. It is the main act, and counts in pills, in "Waiting on you"
+and in Approve All, only where the Board is the only one who can act, or for
+the Board's own seat. Everywhere else it stays in More and is counted
+nowhere.
 
 **Treasurer and Board signatures in Finance review** (open question 4,
 decided). The signatures FINANCE and the Board give get screens of their own in
@@ -621,6 +640,11 @@ a decision you made:
   by the person reimbursed". *(same tag)*
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line. *(new line)* `[Decision — owner]`
+- A bucket's approver may raise an exception on a line finance moved into
+  their bucket. Finance may mark a line's bucket assignment final; after that,
+  no exception can be raised on it, and the line still waits for its bucket's
+  approver or a Board member in their place. A final assignment is not an
+  approval. *(new line)* `[Decision — owner]`
 - A line's signatures are given in order: the confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
