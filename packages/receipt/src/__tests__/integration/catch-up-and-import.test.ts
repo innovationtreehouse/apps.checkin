@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import { MAX_CONSECUTIVE_PUSH_FAILURES, repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
+import { MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
 import { importReceipts } from "../../services/importService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
@@ -79,6 +79,18 @@ describeDb("catch-up steps", () => {
     await receiptService.push(r.id);
     expect(await undelivered()).toEqual([]);
     expect((await receiptService.list({ state: "receipt_finalized" }))[0]).not.toHaveProperty("pushGivenUp");
+  });
+
+  it("reports each receipt's latest push failure, whatever order the receipts' failures interleave in", async () => {
+    ports.fail.push = true;
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    for (const [id, message] of [[a.id, "a second"], [b.id, "b second"], [a.id, "a latest"], [b.id, "b latest"]]) {
+      await db.receiptAuditLog.create({ data: { receiptId: id, action: "push_failed", valueAfter: message } });
+    }
+    const records = await pushRecords((await db.receipt.findUniqueOrThrow({ where: { id: a.id } })).orgId, [a.id, b.id]);
+    expect(records.get(a.id)?.lastPushFailure).toBe("a latest");
+    expect(records.get(b.id)?.lastPushFailure).toBe("b latest");
   });
 
   it("counts each state, the undelivered receipts, and the ones catch-up gave up on", async () => {

@@ -75,11 +75,13 @@ export async function pushRecords(orgId: string, ids: string[]): Promise<Map<str
     db.receiptAuditLog.findMany({
       where: { receiptId: { in: ids }, action: "push_failed" },
       select: { receiptId: true, changedAt: true, valueAfter: true },
-      orderBy: { id: "desc" },
+      orderBy: [{ receiptId: "asc" }, { id: "desc" }],
       distinct: ["receiptId"],
     }),
   ]);
-  const latest = new Map(failures.map((f) => [f.receiptId, f]));
+  // Rows come newest first within each receipt; the first one seen is the latest.
+  const latest = new Map<string | null, (typeof failures)[number]>();
+  for (const f of failures) if (!latest.has(f.receiptId)) latest.set(f.receiptId, f);
   return new Map(
     ids.map((id) => {
       const failure = latest.get(id);
