@@ -13,7 +13,7 @@ const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
   inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null,
 };
-let detail = {
+const baseDetail = {
   ReceivedReceipt: receipt,
   WorkflowReceiptView: {
     receiptId: "rcpt-abc-123", vendorName: "Acme Supply", currency: "USD", receiptDate: "2026-10-01",
@@ -28,6 +28,7 @@ let detail = {
     { id: 12, receiptLineItemId: 2, recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, conversionFactor: 1 },
   ],
 };
+let detail = baseDetail;
 
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
@@ -47,7 +48,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  detail = { ...detail, ReceivedReceipt: receipt };
+  detail = baseDetail;
 });
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
@@ -64,9 +65,15 @@ describe("the receiving page for one receipt", () => {
     expect(field("Total")).toBe("$54.32");
     expect(field("Tax")).toBe("$3.21");
     expect(field("Shipping")).toBe("$8.99");
-    expect(field("Discount")).toBe("−$2.50");
+    expect(field("Discount")).toBe("-$2.50");
     expect(field("Receipt id")).toBe("rcpt-abc-123");
     expect(field("Received")).toBe(new Date("2026-10-02T15:30:00Z").toLocaleString());
+  });
+
+  it("shows a negative discount as an amount added, with one sign", () => {
+    detail = { ...detail, WorkflowReceiptView: { ...detail.WorkflowReceiptView, discountCents: -250 } };
+    wrap();
+    expect(field("Discount")).toBe("$2.50");
   });
 
   it("shows each line's unit price and line total", () => {
