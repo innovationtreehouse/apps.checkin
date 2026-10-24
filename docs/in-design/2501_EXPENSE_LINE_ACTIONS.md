@@ -76,7 +76,7 @@ adds are marked as proposed.
 | Each line is signed by the submitter, a program approver and the Treasurer: three people, three households | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3]` | **Changes** (decided): the program approver's part is the line's approval, not a seat signature (C′.1). The submitter signs a reimbursement by confirming its receipt; a card charge takes the program approver and the Treasurer only (§3). Each signer stays a different person from a different household. The line splits in two: reimbursements keep the §IX.3 citation, which covers reimbursements only, and card charges become `[Decision — owner]` |
 | A bucket's approvers are its owner and treasurers; an org-level bucket has none | Procedure, `[Decision — owner]` | Unchanged. A new line says the approval is the program approver's sign-off |
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. There is no FINANCE override, so no other approval needs reading (open question 3, decided) |
-| When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes** (decided): a Board member without a conflict may approve any line in place of its bucket approvers, whether or not they can act. Replaced below; open question 10 asks you to confirm it against §IX.3 |
+| When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes** (decided): a Board member without a conflict may approve any line in place of its bucket approvers, whether or not they can act. Replaced below. You decided the Board stand-in replaces the program approver's signature (open question 10) |
 | Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes** (decided): the program approver is chosen as for any line, and the reimbursement also takes a later Board member's approval, in a Board seat signed after the line is approved. The §IX.2 citation stays. This changes the app's reading of the policy, not the policy: §IX.2 requires Board approval and doesn't stop the program approver approving too |
 | The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the submitter's confirmation of a reimbursement's receipt, and a card charge has no submitter seat. Reworded below |
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
@@ -614,12 +614,14 @@ Each PR is based on `main`, not stacked.
    what the submitter is paid. Should a bucket assignment, or finance's other
    bookkeeping (capital designation, depreciation, a mapping hold's account),
    also void the submitter's signature?
-10. **A Board member approving a program-budget line.** Financial Policy
-    Art. IX §IX.3's signature list names the Program Leader or Program
-    Treasurer for a reimbursement in a Board-approved program budget. Under
-    C′.3 a Board member may approve such a line in their place. Does that
-    satisfy §IX.3? (§IX.2's first paragraph lets the Board authorize any
-    reimbursement, which may bear on it.)
+10. **A Board member approving a program-budget line.** *Decided:* a Board
+    stand-in replaces the program approver's signature, including on a
+    reimbursement in a Board-approved program budget. Your reasoning: a
+    program leader not signing amounts to the Board using its own authority
+    over its policies, and the Board need not follow its policies to the
+    letter in every case. You expect it to be very rare, and the required
+    reason (§6) records each one. The rule is `[Decision — owner]` and cites
+    no policy clause.
 
 #2483's two open questions (a flag for a Board stand-in in the program-approver
 seat, and whether past signers are re-checked in the stand-in count) bear on
