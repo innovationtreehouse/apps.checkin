@@ -147,7 +147,7 @@ describeDb("expense action counts", () => {
 
     it("counts an open Treasurer seat for a FINANCE holder who may sign it, and not for the Board", async () => {
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(id, li, { SUBMITTER: 1, PROGRAM_APPROVER: 2 });
+      await sign(id, li, { SUBMITTER: 1 });
       expect(await counts(FINANCE)).toEqual({ ...NONE, qb_pending: 1 });
       expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
       expect(await counts(BOARD)).toEqual(NONE);
@@ -163,9 +163,9 @@ describeDb("expense action counts", () => {
 
     it("leaves out a fully signed expense and one where only the submitter seat is open", async () => {
       const signed = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(signed.id, signed.li, { SUBMITTER: 1, PROGRAM_APPROVER: 2, TREASURER: 3 });
+      await sign(signed.id, signed.li, { SUBMITTER: 1, TREASURER: 3 });
       const submitterOpen = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(submitterOpen.id, submitterOpen.li, { PROGRAM_APPROVER: 2, TREASURER: 3 });
+      await sign(submitterOpen.id, submitterOpen.li, { TREASURER: 3 });
       expect(await counts(FINANCE)).toEqual(NONE);
     });
 
@@ -173,13 +173,6 @@ describeDb("expense action counts", () => {
       bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
       await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
       expect(await counts(BOARD)).toEqual({ ...NONE, qb_pending: 1 });
-    });
-
-    it("leaves a FINANCE holder's own program-approver seat to the sign-off count", async () => {
-      bindPorts({ signoff: directory({ approvers: { 100: [3] }, finance: [3, 4], board: [5] }) });
-      const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(id, li, { SUBMITTER: 1, TREASURER: 4 });
-      expect(await counts(FINANCE)).toEqual(NONE);
     });
 
     it("gives an approver who holds no role no QB pending count", async () => {

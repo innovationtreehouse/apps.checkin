@@ -187,8 +187,8 @@ const notesSchema = z.object({ notes: z.string().trim().min(1, "notes are requir
 const ownerSchema = z.object({ ownerId: z.number().int().positive() });
 
 export const approve = approvalAction(
-  z.object({ overrideComment: z.string().nullish() }),
-  (p, e, a, b) => approveLine(p, e, a, b.overrideComment),
+  z.object({ reason: z.string().nullish() }),
+  (p, e, a, b) => approveLine(p, e, a, b.reason),
 );
 export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
@@ -211,10 +211,7 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
     (await db.expenseLineItem.findMany({ where: { expenseId: params.id, ...scopedLines(scope) }, select: { id: true } })).map((l) => l.id),
   );
   const status = await mapServiceErrors(() => signoffStatusFor(principal, params.id));
-  return {
-    ExpenseLineSignoffStatus: seatsOnly(status.lines.filter((s) => visible.has(s.lineItemId))),
-    ExpenseSignoffViewer: { mayRecordBoardAuthorization: status.mayRecordBoardAuthorization },
-  };
+  return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 
 /**

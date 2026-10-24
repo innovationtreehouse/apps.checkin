@@ -8,10 +8,11 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { CLOSED_STATES, availableSigners, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal } from "../lib/signoff";
+import { boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, signoffFactsByLine } from "../lib/signoff-facts";
 import { lineActions } from "../lib/line-actions";
 import { listOpenFlags } from "./flagService";
+import { APPROVABLE_STATUSES } from "./approvalService";
 
 /**
  * Expenses with a pending account hold, for FINANCE only (only FINANCE sets the account and
@@ -39,8 +40,8 @@ export interface ExpenseAwaitingApproval {
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
  * caller (from lineActions) is approval, across at most SIGNOFF_BADGE_EXPENSE_CAP candidate
  * expenses (newest first); past the cap it is a lower bound. The query keeps expenses in owner
- * approval, not the caller's own receipt, with a pending line in the caller's buckets, or in any
- * bucket for a Board member; lineActions decides each line. The approver pill, its "Waiting on
+ * approval, not the caller's own receipt, with a line waiting for approval in the caller's
+ * buckets, or in any bucket for a Board member; lineActions decides each line. The approver pill, its "Waiting on
  * you" view and the owner-approval view count all read this.
  */
 export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
@@ -53,7 +54,7 @@ export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): P
       backfill: false,
       state: "owner_approval",
       submitterId: { not: me },
-      approvals: { some: { status: "pending", ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
+      approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
     },
     orderBy: { submittedAt: "desc" },
     take: SIGNOFF_BADGE_EXPENSE_CAP,
@@ -148,9 +149,8 @@ export async function expenseActionCounts(principal: ExpensePrincipal): Promise<
 /**
  * QB pending expenses the caller can move toward QuickBooks, across at most
  * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE), record
- * the Board authorization, or fill an open Treasurer, Board or Board-substituted program-approver
- * seat. A bucket approver's own program-approver seat is signoffsAwaitingCount's, and the
- * submitter seat is the submitter's.
+ * the Board authorization, or fill an open Treasurer or Board seat. The submitter seat is the
+ * submitter's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
@@ -178,7 +178,6 @@ async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense
     const seats = filled.get(lineId) ?? [];
     for (const seat of missingSeats(f, seats)) {
       if (seat === "SUBMITTER") continue;
-      if (seat === "PROGRAM_APPROVER" && availableSigners(f, seats, seat).includes(me)) continue;
       if (signoffRefusal(f, seats, seat, me) === null) return true;
     }
   }
