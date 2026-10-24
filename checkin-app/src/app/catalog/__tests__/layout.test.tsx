@@ -53,10 +53,20 @@ describe("catalog layout tabs", () => {
     expect(screen.getByRole("tab", { name: /Categories/ })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("hides the sub-row on a tab without sub-pages", () => {
+  it("groups Locations under Org Inventory", () => {
     setSession({ id: 3, isBoardMember: true });
     setPathname("/inventory/locations");
     renderLayout();
+    expect(screen.getByRole("tab", { name: /Org Inventory/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Locations/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /Categories/ })).not.toBeInTheDocument();
+  });
+
+  it("hides the sub-row on a tab without sub-pages", () => {
+    setSession({ id: 3, isBoardMember: true });
+    setPathname("/inventory/receive-queue");
+    renderLayout();
+    expect(screen.queryByRole("tab", { name: /Categories/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Locations/ })).not.toBeInTheDocument();
   });
 });
