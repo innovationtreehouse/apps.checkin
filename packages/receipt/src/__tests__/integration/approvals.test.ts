@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
+import type { ReceiptPrincipal } from "../../contract";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 const taxed = () => manualDetails({ tax: "1.00", receiptTotal: "21.00" });
@@ -88,6 +89,48 @@ describeDb("receipts awaiting finance", () => {
     expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("duplicate_flagged");
     const off = await receiptService.upload(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     expect(off.state).toBe("validation_failed");
-    expect(await receiptService.countAwaitingFinance()).toBe(2);
+    expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual({
+      total: 2,
+      byState: { financial_review: 1, duplicate_flagged: 1, flow_error: 0 },
+    });
+  });
+});
+
+const REIMBURSEE: ReceiptPrincipal = { ...FINANCE, id: 960, name: "reimbursee" };
+const HOUSEMATE: ReceiptPrincipal = { ...FINANCE, id: 970, name: "housemate" };
+const INDEPENDENT: ReceiptPrincipal = { ...FINANCE, id: 980, name: "independent" };
+
+describeDb("receipts awaiting a conflicted finance viewer", () => {
+  beforeEach(() => {
+    const ports = recordingPorts();
+    configure({
+      receiptSink: ports.receiptSink,
+      donorSink: ports.donorSink,
+      households: { householdOf: async (ids) => (ids.includes(BOB.id) ? [BOB.id, HOUSEMATE.id] : []) },
+    });
+  });
+
+  const future = (retailer: string) => ({ details: manualDetails({ retailer, receiptDate: "2999-01-01" }) });
+
+  it("leaves out receipts the viewer uploaded, is reimbursed for, or shares a household with", async () => {
+    actAs(FINANCE);
+    expect((await receiptService.upload(textFile(), "text/plain", future("Uploaded by finance"))).state).toBe("financial_review");
+    actAs(ALICE);
+    const reimbursed = await receiptService.upload(textFile(), "text/plain", future("Reimbursed to finance"));
+    expect(reimbursed.state).toBe("financial_review");
+    await db.receipt.update({ where: { id: reimbursed.id }, data: { reimburseePersonId: REIMBURSEE.id } });
+    actAs(BOB);
+    const file = textFile();
+    await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    expect((await receiptService.upload(file, "text/plain", { details: manualDetails() })).state).toBe("duplicate_flagged");
+
+    const counts = (total: number, financial_review: number, duplicate_flagged: number) => ({
+      total,
+      byState: { financial_review, duplicate_flagged, flow_error: 0 },
+    });
+    expect(await receiptService.countAwaitingFinance(INDEPENDENT.id)).toEqual(counts(3, 2, 1));
+    expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(2, 1, 1));
+    expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(2, 1, 1));
+    expect(await receiptService.countAwaitingFinance(HOUSEMATE.id)).toEqual(counts(2, 2, 0));
   });
 });
