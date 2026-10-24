@@ -550,10 +550,9 @@ reimbursement is never hidden by mistake.
 
 **Tax exceptions (FR4).** `ReceiptOrgSettings` keeps the tax-exempt and age-limit
 flags; tax on a tax-exempt org, a receipt past the age limit, or a future date
-sends it to `financial_review` with reasons shown. Delta: **approve takes a note,
-required when a reason is tax**, stored on the audit row. The source approves
-silently, so nothing records why tax was accepted; that note is FR4's "tax
-explanation". QB-linked backfill keeps its waivers (no submitter step, no age gate).
+sends it to `financial_review` with reasons shown. As in the source, approve
+takes no note, and reject takes an optional reason, stored on the audit row.
+QB-linked backfill keeps its waivers (no submitter step, no age gate).
 
 **Self-decision is refused.** A `FINANCE` person makes no finance decision on a
 receipt they, or anyone in their household, uploaded or are reimbursed for:
@@ -752,7 +751,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 
 The source's vitest suites port with the library (Anthropic client mocked). New:
 caps; auto-OCR success, failure and refusal; the catch-up steps (counts only); X13 state: a never-in-kind receipt never sends `withdrawInKind`, a failed first send stays `pending` and is retried;
-tax note required; self-approval refused; the reimbursement view against a stub
+self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
 `needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image served inline under `sandbox` and a PDF served inline without it; an audit row per file view or download and mail-queue
