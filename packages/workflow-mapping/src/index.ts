@@ -10,6 +10,7 @@ export * from "./workflows";
 export * from "./services/receiptIntakeService";
 export * from "./services/receiptService";
 export * from "./services/lineItemService";
+export { receivingStateCounts, type ReceivingStateCount } from "./services/stateCounts";
 export { orgEventConsumer, catchUpOrgEvents } from "./services/orgEventConsumer";
 export * as routes from "./routes";
 export type { WorkflowRouteCtx, WorkflowBag, WorkflowRouteHandler } from "./routes";

@@ -15,3 +15,4 @@ export { createGmailReader } from "./lib/gmail";
 export { readMailbox, type MailIntakeResult } from "./services/mailIntake";
 export { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "./services/catchUp";
 export { mailQueueService } from "./services/mailQueueService";
+export { receiptStateCounts, RECEIPT_STATES, type ReceiptStateCount } from "./services/stateCounts";

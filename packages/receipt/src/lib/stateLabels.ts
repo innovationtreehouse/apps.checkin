@@ -1,0 +1,14 @@
+/** A receipt state in plain words. A plain module, so server code can read it as well as the screens. */
+export const STATE_LABELS: Record<string, string> = {
+  auto_upload: "Reading",
+  uploaded: "Processing",
+  ocr_failed: "Couldn't read",
+  duplicate_flagged: "Possible duplicate",
+  validation_failed: "Totals don't add up",
+  submitter_review: "Needs your review",
+  financial_review: "Finance review",
+  flow_error: "Error",
+  discarded: "Discarded",
+  rejected: "Rejected",
+  receipt_finalized: "Done",
+};

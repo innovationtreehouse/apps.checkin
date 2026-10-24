@@ -109,16 +109,4 @@ export interface ReceiptListRow {
   complete?: boolean;
 }
 
-export const STATE_LABELS: Record<string, string> = {
-  auto_upload: "Reading",
-  uploaded: "Processing",
-  ocr_failed: "Couldn't read",
-  duplicate_flagged: "Possible duplicate",
-  validation_failed: "Totals don't add up",
-  submitter_review: "Needs your review",
-  financial_review: "Finance review",
-  flow_error: "Error",
-  discarded: "Discarded",
-  rejected: "Rejected",
-  receipt_finalized: "Done",
-};
+export { STATE_LABELS } from "../lib/stateLabels";
