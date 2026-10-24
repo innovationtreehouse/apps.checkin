@@ -104,7 +104,7 @@ export async function seedLineItem(
 export async function seedApproval(
   expenseId: string,
   lineItemId: number,
-  opts?: { ownerId?: number | null; status?: string },
+  opts?: { ownerId?: number | null; status?: string; decidedByUserId?: number },
 ): Promise<number> {
   const row = await db.lineItemOwnerApproval.create({
     data: {
@@ -112,6 +112,7 @@ export async function seedApproval(
       lineItemId,
       ownerId: opts?.ownerId ?? null,
       status: opts?.status ?? "pending",
+      decidedByUserId: opts?.decidedByUserId ?? null,
     },
   });
   return row.id;
@@ -154,15 +155,16 @@ export async function seedPartOwner(opts: {
 }
 
 /**
- * Fills the three base sign-off seats on every line of an expense with distinct people and
- * records a Board authorization, so the expense is postable whatever its size.
+ * Fills the submitter and Treasurer seats on every line of an expense with distinct people and
+ * records a Board authorization, so the expense is postable whatever its size once its lines
+ * are approved.
  */
 export async function signAllLines(expenseId: string): Promise<void> {
   await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });
   for (const { id } of lines) {
     await db.expenseLineSignoff.createMany({
-      data: (["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const).map((seat, i) => ({
+      data: (["SUBMITTER", "TREASURER"] as const).map((seat, i) => ({
         expenseId, lineItemId: id, seat, signerUserId: 9000 + i,
       })),
     });

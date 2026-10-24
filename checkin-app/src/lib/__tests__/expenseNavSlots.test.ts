@@ -1,5 +1,5 @@
 import { visibleLinks } from "@/lib/nav/gates";
-import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
+import { FINANCE } from "@/lib/nav/sections/finance";
 import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
@@ -25,34 +25,35 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
-const TABS = ["Expenses", "Holds", "Flags", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Budgets", "Settings"];
+const TABS = ["Finance review", "Expenses", "Flow status", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Budgets", "Incoming receipt queue", "Settings"];
+const BOARD_TABS = TABS.filter((t) => t !== "Incoming receipt queue");
+const EXPENSE_SCREENS = ["Expenses", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Budgets"];
 
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
-describe("Expense Ops tabs", () => {
-  it("shows the expense screens, Budgets, then Settings to FINANCE and Board", () => {
-    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(TABS);
-    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(TABS);
-    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)[0]).toBe("/expense/expenses");
+describe("Finance section", () => {
+  it("shows the queue first, then the expense list, flow status, setup screens, budgets, mail and settings", () => {
+    expect(names(visibleLinks(FINANCE, finance, released))).toEqual(TABS);
+    expect(names(visibleLinks(FINANCE, board, released))).toEqual(BOARD_TABS);
+    expect(visibleLinks(FINANCE, finance, released)[0].href).toBe("/finance/review");
   });
 
-  it("hides them from a program lead and a plain member", () => {
-    expect(visibleLinks(EXPENSE_OPS, lead, released)).toEqual([]);
-    expect(visibleLinks(EXPENSE_OPS, member, released)).toEqual([]);
+  it("hides it from a program lead and a plain member", () => {
+    expect(visibleLinks(FINANCE, lead, released)).toEqual([]);
+    expect(visibleLinks(FINANCE, member, released)).toEqual([]);
   });
 
-  it("hides them from FINANCE until expense is released, and keeps them for Board", () => {
-    expect(visibleLinks(EXPENSE_OPS, finance, unreleased)).toEqual([]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(TABS);
+  it("hides the expense screens from FINANCE until expense is released, and keeps them for Board", () => {
+    expect(names(visibleLinks(FINANCE, finance, unreleased))).toEqual(TABS.filter((t) => !EXPENSE_SCREENS.includes(t)));
+    expect(names(visibleLinks(FINANCE, board, unreleased))).toEqual(BOARD_TABS);
   });
 
-  it("badges Holds and Flags with their own counts, and nothing else", () => {
-    const c = counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } });
-    const badges = Object.fromEntries(EXPENSE_OPS.links.map((t) => [t.name, t.badge?.(c) ?? null]));
-    expect(badges.Holds).toEqual({ count: 2, color: "red", label: "2 expense holds" });
-    expect(badges.Flags).toEqual({ count: 1, color: "red", label: "1 open expense flags" });
-    expect(Object.values(badges).filter(Boolean)).toHaveLength(2);
-    expect(EXPENSE_OPS.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
+  it("carries one green pill, on Finance review, summing the receipt and expense queue counts", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { financeQueue: 3, "actionable:capital_review": 2 }, receipt: { awaitingFinance: 2 } });
+    const badges = Object.fromEntries(FINANCE.links.map((t) => [t.name, t.badge?.(c) ?? null]));
+    expect(badges["Finance review"]).toEqual({ count: 5, color: "treehouseGreen", label: "5 items wait on you in Finance review" });
+    expect(Object.values(badges).filter(Boolean)).toHaveLength(1);
+    expect(FINANCE.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
 });
 
