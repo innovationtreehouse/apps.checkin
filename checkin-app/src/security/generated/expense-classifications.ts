@@ -69,6 +69,13 @@ export const classifications = {
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
     },
+    ExpenseReceiptReview: {
+        expenseId: 'internal',
+        reasons: 'internal',
+        approvedByUserId: 'pii',
+        note: 'personal',
+        approvedAt: 'internal',
+    },
     ExpenseLineItem: {
         id: 'internal',
         expenseId: 'internal',
@@ -278,6 +285,10 @@ export const relations = {
         holds: { model: 'ExpenseHold', isList: true },
         auditLog: { model: 'ExpenseAuditLog', isList: true },
         flags: { model: 'ExpenseFlag', isList: true },
+        receiptReview: { model: 'ExpenseReceiptReview', isList: false },
+    },
+    ExpenseReceiptReview: {
+        expense: { model: 'Expense', isList: false },
     },
     ExpenseLineItem: {
         expense: { model: 'Expense', isList: false },
