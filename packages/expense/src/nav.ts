@@ -4,8 +4,27 @@
  * `EXPENSE_TABS.approvals` under Programs I Lead.
  */
 
-/** The Expense Ops nav counts expense reports to the host, one per badged tab. */
-export type ExpenseNavCount = "holds" | "openFlags";
+/**
+ * The Expense Ops nav counts expense reports to the host, one per badged tab. `actionable` is the
+ * sum of the per-view action counts.
+ */
+export type ExpenseNavCount = "holds" | "openFlags" | "actionable";
+
+/** The expense list views that carry an action count: the items in the view the viewer can act on. */
+export const EXPENSE_ACTION_VIEWS = [
+  "assign_ownership",
+  "owner_approval",
+  "owner_exception",
+  "capital_review",
+  "set_depreciation_cycle",
+  "qb_pending",
+] as const;
+export type ExpenseActionView = (typeof EXPENSE_ACTION_VIEWS)[number];
+
+/** The key a view's action count rides under in the expense library's nav counts. */
+export function expenseActionCountKey(view: ExpenseActionView): string {
+  return `actionable:${view}`;
+}
 
 export interface ExpenseNavLink {
   name: string;
@@ -23,7 +42,7 @@ export const EXPENSE_TABS = {
 
 /** The FINANCE/Board expense screens, each an Expense Ops tab. */
 export const EXPENSE_OPS_TABS: readonly ExpenseNavLink[] = [
-  { name: "Expenses", href: "/expense/expenses", icon: "🧾" },
+  { name: "Expenses", href: "/expense/expenses", icon: "🧾", badge: "actionable" },
   { name: "Holds", href: "/expense/holds", icon: "⛔", badge: "holds" },
   { name: "Flags", href: "/expense/flags", icon: "🚩", badge: "openFlags" },
   { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️" },
