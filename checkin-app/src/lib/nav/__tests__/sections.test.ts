@@ -95,15 +95,17 @@ describe("the Receipts split", () => {
     expect(list?.badge?.(counts)).toBeNull();
   });
 
-  it("Receipt Review holds review, settings and mail, for FINANCE or BOARD; mail for FINANCE alone", () => {
+  it("Receipt Review holds review, settings, mail and flow status, for FINANCE or BOARD; mail for FINANCE alone", () => {
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
       "/receipts/review",
       "/receipts/settings",
       "/receipts/mail",
+      "/receipt-flow",
     ]);
     expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.board, counts).map((l) => l.href)).toEqual([
       "/receipts/review",
       "/receipts/settings",
+      "/receipt-flow",
     ]);
     for (const name of ["member", "sysadmin", "operations"]) {
       expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);

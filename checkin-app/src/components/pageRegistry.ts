@@ -43,6 +43,8 @@ const REVENUE = (href: string): NavGate => linkGate(REVENUE_OPS, href);
 const EXPENSES = linkGate(EXPENSE_OPS, '/expense/expenses');
 const BUDGETS = linkGate(EXPENSE_OPS, '/budgets');
 const RECEIPT_FINANCE = linkGate(RECEIPT_REVIEW, '/receipts/review');
+// FINANCE and BOARD reach it from Receipt Review, an inventory manager from Inventory.
+const RECEIPT_FLOW: NavGate = (u, c) => linkGate(RECEIPT_REVIEW, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
 const SYSTEM = SYSTEM_STATUS.visible;
@@ -137,6 +139,7 @@ export const PAGES: PageEntry[] = [
   { href: '/receipts/review', label: 'Receipts Review', section: 'Receipt Review', keywords: 'receipt finance tax duplicate', visible: RECEIPT_FINANCE },
   { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Receipt Review', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(RECEIPT_REVIEW, '/receipts/mail') },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipt Review', keywords: 'tax exempt age limit', visible: linkGate(RECEIPT_REVIEW, '/receipts/settings') },
+  { href: '/receipt-flow', label: 'Receipt Flow Status', section: 'Receipt Review', keywords: 'receipt receiving expense state count applying status', visible: RECEIPT_FLOW },
 
   // Facility Ops — board, plus operations on the two aggregate tools. The index
   // redirects to the caller's first visible tab, so it is listed to anyone the

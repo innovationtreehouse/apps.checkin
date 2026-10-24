@@ -3,8 +3,9 @@
  * libraries own their screen lists; workflow-mapping owns Receiving and bulk
  * donation the in-kind screen. Catalog and org inventory show to a catalog
  * viewer, org inventory's manager-only screens to an INVENTORY_MANAGER, its
- * receiving screens to INVENTORY_MANAGER, FINANCE or BOARD (#2384). A
- * viewer any tab admits is admitted to the section (FINANCE reaches Receiving).
+ * receiving screens to INVENTORY_MANAGER, FINANCE or BOARD (#2384), and the
+ * receipt flow status page to an INVENTORY_MANAGER. A viewer any tab admits is
+ * admitted to the section (FINANCE reaches Receiving).
  */
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@checkin/global-catalog/nav";
 import { INVENTORY_NAV_LINKS, type InventoryNavLink } from "@checkin/local-inventory/nav";
@@ -14,6 +15,7 @@ import type { RoleFlag } from "@/lib/roles";
 import type { NavGate, NavSection, SubLink } from "@/lib/nav/types";
 import { anyRole, firstVisibleHref, signedIn } from "@/lib/nav/gates";
 import { libraryCount } from "@/components/navBadges";
+import { RECEIPT_FLOW_LINK } from "@/lib/nav/sections/receiptReview";
 import { canSeeCatalog } from "@/lib/volunteer";
 
 const catalogViewer: NavGate = (u) => canSeeCatalog(u);
@@ -51,6 +53,8 @@ export const INVENTORY: NavSection = {
       },
     },
     { ...IN_KIND_TAB, library: "bulk-donation", visible: anyRole(IN_KIND_ROLES) },
+    // FINANCE and BOARD reach the flow status page from Receipt Review.
+    { ...RECEIPT_FLOW_LINK, library: "workflow-mapping", visible: inventoryManager },
   ],
   visible: signedIn,
   hrefFor: (u, c) => firstVisibleHref(INVENTORY, u, c),
