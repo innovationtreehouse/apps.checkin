@@ -431,9 +431,9 @@ expense-list view. The pill stays per line. Both then come from one rule and
 only the unit differs. #2500's QB-pending count already counts expenses with an
 open Treasurer, Board or Board-substituted program-approver seat the viewer can
 fill; under C′ its program-approver part goes, because a Board stand-in approves
-in owner approval before the expense is QB pending, so FINANCE and the Board already have a count for seats. Open question 4
-asks only whether those signatures also get their own place to work in #2482's
-queue. Treasurer and Board seats stay off this pill.
+in owner approval before the expense is QB pending. Its Treasurer and Board
+seat counts move to Finance review (below). Treasurer and Board seats stay off
+this pill.
 
 A Board member may approve any line (C′.3), but their counts don't include
 every pending line, or the Board would always see the whole queue. A Board
@@ -444,6 +444,33 @@ org-level bucket). The line-actions function gives that condition. On the
 expense page a Board member still sees "Approve as Board (program approver)"
 in More on any line they may approve, and as the main act only on a line no
 bucket approver can approve.
+
+**Treasurer and Board signatures in Finance review** (open question 4,
+decided). The signatures FINANCE and the Board give get screens of their own in
+#2482's Finance review queue.
+
+- **To sign tab:** lists the lines waiting for a Treasurer signature that this
+  viewer may give, one row per expense with the count of such lines, opening
+  the expense page. A "Sign all N as Treasurer" button, the Treasurer's
+  equivalent of Approve All, signs every listed line on that expense the
+  viewer may sign, in one all-or-nothing request under the same per-line
+  refusals as a single signature.
+- **Board tab:** lists the lines waiting for a Board signature this viewer may
+  give: the Board seat on a non-Everyday card charge without Board
+  authorization, the Board seat on a non-member reimbursement once the line is
+  approved, and the Treasurer seat when no finance holder without a conflict
+  can sign it. The Board's approval of a purchase of $2,000 or more is
+  recorded, not signed, and #2482 already lists it in this tab.
+- **Counts:** both tabs count only lines the viewer may sign, from the same
+  line-actions function, and both feed the Finance review pill. A Board member
+  sees the Board tab's count; a finance holder sees both.
+
+This design specifies what each tab lists and how a row is signed. #2482
+specifies the tabs' place in the queue, the row layout and how the pill sums
+them. To keep any seat from being counted twice, step 9 removes the Treasurer,
+Board and Board-substituted seat parts from #2500's QB-pending count in the same
+PR that adds the two tab counts. #2500's QB-pending count keeps only what isn't
+a signature: an unknown reimbursee and a Board authorization to record.
 
 ### 9. Back to the queue (3.12)
 
@@ -523,11 +550,12 @@ from your decisions; the last two wait on open questions 2 and 5:
 | `POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve` | Under C′, takes the seat's refusals and admits a Board stand-in |
 | `POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs` | Refuses `PROGRAM_APPROVER`, which leaves the seat list; the route and its registry entry are unchanged |
 | `POST /api/expense/expenses/[id]/approve-lines` | New, for Approve All; `expense-approver`, with the library checking each line |
+| `POST /api/expense/expenses/[id]/sign-lines` | New, for "Sign all N as Treasurer"; `finance-or-board`, with the library checking each line |
 | `GET /api/expense/queue`, `GET /api/expense/expenses` | Accept the `awaiting_me` view; no new route |
 | Receipt submitter review | The confirm records who confirmed; the receipt-to-expense contract gains the confirmation, alongside the review outcome theme 2 adds. No new route |
 
 The new fields on `ExpenseLineSignoffStatus` change a synthetic
-classification, and the new route needs a registry entry. Both ship in one
+classification, and the two new routes need registry entries. All ship in one
 boundary-only PR on `main` before any feature PR, under the boundary isolation
 rule. With no override, #2482's planned `overrideRequired` field isn't
 needed either; #2482 is being told.
@@ -536,8 +564,8 @@ needed either; #2482 is being told.
 
 Each PR is based on `main`, not stacked.
 
-1. **Registry PR** (boundary only): the new fields and the `approve-lines`
-   entry. Coordinate with #2482's registry PR A.
+1. **Registry PR** (boundary only): the new fields, and the `approve-lines` and
+   `sign-lines` entries. Coordinate with #2482's registry PR A.
 2. **Line actions PR** (3.14, 3.15, 3.16, #2433): the function, the new fields,
    the page drawing only returned acts with one main act per line, bold lines,
    required marks. No server behaviour or rule changes, so it can ship before
@@ -561,6 +589,11 @@ Each PR is based on `main`, not stacked.
    edits.
 8. **Override removal** (3.17): the approve service's finance branch and the
    override dialog go, with the rule line. It can ship in step 3's PR.
+9. **To sign and Board tab content** (open question 4): the two tab lists and
+   counts from the line-actions function, "Sign all N as Treasurer", and the
+   seat counts removed from #2500's QB-pending count in the same PR (§8). After
+   #2482's queue PR adds the tabs, and after steps 1 and 3; the batch-sign
+   route needs a registry entry in step 1's boundary PR.
 
 ## How each item is resolved
 
@@ -591,11 +624,10 @@ Each PR is based on `main`, not stacked.
    confirm again (§3).
 3. **The override and the Treasurer seat.** *Decided:* there is no FINANCE
    override (§7). Only bucket approvers, or a Board stand-in, approve a line.
-4. **Where Treasurer and Board seats are counted.** This design counts the
-   program-approver act on the approver pill. #2500's QB-pending count already
-   counts expenses with a Treasurer, Board or Board-substituted seat the viewer
-   can fill. Should those signatures also get a "To sign" tab in #2482's finance
-   queue, with Approve All's equivalent for the Treasurer?
+4. **Where Treasurer and Board seats are counted.** *Decided:* a To sign tab
+   for Treasurer signatures, with "Sign all N as Treasurer", and Board
+   signatures in the Board tab, both in #2482's Finance review queue and
+   counted on its pill (§8). They move out of #2500's QB-pending count.
 5. **A silent approver.** *Decided:* a Board member without a conflict may
    always step in and approve any line (C′.3). No step marks an approver
    unavailable.
