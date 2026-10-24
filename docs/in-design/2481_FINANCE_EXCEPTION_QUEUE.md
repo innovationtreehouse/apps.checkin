@@ -131,7 +131,7 @@ The tabs sit in three labelled groups, one row each:
 | Group | Tabs | Shown to |
 | --- | --- | --- |
 | Receipts | Finance review, Duplicates, Totals off, Unreadable, Errors, and a "More" picker for #2466's other states, "Not delivered" among them | FINANCE and Board |
-| Expenses | Expenses, Account holds, QuickBooks | FINANCE and Board |
+| Expenses | Expenses, To sign, Account holds, QuickBooks | FINANCE and Board |
 | Board | Board | FINANCE and Board |
 
 Each tab shows a green count of the items this viewer can act on (§7). A tab
@@ -161,9 +161,9 @@ under them.
    also holds the expense list's finance views.
 
 A Board member without the finance role sees all three groups, because the
-Board reads receipt and expense data, but no count is green for them: nothing
-in the queue waits on a Board member's action. They land on the Board tab when
-it has items.
+Board reads receipt and expense data. Their green counts are the Board
+signatures they may give (Board tab, below); nothing else in the queue waits
+on a Board member. They land on the Board tab when it has items.
 
 For example, a finance holder sees 6 on the nav pill and opens it. Finance
 review has 2 receipts, so the page opens there. They approve both and come back
@@ -180,9 +180,10 @@ The Receipts tabs are #2466's, unchanged. The Expenses and Board groups hold:
 | Tab | Reasons | Who acts |
 | --- | --- | --- |
 | Expenses | Bucket to assign; bucket unknown; exception raised by a budget owner; capital review; depreciation cycle; reimbursee to name; tax not reviewed; failed intake (below) | FINANCE |
+| To sign | Lines waiting for a Treasurer signature the viewer can give, with Approve All. The signing act is #2503's; this design places the tab and counts it | FINANCE (the Treasurer seat) |
 | Account holds | One row per held expense: "2 lines have no account rule" | FINANCE |
 | QuickBooks | Posting failed after retries; duplicate to void; changed in QuickBooks; closed but not posted; bucket has no Class; waiting for a match (`AMBIGUOUS`, below) | FINANCE |
-| Board | Board approval not recorded; held, no conflict-free signer | Board, and FINANCE for recording the authorization |
+| Board | Board approval not recorded; held, no conflict-free signer; Board signature to give (a purchase of $2,000 or more, a reimbursement to a non-member, a conflicted Treasurer's seat; the act is #2503's) | Board for signatures, and FINANCE for recording the authorization |
 
 Recording the Board's approval is finance's job (decided): FINANCE records what
 the Board decided. "Board approval not recorded" counts green only for a
@@ -340,19 +341,21 @@ one app, a receipt that failed to become an expense is an Expenses-tab row, and
 - **Receipt tabs**: #2466's `GET /api/receipts/queue-counts`, made conflict-aware
   for FINANCE by #2462's `countAwaitingFinance`. No change.
 - **Expense tabs**: a new `GET /api/expense/finance-queue/counts` returns
-  `{ expenses, accountHolds, quickbooks, board }`, each as
+  `{ expenses, toSign, accountHolds, quickbooks, board }`, each as
   `{ actionable, total, byReason }`, where `byReason` holds the actionable
   count per reason for the chips. "Actionable" leaves out records the viewer is
   conflicted on, using the same `conflictedParties` predicate the refusals use.
-  For the Board tab it counts only the Board authorizations a FINANCE viewer
-  may record; a Board member's count is zero. The tab badges use
+  For To sign it counts only the lines whose Treasurer seat this viewer may
+  sign, and for the Board tab only the Board signatures this viewer may give
+  and the Board authorizations a FINANCE viewer may record. Both feed the one
+  Finance review pill. The tab badges use
   #2466's `queueBadge`: green for actionable, gray for the rest. The same
   counts pick the landing tab and the "Next" tab (§3), and give each reason
   chip its number.
 - **Nav**: the Expense Ops "Holds" and "Flags" pills go. The "Finance review"
   link carries one green pill, the receipt and expense actionable counts added,
   through `/api/nav/todo-counts` as #2462 does for receipts. A Board-only
-  viewer gets no pill, since nothing in the queue is theirs to act on (3.26).
+  viewer's pill counts only the Board signatures they may give (3.26).
 - Every action on either detail page fires `nav-counts-mutated`, so tab and nav
   counts refresh without a reload.
 
@@ -473,7 +476,10 @@ Each PR is based on `main`. None is stacked on another's branch.
    the release that brings the tabs. The QuickBooks tab lists `AMBIGUOUS`
    posts. The sidebar's Expense Ops and Receipt
    Review sections become the one Finance section (§3), and #2500's pill on
-   Expenses goes.
+   Expenses goes. The To sign tab and the Board-signature reason arrive here,
+   and #2500's QB-pending count for the Treasurer and Board seats moves into the
+   queue counts, so no seat is counted twice. The signing act itself ships
+   with #2503.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
    of the rest and can go any time.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
