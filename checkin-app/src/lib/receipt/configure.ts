@@ -19,6 +19,7 @@ import {
   type MailboxReader,
   type ReceiptAlerts,
   type ReceiptPrincipal,
+  type ReimburseeOption,
 } from "@checkin/receipt";
 import { ingestReceipt } from "@checkin/workflow-mapping";
 import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
@@ -88,6 +89,34 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   return { ...toPrincipal(person.id, person.name, isKnownAdult(person)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
 }
 
+/** Live people whose name contains the query, by name. */
+const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true } as const;
+
+/** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
+async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const matches = await prisma.person.findMany({
+    where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+    select: AGE_FIELDS,
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+  });
+  return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
+}
+
+async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
+  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/programAge"),
+  ]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: AGE_FIELDS });
+  return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
+}
+
 /** Re-ask the refresher this long before the token it handed out expires. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
 
@@ -148,6 +177,7 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById },
     alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,

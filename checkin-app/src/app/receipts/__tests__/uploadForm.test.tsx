@@ -5,14 +5,18 @@ import UploadPage from "@checkin/receipt/pages/upload";
 
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { ageBand: "adult" } } }) }));
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 7, ageBand: "adult" } } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
   upload: jest.fn(),
+  api: jest.fn(),
 }));
 
-const { upload: uploadMock } = jest.requireMock<{ upload: jest.Mock<Promise<{ id: string }>, [FormData]> }>("@checkin/receipt/components/api");
+const { upload: uploadMock, api: apiMock } = jest.requireMock<{
+  upload: jest.Mock<Promise<{ id: string }>, [FormData]>;
+  api: jest.Mock<Promise<unknown>, [string]>;
+}>("@checkin/receipt/components/api");
 
 beforeAll(() => {
   window.matchMedia ||= ((query: string) =>
@@ -22,6 +26,8 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   } as unknown as typeof ResizeObserver;
+  // jsdom has no scrollIntoView, which Mantine's combobox calls on open.
+  window.HTMLElement.prototype.scrollIntoView = jest.fn();
 });
 
 beforeEach(() => jest.clearAllMocks());
@@ -104,5 +110,32 @@ describe("Manual receipt upload", () => {
         expect.objectContaining({ message: "At least one line item is required", color: "red", autoClose: false }),
       ),
     );
+  });
+});
+
+describe("Naming who is reimbursed", () => {
+  it("defaults to the uploader, sending no reimbursee id", async () => {
+    uploadMock.mockResolvedValue({ id: "r3" });
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    expect(screen.getByRole("textbox", { name: /Reimburse/ })).toHaveValue("Me");
+    const data = await submittedData();
+    expect(data.needsReimbursement).toBe(true);
+    expect(data).not.toHaveProperty("reimburseePersonId");
+  });
+
+  it("sends the Person id of someone picked from the search", async () => {
+    uploadMock.mockResolvedValue({ id: "r4" });
+    apiMock.mockResolvedValue([{ id: 7, name: "Me Myself" }, { id: 42, name: "Sam Lee" }]);
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    const picker = screen.getByRole("textbox", { name: /Reimburse/ });
+    fireEvent.click(picker);
+    fireEvent.change(picker, { target: { value: "sam" } });
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reimbursee-options?q=sam"));
+    fireEvent.click(await screen.findByRole("option", { name: "Sam Lee" }));
+    expect(screen.queryByRole("option", { name: "Me Myself" })).not.toBeInTheDocument();
+    const data = await submittedData();
+    expect(data).toMatchObject({ needsReimbursement: true, reimburseePersonId: 42 });
   });
 });
