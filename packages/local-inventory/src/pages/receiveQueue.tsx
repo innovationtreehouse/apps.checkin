@@ -4,7 +4,7 @@ import { ActionIcon, Checkbox, Group, Table, Text, Title, Tooltip } from "@manti
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface QueueRow {
@@ -29,6 +29,7 @@ export default function ReceiveQueuePage() {
     setBusy(true);
     try {
       await api(path, { method });
+      notifyNavCounts();
       notifications.show({ message, color: "green" });
       queue.reload();
     } catch (err) {

@@ -41,6 +41,34 @@ describe("the receipt provider", () => {
     expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
   });
 });
+
+jest.mock("@checkin/local-inventory", () => ({ getNavCounts: async () => ({ openBackorders: 4 }) }));
+
+describe("the local-inventory provider", () => {
+  const inventory = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "local-inventory");
+
+  beforeEach(() => { process.env.LOCAL_INVENTORY_DATABASE_URL = "postgres://inventory"; });
+  afterEach(() => { delete process.env.LOCAL_INVENTORY_DATABASE_URL; });
+
+  it("reports open backorders to an inventory manager", async () => {
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": { openBackorders: 4 },
+    });
+  });
+
+  it("reports nothing to FINANCE or BOARD, which read the queue but cannot receive", async () => {
+    for (const u of [{ id: 2, isFinance: true }, { id: 3, isBoardMember: true }, { id: 4 }]) {
+      expect(await collectLibraryCounts(u, ["local-inventory"], inventory)).toBeUndefined();
+    }
+  });
+
+  it("reports no count when the library has no database", async () => {
+    delete process.env.LOCAL_INVENTORY_DATABASE_URL;
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": {},
+    });
+  });
+});
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
