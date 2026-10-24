@@ -23,8 +23,8 @@ export const EDITABLE_RECEIPT_WHERE = {
   state: { in: EDITABLE_RECEIPT_STATES },
 };
 
-/** The apply-failed queue also lists `applying`, so a receipt whose push never landed is visible. */
-export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed", "applying"];
+/** The apply-failed queue: receipts that need a person. `applying` is listed apart, as in progress. */
+export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed"];
 
 export const receivedReceiptLineStatusEnum = [
   "unrecognized",
