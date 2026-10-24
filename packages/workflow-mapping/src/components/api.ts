@@ -7,8 +7,17 @@ import { useSession } from "next-auth/react";
  * routes gate server-side; the client reads the caller's role only to decide
  * which controls to show.
  */
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api/workflow-mapping${path}`, { headers: { "Content-Type": "application/json" }, ...options });
+export function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return request<T>(`/api/workflow-mapping${path}`, options);
+}
+
+/** Reads from the catalog's own /api/catalog/* routes, the source of the legal category values. */
+export function catalogApi<T>(path: string): Promise<T> {
+  return request<T>(`/api/catalog${path}`);
+}
+
+async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
   const text = await res.text();
   let data: unknown = null;
   try {
@@ -45,17 +54,17 @@ export interface Loaded<T> {
 }
 
 /** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
-export function useLoad<T>(path: string): Loaded<T> {
+export function useLoad<T>(path: string, load: (path: string) => Promise<T> = api): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   useEffect(() => {
     const mine = ++seq.current;
-    api<T>(path)
+    load(path)
       .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
       .catch((e: unknown) => { if (mine === seq.current) setError(errorMessage(e)); });
-  }, [path, tick]);
+  }, [path, load, tick]);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { data, error, reload };
 }
