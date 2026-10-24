@@ -1,15 +1,16 @@
 "use client";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Alert, Anchor, Badge, Button, Group, NumberInput, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 
 interface Receipt {
   id: number;
   state: string;
   validationNotes?: string | null;
+  createdAt: string;
   inventoryAppliedAt: string | null;
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
@@ -21,12 +22,17 @@ interface LineItem {
   partNumber: string | null;
   manufacturer: string | null;
   quantity: number;
+  unitPriceCents?: number;
   totalPriceCents?: number;
 }
 interface ParsedReceipt {
+  receiptId?: string;
   vendorName?: string | null;
   currency: string;
   receiptTotalCents?: number;
+  taxCents?: number;
+  shippingCents?: number;
+  discountCents?: number;
   receiptDate: string | null;
   lineItems: LineItem[];
 }
@@ -89,11 +95,13 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         method: "POST",
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (res?.state === "apply_failed") notifications.show({ message: res.validationNotes ?? "Apply failed", color: "orange" });
-      else notifications.show({ message, color: "green" });
+      if (res?.validationNotes) {
+        const title = res.state === "applying" ? "Apply didn't finish" : "Apply failed";
+        notifications.show({ title, message: res.validationNotes, color: "red", autoClose: false });
+      } else notifications.show({ message, color: "green" });
       return true;
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ title: "Couldn't save", message: errorMessage(err), color: "red", autoClose: false });
       return false;
     } finally {
       setBusy(false);
@@ -120,12 +128,20 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   return (
     <>
       <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
-      <Group justify="space-between" my="md">
+      <Group justify="space-between" mt="md">
         <Stack gap={0}>
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
           <Text size="sm" c="dimmed">{parsed.receiptDate ?? "No date"}</Text>
         </Stack>
-        <Badge size="lg" variant="light">{STATE_LABEL[receipt.state] ?? receipt.state}</Badge>
+        <Badge size="lg" variant="light" color={STATE_COLOR[receipt.state] ?? "gray"}>{STATE_LABEL[receipt.state] ?? receipt.state}</Badge>
+      </Group>
+      <Group gap="xl" align="start" my="md">
+        <Field label="Total" value={formatCents(parsed.receiptTotalCents, parsed.currency)} money />
+        <Field label="Tax" value={formatCents(parsed.taxCents, parsed.currency)} money />
+        <Field label="Shipping" value={formatCents(parsed.shippingCents, parsed.currency)} money />
+        <Field label="Discount" value={`${parsed.discountCents ? "−" : ""}${formatCents(parsed.discountCents, parsed.currency)}`} money />
+        <Field label="Receipt id" value={parsed.receiptId ?? "—"} mono />
+        <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {[...late].map(([leg, lineIds]) => (
         <Alert key={leg} color="yellow" mb="md" title="Needs a manual fix">
@@ -162,6 +178,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             <Table.Th>Description</Table.Th>
             <Table.Th>Part</Table.Th>
             <Table.Th>Qty</Table.Th>
+            <Table.Th ta="right">Unit</Table.Th>
+            <Table.Th ta="right">Total</Table.Th>
             <Table.Th>Mapping</Table.Th>
             {editable && <Table.Th>Actions</Table.Th>}
           </Table.Tr>
@@ -170,48 +188,96 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           {lines.map((ls, i) => {
             const li = items.get(ls.receiptLineItemId);
             const lineBase = `${base}/lines/${ls.id}`;
+            const isOpen = editable && open.lineId === ls.id && !!open.form;
             return (
-              <Table.Tr key={ls.id}>
-                <Table.Td>{li?.lineNumber ?? i + 1}</Table.Td>
-                <Table.Td>{li?.description ?? "—"}</Table.Td>
-                <Table.Td>{[li?.manufacturer, li?.partNumber].filter(Boolean).join(" ") || "—"}</Table.Td>
-                <Table.Td>{li?.quantity ?? "—"}</Table.Td>
-                <Table.Td>
-                  <Text size="sm">{ls.recognitionStatus.replace("_", " ")}</Text>
-                  {(ls.assignedGtin13 ?? ls.provisionalItemGtin13) && (
-                    <Text size="xs" ff="monospace" c="dimmed">
-                      {ls.assignedGtin13 ?? ls.provisionalItemGtin13} ×{ls.conversionFactor}
-                    </Text>
-                  )}
-                </Table.Td>
-                {editable && (
+              <Fragment key={ls.id}>
+                <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
+                  <Table.Td>{li?.lineNumber ?? i + 1}</Table.Td>
+                  <Table.Td>{li?.description ?? "—"}</Table.Td>
+                  <Table.Td>{[li?.manufacturer, li?.partNumber].filter(Boolean).join(" ") || "—"}</Table.Td>
+                  <Table.Td>{li?.quantity ?? "—"}</Table.Td>
+                  <Table.Td ta="right" ff="monospace" style={{ whiteSpace: "nowrap" }}>{formatCents(li?.unitPriceCents, parsed.currency)}</Table.Td>
+                  <Table.Td ta="right" ff="monospace" style={{ whiteSpace: "nowrap" }}>{formatCents(li?.totalPriceCents, parsed.currency)}</Table.Td>
                   <Table.Td>
-                    {open.lineId === ls.id && open.form ? (
-                      <LineForm
-                        form={open.form}
-                        busy={busy}
-                        onCancel={() => setOpen({ lineId: 0, form: null })}
-                        onSubmit={async (body) => {
-                          if (await editLine(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
-                        }}
-                      />
-                    ) : (
-                      <Group gap={4} wrap="nowrap">
-                        <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "associate" })}>Associate</Button>
-                        <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "propose" })}>Propose</Button>
-                        <Button size="xs" variant="subtle" loading={busy} onClick={() => editLine(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
-                          Not inventory
-                        </Button>
-                      </Group>
+                    <Badge size="sm" variant="light" color={LINE_STATUS_COLOR[ls.recognitionStatus] ?? "gray"}>
+                      {LINE_STATUS_LABEL[ls.recognitionStatus] ?? ls.recognitionStatus}
+                    </Badge>
+                    {(ls.assignedGtin13 ?? ls.provisionalItemGtin13) && (
+                      <Text size="xs" ff="monospace" c="dimmed">
+                        {ls.assignedGtin13 ?? ls.provisionalItemGtin13} ×{ls.conversionFactor}
+                      </Text>
                     )}
                   </Table.Td>
+                  {editable && (
+                    <Table.Td>
+                      {isOpen ? (
+                        <Button size="xs" variant="subtle" onClick={() => setOpen({ lineId: 0, form: null })}>Close</Button>
+                      ) : (
+                        <Group gap={4} wrap="nowrap">
+                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "associate" })}>Associate</Button>
+                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "propose" })}>Propose</Button>
+                          <Button size="xs" variant="subtle" loading={busy} onClick={() => editLine(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
+                            Not inventory
+                          </Button>
+                        </Group>
+                      )}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+                {isOpen && open.form && (
+                  <Table.Tr>
+                    <Table.Td colSpan={COLUMNS + 1}>
+                      <Paper component="section" p="md" withBorder aria-label={`Line ${li?.lineNumber ?? i + 1} details`}>
+                        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+                          <LineDetails item={li} currency={parsed.currency} />
+                          <LineForm
+                            form={open.form}
+                            busy={busy}
+                            onCancel={() => setOpen({ lineId: 0, form: null })}
+                            onSubmit={async (body) => {
+                              if (await editLine(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
+                            }}
+                          />
+                        </SimpleGrid>
+                      </Paper>
+                    </Table.Td>
+                  </Table.Tr>
                 )}
-              </Table.Tr>
+              </Fragment>
             );
           })}
         </Table.Tbody>
       </Table>
     </>
+  );
+}
+
+/** Columns before Actions; the open line's detail row spans them all. */
+const COLUMNS = 7;
+
+function Field({ label, value, money, mono }: { label: string; value: string; money?: boolean; mono?: boolean }) {
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed">{label}</Text>
+      <Text size="sm" ff={money || mono ? "monospace" : undefined}>{value}</Text>
+    </Stack>
+  );
+}
+
+/** The open line as the receipt states it, shown beside its mapping form. */
+function LineDetails({ item, currency }: { item: LineItem | undefined; currency: string }) {
+  if (!item) return <Text c="dimmed">This line is missing from the stored receipt.</Text>;
+  return (
+    <Stack gap="xs">
+      <Title order={5}>Line {item.lineNumber}: {item.description}</Title>
+      <SimpleGrid cols={3} spacing="sm">
+        <Field label="Part #" value={item.partNumber ?? "—"} mono />
+        <Field label="Manufacturer" value={item.manufacturer ?? "—"} />
+        <Field label="Qty" value={String(item.quantity)} />
+        <Field label="Unit price" value={formatCents(item.unitPriceCents, currency)} money />
+        <Field label="Line total" value={formatCents(item.totalPriceCents, currency)} money />
+      </SimpleGrid>
+    </Stack>
   );
 }
 

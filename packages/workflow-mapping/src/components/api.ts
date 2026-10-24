@@ -70,3 +70,25 @@ export const STATE_LABEL: Record<string, string> = {
   apply_failed: "Apply failed",
   resolved: "Resolved",
 };
+
+export const STATE_COLOR: Record<string, string> = {
+  pending_review: "yellow",
+  applying: "blue",
+  apply_failed: "red",
+  resolved: "green",
+};
+
+/** A line's mapping decision, in plain words. */
+export const LINE_STATUS_LABEL: Record<string, string> = {
+  unrecognized: "Unrecognized",
+  recognized: "Recognized",
+  provisional: "Provisional",
+  non_inventory: "Not inventory",
+};
+
+export const LINE_STATUS_COLOR: Record<string, string> = {
+  unrecognized: "yellow",
+  recognized: "green",
+  provisional: "violet",
+  non_inventory: "gray",
+};

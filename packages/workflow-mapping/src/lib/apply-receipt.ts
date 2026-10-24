@@ -182,11 +182,11 @@ async function pushAndSettle(
   const stamp = (data: { inventoryAppliedAt?: Date; expenseAppliedAt?: Date; donationAppliedAt?: Date }) =>
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
-  const pushes: Array<() => Promise<void>> = [];
+  const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
   let inventoryUnstamped = false;
   // An in-kind receipt's money side goes to donations, never to expense.
   if (receipt.isInKind ? !legs.donationAppliedAt : !legs.expenseAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: receipt.isInKind ? "Donation" : "Expense", push: async () => {
       const validated = CompletedReceiptSchema.parse(moneyReceipt);
       if (receipt.isInKind) {
         await donationSink.ingestInKind(validated);
@@ -195,10 +195,10 @@ async function pushAndSettle(
         await expenseSink.pushReceipt(validated);
         await stamp({ expenseAppliedAt: new Date() });
       }
-    });
+    } });
   }
   if (applyItems.length > 0 && !legs.inventoryAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: "Inventory", push: async () => {
       await inventorySink.applyDelta(
         ResolvedInventoryDeltaSchema.parse({
           receiptId: receipt.receiptId,
@@ -213,16 +213,17 @@ async function pushAndSettle(
         inventoryUnstamped = true;
         throw err;
       }
-    });
+    } });
   }
 
   // allSettled, so every leg's applied stamp is written before the receipt settles.
-  const failed = (await Promise.allSettled(pushes.map((push) => push()))).find(
-    (r): r is PromiseRejectedResult => r.status === "rejected",
+  const results = await Promise.allSettled(pushes.map(({ push }) => push()));
+  // Each failure names its leg, so the reason says which part of the receipt didn't apply.
+  const failures = results.flatMap((r, i) =>
+    r.status === "rejected" ? [`${pushes[i].leg}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [],
   );
-  if (failed) {
-    const err: unknown = failed.reason;
-    const error = err instanceof Error ? err.message : String(err);
+  if (failures.length > 0) {
+    const error = failures.join("; ");
     // Inventory took the delta but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same delta.
     if (inventoryUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error);
     return settleFailed(receiptId, received.orgId, actor, error);
