@@ -78,7 +78,7 @@ adds are marked as proposed.
 | A conflicted Treasurer does not sign; the conflict includes having approved the line as its program approver | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.3; Ethics Policy Art. III §III.5]` | Text unchanged. Under C′ "approved the line as its program approver" is the approval row, and the code reads it from there. There is no FINANCE override, so no other approval needs reading (open question 3, decided) |
 | When every bucket approver is conflicted or unavailable, a Board member signs the program-approver seat | Procedure, `[Decision — owner]` | **Changes** (decided): a Board member without a conflict may approve any line in place of its bucket approvers, whether or not they can act. Replaced below. You decided the Board stand-in replaces the program approver's signature (open question 10) |
 | Reimbursing a non-member takes a Board member in the program-approver seat | Procedure, `[Decision — Policy: Financial Policy Art. IX §IX.2]` | **Changes** (decided): the program approver is chosen as for any line, and the reimbursement also takes a later Board member's approval, in a Board seat signed after the line is approved. The §IX.2 citation stays. This changes the app's reading of the policy, not the policy: §IX.2 requires Board approval and doesn't stop the program approver approving too |
-| The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the submitter's confirmation of a reimbursement's receipt, and a card charge has no submitter seat. Reworded below |
+| The submitter's audience may reach a sign-off for the submitter seat, "since that seat is filled from the receipt" | Procedure, `[Decision — owner]` | **Changes**: the seat is filled from the confirmation of a reimbursement's receipt by the person reimbursed, and a card charge has no submitter seat. Reworded below |
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
 | Proposed in #2224: a line in an org-wide bucket takes a Board member as program approver; at most two Board substitutions on a reimbursement line, one on a card charge | Procedure, `[Decision]` | Consistent. The org-level line's Board member approves the line instead of signing a seat, so the line is no longer pre-approved at intake (C′.4) |
 
@@ -179,8 +179,9 @@ signature does today.
 the bucket has no approvers, and a Board member signs the seat. Under C′ a
 pre-approval would meet the requirement with no one's judgment. So an org-level
 line starts pending, and a Board member without a conflict approves it, as for
-any line whose approvers can't act. The expense then waits in owner approval for
-that Board member. A backfilled expense stays pre-approved, because it takes no
+any line whose approvers can't act. Because an org-level line has no bucket
+approvers to stand in for, the Board member gives no reason (you decided this;
+§6). The expense then waits in owner approval for that Board member. A backfilled expense stays pre-approved, because it takes no
 sign-off at all.
 
 **C′.5 After finance reassigns a line.** Today, when FINANCE settles an exception
@@ -213,7 +214,7 @@ act on a line outside its own buckets. See §7.
 order, as the Inventory prototype did, so no later step can create a problem
 for an earlier one. The order follows Financial Policy Art. IX §IX.3's list:
 
-1. the submitter confirms the receipt (reimbursements only);
+1. the person reimbursed confirms the receipt (reimbursements only);
 2. the line is approved, by a bucket approver or a Board stand-in;
 3. the Treasurer signs;
 4. any Board signature the line takes: the Board seat on a non-Everyday card
@@ -232,17 +233,24 @@ exception raised), no Treasurer or Board signature exists when a line moves. A
 move needs no seat voiding, and the conflict in open question 8 can't arise.
 
 **Going back clears what follows** (open question 12, decided). Whenever an
-earlier step on a line is cleared or has to be given again, every later
-signature on that line is cleared too, and they are given again in order:
+earlier step is cleared or has to be given again, every later step is cleared
+too, and they are given again in order. That covers every later step in the
+expense's state machine, not only signatures: when an expense returns to an
+earlier state, capital review and the depreciation cycle are done again as
+well. For example:
 
 - A finance change to a confirmed reimbursement clears the submitter's
   confirmation (§3), so the line's approval returns to pending and its
   Treasurer and Board signatures are deleted.
 - An approval that reopens, for example when a line moves after an exception,
   clears the Treasurer and Board signatures.
+- An expense that returns to owner approval from capital review, the
+  depreciation cycle or the books queue clears its capital-review and
+  depreciation decisions, and finance makes them again once every line is
+  approved.
 
-Each clearing is audited, one row per cleared signature or approval, naming
-what cleared it. A Board authorization or the Board's recorded approval of a
+Each clearing is audited, one row per cleared signature, approval or capital
+and depreciation decision, naming what cleared it. A Board authorization or the Board's recorded approval of a
 $2,000 purchase is a record, not a signature, so it stays. When a cleared
 approval belongs to an expense that has moved past owner approval, the expense
 returns to owner approval, which the state machine needs a new transition for.
@@ -333,8 +341,8 @@ them the same `actions` field.
 You decided this by the kind of line. The submitter never sees the expense
 page, so in both cases the decision happens on the receipt.
 
-**A reimbursement: the submitter confirms the receipt as read.** The signature
-is the submitter's check-off of the receipt's lines and amounts as the app
+**A reimbursement: the person reimbursed confirms the receipt as read.** The
+signature is the check-off, by the person the reimbursement pays, of the receipt's lines and amounts as the app
 holds them, after OCR or entry and before the receipt goes to finance. It is
 required every time, whatever the intake path; submitting alone doesn't count,
 because OCR can misread a receipt, and the submitter's own money depends on it.
@@ -348,33 +356,45 @@ The review screen becomes the signature:
 
 - It shows the lines and amounts as read, and the confirm button reads "These
   lines and amounts are right" in place of a plain Confirm.
-- Only the uploader confirms; the confirm already admits only them.
+- The person reimbursed confirms, not the uploader, where the two differ (you
+  decided this). Any named reimbursee may confirm, whatever their membership;
+  reimbursees are adults only. When the person reimbursed has no account, a
+  Board member confirms on their behalf and must give a reason; the field is
+  required, the button stays disabled while it is blank, and the server refuses
+  a blank one. The reason is stored and audited with the confirmation.
+- No sign-off of any kind, confirmation, approval or signature, is possible
+  until the person reimbursed is known (you decided this). Today's refusal of
+  a signature while the reimbursee is unknown extends to the confirmation and
+  the approval.
 - The confirmation records who confirmed and when. The receipt-to-expense
   contract carries it, alongside the review outcome theme 2 adds, and when the
   expense is created the app records the submitter seat on every line, signed
-  by the submitter and citing that confirmation.
+  by whoever confirmed and citing that confirmation. The seat comes only from
+  the confirmation: the generic sign-off route refuses `SUBMITTER`.
 
 **A finance change sends a reimbursement back to the submitter** (decided).
-Once the submitter has confirmed a reimbursement, a change finance makes to
-what the submitter claimed or what they are paid voids the submitter's
-signature, and the submitter confirms again before the expense can post. The
+Once a reimbursement is confirmed, a change finance makes to what was claimed
+or what is paid voids the confirmation, and the person reimbursed confirms
+again before the expense can post. The
 changes that count:
 
 - line items: adding, removing or editing a line;
 - amounts: a line's quantity, unit price or total, and the receipt total;
 - tax, shipping and discount;
+- the currency;
 - the receipt date;
 - the reimbursee.
 
 Finance's bookkeeping doesn't count, as you decided (open question 9): which
 bucket a line is charged to, the QuickBooks account set on a hold, and the
-capital or depreciation designation. None of them changes what the submitter
+capital or depreciation designation. Nor does a change to the retailer, which
+you also decided. None of them changes what the submitter
 claimed or what they are paid.
 
 Where the change lands depends on how far the receipt has gone:
 
 - **Before the receipt is finalized** (finance review), the change clears the
-  submitter's confirmation, and the receipt machine's existing guard sends it
+  confirmation, and the receipt machine's existing guard sends it
   back to submitter review when finance approves it, as it does any
   reimbursement not yet confirmed.
 - **After the expense exists**, the change deletes the submitter seat on every
@@ -384,10 +404,12 @@ Where the change lands depends on how far the receipt has gone:
   the receipt shows on the submitter's My receipts page as "Finance changed
   this receipt; confirm it again", with the changed fields marked.
 
-Either way the receipt is back in the submitter's queue, and their My receipts
-pill counts it: the pill counts receipts in submitter review today, and it also
-counts reimbursements whose expense is waiting for the submitter's new
-confirmation. Confirming again records the seat on every line, as at creation.
+Either way the receipt is back in the queue of the person who confirms it, and
+their My receipts pill counts it: the pill counts receipts in submitter review
+today, and it also counts reimbursements whose expense is waiting for a new
+confirmation. A Board member's pill counts a confirmation on someone's behalf
+only where the Board is the only one who can act: the person reimbursed has no
+account. Confirming again records the seat on every line, as at creation.
 
 Every act is audited: each void as `signoff_voided` on its line, naming the
 finance holder, the change and the fields it touched, with the cleared approval
@@ -431,7 +453,10 @@ give a reason, as you decided. The field is marked required, the approve
 button stays disabled while it is blank, and the server refuses a blank one.
 The reason is stored on the approval and written to its audit row. A Board
 member who approves a line as an approver of its own bucket gives no reason,
-and neither does any other approval or signature.
+and neither does one who approves an org-level line, which has no bucket
+approvers to stand in for (C′.4). A Board member confirming a reimbursement
+for someone with no account gives a reason the same way (§3). No other
+approval or signature takes one.
 
 ### 7. No FINANCE override (3.17)
 
@@ -542,8 +567,8 @@ depreciation submits are finance's, and #2482 covers them.
 
 ## Proposed rule text
 
-To land in `docs/rules/expenses.md`, Spending sign-off. The first three follow
-from your decisions; the last two wait on open questions 2 and 5:
+To land in `docs/rules/expenses.md`, Spending sign-off. Every line follows from
+a decision you made:
 
 - A line's program approver signs it by approving it: the approval records who
   approved and when, and no separate signature is taken. Whoever may not hold a
@@ -551,7 +576,8 @@ from your decisions; the last two wait on open questions 2 and 5:
   does not sign its Treasurer seat. *(new line, after the three-signatures line)*
   `[Decision — owner]`
 - A Board member without a conflict may approve any line in place of its
-  bucket approvers, giving the reason. *(replaces the existing line about every owner and
+  bucket approvers, giving the reason. A Board member approving a line in an
+  org-level bucket, which has no bucket approvers, gives none. *(replaces the existing line about every owner and
   treasurer being conflicted or unavailable)* `[Decision — owner]`
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
@@ -560,7 +586,7 @@ from your decisions; the last two wait on open questions 2 and 5:
   card charge is not a reimbursement. *(replaces the existing line; keeps*
   `[Decision — Policy: Financial Policy, Art. IX §IX.2]`*)*
 - A reimbursement reaches the books only once each of its lines is signed by
-  the submitter, by confirming the receipt; by a program approver, who is an
+  the person reimbursed, by confirming the receipt; by a program approver, who is an
   owner or treasurer of the line's bucket, or, for a line outside a
   Board-approved program budget (an org-level bucket), a Board member without a
   conflict who is not the Treasurer; and by the Treasurer. Every signer is a
@@ -572,32 +598,38 @@ from your decisions; the last two wait on open questions 2 and 5:
   different people from different households. The submitter does not sign a
   card charge. *(replaces the three-signatures line for card charges; the
   policy does not address card charges)* `[Decision — owner]`
-- The submitter signs a reimbursement by confirming its receipt as read, its
-  lines and amounts, before the receipt goes to finance, whatever the intake
-  path. Submitting the receipt is not the signature. Finance may correct a card
-  charge's receipt without the submitter. *(new line)* `[Decision — owner]`
-- Once the submitter has confirmed a reimbursement, a change finance makes to
-  what the submitter claimed or what they are paid voids the submitter's
-  signature: its line items, a line's quantity or unit price, tax, shipping,
-  discount, the total, the receipt date, or the person reimbursed. The
-  reimbursement does not reach the books until the submitter confirms it
-  again. Finance's bookkeeping does not void it: a line's bucket, the
-  accounting-system account set on a hold, or the capital or depreciation
-  designation. The void and the new confirmation are both recorded.
+- The person reimbursed signs a reimbursement by confirming its receipt as
+  read, its lines and amounts, before the receipt goes to finance, whatever the
+  intake path. Submitting the receipt is not the signature, and the signature
+  comes from nothing else. Any named reimbursee may confirm, whatever their
+  membership; reimbursees are adults only. When the person reimbursed has no
+  account, a Board member without a conflict confirms on their behalf, giving
+  the reason. Finance may correct a card charge's receipt without the
+  submitter. *(new line)* `[Decision — owner]`
+- No confirmation, approval or signature is given on a reimbursement until the
+  person reimbursed is known. *(new line)* `[Decision — owner]`
+- Once a reimbursement is confirmed, a change finance makes to what was
+  claimed or what is paid voids the confirmation: its line items, a line's
+  quantity or unit price, tax, shipping, discount, the total, the currency, the
+  receipt date, or the person reimbursed. The reimbursement does not reach the
+  books until it is confirmed again. Neither finance's bookkeeping nor the
+  retailer voids it: a line's bucket, the accounting-system account set on a
+  hold, the capital or depreciation designation, or the retailer's name. The void and the new confirmation are both recorded.
   *(new line)* `[Decision — owner]`
 - *(audience line)* replace "since that seat is filled from the receipt" with
-  "since that seat is filled by their confirmation of a reimbursement's
-  receipt". *(same tag)*
+  "since that seat is filled by the confirmation of a reimbursement's receipt
+  by the person reimbursed". *(same tag)*
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line. *(new line)* `[Decision — owner]`
-- A line's signatures are given in order: the submitter's confirmation on a
+- A line's signatures are given in order: the confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
   exist; a Board signature waits for the Treasurer's. *(new line)*
   `[Decision — owner]`
-- When an earlier step on a line is cleared or has to be given again, every
-  later signature on that line is cleared, and they are given again in order.
-  Each clearing is recorded. *(new line)* `[Decision — owner]`
+- When an earlier step is cleared or has to be given again, every later step
+  is cleared and given again in order: later signatures, and, when the expense
+  returns to an earlier state, its capital review and depreciation cycle. Each
+  clearing is recorded. *(new line)* `[Decision — owner]`
 
 ## Routes and the security registry
 
@@ -605,11 +637,11 @@ from your decisions; the last two wait on open questions 2 and 5:
 | --- | --- |
 | `GET /api/expense/expenses/[id]/signoffs` | Gains `actions` and `awaiting` per line and `mayRecordBoardAuthorization`. These describe the caller only, so they name no one else |
 | `POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve` | Under C′, takes the seat's refusals and admits a Board stand-in |
-| `POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs` | Refuses `PROGRAM_APPROVER`, which leaves the seat list; the route and its registry entry are unchanged |
+| `POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs` | Refuses `PROGRAM_APPROVER`, which leaves the seat list, and `SUBMITTER`, which comes only from the confirmation; the route and its registry entry are unchanged |
 | `POST /api/expense/expenses/[id]/approve-lines` | New, for Approve All; `expense-approver`, with the library checking each line |
 | `POST /api/expense/expenses/[id]/sign-lines` | New, for "Sign all N as Treasurer"; `finance-or-board`, with the library checking each line |
 | `GET /api/expense/queue`, `GET /api/expense/expenses` | Accept the `awaiting_me` view; no new route |
-| Receipt submitter review | The confirm records who confirmed; the receipt-to-expense contract gains the confirmation, alongside the review outcome theme 2 adds. No new route |
+| Receipt submitter review | The confirm admits the person reimbursed, or a Board member with a reason for someone with no account, and records who confirmed; the receipt-to-expense contract gains the confirmation, alongside the review outcome theme 2 adds |
 
 The new fields on `ExpenseLineSignoffStatus` change a synthetic
 classification, and the two new routes need registry entries. All ship in one
@@ -668,7 +700,7 @@ Each PR is based on `main`, not stacked.
 | 3.17 | Only FINANCE overrides; no rule | No override: only bucket approvers, or a Board stand-in, approve (§7) | 8 |
 | 3.25 | Pill counts seats, page opens on approval | Approval is the sign-off, so one count, and a "Waiting on you" view (§8) | 3, 5 |
 | 3.29 | Seats, Board holds, backfill, org-level pre-approval, conflicts are new | Each has a defined action or status (§10, C′.1 to C′.9) | 2, 3 |
-| #2432 | Submitter can't sign | A reimbursement's submitter confirms the receipt as read, which fills the seat; a finance change clears it and every later signature; a card charge takes no submitter seat (§3, C′.9) | 7 |
+| #2432 | Submitter can't sign | The person reimbursed confirms the receipt as read, which fills the seat; a finance change clears it and every later signature; a card charge takes no submitter seat (§3, C′.9) | 7 |
 | #2433 | Sign-as shown to people who can't sign | Same as 3.15; other seats show as status (§1) | 2 |
 | #1272 | No rule for the override | As 3.17 | 8 |
 
