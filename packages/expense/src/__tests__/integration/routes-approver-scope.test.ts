@@ -89,6 +89,18 @@ describeDb("approver routes filter to the caller's buckets", () => {
     await expect(call(expenses.approve, "/x", ids(), {})).rejects.toMatchObject({ status: 404 });
   });
 
+  it("POST …/approve-lines: 404", async () => {
+    as(OUTSIDER);
+    await expect(call(expenses.approveAll, "/x", ids(), { approvalIds: [approvalId] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("POST …/approve-lines: the bucket's approver approves and gets the rows back", async () => {
+    as(APPROVER);
+    expect(await call(expenses.approveAll, "/x", ids(), { approvalIds: [approvalId] })).toMatchObject({
+      LineItemOwnerApproval: [{ id: approvalId, status: "approved" }],
+    });
+  });
+
   it("POST …/raise-exception: 404", async () => {
     as(OUTSIDER);
     await expect(call(expenses.raise, "/x", ids(), { notes: "not mine" })).rejects.toMatchObject({ status: 404 });

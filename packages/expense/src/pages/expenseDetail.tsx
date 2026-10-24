@@ -9,6 +9,7 @@ import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
+import ApproveAllButton, { type LineActsStatus } from "../components/ApproveAllButton";
 
 interface Line {
   id: number;
@@ -61,7 +62,7 @@ interface Expense {
   approvals: Approval[];
   flags?: Flag[];
 }
-interface SignoffStatus {
+interface SignoffStatus extends LineActsStatus {
   lineItemId: number;
   filled: string[];
   missing: string[];
@@ -261,6 +262,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         <Amount label="Submitted" value={new Date(e.submittedAt).toLocaleString()} />
       </Group>
 
+      <ApproveAllButton base={base} statuses={signoffs.data ?? []} approvals={approvalRows} onDone={reloadAll} />
       <Table>
         <Table.Thead>
           <Table.Tr>

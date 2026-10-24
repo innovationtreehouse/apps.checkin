@@ -13,6 +13,7 @@ import { callerId } from "../lib/caller";
 import { SEATS, type FilledSeat } from "../lib/signoff";
 import {
   approveLine,
+  approveLines,
   assignOwner,
   financeAssign,
   raiseException,
@@ -180,7 +181,17 @@ export const approve = approvalAction(
   z.object({ overrideComment: z.string().nullish() }),
   (p, e, a, b) => approveLine(p, e, a, b.overrideComment),
 );
-export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
+/** Approve All: every listed line the caller approves, or none; the response is those approval rows. */
+export const approveAll: ExpenseRouteHandler = async ({ req, params }) => {
+  const { approvalIds } = await parseBody(req, z.object({ approvalIds: z.array(z.number().int().positive()).min(1, "Name at least one line to approve") }));
+  const principal = await getPrincipal();
+  await visibleExpense(principal, params.id);
+  await mapServiceErrors(() => approveLines(principal, params.id, approvalIds));
+  return {
+    LineItemOwnerApproval: await db.lineItemOwnerApproval.findMany({ where: { id: { in: approvalIds }, expenseId: params.id }, orderBy: { id: "asc" } }),
+  };
+};
+export const raise = approvalAction(notesSchema,(p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
 export const financeAssignOwner = approvalAction(ownerSchema, (p, e, a, b) => financeAssign(p, e, a, b.ownerId));
 export const assign = approvalAction(

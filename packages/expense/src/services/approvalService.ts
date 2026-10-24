@@ -71,6 +71,41 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
   if (count === 0) throw new ServiceError(409, "This line changed; reload");
 }
 
+/**
+ * The refusals every approval runs, single or batch. Returns the override comment FINANCE gave
+ * when approving outside its own buckets, or null for a bucket approver.
+ */
+async function approvalNotes(
+  principal: ExpensePrincipal,
+  expense: { submitterId: number; reimburseePersonId: number | null },
+  approval: ApprovalRead,
+  overrideComment?: string | null,
+): Promise<string | null> {
+  requireStatus(approval, "pending");
+  await refuseConflicted(principal, expense);
+  if (await isBucketApprover(principal, approval.ownerId)) return null;
+  if (!principal.isFinance) throw new ServiceError(403, "This line item is not in a bucket you approve");
+  const notes = overrideComment?.trim() || null;
+  if (!notes) throw new ServiceError(400, "Override comment is required for finance approval");
+  return notes;
+}
+
+async function recordApproval(
+  tx: Prisma.TransactionClient,
+  actor: ReturnType<typeof actorOf>,
+  expenseId: string,
+  approval: ApprovalRead & { lineItemId: number },
+  notes: string | null,
+): Promise<void> {
+  await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
+  await writeAudit(tx, actor, {
+    expenseId,
+    action: notes ? "line_item_approved_finance_override" : "line_item_approved",
+    lineItemId: approval.lineItemId,
+    notes,
+  });
+}
+
 /** An approver approves; FINANCE may approve any line with an override comment (distinct audit action). */
 export async function approveLine(
   principal: ExpensePrincipal,
@@ -80,24 +115,42 @@ export async function approveLine(
 ): Promise<void> {
   const actor = actorOf(principal);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
-  requireStatus(approval, "pending");
-  await refuseConflicted(principal, expense);
+  const notes = await approvalNotes(principal, expense, approval, overrideComment);
 
-  let notes: string | null = null;
-  if (!(await isBucketApprover(principal, approval.ownerId))) {
-    if (!principal.isFinance) throw new ServiceError(403, "This line item is not in a bucket you approve");
-    notes = overrideComment?.trim() || null;
-    if (!notes) throw new ServiceError(400, "Override comment is required for finance approval");
-  }
+  await db.$transaction((tx) => recordApproval(tx, actor, expenseId, approval, notes));
+
+  await checkApprovalAutoTransition(expenseId, actor);
+}
+
+/**
+ * Approve All: approves every listed line under the expense lock, each through the same refusals
+ * as a single approval, or none of them. A refusal names the line by its number.
+ */
+export async function approveLines(principal: ExpensePrincipal, expenseId: string, approvalIds: number[]): Promise<void> {
+  const actor = actorOf(principal);
+  const ids = [...new Set(approvalIds)];
+  if (ids.length === 0) throw new ServiceError(400, "Name at least one line to approve");
 
   await db.$transaction(async (tx) => {
-    await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
-    await writeAudit(tx, actor, {
-      expenseId,
-      action: notes ? "line_item_approved_finance_override" : "line_item_approved",
-      lineItemId: approval.lineItemId,
-      notes,
+    await lockExpense(tx, expenseId);
+    const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+    if (!expense) throw new ServiceError(404, "Expense not found");
+    if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+    const approvals = await tx.lineItemOwnerApproval.findMany({
+      where: { expenseId, id: { in: ids } },
+      include: { lineItem: { select: { lineNumber: true } } },
+      orderBy: { lineItem: { lineNumber: "asc" } },
     });
+    if (approvals.length !== ids.length) throw new ServiceError(404, "Approval record not found");
+    for (const approval of approvals) {
+      try {
+        // No override comment: a line that needs one is refused here, as a single approval without it is.
+        await recordApproval(tx, actor, expenseId, approval, await approvalNotes(principal, expense, approval));
+      } catch (err) {
+        if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${approval.lineItem.lineNumber}: ${err.message}`);
+        throw err;
+      }
+    }
   });
 
   await checkApprovalAutoTransition(expenseId, actor);
