@@ -170,6 +170,20 @@ describe('expense stripper', () => {
         expect(strip('DonatedCapitalLineView', line, ['public'])).toEqual({});
     });
 
+    it("an internal-only view keeps a line's status and the caller's own acts, and drops any signer", () => {
+        const status = {
+            lineItemId: 3,
+            filled: ['SUBMITTER'],
+            missing: ['TREASURER'],
+            blocked: [],
+            actions: [{ act: 'sign', primary: true }],
+            awaiting: ['Awaiting approval'],
+            mayRecordBoardAuthorization: false,
+        };
+        expect(strip('ExpenseLineSignoffStatus', { ...status, signerUserId: 9, signerUsername: 'jordan' }, INTERNAL_ONLY)).toEqual(status);
+        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({});
+    });
+
     it('a public-only view sees nothing, settings included', () => {
         const settings = { orgId: 'treehouse', boardReviewTotalCents: 200000, noteInLieuLimitCents: 5000 };
         expect(strip('ExpenseOrgSettings', settings, ['public'])).toEqual({});
