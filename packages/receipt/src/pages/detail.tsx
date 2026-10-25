@@ -9,7 +9,7 @@ import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { differenceDollars, draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
+import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -118,7 +118,7 @@ export default function ReceiptDetailPage() {
   const dirty = editing && isDirty(r, draft);
   const totalsOff = r.state === "validation_failed";
   // A saved receipt whose lines already add up still needs a way out of Totals off.
-  const savedAddsUp = totalsOff && draftDifference(r, EMPTY_DRAFT) === 0;
+  const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -189,10 +189,13 @@ export default function ReceiptDetailPage() {
   /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
   const saveTotalsOff = () =>
     exclusive(async () => {
-      const difference = draftDifference(r, draft);
+      const math = draftMath(r, draft);
       if (dirty && !(await saveDraft())) return;
-      if (difference === 0) await resubmit(dirty);
-      else stillOff(`Saved. Still ${difference === null ? "" : `${differenceDollars(Math.abs(difference))} `}off; stays in Totals off.`);
+      if (math?.balanced) await resubmit(dirty);
+      else {
+        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        stillOff(`Saved. Still ${off}; stays in Totals off.`);
+      }
     });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>

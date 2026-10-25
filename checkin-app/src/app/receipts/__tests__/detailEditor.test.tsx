@@ -100,13 +100,24 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(resubmitted()).toBe(false);
   });
 
-  it("names a difference under a cent rather than calling it $0", async () => {
+  it("counts a fractional-cent line within its cent of rounding as balanced, and resubmits", async () => {
     wrap();
     type("Line 2 quantity", "1.0005");
     type("Receipt total", "26.50");
-    expect(screen.getByText("Difference: $0.005")).toBeInTheDocument();
+    expect(screen.getByText("Matches within rounding: $0.005 off (rounding of up to $0.01 allowed)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved. Still $0.005 off; stays in Totals off.", color: "yellow", autoClose: false }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+  });
+
+  it("shows the real difference and the rounding allowed when a fractional-cent receipt is still off", async () => {
+    wrap();
+    type("Line 2 quantity", "1.0005");
+    type("Receipt total", "26.47");
+    expect(screen.getByText("Difference: $0.035 (rounding of up to $0.01 allowed)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(shown()).toContainEqual({ message: "Saved. Still $0.035 off (rounding of up to $0.01 allowed); stays in Totals off.", color: "yellow", autoClose: false }),
+    );
     expect(resubmitted()).toBe(false);
   });
 

@@ -2,6 +2,7 @@
  * Unsaved edits to a receipt on its detail page, and the writes that save them. Amounts are kept
  * as the dollar strings a person typed; the routes take dollars as numbers.
  */
+import { receiptMath, type MathLine, type ReceiptMath } from "../lib/lineMath";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 
 export interface ServerLine {
@@ -132,26 +133,34 @@ export function calculatedCents(lines: DraftLine[], header: Header): number | nu
   return (parts as number[]).reduce((a, b) => a + b, 0) - discount;
 }
 
-/** How far a calculated sum is from the header's receipt total, in cents; 0 passes the server's math check. */
-export function differenceCents(calculated: number | null, header: Header): number | null {
-  const total = parseCents(header.receiptTotal);
-  return calculated === null || total === null ? null : calculated - total;
+/** The server's math check on these lines and header; null while any amount is unreadable. */
+export function headerMath(lines: DraftLine[], header: Header): ReceiptMath | null {
+  const mathLines: MathLine[] = [];
+  for (const l of lines) {
+    const quantity = parseQuantity(l.quantity);
+    const unitPriceCents = parseCents(l.unitPrice);
+    if (quantity === null || unitPriceCents === null) return null;
+    mathLines.push({ quantity, unitPriceCents });
+  }
+  const [shipping, tax, discount, total] = [header.shipping, header.tax, header.discount, header.receiptTotal].map(parseCents);
+  if (shipping === null || tax === null || discount === null || total === null) return null;
+  return receiptMath(mathLines, shipping, tax, discount, total);
 }
 
-/** How far the draft's calculated sum is from its receipt total, in cents. */
-export function draftDifference(r: ServerReceipt, draft: Draft): number | null {
-  const header = draftHeader(r, draft);
-  return differenceCents(calculatedCents(draftLines(r, draft), header), header);
+/** The server's math check on the receipt as the draft would save it. */
+export function draftMath(r: ServerReceipt, draft: Draft): ReceiptMath | null {
+  return headerMath(draftLines(r, draft), draftHeader(r, draft));
 }
 
-/**
- * A non-zero difference as signed dollars: whole cents from a cent up, and its real size under a
- * cent, so a difference the math check still fails never reads as $0.00.
- */
+/** A difference as signed dollars at its real size, fractions of a cent included. */
 export function differenceDollars(cents: number): string {
-  if (Math.abs(cents) >= 1) return signedDollars(Math.round(cents));
-  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", { maximumSignificantDigits: 2, maximumFractionDigits: 20 });
+  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
   return `${cents < 0 ? "-" : ""}$${dollars}`;
+}
+
+/** How much rounding the check allowed, as a phrase to follow a difference; empty when none was. */
+export function roundingAllowed(allowedCents: number): string {
+  return allowedCents > 0 ? ` (rounding of up to ${signedDollars(allowedCents)} allowed)` : "";
 }
 
 /**

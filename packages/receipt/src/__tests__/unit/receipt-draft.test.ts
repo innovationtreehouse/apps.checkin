@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculatedCents,
   canAddLine,
-  differenceCents,
   differenceDollars,
-  draftDifference,
+  draftMath,
   draftHeader,
   draftLines,
   draftProblem,
@@ -13,6 +12,7 @@ import {
   isDirty,
   parseCents,
   planSave,
+  roundingAllowed,
   type Draft,
   type ServerReceipt,
 } from "../../components/receiptDraft";
@@ -64,18 +64,23 @@ describe("calculatedCents", () => {
   });
 });
 
-describe("draftDifference", () => {
-  it("is 0 when the lines, shipping and tax add up to the total", () => {
-    expect(draftDifference(receipt, EMPTY_DRAFT)).toBe(0);
+describe("draftMath", () => {
+  it("balances exactly when the lines, shipping and tax add up to the total", () => {
+    expect(draftMath(receipt, EMPTY_DRAFT)).toEqual({ differenceCents: 0, allowedCents: 0, balanced: true });
   });
 
   it("is the calculated sum minus the draft's total", () => {
-    expect(draftDifference(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "27.00" } })).toBe(-50);
-    expect(draftDifference(receipt, { ...EMPTY_DRAFT, lines: { 2: { unitPrice: "10.25" } } })).toBe(25);
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "27.00" } })).toMatchObject({ differenceCents: -50, balanced: false });
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, lines: { 2: { unitPrice: "10.25" } } })).toMatchObject({ differenceCents: 25, balanced: false });
+  });
+
+  it("allows a cent of rounding for a line costing a fraction of a cent", () => {
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, lines: { 2: { quantity: "1.0005" } } })).toEqual({ differenceCents: 0.5, allowedCents: 1, balanced: true });
   });
 
   it("is null while an amount is unreadable", () => {
-    expect(draftDifference(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "x" } })).toBeNull();
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "x" } })).toBeNull();
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "" } } })).toBeNull();
   });
 });
 
@@ -138,25 +143,17 @@ describe("draftProblem", () => {
 });
 
 describe("differenceDollars", () => {
-  it("shows whole cents from a cent up", () => {
+  it("shows the real difference, whole cents and fractions of a cent", () => {
     expect(differenceDollars(-50)).toBe("-$0.50");
-    expect(differenceDollars(1234.4)).toBe("$12.34");
-  });
-
-  it("shows a difference under a cent at its real size, never $0.00", () => {
-    expect(differenceDollars(0.5)).toBe("$0.005");
+    expect(differenceDollars(1234)).toBe("$12.34");
+    expect(differenceDollars(3.5)).toBe("$0.035");
     expect(differenceDollars(-0.4)).toBe("-$0.004");
-    const epsilon = 0.1 * 3 * 100 - 30;
-    expect(epsilon).not.toBe(0);
-    expect(differenceDollars(epsilon)).not.toMatch(/^\$0(\.0+)?$/);
   });
 });
 
-describe("differenceCents", () => {
-  it("is the calculated sum minus the header's total, null while either is unreadable", () => {
-    const header = draftHeader(receipt, EMPTY_DRAFT);
-    expect(differenceCents(2700, header)).toBe(50);
-    expect(differenceCents(null, header)).toBeNull();
-    expect(differenceCents(2650, { ...header, receiptTotal: "" })).toBeNull();
+describe("roundingAllowed", () => {
+  it("names the rounding allowed, and says nothing when none was", () => {
+    expect(roundingAllowed(0)).toBe("");
+    expect(roundingAllowed(2)).toBe(" (rounding of up to $0.02 allowed)");
   });
 });

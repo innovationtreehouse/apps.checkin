@@ -4,18 +4,20 @@ import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   calculatedCents,
   canAddLine,
-  differenceCents,
   differenceDollars,
   draftHeader,
   EMPTY_LINE,
+  headerMath,
   lineCents,
   lineFromServer,
+  roundingAllowed,
   signedDollars,
   type Draft,
   type DraftLine,
   type Header,
   type ServerReceipt,
 } from "./receiptDraft";
+import type { ReceiptMath } from "../lib/lineMath";
 
 interface Props {
   receipt: ServerReceipt;
@@ -29,6 +31,15 @@ const lineTotal = (line: DraftLine) => {
   const cents = lineCents(line);
   return cents === null ? "—" : signedDollars(Math.round(cents));
 };
+
+function balanceText(math: ReceiptMath | null): string {
+  if (!math) return "Difference: —";
+  if (math.differenceCents === 0) return "Matches the receipt total";
+  const difference = differenceDollars(math.differenceCents);
+  return math.balanced
+    ? `Matches within rounding: ${difference} off${roundingAllowed(math.allowedCents)}`
+    : `Difference: ${difference}${roundingAllowed(math.allowedCents)}`;
+}
 
 /** Every field of a receipt and its lines, editable, with the sum its total must equal. */
 export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Props) {
@@ -50,7 +61,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
   const subtotal = allLines.map(lineCents).reduce<number | null>((a, b) => (a === null || b === null ? null : a + b), 0);
   const calculated = calculatedCents(allLines, header);
-  const difference = differenceCents(calculated, header);
+  const math = headerMath(allLines, header);
 
   const row = (key: string, line: DraftLine, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
     <Table.Tr key={key}>
@@ -135,8 +146,8 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
           {amount("− Discount", "discount")}
           <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : signedDollars(Math.round(calculated))}</Text></Text>
           {amount("Receipt total", "receiptTotal")}
-          <Text size="sm" fw={600} c={difference === 0 ? "green" : "red"}>
-            {difference === null ? "Difference: —" : difference === 0 ? "Matches the receipt total" : `Difference: ${differenceDollars(difference)}`}
+          <Text size="sm" fw={600} c={math?.balanced ? "green" : "red"}>
+            {balanceText(math)}
           </Text>
           {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
         </Stack>

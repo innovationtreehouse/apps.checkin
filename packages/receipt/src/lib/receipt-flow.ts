@@ -6,17 +6,17 @@ import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories
 import { getOrg, ports } from "../runtime";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
+import { receiptMath, type MathLine } from "./lineMath";
 import { missingDetails, missingDetailsNote } from "./missingDetails";
 
 export function validateLineItemMath(
-  lineItems: Array<{ quantity: number; unitPriceCents: number }>,
+  lineItems: MathLine[],
   shippingCents: number,
   taxCents: number,
   discountCents: number,
   receiptTotalCents: number,
 ): boolean {
-  const lineSum = lineItems.reduce((acc, li) => acc + li.quantity * li.unitPriceCents, 0);
-  return lineSum + shippingCents + taxCents - discountCents === receiptTotalCents;
+  return receiptMath(lineItems, shippingCents, taxCents, discountCents, receiptTotalCents).balanced;
 }
 
 export function computeFinancialReviewFlags(

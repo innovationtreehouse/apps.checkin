@@ -70,6 +70,13 @@ Income and donation rules are in `revenue.md`.
   exclusion records who made it and why, so it stays visible.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A receipt's lines, plus shipping and tax, less discount, must equal its
+  total. The check is exact unless a line's cost (quantity × unit price) is a
+  fraction of a cent. Then the total may differ by up to one cent for each
+  such line. The receipt editor applies the same check, so it shows a
+  receipt as balanced exactly when the check passes.
+  [Decision]
+
 ### Budget buckets
 
 - A budget bucket is an accounting bucket, not a person. Finance creates,
