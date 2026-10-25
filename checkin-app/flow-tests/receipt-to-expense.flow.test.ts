@@ -42,7 +42,7 @@ let submitter: Session;
 let finance: Session;
 let board: Session;
 let approver: Session;
-let bucketId: number;
+let bucketId: number | undefined;
 let original: Receipt | undefined;
 
 beforeAll(async () => {
@@ -54,9 +54,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
-  // Archive is the only removal: the booked expense line still references the bucket by id.
-  expect((await post(finance, `/api/budget-owners/${bucketId}/archive`)).status).toBe(200);
+  // The sessions are all set before the bucket is, so a beforeAll that failed earlier leaves nothing to undo.
+  if (bucketId !== undefined) {
+    await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
+    // Archive is the only removal: the booked expense line still references the bucket by id.
+    expect((await post(finance, `/api/budget-owners/${bucketId}/archive`)).status).toBe(200);
+  }
   if (original) await post(submitter, `/api/receipts/${original.id}/submitter-discard`);
 });
 
