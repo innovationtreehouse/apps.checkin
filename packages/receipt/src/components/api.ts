@@ -117,4 +117,4 @@ export interface ReceiptListRow {
   duplicateSuspectReceiptId?: string | null;
 }
 
-export { isDiscardedDuplicate, STATE_LABELS } from "../lib/stateLabels";
+export { isDiscardedDuplicate, receiptStateLabel, STATE_LABELS } from "../lib/stateLabels";

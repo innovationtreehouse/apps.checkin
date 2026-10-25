@@ -162,4 +162,17 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.getByText(/and cleared as not a duplicate/)).toBeInTheDocument();
     expect(screen.queryByText("Possible duplicate", { selector: "h5" })).toBeNull();
   });
+
+  it("badges a receipt discarded while flagged as discarded as a duplicate", () => {
+    mockLoads["/r1"] = { ...flagged, state: "discarded", duplicateFlaggedAt: "2026-10-02T00:00:00Z" };
+    wrap();
+    expect(screen.getByText("Discarded as a duplicate")).toBeInTheDocument();
+  });
+
+  it("badges a receipt discarded after its flag was cleared as plainly discarded", () => {
+    mockLoads["/r1"] = { ...flagged, state: "discarded", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
+    wrap();
+    expect(screen.getByText("Discarded")).toBeInTheDocument();
+    expect(screen.queryByText("Discarded as a duplicate")).toBeNull();
+  });
 });
