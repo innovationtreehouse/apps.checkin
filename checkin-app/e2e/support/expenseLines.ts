@@ -8,6 +8,8 @@ export const lineRow = (page: Page, description: string): Locator => page.getByR
 export async function lineAct(page: Page, description: string, label: string): Promise<void> {
   const row = lineRow(page, description);
   await expect(row.getByRole("button").first()).toBeVisible();
+  // The act buttons draw from the sign-off load, but a click does nothing until the approvals load too.
+  await page.waitForLoadState("networkidle");
   const main = row.getByRole("button", { name: label, exact: true });
   if (await main.count()) await main.click();
   else {
