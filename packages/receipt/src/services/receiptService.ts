@@ -19,6 +19,7 @@ import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
 import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
+import { listWords, missingDetails } from "../lib/missingDetails";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -175,7 +176,7 @@ function ocrDetail(data: OcrData) {
     shippingCents: toCents(data.shipping),
     taxCents: toCents(data.tax),
     discountCents: toCents(data.discount),
-    receiptTotalCents: toCents(data.receiptTotal),
+    receiptTotalCents: data.receiptTotal === null ? null : toCents(data.receiptTotal),
   };
 }
 
@@ -603,7 +604,9 @@ export const receiptService = {
     if (row.needsReimbursement && !row.reimbursementFor?.trim()) {
       throw new ServiceError(400, "reimbursementFor is required when needsReimbursement is set");
     }
-    await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date() } }, actor, "submitter_review_confirmed");
+    const missing = missingDetails(row);
+    if (missing.length > 0) throw new ServiceError(400, `Fill in the ${listWords(missing)} before confirming this receipt`);
+    await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date(), validationNotes: null } }, actor, "submitter_review_confirmed");
     await runFullFlow(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },

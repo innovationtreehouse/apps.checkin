@@ -5,7 +5,8 @@ import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
 import { resolveNextState } from "../workflows/receipt.invariants";
-import type { ReceiptMachineContext } from "../workflows/receipt.guards";
+import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
+import { missingDetails, missingDetailsNote } from "./missingDetails";
 
 export function validateLineItemMath(
   lineItems: Array<{ quantity: number; unitPriceCents: number }>,
@@ -197,17 +198,38 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
   await pushReceipt(row.id, actor);
 }
 
-/** Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. */
+/**
+ * Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. A
+ * receipt missing its retailer, date or total goes to its submitter before any other check.
+ */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
   const orgId = (await getOrg()).id;
   const row = await receiptRepo.find(receiptId, orgId);
   if (!row) return;
-  if (!row.retailer || !row.receiptDate || row.receiptTotalCents === null) return;
+
+  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
+    await receiptRepo.update(receiptId, { detail }, row.state);
+    await audit(db, receiptId, actor, {
+      action: "pipeline_transition",
+      fieldChanged: "state",
+      valueBefore: row.state,
+      valueAfter,
+    });
+  };
+
+  const total = row.receiptTotalCents;
+  const missing = missingDetails(row);
+  if (total === null || missing.length > 0) {
+    const held = resolveNextState(row.state, { type: "RUN_PIPELINE" }, { ...NEUTRAL_CONTEXT, detailsMissing: true });
+    if (held !== "submitter_review") throw new Error(`Unexpected next state '${held}' from '${row.state}' for a receipt missing details`);
+    await transition({ state: "submitter_review", validationNotes: missingDetailsNote(missing) }, `submitter_review (missing ${missing.join(", ")})`);
+    return;
+  }
 
   const lineItems = await receiptRepo.listLineItems(receiptId);
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
-  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, row.receiptTotalCents);
+  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
   const { taxReview, ageReview, futureReview, corrected, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
@@ -215,6 +237,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const isQbLinked = !!row.qbTxnId;
 
   const context: ReceiptMachineContext = {
+    detailsMissing: false,
     isDuplicate: !!dupId,
     mathValid: valid,
     needsReimbursement: row.needsReimbursement,
@@ -226,16 +249,6 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   };
 
   const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
-
-  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
-    await receiptRepo.update(receiptId, { detail }, row.state);
-    await audit(db, receiptId, actor, {
-      action: "pipeline_transition",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter,
-    });
-  };
 
   try {
     switch (nextState) {

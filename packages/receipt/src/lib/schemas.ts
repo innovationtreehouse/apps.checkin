@@ -14,6 +14,8 @@ const cents = z.number().int().nonnegative();
 /** An ISO 4217 code; money formatting throws on anything else. */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
+/** Text a receipt cannot be checked without; blank or spaces-only is refused. */
+const requiredText = (name: string, max: number) => z.string().trim().min(1, { message: `${name} is required` }).max(max);
 
 export const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
@@ -26,8 +28,8 @@ export const LineItemSchema = z.object({
 
 /** Details typed by the uploader. Present ⇒ manual upload; absent ⇒ OCR reads the file. */
 export const ManualDetailsSchema = z.object({
-  retailer: z.string().min(1).max(500),
-  receiptDate: z.string().min(1).max(50),
+  retailer: requiredText("The retailer", 500),
+  receiptDate: requiredText("The date", 50),
   receiptTotal: dollarString,
   currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
   shipping: dollarString.optional(),
@@ -93,8 +95,8 @@ export const AddLineItemSchema = z.object({
 
 export const EditReceiptSchema = z
   .object({
-    retailer: z.string().min(1).max(500).optional(),
-    receiptDate: z.string().min(1).max(50).optional(),
+    retailer: requiredText("The retailer", 500).optional(),
+    receiptDate: requiredText("The date", 50).optional(),
     currency: z.string().min(1).max(10).optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),

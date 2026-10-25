@@ -102,7 +102,8 @@ export function headerFromServer(r: ServerReceipt): Header {
     shipping: toDollars(r.shippingCents),
     tax: toDollars(r.taxCents),
     discount: toDollars(r.discountCents),
-    receiptTotal: toDollars(r.receiptTotalCents),
+    // A total OCR could not read stays blank, so the submitter types it rather than keeping $0.00.
+    receiptTotal: r.receiptTotalCents === null ? "" : toDollars(r.receiptTotalCents),
   };
 }
 

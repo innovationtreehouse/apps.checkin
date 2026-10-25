@@ -22,6 +22,7 @@ export const receiptMachine = setup({
       on: {
         // Guards evaluated in priority order — first match wins.
         RUN_PIPELINE: [
+          { guard: 'detailsMissing',       target: 'submitter_review'  },
           { guard: 'isDuplicate',          target: 'duplicate_flagged' },
           { guard: 'mathInvalid',          target: 'validation_failed' },
           { guard: 'needsSubmitterReview', target: 'submitter_review'  },
@@ -80,6 +81,7 @@ export const receiptMachine = setup({
     flow_error: {
       on: {
         RUN_PIPELINE: [
+          { guard: 'detailsMissing',       target: 'submitter_review'  },
           { guard: 'isDuplicate',          target: 'duplicate_flagged' },
           { guard: 'mathInvalid',          target: 'validation_failed' },
           { guard: 'needsSubmitterReview', target: 'submitter_review'  },
