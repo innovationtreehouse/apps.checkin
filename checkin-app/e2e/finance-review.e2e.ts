@@ -18,7 +18,8 @@ test.afterAll(async () => {
 
 /** The tab buttons in the Receipts, Expenses and Board rows. */
 const tabButtons = (page: Page) => page.locator("button[aria-pressed]");
-const moreStates = (page: Page) => page.getByLabel("More receipt states");
+/** The "More" picker's input; its listbox carries the same label. */
+const moreStates = (page: Page) => page.getByRole("textbox", { name: "More receipt states" });
 
 async function settled(page: Page): Promise<void> {
   await page.waitForLoadState("networkidle");

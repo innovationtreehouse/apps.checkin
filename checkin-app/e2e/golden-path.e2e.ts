@@ -96,7 +96,10 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await line(page).getByRole("button", { name: "Associate" }).click();
     await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(CATALOG_ITEM);
     await page.getByRole("option", { name: new RegExp(CATALOG_ITEM) }).click();
+    // Saving the last line applies the receipt; reloading before it answers would abort it.
+    const associated = page.waitForResponse((res) => res.request().method() === "POST" && /\/lines\/\d+\/associate$/.test(new URL(res.url()).pathname));
     await page.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await associated).status()).toBe(200);
     await eventually(page, page.getByText("Resolved", { exact: true }));
     await noProblems(watch, "Part mapping");
   });
