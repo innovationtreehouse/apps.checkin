@@ -1,6 +1,6 @@
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
-import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
+import { Prisma, type ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
@@ -91,27 +91,31 @@ export const BODY_COPY_DISCARDED = "body_copy_discarded";
  * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
  * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
  * person has cleared the flag, the receipt is never re-flagged. The field matches compare
- * retailers ignoring case and extra whitespace.
+ * retailers ignoring case and extra whitespace, in SQL that mirrors `retailerKey`.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
   if (row.duplicateFlagClearedAt) return null;
   if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
   const { orgId, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
-  const notSelf = { id: { not: id }, receipt: { auditLogs: { none: { action: BODY_COPY_DISCARDED } } } };
   const retailer = retailerKey(row.retailer);
-  const sameRetailer = async (where: Prisma.ReceiptDetailWhereInput) => {
-    const candidates = await db.receiptDetail.findMany({ where: { orgId, ...where, ...notSelf }, select: { id: true, retailer: true } });
-    return candidates.find((c) => retailerKey(c.retailer) === retailer)?.id ?? null;
+  const sameRetailer = async (match: Prisma.Sql) => {
+    const [hit] = await db.$queryRaw<{ id: string }[]>`
+      SELECT d.id FROM receipt_details d
+      WHERE d.org_id = ${orgId} AND d.id <> ${id} AND ${match}
+        AND lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) IS NOT DISTINCT FROM ${retailer}
+        AND NOT EXISTS (SELECT 1 FROM receipt_audit_log a WHERE a.receipt_id = d.id AND a.action = ${BODY_COPY_DISCARDED})
+      LIMIT 1`;
+    return hit?.id ?? null;
   };
 
-  const composite = await sameRetailer({ receiptDate, receiptTotalCents });
+  const composite = await sameRetailer(Prisma.sql`d.receipt_date IS NOT DISTINCT FROM ${receiptDate} AND d.receipt_total_cents IS NOT DISTINCT FROM ${receiptTotalCents}`);
   if (composite) return composite;
   if (orderNumber) {
-    const byOrder = await sameRetailer({ orderNumber });
+    const byOrder = await sameRetailer(Prisma.sql`d.order_number = ${orderNumber}`);
     if (byOrder) return byOrder;
   }
   if (receiptNumber) {
-    const byNumber = await sameRetailer({ receiptNumber });
+    const byNumber = await sameRetailer(Prisma.sql`d.receipt_number = ${receiptNumber}`);
     if (byNumber) return byNumber;
   }
   return null;
