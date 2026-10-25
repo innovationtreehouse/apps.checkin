@@ -60,4 +60,14 @@ describe("typed details", () => {
     expect(EditReceiptSchema.safeParse({ receiptDate: "" }).success).toBe(false);
     expect(EditReceiptSchema.parse({ retailer: " Acme " })).toEqual({ retailer: "Acme" });
   });
+
+  it.each(["10/01/2026", "2026-1-5", "2026-02-30", "2026-13-01", "Oct 1 2026"])("refuses an edited date %j that is not a real YYYY-MM-DD date", (receiptDate) => {
+    const result = EditReceiptSchema.safeParse({ receiptDate });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]).toMatchObject({ path: ["receiptDate"], message: "The date must be a real date written YYYY-MM-DD" });
+  });
+
+  it("accepts an edited date the picker sends", () => {
+    expect(EditReceiptSchema.parse({ receiptDate: "2026-02-28" })).toEqual({ receiptDate: "2026-02-28" });
+  });
 });

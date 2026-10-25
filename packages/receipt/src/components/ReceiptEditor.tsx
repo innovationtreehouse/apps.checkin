@@ -96,7 +96,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
         <Text fw={500} size="sm">Correct the receipt</Text>
         <Group grow wrap="wrap">
           <TextInput label="Retailer" miw={200} value={header.retailer} onChange={(e) => setHeader("retailer", e.currentTarget.value)} />
-          <TextInput label="Date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
+          <TextInput label="Date" type="date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
         </Group>
 
         <Table.ScrollContainer minWidth={820}>

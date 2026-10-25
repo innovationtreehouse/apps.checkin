@@ -130,6 +130,15 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(mockApi).toHaveBeenCalledTimes(1);
   });
 
+  it("edits the date with a date picker and saves it as YYYY-MM-DD", async () => {
+    wrap();
+    const date = screen.getByLabelText("Date");
+    expect(date).toHaveAttribute("type", "date");
+    fireEvent.change(date, { target: { value: "2026-09-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ receiptDate: "2026-09-30" }) }));
+  });
+
   it("is read-only once the receipt was sent to receiving", () => {
     mockReceipt = { ...receipt, pushedAt: "2026-10-02T00:00:00Z" };
     wrap();

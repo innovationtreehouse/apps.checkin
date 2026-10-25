@@ -16,6 +16,14 @@ export const CURRENCY_CODE = /^[A-Z]{3}$/;
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string().trim().min(1, { message: `${name} is required` }).max(max);
+/** A calendar date as the date picker sends it. */
+const isoDate = requiredText("The date", 50).refine(
+  (v) => {
+    const parsed = new Date(`${v}T00:00:00Z`);
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(v);
+  },
+  { message: "The date must be a real date written YYYY-MM-DD" },
+);
 
 export const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
@@ -96,7 +104,7 @@ export const AddLineItemSchema = z.object({
 export const EditReceiptSchema = z
   .object({
     retailer: requiredText("The retailer", 500).optional(),
-    receiptDate: requiredText("The date", 50).optional(),
+    receiptDate: isoDate.optional(),
     currency: z.string().min(1).max(10).optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),
