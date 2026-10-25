@@ -523,22 +523,25 @@ describe("ProgramDetailsPage", () => {
     // Volunteers card renders first (1 volunteer), then active participants (401, 402), then pending (403).
     fireEvent.click(removeButtons[1]);
     const modal1 = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal1).getByRole("button", { name: "Remove" }));
+    // An active place defaults to a withdrawal that keeps history.
+    expect(within(modal1).getByRole("button", { name: "Withdrew: keep history" })).toHaveAttribute("data-variant", "filled");
+    fireEvent.click(within(modal1).getByRole("button", { name: "Withdrew: keep history" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 401 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 401, mode: "withdraw" }) }),
       ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[3]);
     const modal2 = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal2).getByRole("button", { name: "Remove" }));
+    expect(within(modal2).getByRole("button", { name: "Never took part: remove" })).toHaveAttribute("data-variant", "filled");
+    fireEvent.click(within(modal2).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403, mode: "remove" }) }),
       ),
     );
   });
@@ -570,7 +573,7 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    const confirm = within(modal).getByRole("button", { name: "Remove" });
+    const confirm = within(modal).getByRole("button", { name: "Withdrew: keep history" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: " Family moved away " } });
     expect(confirm).toBeEnabled();
@@ -578,7 +581,7 @@ describe("ProgramDetailsPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Family moved away" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "withdraw", reason: "Family moved away" }) }),
       ),
     );
   });
@@ -595,13 +598,13 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    expect(within(modal).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Never took part: remove" })).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Paid before the price was zeroed" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "remove", reason: "Paid before the price was zeroed" }) }),
       ),
     );
   });
@@ -623,12 +626,12 @@ describe("ProgramDetailsPage", () => {
     // Volunteer (201), active participant (101), then the pending one (102).
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 102 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 102, mode: "remove" }) }),
       ),
     );
     await waitFor(() =>
@@ -653,7 +656,7 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
@@ -704,14 +707,14 @@ describe("ProgramDetailsPage", () => {
 
     // 1st remove -> notice (blue)
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "blue", message: "Seat freed. Add +1 in Shopify." })),
     );
 
     // 2nd remove -> warning (yellow)
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: "Shopify inventory release failed." })),
     );
@@ -719,7 +722,7 @@ describe("ProgramDetailsPage", () => {
     // 3rd remove -> bare success, no further notification
     const before = (notifications.show as jest.Mock).mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
     expect((notifications.show as jest.Mock).mock.calls.length).toBe(before);
   });

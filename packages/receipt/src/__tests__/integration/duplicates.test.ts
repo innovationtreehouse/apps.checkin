@@ -1,6 +1,9 @@
 import { beforeEach, expect, it } from "vitest";
 import type { ReceiptPrincipal } from "../../contract";
 import { db } from "../../db";
+import { checkDuplicate } from "../../lib/receipt-flow";
+import { receiptRepo } from "../../repositories/receipt";
+import { getOrg } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -24,6 +27,27 @@ describeDb("duplicate detection", () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     expect(second.state).toBe("duplicate_flagged");
+  });
+
+  it("matches the retailer ignoring case and extra whitespace", async () => {
+    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: " amazon  " }) });
+    expect(second.state).toBe("duplicate_flagged");
+    expect(second.duplicateSuspectReceiptId).toBe(first.id);
+  });
+
+  it.each(["orderNumber", "receiptNumber"])("matches %s under a retailer differing in case and spacing", async (field) => {
+    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme  Hardware", receiptDate: "2999-01-01" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "acme hardware ", receiptDate: "2999-01-02" }) });
+    await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "N-1" } });
+    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    expect(row && (await checkDuplicate(row))).toBe(first.id);
+  });
+
+  it("does not match a different retailer name on the same date and total", async () => {
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
+    expect(second.state).not.toBe("duplicate_flagged");
   });
 
   it("two identical files uploaded at once: exactly one is flagged, against the other", async () => {

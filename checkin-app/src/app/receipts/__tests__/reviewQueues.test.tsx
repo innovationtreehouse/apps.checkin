@@ -52,7 +52,7 @@ describe("the review screen's other states", () => {
     ["uploaded", "?state=uploaded", "Uploaded"],
     ["submitter_review", "?state=submitter_review", "Submitter review"],
     ["receipt_finalized", "?state=receipt_finalized", "Finalized"],
-    ["not_pushed", "?state=receipt_finalized&pushed=0", "Not delivered to receiving"],
+    ["not_pushed", "?state=receipt_finalized&pushed=0", "Not delivered to part mapping"],
     ["discarded", "?state=discarded", "Discarded"],
     ["rejected", "?state=rejected", "Rejected"],
   ])("?queue=%s lists %s and names it in the picker", (queue, path, label) => {
