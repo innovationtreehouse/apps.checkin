@@ -149,7 +149,6 @@ export const classifications = {
         id: 'internal',
         orgId: 'internal',
         expenseId: 'internal',
-        payload: 'personal',
         createdAt: 'internal',
     },
     ExpenseQbAccount: {
