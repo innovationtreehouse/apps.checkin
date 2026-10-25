@@ -17,23 +17,7 @@ const PERSONAS = [FINANCE, BOARD, APPROVER, TREASURER, INVENTORY_MANAGER, MEMBER
 
 /** A page that fails today: skipped by the sweep and asserted on its own as `test.fail` until its fix lands. */
 interface KnownFailure { page: string; personas: string[]; bug: string }
-const KNOWN_FAILURES: KnownFailure[] = [
-  {
-    page: "/attendance/certifications",
-    personas: [FINANCE, INVENTORY_MANAGER, MEMBER],
-    bug: "the nav offers it, but /api/kioskdisplay/certifications answers 403 and the page shows Forbidden",
-  },
-  {
-    page: "/my-household",
-    personas: [FINANCE, APPROVER, TREASURER, INVENTORY_MANAGER],
-    bug: "the nav offers it, but /api/household/emergency-contacts answers 403",
-  },
-  {
-    page: "/safety/trusted-adults",
-    personas: [APPROVER, TREASURER],
-    bug: "the nav offers it, but the page sends them to the home page",
-  },
-];
+const KNOWN_FAILURES: KnownFailure[] = [];
 
 /** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
 interface SeedPrompt { page: string; personas: string[]; text: string }
