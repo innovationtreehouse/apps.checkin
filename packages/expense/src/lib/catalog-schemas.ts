@@ -21,6 +21,8 @@ export const ItemInfoSchema = z.object({
   subcategoryId: z.number(),
 }).nullable();
 
+export const ItemNameArraySchema = z.array(z.object({ gtin13: z.string(), name: z.string() }));
+
 export const LookupResultSchema = z.object({
   index: z.number(),
   gtin13: z.string().nullable(),

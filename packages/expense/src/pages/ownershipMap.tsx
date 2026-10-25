@@ -11,16 +11,22 @@ interface PartOwner {
   ownerId: number;
 }
 
+interface CatalogItem {
+  gtin13: string;
+  name: string;
+}
+
 /** /expense/ownership-map — which budget-owner bucket owns each part; FINANCE edits it. */
 export default function OwnershipMapPage() {
   const { isFinance } = useRoles();
   const [page, setPage] = useState(1);
-  const map = useLoad<{ PartOwnerMap: PartOwner[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page));
+  const map = useLoad<{ PartOwnerMap: PartOwner[]; Item?: CatalogItem[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page));
   const [gtin13, setGtin13] = useState("");
   const [owner, setOwner] = useState<string | null>(null);
 
   const buckets = map.data?.ExpenseBucketView ?? [];
   const nameOf = new Map(buckets.map((b) => [b.id, b.name]));
+  const itemName = new Map((map.data?.Item ?? []).map((i) => [i.gtin13, i.name]));
   const options = buckets.filter((b) => !b.archivedAt).map((b) => ({ value: String(b.id), label: b.name }));
 
   return (
@@ -32,10 +38,16 @@ export default function OwnershipMapPage() {
       </Text>
       {map.error && <LoadError what="the part buckets" message={map.error} onRetry={map.reload} />}
       <Table maw={640}>
-        <Table.Thead><Table.Tr><Table.Th>GTIN</Table.Th><Table.Th>Bucket</Table.Th></Table.Tr></Table.Thead>
+        <Table.Thead><Table.Tr><Table.Th>Part</Table.Th><Table.Th>Bucket</Table.Th></Table.Tr></Table.Thead>
         <Table.Tbody>
           {(map.data?.PartOwnerMap ?? []).map((p) => (
-            <Table.Tr key={p.id}><Table.Td>{p.gtin13}</Table.Td><Table.Td>{nameOf.get(p.ownerId) ?? `#${p.ownerId}`}</Table.Td></Table.Tr>
+            <Table.Tr key={p.id}>
+              <Table.Td>
+                {itemName.get(p.gtin13) ?? p.gtin13}
+                {itemName.has(p.gtin13) && <Text size="xs" c="dimmed">{p.gtin13}</Text>}
+              </Table.Td>
+              <Table.Td>{nameOf.get(p.ownerId) ?? `#${p.ownerId}`}</Table.Td>
+            </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>

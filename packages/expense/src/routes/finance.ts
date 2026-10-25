@@ -10,6 +10,7 @@ import type { ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { writeOrgAudit } from "../lib/audit";
+import { getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
@@ -175,10 +176,10 @@ const buckets = () => getExpenseRuntime().budgetOwners.list();
 
 export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView: await buckets() });
 
-export const ownershipMap: ExpenseRouteHandler = async ({ req }) => ({
-  PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) }),
-  ExpenseBucketView: await buckets(),
-});
+export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
+  return { PartOwnerMap: rows, Item: await getItemNames(rows.map((r) => r.gtin13)), ExpenseBucketView: await buckets() };
+};
 
 export const setOwnership: ExpenseRouteHandler = async ({ req }) => {
   const { gtin13, ownerId } = await parseBody(
