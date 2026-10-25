@@ -256,6 +256,9 @@ Things the app takes as true because they are handled outside it.
 - An emergency contact's relationship to the household is optional free text,
   with no picklist of types.  [Decision — deliberate limit]
 
+- Only the household lead reads the household's emergency contacts; other
+  members of the household do not.  [Decision]
+
 - A household names at least one emergency contact at intake, and its last valid
   contact cannot be removed.  [Decision]
 
