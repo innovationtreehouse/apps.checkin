@@ -9,6 +9,7 @@ import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
 import { receiptMath, type MathLine } from "./lineMath";
 import { missingDetails, missingDetailsNote } from "./missingDetails";
+import { describeCorrection, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
   lineItems: MathLine[],
@@ -51,6 +52,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
       fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
     },
     select: { fieldChanged: true, valueBefore: true },
+    orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const before = (field: string) =>
     edits.flatMap((e) => (e.fieldChanged === field && e.valueBefore !== null ? [e.valueBefore] : []));
@@ -62,6 +64,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
     taxReview: current.taxReview || before("taxCents").some((t) => flags(Number(t), date).taxReview),
     ageReview: current.ageReview || before("receiptDate").some((d) => flags(row.taxCents, d).ageReview),
     corrected: edits.length > 0,
+    corrections: submitterCorrections(edits, row),
   };
 }
 
@@ -241,7 +244,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
   const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
-  const { taxReview, ageReview, futureReview, corrected, ageLimitDays, diffDays } = await reviewFlags(row, settings);
+  const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
   // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
@@ -283,7 +286,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
           taxReview && "tax review required (tax-exempt org with tax > 0)",
           ageReview && `age limit exceeded (${diffDays}d > ${ageLimitDays}d)`,
           futureReview && "future-dated receipt",
-          corrected && "submitter corrected the tax or date",
+          corrected && corrections.map(describeCorrection).join("; "),
         ]
           .filter(Boolean)
           .join("; ");

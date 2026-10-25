@@ -60,6 +60,12 @@ Income and donation rules are in `revenue.md`.
   goes to finance review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A tax or date the submitter fills in where the field was blank goes to
+  finance review the same as one they changed. Finance sees which it was:
+  entered, where the field was blank (a tax of $0 counts as blank), or
+  changed, with the earlier value and the new one.
+  [Decision]
+
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
   match.
