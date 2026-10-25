@@ -48,7 +48,7 @@ describe('enrollment — exhaustive state space', () => {
     const realized = new Set<string>();
 
     test('every (status × held × req × den) tuple is on-diagram-clean or off-diagram-flagged', () => {
-        for (const status of ['PENDING', 'ACTIVE'] as const) {
+        for (const status of ['PENDING', 'ACTIVE', 'WITHDRAWN'] as const) {
             for (const inventoryHeldAt of BOOLS) {
                 for (const isPaymentPlanRequested of BOOLS) {
                     for (const paymentPlanDeniedAt of BOOLS) {

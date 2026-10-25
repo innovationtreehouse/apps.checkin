@@ -222,12 +222,10 @@ describe('enum parity', () => {
 
 describe('TRANSITIONS (§5 table as data)', () => {
     const ALL: LifecycleState[] = ['UNENROLLED', 'PENDING_UNPAID', 'PENDING_HOLD_FAILED', 'PENDING_HELD', 'PENDING_HELD_DENIED', 'ACTIVE', 'WITHDRAWN'];
-    // WITHDRAWN is declared and read everywhere, but no transition writes it yet.
-    const EXPECTED_UNREACHABLE: LifecycleState[] = ['WITHDRAWN'];
 
-    test('every state except EXPECTED_UNREACHABLE is reachable from ∅', () => {
+    test('every state is reachable from ∅', () => {
         const r = reachability(TRANSITIONS, ALL, ['UNENROLLED'], ['UNENROLLED', 'ACTIVE']);
-        expect(r.unreachable).toEqual(EXPECTED_UNREACHABLE);
+        expect(r.unreachable).toEqual([]);
     });
 
     test('every edge references declared states only', () => {

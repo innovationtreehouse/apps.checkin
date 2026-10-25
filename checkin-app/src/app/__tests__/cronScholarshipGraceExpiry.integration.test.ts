@@ -8,7 +8,7 @@
  * endpoint performs no Shopify op) so they can still pay. Once
  * BoardSettings.scholarshipDenialGraceDays has elapsed since
  * paymentPlanDeniedAt, this sweep auto-withdraws the participant and releases
- * the seat (+1) — reusing the same withdrawAndReleaseHold path self/admin
+ * the seat (+1) — reusing the same deleteAndReleaseHold path self/admin
  * withdrawal uses.
  */
 import { GET } from '@/app/api/cron/scholarship-grace-expiry/route';
