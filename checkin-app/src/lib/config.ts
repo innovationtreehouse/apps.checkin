@@ -317,6 +317,9 @@ export const config = {
     // True ONLY on CHECKIN_ENV=local (see shopifyMockActiveEnv). Gates /api/dev/shopify/*
     // + the dev tool + the synthetic dev-mock variant fallbacks. Always false on dev and prod.
     shopifyMockActive: (): boolean => shopifyMockActiveEnv(),
+    // True ONLY on CHECKIN_ENV=local, where no QuickBooks company is reachable: the
+    // bucket form's Class picker lists fixed stand-in Classes. Always false on dev and prod.
+    quickBooksMockActive: (): boolean => readCheckinEnv() === 'local',
 
     // True when the dev/local background-check mock stands in for Averity (consent URL
     // unset, non-prod). Selects the mock provider (in-app consent link) and gates
