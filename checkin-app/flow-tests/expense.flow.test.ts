@@ -163,12 +163,13 @@ describe("expense — field stripping", () => {
   it("serves an approver internal fields only, FINANCE the submitter too", async () => {
     const approver = await loginAs(APPROVER);
     const finance = await loginAs(FINANCE);
-    const asApprover = await api<ExpenseRow>(approver, E);
-    const asFinance = await api<ExpenseRow>(finance, E);
+    const asApprover = await api<{ Expense: ExpenseRow; ExpenseQueueReason: unknown[] }>(approver, E);
+    const asFinance = await api<{ Expense: ExpenseRow }>(finance, E);
     expect(asApprover.status).toBe(200);
-    expect(asApprover.json.vendorName).toBe("TEST-Lumber Co");
-    expect(asApprover.json.submitterId).toBeUndefined();
-    expect(asFinance.json.submitterId).toBe(10);
+    expect(asApprover.json.Expense.vendorName).toBe("TEST-Lumber Co");
+    expect(asApprover.json.Expense.submitterId).toBeUndefined();
+    expect(asApprover.json.ExpenseQueueReason).toEqual([]);
+    expect(asFinance.json.Expense.submitterId).toBe(10);
   });
 
   it("confines an approver's list to their bucket's expenses", async () => {
