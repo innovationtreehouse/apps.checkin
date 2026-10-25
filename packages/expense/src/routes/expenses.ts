@@ -21,7 +21,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus, signoffStatusFor } from "../services/signoffService";
+import { recordBoardAuthorization, setReimbursee, signLine, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
 import { approveTax } from "../services/taxApprovalService";
@@ -190,7 +190,10 @@ export const approve = approvalAction(
 );
 export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
-export const financeAssignOwner = approvalAction(ownerSchema, (p, e, a, b) => financeAssign(p, e, a, b.ownerId));
+export const financeAssignOwner = approvalAction(
+  ownerSchema.extend({ final: z.boolean().optional(), note: z.string().nullish() }),
+  (p, e, a, b) => financeAssign(p, e, a, b.ownerId, b.final ?? false, b.note),
+);
 export const assign = approvalAction(
   ownerSchema.extend({ permanent: z.boolean().optional() }),
   (p, e, a, b) => assignOwner(p, e, a, b.ownerId, b.permanent ?? false),
@@ -236,7 +239,7 @@ export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   });
   if (!line || !(await maySign(principal, line))) throw httpError(404, "Line item not found");
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
-  const status = await signoffStatus(params.id);
+  const status = await signoffStatusFor(principal, params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };
 };
 
@@ -245,7 +248,7 @@ export const boardAuthorization: ExpenseRouteHandler = async ({ req, params }) =
   const { authorization } = await parseBody(req, z.object({ authorization: z.string().trim().min(1, "Say what the Board authorized") }));
   const principal = await getPrincipal();
   await mapServiceErrors(() => recordBoardAuthorization(principal, params.id, authorization));
-  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
+  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatusFor(principal, params.id)) };
 };
 
 async function expenseWithLines(id: string) {

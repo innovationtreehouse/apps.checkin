@@ -197,7 +197,7 @@ export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: s
     signoffFactsByLine(db, expense),
     filledSeatsByLine(db, expenseId),
     boardApprovalNeeded(db, expense),
-    db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, status: true, ownerId: true } }),
+    db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, status: true, ownerId: true, bucketFinal: true } }),
   ]);
   const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
   const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };

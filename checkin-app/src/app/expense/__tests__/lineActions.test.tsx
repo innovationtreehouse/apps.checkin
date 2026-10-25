@@ -28,6 +28,14 @@ beforeAll(() => {
       }) as unknown as MediaQueryList);
 });
 
+beforeAll(() => {
+  globalThis.ResizeObserver ||= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
+
 beforeEach(() => mockSend.mockClear());
 
 type Act = { act: string; seat?: string; primary: boolean; noteRequired: boolean };
@@ -98,6 +106,41 @@ describe("only the acts the server returns are drawn (3.15, #2433)", () => {
     load([{ status: "exception_raised", actions: [{ act: "assign-bucket", primary: true, noteRequired: false }, { act: "reject-exception", primary: false, noteRequired: true }] }]);
     expect(screen.getByRole("button", { name: "Assign bucket" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject exception" })).not.toBeInTheDocument();
+  });
+});
+
+describe("a status without acts", () => {
+  it("draws no act and does not break the page", () => {
+    mockLoads = {
+      "/expenses/e1": {
+        id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000, taxCents: 0, shippingCents: 0, discountCents: 0,
+        currency: "USD", submittedAt: "2026-10-01T00:00:00Z", state: "owner_approval", needsReimbursement: false, reimburseePersonId: null, backfill: false,
+        lineItems: [line(1)], approvals: [],
+      },
+      "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "pending" }],
+      "/expenses/e1/signoffs": [{ lineItemId: 1, filled: [], missing: ["SUBMITTER", "TREASURER"], blocked: [] }],
+    };
+    render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
+    expect(screen.getByText("Part 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve|Sign as|More/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/wait on you/)).not.toBeInTheDocument();
+  });
+});
+
+describe("a final bucket", () => {
+  it("finance's Assign bucket on an exception offers Make this final, which asks for a required note", async () => {
+    load([{ status: "exception_raised", actions: [{ act: "assign-bucket", primary: true, noteRequired: false }] }]);
+    fireEvent.click(screen.getByRole("button", { name: "Assign bucket" }));
+    await screen.findByRole("dialog");
+    expect(screen.queryByLabelText(/Why this bucket is final/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Make this final/));
+    expect(await screen.findByLabelText(/Why this bucket is final/)).toBeRequired();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  });
+
+  it("shows that finance made the bucket final", () => {
+    load([{ status: "finance_assigned", actions: [APPROVE], awaiting: ["Finance made this bucket final"] }]);
+    expect(screen.getByText("Finance made this bucket final")).toBeInTheDocument();
   });
 });
 

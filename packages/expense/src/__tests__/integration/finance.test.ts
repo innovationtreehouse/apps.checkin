@@ -128,11 +128,13 @@ describeDb("sign-off seats", () => {
     await checkApprovalAutoTransition(id, { userId: 3 });
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("owner_approval");
 
+    // The submitter confirms first; the approval follows.
+    await expect(approveLine(principal(5, { isBoard: true }), id, approvalId)).rejects.toMatchObject({ status: 403 });
+    await signLine(principal(1), li, "SUBMITTER");
     await expect(approveLine(principal(2), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await approveLine(principal(5, { isBoard: true }), id, approvalId);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
 
-    await signLine(principal(1), li, "SUBMITTER");
     await expect(signLine(principal(5), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 
@@ -154,6 +156,20 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
   });
 
+  it("FINANCE names a non-member adult as reimbursee; the line then takes a Board seat after the Treasurer", async () => {
+    // submitter 1 is a member; 12, named by FINANCE 3, is not · owner 2 approved · finance 3, 4 · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], nonMembers: [12] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+
+    await setReimbursee(ORG, id, 12, FINANCE);
+    expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
+    await expect(signLine(BOARD, li, "BOARD")).rejects.toMatchObject({ status: 403 });
+    await signLine(principal(4, { isFinance: true }), li, "TREASURER");
+    await signLine(BOARD, li, "BOARD");
+  });
+
   it("a non-member reimbursement adds a Board seat after the approval and the Treasurer; the rule follows the reimbursee and skips card charges", async () => {
     // submitter 11 is not a member; reimbursee 1 is; owner 2 · finance 3 · board 5
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [11, 12] }) });
@@ -172,11 +188,12 @@ describeDb("sign-off seats", () => {
     const nonMember = await line({ needsReimbursement: true, reimburseePersonId: 12 });
     expect(await missing(nonMember.id)).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
     await expect(signLine(BOARD, nonMember.li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not approved yet/) });
+    await signLine(principal(11), nonMember.li, "SUBMITTER");
     await approveLine(principal(2), nonMember.id, nonMember.approvalId);
     await expect(signLine(BOARD, nonMember.li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/after the Treasurer/) });
     await signLine(FINANCE, nonMember.li, "TREASURER");
     await signLine(BOARD, nonMember.li, "BOARD");
-    expect(await missing(nonMember.id)).toEqual(["SUBMITTER"]);
+    expect(await missing(nonMember.id)).toEqual([]);
   });
 
   describe("the reimbursee (reimburseePersonId)", () => {

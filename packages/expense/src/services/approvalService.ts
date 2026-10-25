@@ -73,6 +73,8 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
 /** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
 export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
 
+const BUCKET_FINAL = "Finance made this line's bucket final; its approver approves it, or a Board member stands in";
+
 /**
  * The program approver's sign-off. A bucket approver approves; a Board member without a conflict
  * may approve any line in place of its approvers, giving the reason, which is kept on the approval
@@ -125,7 +127,8 @@ export async function raiseException(
 ): Promise<void> {
   const actor = actorOf(principal);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
-  requireStatus(approval, "pending");
+  if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
+  if (approval.bucketFinal) throw new ServiceError(409, BUCKET_FINAL);
   if (!principal.isFinance && !(await isBucketApprover(principal, approval.ownerId))) {
     throw new ServiceError(403, "This line item is not in a bucket you approve");
   }
@@ -163,15 +166,23 @@ export async function rejectException(
   await checkApprovalAutoTransition(expenseId, actor);
 }
 
-/** FINANCE settles an exception by moving the line to another bucket; it is not an approval, so the line waits for that bucket's approver. */
+/**
+ * FINANCE settles an exception by moving the line to another bucket; it is not an approval, so the
+ * line waits for that bucket's approver. Made `final`, with a required note kept on the approval
+ * and its audit row, the line takes no further exception.
+ */
 export async function financeAssign(
   principal: ExpensePrincipal,
   expenseId: string,
   approvalId: number,
   ownerId: number,
+  final = false,
+  note?: string | null,
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
+  const finalNote = note?.trim() || null;
+  if (final && !finalNote) throw new ServiceError(400, "Say why finance makes this bucket final");
   await requireLiveBuckets([ownerId]);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
@@ -179,7 +190,13 @@ export async function financeAssign(
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
-    await transition(tx, approval, { ownerId, status: "finance_assigned", decidedAt: new Date(), decidedByUserId: actor.userId });
+    await transition(tx, approval, {
+      ownerId,
+      status: "finance_assigned",
+      decidedAt: new Date(),
+      decidedByUserId: actor.userId,
+      ...(final ? { bucketFinal: true, notes: finalNote } : {}),
+    });
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_assigned_exception",
@@ -187,6 +204,9 @@ export async function financeAssign(
       valueBefore: "exception_raised",
       valueAfter: String(ownerId),
     });
+    if (final) {
+      await writeAudit(tx, actor, { expenseId, action: "bucket_made_final", lineItemId: approval.lineItemId, fieldChanged: "bucketFinal", valueAfter: String(ownerId), notes: finalNote });
+    }
   });
 
   await checkApprovalAutoTransition(expenseId, actor);

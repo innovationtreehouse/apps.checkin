@@ -33,6 +33,8 @@ const pending: SignoffFacts = {
 /** The line approved by its bucket owner. */
 const base: SignoffFacts = { ...pending, approved: true, approver: 2 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
+/** The submitter has confirmed the reimbursement: the approval may follow. */
+const CONFIRMED = seats(["SUBMITTER", 1]);
 
 describe("the approval is the program approver's sign-off", () => {
   it("a line needs no program-approver seat: submitter and Treasurer only", () => {
@@ -54,31 +56,43 @@ describe("the approval is the program approver's sign-off", () => {
 
 describe("approvalRefusal (C′.2)", () => {
   it("a bucket approver without a conflict approves", () => {
-    expect(approvalRefusal(pending, [], 2)).toBeNull();
+    expect(approvalRefusal(pending, CONFIRMED, 2)).toBeNull();
     expect(approvesAsStandIn(pending, 2)).toBe(false);
   });
 
   it("refuses the submitter, the reimbursee and their households", () => {
-    expect(approvalRefusal({ ...pending, approvers: [8] }, [], 8)).toMatch(/household submitted/);
+    expect(approvalRefusal({ ...pending, approvers: [8] }, CONFIRMED, 8)).toMatch(/household submitted/);
   });
 
   it("refuses an approver whose household already holds a seat on the expense", () => {
-    expect(approvalRefusal({ ...pending, seatedHouseholds: [2] }, [], 2)).toMatch(/household already holds a seat/);
+    expect(approvalRefusal({ ...pending, seatedHouseholds: [2] }, CONFIRMED, 2)).toMatch(/household already holds a seat/);
   });
 
   it("refuses an approver who signs another seat on the line", () => {
     const facts = { ...pending, approvers: [2, 3] };
-    expect(approvalRefusal(facts, seats(["TREASURER", 3]), 3)).toMatch(/another seat/);
+    expect(approvalRefusal(facts, seats(["SUBMITTER", 1], ["TREASURER", 3]), 3)).toMatch(/another seat/);
   });
 
   it("refuses anyone who is neither a bucket approver nor on the Board, FINANCE included", () => {
-    expect(approvalRefusal(pending, [], 3)).toMatch(/not in a bucket you approve/);
+    expect(approvalRefusal(pending, CONFIRMED, 3)).toMatch(/not in a bucket you approve/);
+  });
+});
+
+describe("the submitter's confirmation comes first (C′.9)", () => {
+  it("a reimbursement line is approved only once its submitter has signed", () => {
+    expect(approvalRefusal(pending, [], 2)).toMatch(/not confirmed/);
+    expect(approvalRefusal(pending, [], 5)).toMatch(/not confirmed/);
+    expect(approvalRefusal(pending, CONFIRMED, 2)).toBeNull();
+  });
+
+  it("a card charge takes the approval without it", () => {
+    expect(approvalRefusal({ ...pending, kind: "card_charge" }, [], 2)).toBeNull();
   });
 });
 
 describe("a Board stand-in (C′.3)", () => {
   it("a Board member may approve any line, even while its approvers can act", () => {
-    expect(approvalRefusal(pending, [], 5)).toBeNull();
+    expect(approvalRefusal(pending, CONFIRMED, 5)).toBeNull();
     expect(approvesAsStandIn(pending, 5)).toBe(true);
   });
 
@@ -87,8 +101,8 @@ describe("a Board stand-in (C′.3)", () => {
   });
 
   it("takes every approval refusal", () => {
-    expect(approvalRefusal({ ...pending, conflicted: [1, 5] }, [], 5)).toMatch(/household submitted/);
-    expect(approvalRefusal({ ...pending, seatedHouseholds: [5] }, [], 5)).toMatch(/household already holds a seat/);
+    expect(approvalRefusal({ ...pending, conflicted: [1, 5] }, CONFIRMED, 5)).toMatch(/household submitted/);
+    expect(approvalRefusal({ ...pending, seatedHouseholds: [5] }, CONFIRMED, 5)).toMatch(/household already holds a seat/);
   });
 
   it("counts as a substitution: on a card charge it leaves none for the Treasurer seat", () => {
@@ -105,8 +119,8 @@ describe("a Board stand-in (C′.3)", () => {
 
   it("an org-level line takes a Board member's approval", () => {
     const facts = { ...pending, approvers: [], orgLevel: true };
-    expect(approvalRefusal(facts, [], 2)).toMatch(/not in a bucket you approve/);
-    expect(approvalRefusal(facts, [], 5)).toBeNull();
+    expect(approvalRefusal(facts, CONFIRMED, 2)).toMatch(/not in a bucket you approve/);
+    expect(approvalRefusal(facts, CONFIRMED, 5)).toBeNull();
   });
 });
 
@@ -132,8 +146,8 @@ describe("the reimbursee is known before any sign-off", () => {
   const unknown = { ...pending, reimburseeUnknown: true };
 
   it("refuses the approval to a bucket approver and a Board member alike", () => {
-    expect(approvalRefusal(unknown, [], 2)).toMatch(/reimbursee is unknown/);
-    expect(approvalRefusal(unknown, [], 5)).toMatch(/reimbursee is unknown/);
+    expect(approvalRefusal(unknown, CONFIRMED, 2)).toMatch(/reimbursee is unknown/);
+    expect(approvalRefusal(unknown, CONFIRMED, 5)).toMatch(/reimbursee is unknown/);
   });
 
   it("refuses every seat, the submitter's included", () => {
@@ -149,7 +163,7 @@ describe("a non-member reimbursement (C′.6)", () => {
 
   it("keeps the bucket approver and adds a Board seat", () => {
     expect(takesBoardSeat(nonMember)).toBe(true);
-    expect(approvalRefusal({ ...nonMember, approved: false, approver: null }, [], 2)).toBeNull();
+    expect(approvalRefusal({ ...nonMember, approved: false, approver: null }, CONFIRMED, 2)).toBeNull();
     expect(missingSeats(nonMember, seats(["SUBMITTER", 1], ["TREASURER", 3]))).toEqual(["BOARD"]);
   });
 
@@ -259,6 +273,6 @@ describe("the reimbursee's setter", () => {
   });
 
   it("may still approve the line", () => {
-    expect(approvalRefusal({ ...pending, approvers: [3], reimburseeSetter: 3 }, [], 3)).toBeNull();
+    expect(approvalRefusal({ ...pending, approvers: [3], reimburseeSetter: 3 }, CONFIRMED, 3)).toBeNull();
   });
 });

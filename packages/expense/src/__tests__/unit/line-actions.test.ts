@@ -31,7 +31,7 @@ interface Case {
   state?: string;
   backfill?: boolean;
   reimburseeUnknown?: boolean;
-  approval?: { status: string; ownerId: number | null } | null;
+  approval?: { status: string; ownerId: number | null; bucketFinal?: boolean } | null;
   /** Who approved the line when its approval is `approved`; the bucket owner unless given. */
   approver?: number;
   boardApproval?: boolean;
@@ -43,7 +43,8 @@ function run(c: Case) {
   const approval = c.approval === undefined ? { status: "pending", ownerId: 7 } : c.approval;
   const approved = approval?.status === "approved";
   const facts = { ...base, approved, approver: approved ? (c.approver ?? 2) : null, reimburseeUnknown: c.reimburseeUnknown ?? false, ...c.facts };
-  const filled = c.filled ?? [];
+  // A reimbursement's submitter has signed unless a case says otherwise, so its approval may follow.
+  const filled = c.filled ?? CONFIRMED;
   const input: LineActionsInput = {
     caller: { id: c.caller, isFinance: c.isFinance ?? facts.finance.includes(c.caller) },
     expense: { state: c.state ?? "owner_approval", backfill: c.backfill ?? false, reimburseeUnknown: c.reimburseeUnknown ?? false },
@@ -58,21 +59,37 @@ function run(c: Case) {
 /** Acts as `act` or `act:SEAT`, the main one starred. */
 const acts = (c: Case) => run(c).actions.map((a) => `${a.primary ? "*" : ""}${a.act}${a.seat ? `:${a.seat}` : ""}`);
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
+const CONFIRMED = seats(["SUBMITTER", 1]);
 const approveOf = (c: Case) => run(c).actions.find((a) => a.act === "approve");
 
 describe("acts per role", () => {
   it("a bucket owner's main act is the approval, the program approver's sign-off; raise exception goes under More", () => {
     expect(acts({ caller: 2 })).toEqual(["*approve", "raise-exception"]);
     expect(approveOf({ caller: 2 })?.noteRequired).toBe(false);
-    expect(run({ caller: 2 }).awaiting).toEqual(["Awaiting Submitter", "Awaiting Treasurer"]);
+    expect(run({ caller: 2 }).awaiting).toEqual(["Awaiting Treasurer"]);
+  });
+
+  it("a reimbursement line waits for its submitter before anyone may approve it", () => {
+    expect(acts({ caller: 2, filled: [] })).toEqual(["raise-exception"]);
+    expect(acts({ caller: 5, filled: [] })).toEqual([]);
+    expect(run({ caller: 2, filled: [] }).awaiting).toEqual(["Awaiting approval", "Awaiting Submitter", "Awaiting Treasurer"]);
+    expect(acts({ caller: 2, filled: [], facts: { kind: "card_charge" } })).toEqual(["*approve", "raise-exception"]);
   });
 
   it("once the line is approved its approver has no act left", () => {
     expect(acts({ caller: 2, ...APPROVED })).toEqual([]);
   });
 
-  it("an approver of the bucket finance moved the line to approves it", () => {
-    expect(acts({ caller: 2, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual(["*approve"]);
+  it("an approver of the bucket finance moved the line to approves it, or raises another exception", () => {
+    expect(acts({ caller: 2, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual(["*approve", "raise-exception"]);
+  });
+
+  it("on a line whose bucket finance made final, the approver's only act is Approve", () => {
+    const approval = { status: "finance_assigned", ownerId: 7, bucketFinal: true };
+    expect(acts({ caller: 2, approval })).toEqual(["*approve"]);
+    expect(acts({ caller: 3, approval })).toEqual([]);
+    expect(run({ caller: 2, approval }).awaiting).toContain("Finance made this bucket final");
+    expect(acts({ caller: 2, approval: { ...approval, status: "pending" } })).toEqual(["*approve"]);
   });
 
   it("FINANCE outside the bucket has no approve act, and signs as Treasurer only once the line is approved", () => {
@@ -98,6 +115,7 @@ describe("acts per role", () => {
     it("leaves a line with no main act, so it does not wait on the Board member, while a bucket approver can approve", () => {
       expect(primaries({ caller: 5 })).toEqual([]);
       expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7 } })).toEqual([]);
+      expect(primaries({ caller: 5, approval: { status: "finance_assigned", ownerId: 7, bucketFinal: true } })).toEqual([]);
       expect(primaries({ caller: 5, facts: { approvers: [2, 4], conflicted: [1, 2, 8] } })).toEqual([]);
     });
 
@@ -133,8 +151,8 @@ describe("acts per role", () => {
   });
 
   it("only the submitter is offered the submitter seat", () => {
-    expect(acts({ caller: 1 })).toEqual(["*sign:SUBMITTER"]);
-    for (const caller of [2, 3, 5]) expect(acts({ caller })).not.toContain("sign:SUBMITTER");
+    expect(acts({ caller: 1, filled: [] })).toEqual(["*sign:SUBMITTER"]);
+    for (const caller of [2, 3, 5]) expect(acts({ caller, filled: [] })).not.toContain("sign:SUBMITTER");
   });
 
   it("FINANCE settles a raised exception: Assign bucket is the main act, Reject exception goes under More with a required note", () => {
@@ -173,7 +191,7 @@ describe("acts per conflict", () => {
   });
 
   it("FINANCE on their own expense gets only the submitter seat", () => {
-    expect(acts({ caller: 1, isFinance: true, facts: { finance: [1, 3], approvers: [1, 2] } })).toEqual(["*sign:SUBMITTER"]);
+    expect(acts({ caller: 1, isFinance: true, filled: [], facts: { finance: [1, 3], approvers: [1, 2] } })).toEqual(["*sign:SUBMITTER"]);
   });
 
   it("an approver whose household already holds a seat on the expense is offered no approval", () => {

@@ -112,6 +112,13 @@ Income and donation rules are in `revenue.md`.
   approves a line.
   [Decision — owner]
 
+- A bucket's approver may raise an exception on a line finance moved into their
+  bucket, until finance marks the line's bucket assignment final. After that,
+  no exception is raised on the line, and it still waits for its bucket's
+  approver or a Board member in their place. A final assignment is not an
+  approval. Making it final takes a note, which is recorded.
+  [Decision — owner]
+
 - A line's signatures are given in order: the submitter's confirmation on a
   reimbursement, then the line's approval, then the Treasurer, then any Board
   signature the line takes. A signature is refused until the ones before it
@@ -154,7 +161,8 @@ Income and donation rules are in `revenue.md`.
 
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
-  without a conflict signs a Board seat on each line once the line is approved.
+  without a conflict signs a Board seat on each line once the line is approved
+  and the Treasurer has signed it.
   What counts is the person reimbursed, not whoever submitted the receipt, and a
   card charge is not a reimbursement.
   [Decision — *Policy: Financial Policy, Art. IX §IX.2*]

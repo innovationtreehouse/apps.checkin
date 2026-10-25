@@ -88,8 +88,8 @@ interface SignoffStatus {
   filled: string[];
   missing: string[];
   blocked: string[];
-  actions: LineAction[];
-  awaiting: string[];
+  actions?: LineAction[];
+  awaiting?: string[];
   /** Same on every line: whether the caller may record the expense's Board authorization. */
   mayRecordBoardAuthorization: boolean;
 }
@@ -380,6 +380,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [text, setText] = useState("");
   const [bucket, setBucket] = useState<string | null>(null);
   const [permanent, setPermanent] = useState(false);
+  const [final, setFinal] = useState(false);
   const [reimbursee, setReimbursee] = useState("");
   const [authorization, setAuthorization] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
@@ -405,7 +406,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
   const bucketNames = new Map((Array.isArray(approvalBag) ? [] : approvalBag?.ExpenseBucketView ?? []).map((b) => [b.id, b.name]));
-  const statusOf = new Map((signoffs.data ?? []).map((s) => [s.lineItemId, s]));
+  // A status without acts draws none, so a short response leaves the line as plain status.
+  const statuses = (signoffs.data ?? []).map((s) => ({ ...s, actions: s.actions ?? [], awaiting: s.awaiting ?? [] }));
+  const statusOf = new Map(statuses.map((s) => [s.lineItemId, s]));
 
   async function runAction() {
     if (!dialog) return;
@@ -414,6 +417,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
     const body =
       action.act === "approve" ? { reason: text || null }
       : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
+      : route === "finance-assign" ? { ownerId: Number(bucket), final, note: final ? text : null }
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
     if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
       setDialog(null);
@@ -432,7 +436,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       return;
     }
     if (!approval) return;
-    setText(""); setBucket(null); setPermanent(false);
+    setText(""); setBucket(null); setPermanent(false); setFinal(false);
     setDialog({ action, approval });
   }
 
@@ -445,6 +449,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
   const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
   const canMapPart = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
+  // Settling an exception, finance may make the bucket final; that takes a note.
+  const canMakeFinal = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "finance-assign";
+  const finalNoteMissing = canMakeFinal && final && !text.trim();
   const waitingOnYou = e.lineItems.filter((l) => statusOf.get(l.id)?.actions.some((a) => a.primary)).length;
   const reviews = (e.flags ?? []).flatMap((flag) => {
     const kind = flag.checkedOffAt ? null : reviewKindOf(flag);
@@ -604,7 +611,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
       {isFinance && reviews.length > 0 && <ReviewsPanel e={e} reviews={reviews} onDecided={() => void decided()} />}
 
-      {(signoffs.data ?? []).some((s) => s.mayRecordBoardAuthorization) && (
+      {statuses.some((s) => s.mayRecordBoardAuthorization) && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Board authorization</Text>
           <Textarea
@@ -695,6 +702,17 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               {canMapPart && (
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />
               )}
+              {canMakeFinal && (
+                <Checkbox
+                  label="Make this final"
+                  description="No further exception can be raised; the bucket's approver approves it, or a Board member stands in. This is not an approval."
+                  checked={final}
+                  onChange={(ev) => setFinal(ev.currentTarget.checked)}
+                />
+              )}
+              {canMakeFinal && final && (
+                <Textarea label="Why this bucket is final" required value={text} onChange={(ev) => setText(ev.currentTarget.value)} />
+              )}
             </>
           ) : takesNote && (
             <Textarea
@@ -704,7 +722,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               onChange={(ev) => setText(ev.currentTarget.value)}
             />
           )}
-          <Button onClick={() => void runAction()} disabled={needsBucket ? !bucket : !!dialog?.action.noteRequired && !text.trim()}>
+          <Button onClick={() => void runAction()} disabled={needsBucket ? !bucket || finalNoteMissing : !!dialog?.action.noteRequired && !text.trim()}>
             Confirm
           </Button>
         </Stack>
