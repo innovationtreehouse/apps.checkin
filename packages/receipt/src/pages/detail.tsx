@@ -8,7 +8,7 @@ import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, T
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
-import { api, BASE, dollars, errorMessage, receiptStateLabel, send, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, signedDollars, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
