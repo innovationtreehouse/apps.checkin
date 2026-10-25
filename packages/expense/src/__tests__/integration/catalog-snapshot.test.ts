@@ -1,6 +1,6 @@
 /**
  * A line's catalog inputs to its QuickBooks account are fixed at sign-off: a later catalog edit
- * does not move a signed line's account, a void clears the snapshot, and a line whose snapshot
+ * does not move a signed line's account, clearing a step clears the snapshot, and a line whose snapshot
  * failed at sign-off takes it at its first successful posting lookup.
  */
 import { it, expect, vi, beforeEach } from "vitest";
@@ -8,7 +8,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedAccountMapping, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
-import { financeAssign, raiseException } from "../../services/approvalService";
+import { clearFrom } from "../../lib/signoff-facts";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 
 const GTIN = "0000000000017";
@@ -38,7 +38,8 @@ function catalogFiles(lineItemId: number, under: "Hardware" | "Tools") {
 async function seedLine(): Promise<{ id: string; li: number }> {
   const id = await seedExpense({ state: "owner_approval" });
   const li = await seedLineItem(id, { partNumber: "PN-1" });
-  await seedApproval(id, li, { ownerId: 100 });
+  // Approved by its bucket owner, so the seats are next.
+  await seedApproval(id, li, { ownerId: 100, status: "approved" });
   await seedAccountMapping({ category: "Hardware", qbAccount: "4000" });
   await seedAccountMapping({ category: "Tools", qbAccount: "5000" });
   return { id, li };
@@ -63,7 +64,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
     await signLine(principal(1), li, "SUBMITTER");
-    await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
     expect(await snapshot(li)).toEqual({ signedGtin13: GTIN, signedCategory: "Hardware", signedSubcategory: "Cables" });
 
@@ -75,7 +75,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
     await signLine(principal(1), li, "SUBMITTER");
-    await signLine(principal(2), li, "PROGRAM_APPROVER");
     expect((await snapshot(li)).signedCategory).toBeNull();
 
     catalogFiles(li, "Tools");
@@ -87,7 +86,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
     const { id, li } = await seedLine();
     inv.lookupItems.mockRejectedValue(new Error("catalog down"));
     await signLine(principal(1), li, "SUBMITTER");
-    await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
     expect((await snapshot(li)).signedCategory).toBeNull();
 
@@ -96,16 +94,13 @@ describeDb("a signed line's account is fixed at sign-off", () => {
     expect((await snapshot(li)).signedCategory).toBe("Hardware");
   });
 
-  it("voiding the line's sign-offs clears its snapshot", async () => {
+  it("clearing the line's approval clears its snapshot", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
     await signLine(principal(1), li, "SUBMITTER");
-    await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
 
-    const approval = await db.lineItemOwnerApproval.findFirstOrThrow({ where: { lineItemId: li } });
-    await raiseException(principal(2), id, approval.id, "not ours");
-    await financeAssign(FINANCE, id, approval.id, 101);
+    await db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "test"));
     expect(await snapshot(li)).toEqual({ signedGtin13: null, signedCategory: null, signedSubcategory: null });
   });
 });

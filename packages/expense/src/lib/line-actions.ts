@@ -1,6 +1,6 @@
 // What the caller may do on each expense line, and what the line waits on otherwise. Pure: the
 // page draws only these acts, so every eligibility rule an act depends on lives here.
-import { CLOSED_STATES, SEATS, availableSigners, blockedSeats, boardAuthorizationRefusal, boardFillsProgramSeat, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import type { LineHold } from "./signoff-facts";
 
 export type LineAct = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
@@ -9,9 +9,12 @@ export interface LineAction {
   act: LineAct;
   /** The seat a `sign` fills. */
   seat?: Seat;
-  /** True on at most one act per line: the button on the line. The rest go under More. */
+  /**
+   * True on at most one act per line: the button on the line. The rest go under More. A line waits
+   * on the caller, for every count and list, only when one of its acts is primary.
+   */
   primary: boolean;
-  /** The server refuses the act without a note. */
+  /** The server refuses the act without a note: an exception's, or a Board stand-in's reason. */
   noteRequired: boolean;
 }
 
@@ -31,7 +34,7 @@ export interface LineActionsInput {
   caller: LineActionsCaller;
   expense: LineActionsExpense;
   /** The line's bucket approval row; null when the line has none. */
-  approval: { status: string; ownerId: number | null } | null;
+  approval: { status: string; ownerId: number | null; bucketFinal?: boolean } | null;
   facts: SignoffFacts;
   filled: FilledSeat[];
   /** The line's unfilled seats, then the Board's approval when the expense needs it. */
@@ -43,21 +46,29 @@ export interface LineActions {
   awaiting: string[];
 }
 
-const SEAT_NAME: Record<Seat, string> = { SUBMITTER: "Submitter", PROGRAM_APPROVER: "Program approver", TREASURER: "Treasurer", BOARD: "Board" };
+const SEAT_NAME: Record<Seat, string> = { SUBMITTER: "Submitter", TREASURER: "Treasurer", BOARD: "Board" };
+
+/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
+const APPROVABLE = new Set(["pending", "finance_assigned"]);
 
 /** Everyone who could take some part on the line. */
 function pool(facts: SignoffFacts): number[] {
   return [...new Set([facts.submitterId, ...facts.approvers, ...facts.finance, ...facts.board])];
 }
 
-/** Whether `id` approves the pending line as a bucket approver; a FINANCE override is not counted. */
-function approvesAsApprover(facts: SignoffFacts, id: number): boolean {
-  return facts.approvers.includes(id) && !facts.conflicted.includes(id);
+/** Whether `id` may approve the line: the approve service's checks. */
+function mayApprove(input: LineActionsInput, id: number): boolean {
+  const { expense, approval } = input;
+  return expense.state === "owner_approval" && !!approval && APPROVABLE.has(approval.status) && approvalRefusal(input.facts, input.filled, id) === null;
+}
+
+/** Whether `id` approves the line as one of its bucket approvers, not as a Board stand-in. */
+function approvesAsApprover(input: LineActionsInput, id: number): boolean {
+  return mayApprove(input, id) && !approvesAsStandIn(input.facts, id);
 }
 
 /** Whether the caller may sign `seat`: the sign-off service's checks, in its order. */
 function maySign(input: LineActionsInput, seat: Seat, id: number): boolean {
-  if (seat === "PROGRAM_APPROVER" && input.approval?.ownerId == null) return false;
   return signoffRefusal(input.facts, input.filled, seat, id) === null;
 }
 
@@ -68,13 +79,11 @@ function callerActs(input: LineActionsInput): LineAction[] {
   const acts: LineAction[] = [];
   const add = (act: LineAct, extra: Partial<LineAction> = {}) => acts.push({ act, primary: false, noteRequired: false, ...extra });
 
+  if (mayApprove(input, caller.id)) add("approve", { noteRequired: approvesAsStandIn(facts, caller.id) && !facts.orgLevel });
   if (approval && !conflicted) {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
-    if (deciding && approval.status === "pending" && (approver || caller.isFinance)) {
-      add("approve", { noteRequired: !approver });
-      add("raise-exception", { noteRequired: true });
-    }
+    if (deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
       add("reject-exception", { noteRequired: true });
@@ -96,7 +105,8 @@ function callerActs(input: LineActionsInput): LineAction[] {
 /**
  * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the part
  * (approve or a seat) with the fewest other people able to take it, ties going approval, then
- * Treasurer, then Board; a bucket fix stands alone when the caller has no part to take.
+ * Treasurer, then Board; a bucket fix stands alone when the caller has no part to take. A Board
+ * stand-in's approval is the main act only when no bucket approver can approve the line.
  */
 function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const assign = acts.find((a) => a.act === "assign-bucket" || a.act === "resolve-bucket");
@@ -107,9 +117,10 @@ function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const others = pool(input.facts).filter((id) => id !== input.caller.id);
   const rivals = (a: LineAction): number =>
     a.act === "approve"
-      ? others.filter((id) => approvesAsApprover(input.facts, id)).length
+      ? others.filter((id) => approvesAsApprover(input, id)).length
       : others.filter((id) => maySign(input, a.seat!, id)).length;
-  const parts = acts.filter((a) => a.act === "approve" || a.act === "sign");
+  const standingIn = approvesAsStandIn(input.facts, input.caller.id) && others.some((id) => approvesAsApprover(input, id));
+  const parts = acts.filter((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
   const main = parts.reduce<{ act: LineAction; n: number } | null>((best, a) => {
     const n = rivals(a);
     return best === null || n < best.n ? { act: a, n } : best;
@@ -118,11 +129,9 @@ function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   else if (assign) assign.primary = true;
 }
 
-/** The seat goes to a Board member standing in: nobody it belongs to can sign it. */
+/** The Treasurer seat goes to a Board member standing in: no FINANCE holder can sign it. */
 function standIn(facts: SignoffFacts, filled: FilledSeat[], seat: Seat): boolean {
-  if (seat === "SUBMITTER" || seat === "BOARD") return false;
-  if (seat === "PROGRAM_APPROVER" && boardFillsProgramSeat(facts)) return true;
-  return availableSigners(facts, filled, seat).length === 0;
+  return seat === "TREASURER" && availableSigners(facts, filled, seat).length === 0;
 }
 
 /** Plain status for each open seat or hold the caller has no act on. */
@@ -131,13 +140,19 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   if (expense.backfill) return ["Booked before the app; no sign-off"];
   if (CLOSED_STATES.has(expense.state)) return [];
   const out: string[] = [];
-  if (approval?.status === "pending" && expense.state === "owner_approval" && !acts.some((a) => a.act === "approve")) out.push("Awaiting approval");
-  if (expense.reimburseeUnknown && input.holds.length > 0) out.push("Held until finance names the reimbursee");
+  if (approval?.bucketFinal && APPROVABLE.has(approval.status)) out.push("Finance made this bucket final");
+  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
+    // Whether a bucket approver could approve once the submitter has signed, which comes first.
+    const confirmed = filled.some((f) => f.seat === "SUBMITTER") ? input : { ...input, filled: [...filled, { seat: "SUBMITTER" as const, signerUserId: facts.submitterId }] };
+    const approver = facts.approvers.some((id) => approvesAsApprover(confirmed, id));
+    out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
+  }
+  if (expense.reimburseeUnknown) out.push("Held until finance names the reimbursee");
   const blocked = blockedSeats(facts, filled);
   for (const seat of SEATS) {
     if (!input.holds.includes(seat) || acts.some((a) => a.seat === seat)) continue;
     if (blocked.includes(seat)) out.push("Held: no one without a conflict can sign");
-    else if (seat === "PROGRAM_APPROVER" && approval?.ownerId == null) out.push("Waiting for Finance to assign a budget bucket");
+    else if (seat === "BOARD" && !facts.approved && takesBoardSeat(facts) && !facts.boardSeat) out.push("Board approval after the line is approved");
     else if (standIn(facts, filled, seat)) out.push("Awaiting a Board stand-in");
     else out.push(`Awaiting ${SEAT_NAME[seat]}`);
   }

@@ -90,6 +90,11 @@ describeDb("expense action counts", () => {
       expect(await counts(OTHER_APPROVER)).toEqual({ ...NONE, owner_approval: 1 });
     });
 
+    it("counts an expense whose line finance moved into the viewer's bucket", async () => {
+      await seedLine("owner_approval", { ownerId: 200, status: "finance_assigned" });
+      expect(await counts(OTHER_APPROVER)).toEqual({ ...NONE, owner_approval: 2 });
+    });
+
     it("counts an expense with several pending lines once, as the list shows it", async () => {
       const { id } = await seedLine("owner_approval", { ownerId: 200 });
       await seedApproval(id, await seedLineItem(id), { ownerId: 200 });
@@ -148,7 +153,7 @@ describeDb("expense action counts", () => {
 
     it("leaves an open Treasurer seat to the finance queue's To sign count", async () => {
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(id, li, { SUBMITTER: 1, PROGRAM_APPROVER: 2 });
+      await sign(id, li, { SUBMITTER: 1 });
       expect(await counts(FINANCE)).toEqual(NONE);
       expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1 });
       expect((await financeQueueCounts(CONFLICTED_FINANCE)).toSign).toMatchObject({ actionable: 0 });
@@ -165,20 +170,24 @@ describeDb("expense action counts", () => {
 
     it("leaves out a fully signed expense and one where only the submitter seat is open", async () => {
       const signed = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(signed.id, signed.li, { SUBMITTER: 1, PROGRAM_APPROVER: 2, TREASURER: 3 });
+      await sign(signed.id, signed.li, { SUBMITTER: 1, TREASURER: 3 });
       const submitterOpen = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
-      await sign(submitterOpen.id, submitterOpen.li, { PROGRAM_APPROVER: 2, TREASURER: 3 });
+      await sign(submitterOpen.id, submitterOpen.li, { TREASURER: 3 });
       expect(await counts(FINANCE)).toEqual(NONE);
     });
 
-    it("leaves a Board seat on an org-level card charge to the finance queue's Board count", async () => {
+    it("leaves a Board seat on an org-level card charge to the finance queue's Board count, once the Treasurer has signed", async () => {
       bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
-      await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
+      const { id, li } = await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
+      // The Board signs after the Treasurer, so the seat is not the Board's to give yet.
+      expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE ?? 0).toBe(0);
+
+      await sign(id, li, { TREASURER: 3 });
       expect(await counts(BOARD)).toEqual(NONE);
       expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE).toBeGreaterThan(0);
     });
 
-    it("leaves a FINANCE holder's own program-approver seat to the sign-off count", async () => {
+    it("gives a FINANCE holder who approves the bucket no count once another Treasurer has signed", async () => {
       bindPorts({ signoff: directory({ approvers: { 100: [3] }, finance: [3, 4], board: [5] }) });
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
       await sign(id, li, { SUBMITTER: 1, TREASURER: 4 });
