@@ -93,6 +93,16 @@ describe("HouseholdPage", () => {
     expect(screen.getByText("No emergency contact on file. Add at least one.")).toBeInTheDocument();
   });
 
+  it("does not load emergency contacts for a member who is not the household lead", async () => {
+    setSession({ id: 11, email: "" });
+    const fetchMock = mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("Jamie Smith")).toBeInTheDocument();
+    expect(screen.queryByText("Emergency Contacts")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/household/emergency-contacts");
+  });
+
   it("adds a household member", async () => {
     setSession({ id: 10, email: "sam@example.com" });
     const fetchMock = mockRoutes();
