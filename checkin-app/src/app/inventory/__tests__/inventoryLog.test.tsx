@@ -1,6 +1,7 @@
 jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { notifications } from "@mantine/notifications";
 import { renderWithProviders, resetRtl, router, setSearchParams } from "@/test-helpers/rtl";
 import InventoryLogPage, { applySource, parseDelta } from "@checkin/local-inventory/pages/inventoryLog";
 
@@ -81,10 +82,32 @@ describe("inventory log, by receipt or donation", () => {
     expect(loaded).toContain("/received-inventory-deltas?page=1&limit=50");
     const failed = screen.getByText("stock row locked").closest("tr") as HTMLElement;
     expect(within(failed).getByText("failed")).toBeInTheDocument();
-    expect(within(failed).getByRole("link", { name: "Receipt r-9" })).toHaveAttribute("href", "/receipts/r-9");
+    expect(within(failed).getByText("Receipt r-9")).toBeInTheDocument();
+    expect(within(failed).queryByRole("link")).not.toBeInTheDocument();
     expect(within(failed).getByText("Digi-Key")).toBeInTheDocument();
     expect(within(failed).getByText("1 to receive queue")).toBeInTheDocument();
     expect(screen.getByText("Donation #7")).toBeInTheDocument();
+  });
+
+  it("links a receipt to its Part mapping page when the host resolves it", async () => {
+    setSearchParams("view=applies");
+    const resolve = jest.fn(async () => ({ "r-9": 31 }));
+    renderWithProviders(<InventoryLogPage receivedReceiptIds={resolve} />);
+    const link = await screen.findByRole("link", { name: "Receipt r-9" });
+    expect(link).toHaveAttribute("href", `/inventory/receiving/31?from=${encodeURIComponent("/inventory/inventory-log?view=applies")}`);
+    expect(resolve).toHaveBeenCalledWith(["r-9"]);
+    expect(screen.getByText("Donation #7").closest("a")).toBeNull();
+  });
+
+  it("keeps the receipt id as text and raises a chip that stays up when the lookup fails", async () => {
+    setSearchParams("view=applies");
+    const show = jest.spyOn(notifications, "show");
+    renderWithProviders(<InventoryLogPage receivedReceiptIds={async () => { throw new Error("HTTP 500"); }} />);
+    await waitFor(() => expect(show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red", autoClose: false, title: "Couldn't link receipts to Part mapping", message: "HTTP 500",
+    })));
+    expect(screen.getByText("Receipt r-9").closest("a")).toBeNull();
+    show.mockRestore();
   });
 
   it("expands an apply into its lines, and shows the raw payload on demand", () => {

@@ -1,10 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
-import { lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
+import { errorMessage, lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface LogRow {
@@ -51,6 +52,10 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 type View = "parts" | "applies";
+/** Maps receipt ids to their Part mapping receipt ids; the host supplies it to viewers who can open Part mapping. */
+export type ReceivedReceiptIds = (receiptIds: readonly string[]) => Promise<Record<string, number>>;
+
+const APPLIES_HREF = "/inventory/inventory-log?view=applies";
 type StatusFilter = "" | "failed" | "applied";
 
 /** The delta's retailer and lines; `lines` is null when the payload does not parse. */
@@ -96,19 +101,19 @@ function useLogQuery() {
 }
 
 /** /inventory/inventory-log — every stock change by part, and every receipt or donation apply with its outcome. */
-export default function InventoryLogPage() {
+export default function InventoryLogPage({ receivedReceiptIds }: { receivedReceiptIds?: ReceivedReceiptIds }) {
   const canSee = useCanSeeReceiving();
   return (
     <>
       <Title order={3} mb="md">Inventory log</Title>
-      {canSee ? <LogViews /> : (
+      {canSee ? <LogViews receivedReceiptIds={receivedReceiptIds} /> : (
         <Alert color="gray">The inventory log is open to inventory managers, Finance and the Board.</Alert>
       )}
     </>
   );
 }
 
-function LogViews() {
+function LogViews({ receivedReceiptIds }: { receivedReceiptIds?: ReceivedReceiptIds }) {
   const { view, statusFilter, receiptId, go } = useLogQuery();
   return (
     <>
@@ -123,7 +128,7 @@ function LogViews() {
       />
       {view === "parts"
         ? <PartsView key={receiptId} receiptId={receiptId} onReceipt={(id) => go({ receiptId: id })} />
-        : <AppliesView key={statusFilter} status={statusFilter} onStatus={(s) => go({ view: "applies", status: s })} onReceipt={(id) => go({ receiptId: id })} />}
+        : <AppliesView key={statusFilter} status={statusFilter} onStatus={(s) => go({ view: "applies", status: s })} onReceipt={(id) => go({ receiptId: id })} receivedReceiptIds={receivedReceiptIds} />}
     </>
   );
 }
@@ -178,13 +183,34 @@ function PartsView({ receiptId, onReceipt }: { receiptId: string; onReceipt: (id
   );
 }
 
-function AppliesView({ status, onStatus, onReceipt }: {
-  status: StatusFilter; onStatus: (s: StatusFilter) => void; onReceipt: (id: string) => void;
+/** The Part mapping receipt id of each receipt on the page; empty without a resolver, and an error chip when the lookup fails. */
+function usePartMappingIds(rows: ApplyRow[] | null, resolve: ReceivedReceiptIds | undefined): Record<string, number> {
+  const [ids, setIds] = useState<Record<string, number>>({});
+  const key = (rows ?? []).flatMap((r) => {
+    const s = applySource(r);
+    return s?.kind === "receipt" ? [s.id] : [];
+  }).join("\n");
+  useEffect(() => {
+    if (!resolve || !key) return;
+    let live = true;
+    resolve(key.split("\n"))
+      .then((m) => { if (live) setIds(m); })
+      .catch((err: unknown) => {
+        if (live) notifications.show({ color: "red", autoClose: false, title: "Couldn't link receipts to Part mapping", message: errorMessage(err) });
+      });
+    return () => { live = false; };
+  }, [resolve, key]);
+  return ids;
+}
+
+function AppliesView({ status, onStatus, onReceipt, receivedReceiptIds }: {
+  status: StatusFilter; onStatus: (s: StatusFilter) => void; onReceipt: (id: string) => void; receivedReceiptIds?: ReceivedReceiptIds;
 }) {
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const filter = status && `status=${status}`;
   const rows = useLoad<ApplyRow[]>(`/received-inventory-deltas?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`);
+  const partMappingIds = usePartMappingIds(rows.data, receivedReceiptIds);
   const count = useLoad<{ total: number }>(`/received-inventory-deltas/count${filter && `?${filter}`}`);
   return (
     <>
@@ -219,6 +245,7 @@ function AppliesView({ status, onStatus, onReceipt }: {
                         open={expanded === row.id}
                         onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                         onReceipt={onReceipt}
+                        partMappingId={partMappingIds[applySource(row)?.id ?? ""]}
                       />
                     ))}
                   </Table.Tbody>
@@ -230,8 +257,8 @@ function AppliesView({ status, onStatus, onReceipt }: {
   );
 }
 
-function ApplyRows({ row, open, onToggle, onReceipt }: {
-  row: ApplyRow; open: boolean; onToggle: () => void; onReceipt: (id: string) => void;
+function ApplyRows({ row, open, onToggle, onReceipt, partMappingId }: {
+  row: ApplyRow; open: boolean; onToggle: () => void; onReceipt: (id: string) => void; partMappingId?: number;
 }) {
   const [showPayload, setShowPayload] = useState(false);
   const delta = parseDelta(row.deltaJson);
@@ -243,8 +270,9 @@ function ApplyRows({ row, open, onToggle, onReceipt }: {
         <Table.Td>{new Date(row.receivedAt).toLocaleString()}</Table.Td>
         <Table.Td><Badge size="sm" color={row.status === "applied" ? "green" : "red"}>{row.status}</Badge></Table.Td>
         <Table.Td>
-          {source?.kind === "receipt"
-            ? <Anchor component={Link} href={`/receipts/${encodeURIComponent(source.id)}`} size="sm">Receipt {source.id}</Anchor>
+          {source?.kind === "receipt" && partMappingId !== undefined
+            ? <Anchor component={Link} href={`/inventory/receiving/${partMappingId}?from=${encodeURIComponent(APPLIES_HREF)}`} size="sm">Receipt {source.id}</Anchor>
+            : source?.kind === "receipt" ? `Receipt ${source.id}`
             : source ? `Donation #${source.id}` : "—"}
         </Table.Td>
         <Table.Td>{delta.retailer ?? "—"}</Table.Td>
