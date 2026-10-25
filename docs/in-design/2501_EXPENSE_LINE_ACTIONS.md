@@ -175,7 +175,11 @@ approvers, not only when every approver is conflicted or unavailable. There is
 no step to mark an approver unavailable. The bucket approvers keep their act,
 and the line counts as approved by whichever eligible person approves first.
 Every approval refusal applies to the Board member too: their household, other
-seats on the line, and the Treasurer bar. A Board approval of a line in a
+seats on the line, and the Treasurer bar. On a program-budget line, a Board
+member who holds FINANCE may stand in too: you decided the bar is a conflict,
+not being the Treasurer ("it should prevent someone with a conflict, not the
+treasurer simply for being the treasurer"). They still may not also sign that
+line's Treasurer seat (C′.2). A Board approval of a line in a
 Board-approved program budget is recorded as a Board stand-in, so the audit
 shows who approved in place of the bucket's approvers, and the Board member
 gives a reason with it (§6). It counts as a
@@ -688,7 +692,8 @@ a decision you made:
   does not sign its Treasurer seat. *(new line, after the three-signatures line)*
   `[Decision — owner]`
 - A Board member without a conflict may approve any line in place of its
-  bucket approvers, giving the reason. A Board member approving a line in an
+  bucket approvers, giving the reason. On a program-budget line, holding the
+  finance role does not bar them; a conflict does. A Board member approving a line in an
   org-level bucket, which has no bucket approvers, gives none. *(replaces the existing line about every owner and
   treasurer being conflicted or unavailable)* `[Decision — owner]`
 - Reimbursing someone who is not a Treehouse Member takes the program approver
