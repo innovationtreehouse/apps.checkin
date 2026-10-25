@@ -177,7 +177,8 @@ Things the app takes as true because they are handled outside it.
   withdrawn: their enrollment stays, marked as ended on the day they left. A place
   nobody took up, unpaid or never attended, is removed outright. Whoever removes
   the place chooses which; unchosen, an unpaid place is removed and an active one
-  withdrawn. The expiry sweeps only ever remove.  [Decision — *Principle: people decide about people*]
+  withdrawn. Withdrawing a paid place is removing it, so only the Board does it,
+  with a written reason. The expiry sweeps only ever remove.  [Decision — *Principle: people decide about people*]
 
 - A withdrawn person is no longer enrolled: they hold no seat and are treated as
   not in the program everywhere enrollment is read.  [Decision]

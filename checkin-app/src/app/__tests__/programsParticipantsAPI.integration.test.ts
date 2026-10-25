@@ -417,7 +417,7 @@ describe('Program Participants API Integration Tests', () => {
 
         // Same rule one step out: own household is the actor's own interest too.
         it('should NOT let a board member override the age limit for their OWN household member', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
              // depId is 25 — outside the exact-age program's [18, 21] band.
              const req = new Request(`http://localhost:4000/api/programs/${exactAgeProgramId}/participants`, {
@@ -442,7 +442,7 @@ describe('Program Participants API Integration Tests', () => {
         // (awaiting Shopify payment), NOT a comped/free enrollment and NOT a
         // scary "bypasses all payment" override prompt.
         it('should make a board parent PAY (PENDING) when enrolling their own dependent in a paid program', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
                  method: 'POST',
@@ -477,7 +477,7 @@ describe('Program Participants API Integration Tests', () => {
         // The comp still belongs to genuine admin action: a board member
         // enrolling someone OUTSIDE their household (the program-ops surface).
         it('should require override + comp (ACTIVE) when a board member enrolls a non-household participant', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
              const promptReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
                  method: 'POST',

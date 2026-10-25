@@ -573,7 +573,7 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    const confirm = within(modal).getByRole("button", { name: "Remove" });
+    const confirm = within(modal).getByRole("button", { name: "Withdrew: keep history" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: " Family moved away " } });
     expect(confirm).toBeEnabled();
@@ -581,7 +581,7 @@ describe("ProgramDetailsPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Family moved away" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "withdraw", reason: "Family moved away" }) }),
       ),
     );
   });
@@ -598,13 +598,13 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    expect(within(modal).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Never took part: remove" })).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Paid before the price was zeroed" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "remove", reason: "Paid before the price was zeroed" }) }),
       ),
     );
   });
