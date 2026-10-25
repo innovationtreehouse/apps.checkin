@@ -335,7 +335,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
-                {r.state === "discarded" && (
+                {(r.state === "discarded" || r.state === "rejected") && (
                   <Group align="end">
                     <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
                     <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on", "Couldn't ignore this file")}>

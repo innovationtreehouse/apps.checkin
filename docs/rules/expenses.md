@@ -51,7 +51,8 @@ Income and donation rules are in `revenue.md`.
   open state; mail intake also discards a mailed body that copies an attachment
   of the same message. Finance refuses a receipt by rejecting it, with a reason,
   from any open state. The Board neither discards nor rejects. An open receipt
-  is one not yet finalized, discarded or rejected.
+  is one not yet finalized, discarded or rejected. Finance may add a discarded
+  or rejected receipt's file to the mailbox ignore list.
   [Decision — owner]
 
 - Nobody takes a step on a receipt they are conflicted on if they could use it

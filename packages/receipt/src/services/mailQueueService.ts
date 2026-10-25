@@ -19,6 +19,7 @@ const AssignSchema = z.union([
   z.object({ release: z.literal(true) }).strict(),
 ]);
 const REASON = z.string().trim().min(1, "A reason is required").max(500);
+const IGNORABLE_STATES = new Set(["discarded", "rejected"]);
 const DiscardSchema = z.object({ reason: REASON, ignoreFile: z.literal(true).optional() }).strict();
 const IgnoreSchema = z.object({ reason: REASON }).strict();
 
@@ -165,13 +166,13 @@ export const mailQueueService = {
     return db.receiptIgnoredFile.findMany({ where: { orgId: (await getOrg()).id }, select: IGNORED_FIELDS, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
   },
 
-  /** List a discarded receipt's file. Receipts already made from it are left as they are. */
+  /** List a discarded or rejected receipt's file. Receipts already made from it are left as they are. */
   async ignoreReceiptFile(receiptId: string, rawInput: unknown) {
     const actor = await requireActor();
     const { reason } = parse(IgnoreSchema, rawInput);
     const receipt = await db.receipt.findFirst({ where: { id: receiptId, orgId: (await getOrg()).id }, select: { fileHash: true, details: { select: { state: true } } } });
     if (!receipt) throw new ServiceError(404, "Receipt not found");
-    if (receipt.details?.state !== "discarded") throw new ServiceError(409, "Only a discarded receipt's file can be ignored");
+    if (!IGNORABLE_STATES.has(receipt.details?.state ?? "")) throw new ServiceError(409, "Only a discarded or rejected receipt's file can be ignored");
     return db.$transaction((tx) => addIgnored(tx, actor, receipt.fileHash, reason, "receipt", receiptId));
   },
 

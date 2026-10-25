@@ -203,6 +203,14 @@ describeDb("mailbox ignore list", () => {
     await expect(mailQueueService.ignoreReceiptFile("no-such-receipt", { reason: "logo" })).rejects.toMatchObject({ status: 404 });
   });
 
+  it("lists a rejected receipt's file", async () => {
+    const r = { id: await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined) };
+    await receiptService.rejectFinancial(r.id, "not a receipt");
+    const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
+    const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
+  });
+
   it("removes an entry, audited like an add", async () => {
     const id = await holdItem("held", "news@elsewhere.test", "logo");
     await mailQueueService.discard(id, { reason: "newsletter logo", ignoreFile: true });

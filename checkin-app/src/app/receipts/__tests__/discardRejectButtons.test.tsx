@@ -76,3 +76,13 @@ describe("who sees Discard and Reject on an open receipt", () => {
     expect(shown()).toEqual({ discard: false, reject: false });
   });
 });
+
+describe("who sees Ignore this file", () => {
+  it.each([["discarded", true], ["rejected", true], ["financial_review", false]] as const)("finance on a %s receipt: %s", (state, offered) => {
+    mockRoles = { isFinance: true, isBoard: false };
+    mockUserId = 2;
+    mockReceipt = { ...receipt, state };
+    render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
+    expect(screen.queryByRole("button", { name: "Ignore this file from now on" }) !== null).toBe(offered);
+  });
+});
