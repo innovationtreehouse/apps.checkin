@@ -88,6 +88,9 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const watch = watchPage(page);
     await page.goto("/inventory/receiving?queue=all");
     await page.getByRole("row").filter({ hasText: RETAILER }).getByRole("link").click();
+    // The list shows other receipts' state badges, so read the badge only once the receipt's own page is up.
+    await page.waitForURL(/\/inventory\/receiving\/\d+(\?|$)/);
+    await expect(page.getByRole("heading", { name: `${RETAILER} · $12.50` })).toBeVisible();
     await expect(page.getByText("Needs mapping", { exact: true })).toBeVisible();
 
     await line(page).getByRole("button", { name: "Associate" }).click();
