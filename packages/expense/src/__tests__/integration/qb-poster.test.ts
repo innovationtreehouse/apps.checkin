@@ -698,7 +698,7 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
 
     expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { detail: true, checkedOffAt: true } })).toEqual([
-      { detail: "closed but not posted: a line is not approved: it is pending, under exception, or rejected", checkedOffAt: null },
+      { detail: "closed but not posted: a line is not approved: it is pending, under exception, waiting for its new bucket's approver, or rejected", checkedOffAt: null },
     ]);
   });
 
