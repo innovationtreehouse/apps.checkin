@@ -14,6 +14,11 @@ describe("receivedReceiptIds", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("fails, rather than dropping links, when a row comes back without its receipt id", async () => {
+    mockFetchJson({ "/api/workflow-mapping/receipts?": [{ id: 31, receiptId: "r-9" }, { id: 32 }] });
+    await expect(receivedReceiptIds(["r-9", "r-10"])).rejects.toThrow("The Part mapping receipt lookup returned rows without their receipt id");
+  });
+
   it("names the lookup when it fails", async () => {
     mockFetchJson({});
     await expect(receivedReceiptIds(["r-9"])).rejects.toThrow("The Part mapping receipt lookup failed (HTTP 404)");

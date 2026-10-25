@@ -58,15 +58,19 @@ export type ReceivedReceiptIds = (receiptIds: readonly string[]) => Promise<Reco
 const APPLIES_HREF = "/inventory/inventory-log?view=applies";
 type StatusFilter = "" | "failed" | "applied";
 
-/** The delta's retailer and lines; `lines` is null when the payload does not parse. */
+/** The delta's retailer and lines; `lines` is null when the payload does not parse or its lines are not a list. */
 export function parseDelta(deltaJson: string | undefined): ParsedDelta {
   if (!deltaJson) return { retailer: null, lines: null, pretty: "" };
   try {
     const parsed = JSON.parse(deltaJson) as {
       source?: { retailer?: string | null };
-      lineItems?: Array<Partial<ApplyLine>>;
+      lineItems?: unknown;
     };
-    const lines = (parsed.lineItems ?? []).map((l) => ({
+    if (parsed.lineItems !== undefined && !Array.isArray(parsed.lineItems)) {
+      return { retailer: parsed.source?.retailer ?? null, lines: null, pretty: JSON.stringify(parsed, null, 2) };
+    }
+    const items = (parsed.lineItems ?? []) as Array<Partial<ApplyLine>>;
+    const lines = items.map((l) => ({
       gtin13: String(l.gtin13 ?? ""),
       quantityDelta: Number(l.quantityDelta ?? 0),
       isDelayed: l.isDelayed === true,

@@ -157,6 +157,11 @@ describe("parseDelta and applySource", () => {
     expect(parseDelta("not json")).toEqual({ retailer: null, lines: null, pretty: "not json" });
   });
 
+  it("reads no lines from a payload whose lineItems is not a list", () => {
+    expect(parseDelta(JSON.stringify({ lineItems: "corrupted" })).lines).toBeNull();
+    expect(parseDelta(JSON.stringify({ source: { retailer: "Acme" }, lineItems: { a: 1 } }))).toMatchObject({ retailer: "Acme", lines: null });
+  });
+
   it("names the donation from its source key when there is no receipt", () => {
     expect(applySource({ id: 1, status: "applied", receivedAt: "", sourceKey: "donation:7", receiptId: null })).toEqual({ kind: "donation", id: "7" });
     expect(applySource({ id: 1, status: "applied", receivedAt: "" })).toBeNull();

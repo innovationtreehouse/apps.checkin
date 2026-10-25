@@ -5,5 +5,7 @@ export async function receivedReceiptIds(receiptIds: readonly string[]): Promise
   const res = await fetch(`/api/workflow-mapping/receipts?${q}`);
   if (!res.ok) throw new Error(`The Part mapping receipt lookup failed (HTTP ${res.status})`);
   const rows = (await res.json()) as Array<{ id: number; receiptId?: string }>;
-  return Object.fromEntries(rows.flatMap((r) => (r.receiptId ? [[r.receiptId, r.id]] : [])));
+  // A row without its receiptId means the viewer's response tier withholds it, so the links cannot be built.
+  if (rows.some((r) => !r.receiptId)) throw new Error("The Part mapping receipt lookup returned rows without their receipt id");
+  return Object.fromEntries(rows.map((r) => [r.receiptId, r.id]));
 }
