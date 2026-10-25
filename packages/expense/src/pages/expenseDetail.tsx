@@ -549,7 +549,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             const s = statusOf.get(l.id);
             const main = s?.actions.find((x) => x.primary);
             const more = s?.actions.filter((x) => !x.primary) ?? [];
-            const noBucket = a?.ownerId == null;
             return (
               <Table.Tr key={l.id} fw={main ? 700 : undefined} data-waiting-on-you={main ? true : undefined}>
                 <Table.Td>{main && <span aria-label="Waits on you">→ </span>}{l.lineNumber}</Table.Td>
@@ -569,7 +568,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
                 <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
                 <Table.Td>
-                  <Marked on={(open("BUCKET_TO_ASSIGN") && noBucket) || (open("BUCKET_UNKNOWN") && a?.status === "unknown")}>
+                  <Marked on={(open("BUCKET_TO_ASSIGN") && a?.ownerId == null) || (open("BUCKET_UNKNOWN") && a?.status === "unknown")}>
                     {a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}
                   </Marked>
                 </Table.Td>
@@ -607,7 +606,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Table.Tbody>
       </Table>
 
-      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={reloadAll} />
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} />
 
       {isFinance && reviews.length > 0 && <ReviewsPanel e={e} reviews={reviews} onDecided={() => void decided()} />}
 
@@ -669,13 +668,17 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   <Checkbox label="Capital" checked={value.isCapital} onChange={(ev) => setCapital({ ...capital, [line.id]: { ...value, isCapital: ev.currentTarget.checked } })} />
                 )}
                 {e.state === "set_depreciation_cycle" && (
-                  <TextInput w={140} placeholder="Owner person id" value={value.owner} onChange={(ev) => setCapital({ ...capital, [line.id]: { ...value, owner: ev.currentTarget.value } })} />
+                  <Select
+                    w={200} placeholder="Owner bucket" aria-label={`Owner bucket for ${line.description}`} data={bucketOptions} searchable
+                    value={value.owner || null} onChange={(v) => setCapital({ ...capital, [line.id]: { ...value, owner: v ?? "" } })}
+                  />
                 )}
                 <NumberInput w={140} placeholder="Years" min={1} value={value.years} onChange={(v) => setCapital({ ...capital, [line.id]: { ...value, years: typeof v === "number" ? v : "" } })} />
               </Group>
             ))}
           <Button
             mt="xs"
+            disabled={e.state === "set_depreciation_cycle" && capitalRows.some(({ line, value }) => line.isCapital && (!value.owner || value.years === ""))}
             onClick={async () => {
               const ok = e.state === "capital_review"
                 ? await send(`${base}/capital-review/submit`, "POST", {

@@ -1,16 +1,17 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
-import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
+import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
+import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -44,23 +45,33 @@ interface Receipt extends ReceiptListRow {
 interface AuditRow {
   id: number;
   action: string;
+  userId: number | null;
   username: string | null;
+  fieldChanged: string | null;
+  valueBefore: string | null;
   valueAfter: string | null;
   changedAt: string;
+}
+
+/** How a submitter's correction to a field reads beside it: "entered by the submitter", or the earlier value. */
+function correctionNote(c: SubmitterCorrection | undefined): string {
+  if (!c) return "";
+  return c.kind === "entered" ? " (entered by the submitter)" : ` (the submitter changed it from ${c.before})`;
 }
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 /**
- * /receipts/[id] and /receipts/review/[id] — one receipt: its file, details and lines, and the
- * actions its state allows the caller. Opened from a review queue, a decision returns to that queue.
+ * /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the
+ * caller. Opened from the host's finance queue at `queueBase` (`?queue=` present), a decision
+ * returns to that queue.
  */
-export default function ReceiptDetailPage() {
+export default function ReceiptDetailPage({ queueBase }: { queueBase?: string }) {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queueParam = useSearchParams().get("queue");
-  const fromReview = usePathname().startsWith("/receipts/review/");
+  const fromReview = queueParam !== null && queueBase !== undefined;
   const { data: session } = useSession();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
@@ -83,12 +94,24 @@ export default function ReceiptDetailPage() {
   if (!r) return <Text>Loading…</Text>;
 
   const back = fromReview
-    ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
+    ? { href: reviewHref(queueBase, returnQueue(queueParam, r.state)), label: "Finance review" }
     : { href: "/receipts", label: "My receipts" };
 
   const reasons = r.financialReviewReasons;
   const dateFlagged = reasons.includes("old_date") || reasons.includes("future_date");
   const taxFlagged = reasons.includes("tax");
+  // Finance and the Board read the audit log, so they see whether each correction entered a value or changed one.
+  const corrections = audit.data
+    ? submitterCorrections(
+        audit.data.filter((a) => a.action === "field_edit" && a.userId === r.uploadedByUserId),
+        { taxCents: r.taxCents, receiptDate: r.receiptDate },
+      )
+    : [];
+  const correctionOf = (field: SubmitterCorrection["field"]) => corrections.find((c) => c.field === field);
+  const reasonLabel = (reason: string) =>
+    reason === "submitter_correction" && corrections.length > 0
+      ? corrections.map(describeCorrection).join("; ")
+      : (REVIEW_REASON_LABELS[reason] ?? reason);
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
@@ -116,6 +139,9 @@ export default function ReceiptDetailPage() {
   const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
+  const totalsOff = r.state === "validation_failed";
+  // A saved receipt whose lines already add up still needs a way out of Totals off.
+  const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -158,6 +184,42 @@ export default function ReceiptDetailPage() {
     exclusive(async () => {
       if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
     });
+  const stillOff = (message: string) => notifications.show({ message, color: "yellow", autoClose: false });
+  /** Sends the saved receipt back through the flow and reports where it landed. */
+  const resubmit = async (saved: boolean) => {
+    let after: Receipt;
+    try {
+      after = await api<Receipt>(`/${id}/resubmit`, { method: "POST", body: "{}" });
+    } catch (err) {
+      receipt.reload();
+      audit.reload();
+      notifications.show({ title: saved ? "Saved, but couldn't resubmit" : "Couldn't resubmit this receipt", message: errorMessage(err), color: "red", autoClose: false });
+      return;
+    }
+    window.dispatchEvent(new Event("nav-counts-mutated"));
+    if (after.state === "validation_failed") {
+      stillOff(`${saved ? "Saved. " : ""}The totals still don't add up; stays in Totals off.`);
+    } else {
+      notifications.show({ message: `${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`, color: "green" });
+      if (fromReview) {
+        router.push(back.href);
+        return;
+      }
+    }
+    receipt.reload();
+    audit.reload();
+  };
+  /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
+  const saveTotalsOff = () =>
+    exclusive(async () => {
+      const math = draftMath(r, draft);
+      if (dirty && !(await saveDraft())) return;
+      if (math?.balanced) await resubmit(dirty);
+      else {
+        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        stillOff(`Saved. Still ${off}; stays in Totals off.`);
+      }
+    });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>
     exclusive(async () => {
@@ -172,12 +234,12 @@ export default function ReceiptDetailPage() {
         <Title order={3}>{r.retailer ?? "Receipt"}</Title>
         <Group gap="xs">
           {r.isInKind && <Badge>Donation</Badge>}
-          <Badge variant="light">{STATE_LABELS[r.state] ?? r.state}</Badge>
+          <Badge variant="light">{receiptStateLabel(r)}</Badge>
         </Group>
       </Group>
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
       {r.financialReviewReasons.length > 0 && (
-        <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+        <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
       )}
       {comparing && (
         <DuplicateCompare
@@ -203,9 +265,9 @@ export default function ReceiptDetailPage() {
           <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
-          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged></Text>
+          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>
           <Text>
-            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>, shipping {dollars(r.shippingCents)}
+            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>{correctionNote(correctionOf("tax"))}, shipping {dollars(r.shippingCents)}
             {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
           </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}
@@ -228,7 +290,7 @@ export default function ReceiptDetailPage() {
 
           {editing && (
             <Group gap="xs">
-              <Button size="xs" disabled={!dirty} loading={saving} onClick={() => void save()}>Save changes</Button>
+              <Button size="xs" disabled={!dirty && !savedAddsUp} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : save())}>Save changes</Button>
               {dirty && (
                 <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
@@ -248,11 +310,6 @@ export default function ReceiptDetailPage() {
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
               <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
-            )}
-            {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", "Couldn't resubmit this receipt", true))}>
-                {dirty ? "Save and resubmit" : "Resubmit"}
-              </Button>
             )}
             {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>

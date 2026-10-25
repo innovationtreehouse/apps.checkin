@@ -26,6 +26,17 @@ describeDb("queues", () => {
     expect(await receiptService.list()).toHaveLength(4);
   });
 
+  it("narrows the queue to the given receipts, within the caller's org", async () => {
+    const a = await makeReceipt({ state: "resolved" });
+    const b = await makeReceipt({ state: "pending_review" });
+    await makeReceipt({ state: "resolved" });
+    const foreign = await makeReceipt({ state: "resolved", orgId: OTHER_ORG_ID });
+
+    const rows = await receiptService.list(undefined, [a.receiptId, b.receiptId, foreign.receiptId]);
+    expect(rows.map((r) => [r.id, r.receiptId]).sort()).toEqual([[a.id, a.receiptId], [b.id, b.receiptId]].sort());
+    expect((await receiptService.list(["resolved"], [a.receiptId, b.receiptId])).map((r) => r.id)).toEqual([a.id]);
+  });
+
   it("400 on an unknown state", async () => {
     await expect(receiptService.list(["bogus"])).rejects.toMatchObject({ status: 400 });
   });

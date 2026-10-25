@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { changeProgramStockWith, type StockWriteOptions } from "@/lib/shopify/stock";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
-import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
+import { STATES as ENROLLMENT_STATES, fromWhere } from "@/lib/programs/enrollmentState";
 
 /** Seats Shopify counts as taken out of public stock: every ACTIVE seat and every held PENDING seat. */
 export function countStockTakenSeats(programId: number, db: TxClient = prisma): Promise<number> {
@@ -56,52 +56,84 @@ export async function lockProgramAndCheckCapacity(
     }
 }
 
+type Only = ProgramParticipantStatus | Prisma.ProgramParticipantWhereInput;
+
+function onlyWhere(only?: Only): Prisma.ProgramParticipantWhereInput {
+    return typeof only === "string" ? { status: only } : only ?? {};
+}
+
+/** +1 when a seat taken out of Shopify without a sale comes back, unless the sale has ended. */
+async function seatReturnDelta(tx: TxClient, programId: number, released: boolean): Promise<number> {
+    if (!released) return 0;
+    const sale = await tx.program.findUnique({ where: { id: programId }, select: { startAt: true, offSaleAt: true, saleEndedAt: true } });
+    return sale && isSaleEnded(sale) ? 0 : 1;
+}
+
 /**
- * Delete a participant and put its seat back on sale (+1) when the seat was
- * taken out of Shopify without a payment, exactly once: a scholarship hold
- * (inventoryHeldAt set), or a comped/approved place whose -1 is on record
- * (seatTakenWithoutSaleAt). A paid place returns nothing; a person decides that
- * at the store. This is the ONE implementation of "exit a participant" shared
- * by every code path that does it — manual self/admin withdrawal
- * (DELETE /api/programs/[id]/participants) and grace-period auto-withdrawal
- * (cron/scholarship-grace-expiry) — so every -1 taken without a sale comes back
- * +1 at most once.
+ * Delete a participant who never really took part (the never-there exit) and
+ * put its seat back on sale (+1) when the seat was taken out of Shopify without
+ * a payment, exactly once: a scholarship hold (inventoryHeldAt set), or a
+ * comped/approved place whose -1 is on record (seatTakenWithoutSaleAt). A paid
+ * place returns nothing; a person decides that at the store.
  *
- * `delete()` IS the atomicity boundary: a given row can be deleted at most
- * once, so "was inventoryHeldAt set on the row we just deleted" can never be
- * double-counted even under concurrent callers — a second delete() throws
- * Prisma P2025 (row already gone), which callers handle as an idempotent
- * no-op and never reach this function for.
+ * `delete()` IS the atomicity boundary: a second delete() throws Prisma P2025
+ * (row already gone), which callers handle as an idempotent no-op. `only` makes
+ * the delete conditional on the row in the same statement, so a payment that
+ * lands between a caller's check and this delete cannot slip through; a
+ * mismatch throws P2025 like a missing row.
  *
- * `onlyStatus` makes the delete conditional on the row's status in the same
- * statement, so a payment that lands between a caller's check and this delete
- * cannot slip through; a mismatch throws P2025 like a missing row.
- *
- * After the program's sale has ended the seat is released without the +1, so
- * the seat is not put back on sale.
- *
- * Never throws on the Shopify leg (the stock writer already logs +
- * emails on failure); the boolean return lets the caller surface a
- * non-fatal warning the same way every other Shopify-adjusting endpoint does.
+ * Never throws on the Shopify leg (the stock writer already logs + emails on
+ * failure); `shopifyOk` lets the caller surface a non-fatal warning.
  */
-export async function withdrawAndReleaseHold(
+export async function deleteAndReleaseHold(
     programId: number,
     personId: number,
     program: { shopifyVariantId?: string | null },
-    only?: ProgramParticipantStatus | Prisma.ProgramParticipantWhereInput,
+    only?: Only,
     stockOptions: StockWriteOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
         const enrollment = await tx.programParticipant.delete({
-            where: { programId_personId: { programId, personId }, ...(typeof only === "string" ? { status: only } : only) },
+            where: { programId_personId: { programId, personId }, ...onlyWhere(only) },
         });
         const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
         const released = !!enrollment.inventoryHeldAt || unsoldPlace;
-        // Once the sale has ended the seat is not resold: no +1.
-        const sale = released
-            ? await tx.program.findUnique({ where: { id: programId }, select: { startAt: true, offSaleAt: true, saleEndedAt: true } })
-            : null;
-        return { result: { enrollment, released }, delta: released && !(sale && isSaleEnded(sale)) ? 1 : 0 };
+        return { result: { enrollment, released }, delta: await seatReturnDelta(tx, programId, released) };
     }, stockOptions);
     return { ...result, shopifyOk: landed };
+}
+
+/**
+ * Withdraw a participant who took part and left: the row stays as history,
+ * status WITHDRAWN with endedAt set. A seat taken out of Shopify without a sale
+ * goes back on sale (+1) exactly as {@link deleteAndReleaseHold} returns it.
+ *
+ * The status flip is the atomicity boundary: exactly one concurrent caller
+ * moves the row to WITHDRAWN, and the rest get null. Once WITHDRAWN, no
+ * PENDING-gated hold guard can match the row, so the hold is frozen before the
+ * second CAS clears it. Null also means no row matched `only` or none exists;
+ * the caller tells those apart.
+ */
+export async function withdrawParticipant(
+    programId: number,
+    personId: number,
+    program: { shopifyVariantId?: string | null },
+    only?: Only,
+    stockOptions: StockWriteOptions = {},
+): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean } | null> {
+    const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
+        const { count: won } = await tx.programParticipant.updateMany({
+            where: { programId, personId, AND: [{ status: { not: "WITHDRAWN" } }, onlyWhere(only)] },
+            data: { status: "WITHDRAWN", endedAt: new Date() },
+        });
+        if (won === 0) return { result: null, delta: 0 };
+        const { count: heldReleased } = await tx.programParticipant.updateMany({
+            where: { programId, personId, ...fromWhere("WITHDRAWN"), inventoryHeldAt: { not: null } },
+            data: { inventoryHeldAt: null },
+        });
+        const enrollment = await tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId } } });
+        const released = heldReleased === 1 || enrollment.seatTakenWithoutSaleAt !== null;
+        return { result: { enrollment, released }, delta: await seatReturnDelta(tx, programId, released) };
+    }, stockOptions);
+    return result && { ...result, shopifyOk: landed };
 }

@@ -153,25 +153,25 @@ describeDb("flags are checked off independently", () => {
   it("a party to the expense, or their household, cannot check off its flags", async () => {
     bindPorts({ signoff: directory({ households: [[1, 6]] }) });
     const id = await seedExpense({ submitterId: 1 });
-    await raiseFlag(id, "COI", "conflict");
+    await raiseFlag(id, "QB_DRIFT", "amount");
     const flag = (await db.expenseFlag.findFirst({ where: { expenseId: id } }))!;
 
-    await expect(checkOffFlag(principal(1, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
-    await expect(checkOffFlag(principal(6, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
-    await checkOffFlag(BOARD, flag.id);
+    await expect(checkOffFlag(principal(1, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
+    await expect(checkOffFlag(principal(6, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
+    await checkOffFlag(FINANCE, flag.id, "seen");
   });
 });
 
 describeDb("threshold changes", () => {
-  it("FINANCE tightens and loosens within policy; past policy, or switching review off, is the Board's", async () => {
+  it("FINANCE tightens and loosens within policy; past policy, or raising a capital threshold, is the Board's", async () => {
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 200_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, BOARD);
 
-    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, FINANCE);
-    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE)).rejects.toMatchObject({ status: 403 });
-    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, BOARD);
+    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, BOARD);
+    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE);
 
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000_001 }, BOARD)).rejects.toThrow();
     const changes = await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } });

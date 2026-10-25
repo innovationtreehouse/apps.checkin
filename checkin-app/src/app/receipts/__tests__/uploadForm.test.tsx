@@ -34,11 +34,17 @@ beforeEach(() => jest.clearAllMocks());
 
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label, { exact: false }), { target: { value } });
 
-function renderManual() {
+/** Opens the typed-details form with a file, and with the retailer, date and total filled unless `fillRequired` is false. */
+function renderManual(fillRequired = true) {
   const { container } = render(<MantineProvider><UploadPage /></MantineProvider>);
   const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
   fireEvent.change(fileInput, { target: { files: [new File(["receipt"], "r.txt", { type: "text/plain" })] } });
   fireEvent.click(screen.getByText("I'll type the details"));
+  if (fillRequired) {
+    type("Retailer", "Acme");
+    type("Date", "2026-10-01");
+    type("Total", "10");
+  }
 }
 
 async function submittedData(): Promise<Record<string, unknown>> {
@@ -110,6 +116,36 @@ describe("Manual receipt upload", () => {
         expect.objectContaining({ message: "At least one line item is required", color: "red", autoClose: false }),
       ),
     );
+  });
+});
+
+describe("Required details", () => {
+  it("refuses to upload without the retailer, date and total, naming each", () => {
+    renderManual(false);
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    expect(notifications.show).toHaveBeenCalledWith({
+      title: "Receipt not uploaded",
+      message: "Fill in the retailer, date and total.",
+      color: "red",
+      autoClose: false,
+    });
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("counts a retailer of only spaces as missing", () => {
+    renderManual();
+    type("Retailer", "   ");
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Fill in the retailer.", autoClose: false }));
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a total of zero once it is typed", async () => {
+    uploadMock.mockResolvedValue({ id: "r5" });
+    renderManual();
+    type("Total", "0");
+    const data = await submittedData();
+    expect(data.details).toMatchObject({ receiptTotal: "0" });
   });
 });
 

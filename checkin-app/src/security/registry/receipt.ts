@@ -27,6 +27,8 @@ defineRoute({ endpoint: 'POST /api/receipts/upload', authorize: 'receipt-submitt
 defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+// Only the uploader discards; finance rejects instead, and the Board does neither (expenses.md).
+defineRoute({ endpoint: 'POST /api/receipts/[id]/discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/reimbursement', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/in-kind', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 // The people an uploader may name as reimbursee on upload, matching ?q=: each one's id
@@ -41,7 +43,6 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/line-items', authorize: 'receip
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/retry-ocr', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
-defineRoute({ endpoint: 'POST /api/receipts/[id]/discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 
 // FINANCE reads (BOARD too).

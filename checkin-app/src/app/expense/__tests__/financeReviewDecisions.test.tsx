@@ -18,6 +18,12 @@ jest.mock("@checkin/expense/components/api", () => ({
 }));
 
 beforeAll(() => {
+  // Mantine's Select measures itself; jsdom has no ResizeObserver.
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
   window.matchMedia =
     window.matchMedia ||
     ((query: string) =>
@@ -114,10 +120,10 @@ describe("the Reviews panel", () => {
     expect(screen.getByRole("row", { name: "amount $10.00 $15.00" })).toBeInTheDocument();
   });
 
-  it("names a duplicate to void and a closed expense never posted, and hides other flags", () => {
+  it("names a duplicate to void and a closed expense never posted, and hides a retired kind", () => {
     load(expense({
       flags: [
-        { id: 1, kind: "QB_POST_FAILED", audience: "FINANCE", detail: "the entry posted for this expense needs voiding", checkedOffAt: null },
+        { id: 1, kind: "QB_DUPLICATE_TO_VOID", audience: "FINANCE", detail: "the entry posted for this expense needs voiding", checkedOffAt: null },
         { id: 2, kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted: a line is missing a sign-off seat", checkedOffAt: null },
         { id: 3, kind: "QB_POST_FAILED", audience: "FINANCE", detail: "Account is inactive", checkedOffAt: null },
       ],
@@ -187,6 +193,18 @@ describe("back to the queue", () => {
     expect(mockGoTo).not.toHaveBeenCalled();
   });
 
+  it("returns to the Account holds tab after Resubmit clears the last hold", async () => {
+    const line = { id: 1, lineNumber: 1, description: "Bolts", partNumber: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isCapital: false, depreciationYears: null, capitalOwnerId: null, manualQbAccount: "6110" };
+    load(
+      expense({ lineItems: [line], holds: [{ id: 3, lineItemId: 1, reason: "NO_PART_NUMBER", matchedRows: "[]", status: "PENDING" }] }),
+      [reason("ACCOUNT_HOLD", { tab: "holds", count: 1 })],
+    );
+    refetch({ Expense: expense(), ExpenseQueueReason: [] });
+    wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=holds" />);
+    fireEvent.click(screen.getByRole("button", { name: "Resubmit" }));
+    await waitFor(() => expect(mockGoTo).toHaveBeenCalledWith("/finance/review?queue=holds"));
+  });
+
   it("stays on the page while a line still has a main act for the viewer", async () => {
     retry();
     const line = { lineItemId: 1, filled: [], missing: ["TREASURER"], blocked: [], awaiting: [], mayRecordBoardAuthorization: false };
@@ -212,7 +230,7 @@ describe("required notes", () => {
     load(expense({ state: "owner_approval" }), [], {
       "/expenses/e1/line-item-approvals": [{ id: 5, lineItemId: 1, ownerId: 7, status: "pending" }],
       "/expenses/e1/signoffs": [{
-        lineItemId: 1, filled: [], missing: ["TREASURER"], blocked: [], awaiting: [], mayRecordBoardAuthorization: false,
+        lineItemId: 1, filled: [], missing: [], blocked: [], awaiting: [],
         actions: [{ act: "raise-exception", primary: true, noteRequired: true }],
       }],
     });

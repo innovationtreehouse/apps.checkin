@@ -75,6 +75,13 @@ describe("deriveReasons", () => {
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }, reimburseeVendorLinked: true }))).toEqual(["QB_AWAITING_MATCH"]);
   });
 
+  it("reads a bucket with no QuickBooks Class as a QuickBooks reason naming the bucket", () => {
+    expect(deriveReasons(facts({ missingClass: { bucketName: "Facility" } }))).toEqual([
+      { code: "QB_NO_CLASS", tab: "qb", amountCents: null, count: null, detail: "Facility" },
+    ]);
+    expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
+  });
+
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
     const closed = facts({
       expense: { state: "qb_complete", qbMatchState: "NEEDS_FINANCE", taxCents: 100, needsReimbursement: true },
@@ -105,11 +112,10 @@ describe("deriveReasons", () => {
 });
 
 describe("reviewKindOf", () => {
-  it("names the three reviews, and a QB_POST_FAILED only when its entry needs voiding", () => {
-    for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind, detail: null })).toBe(kind);
-    expect(reviewKindOf({ kind: "QB_POST_FAILED", detail: "x; the entry posted for this expense needs voiding" })).toBe("QB_DUPLICATE_TO_VOID");
-    expect(reviewKindOf({ kind: "QB_POST_FAILED", detail: "Account is inactive" })).toBeNull();
-    expect(reviewKindOf({ kind: "TAX_ATTACHED", detail: null })).toBeNull();
+  it("names the three reviews, and nothing for a retired kind", () => {
+    for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind })).toBe(kind);
+    expect(reviewKindOf({ kind: "QB_POST_FAILED" })).toBeNull();
+    expect(reviewKindOf({ kind: "TAX_ATTACHED" })).toBeNull();
   });
 });
 
@@ -125,6 +131,8 @@ describe("reasonText", () => {
       .toBe("Closed but not posted: a line is missing a sign-off seat");
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 1 }), "USD")).toBe("1 line has no account rule");
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
+    expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
+    expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
   });
 });
 

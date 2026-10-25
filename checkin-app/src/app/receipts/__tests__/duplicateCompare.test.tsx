@@ -13,13 +13,15 @@ let mockErrors: Record<string, string> = {};
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "r1" }),
-  usePathname: () => "/receipts/review/r1",
   useSearchParams: () => new URLSearchParams("queue=duplicate_flagged"),
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: mockUserId } } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
-jest.mock("@checkin/receipt/components/ReceiptFile", () => ({ __esModule: true, default: () => null }));
+jest.mock("@checkin/receipt/components/ReceiptFile", () => ({
+  __esModule: true,
+  default: ({ src, mimeType, title }: { src: string; mimeType: string; title: string }) => <figure aria-label={title} data-src={src} data-type={mimeType} />,
+}));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
   useLoad: (path: string | null) => ({ data: path === null ? null : mockLoads[path] ?? null, error: path === null ? null : mockErrors[path] ?? null, reload: mockReload }),
@@ -59,7 +61,7 @@ beforeEach(() => {
   mockSend.mockResolvedValue(true);
 });
 
-const wrap = () => render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
+const wrap = () => render(<MantineProvider><ReceiptDetailPage queueBase="/finance/review" /></MantineProvider>);
 /** The compare row whose first cell is `label`, with or without its "Same" badge. */
 function row(label: string): HTMLElement {
   const found = screen.getAllByRole("row").find((r) => within(r).queryAllByRole("cell")[0]?.textContent?.replace(/Same$/, "") === label);
@@ -90,14 +92,28 @@ describe("a suspected duplicate's detail page", () => {
 
   it("links to the original under the review queue", () => {
     wrap();
-    expect(screen.getByRole("link", { name: "Open the suspected original" })).toHaveAttribute("href", "/receipts/review/r0?queue=duplicate_flagged");
-    expect(screen.getByRole("link", { name: "View its file" })).toHaveAttribute("href", "/api/receipts/r0/file");
+    expect(screen.getByRole("link", { name: "Open the suspected original" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
+  });
+
+  it("shows both files side by side from the file route, each with a download link", () => {
+    mockLoads["/r0"] = { ...original, mimeType: "image/jpeg" };
+    wrap();
+    const mine = screen.getByRole("figure", { name: "This receipt's file" });
+    const theirs = screen.getByRole("figure", { name: "The original's file" });
+    expect(mine).toHaveAttribute("data-src", "/api/receipts/r1/file");
+    expect(mine).toHaveAttribute("data-type", "application/pdf");
+    expect(theirs).toHaveAttribute("data-src", "/api/receipts/r0/file");
+    expect(theirs).toHaveAttribute("data-type", "image/jpeg");
+    expect(mine.parentElement?.parentElement).toBe(theirs.parentElement?.parentElement);
+    const downloads = screen.getAllByRole("link", { name: "Download" });
+    expect(downloads.map((a) => a.getAttribute("href"))).toEqual(["/api/receipts/r1/file", "/api/receipts/r0/file"]);
+    for (const a of downloads) expect(a).toHaveAttribute("download");
   });
 
   it("clears the flag and returns to the queue", async () => {
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Not a duplicate" }));
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/receipts/review?queue=duplicate_flagged"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=duplicate_flagged"));
     expect(mockSend).toHaveBeenCalledWith("/r1/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag");
   });
 
@@ -128,6 +144,12 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
   });
 
+  it("names a finalized original's state in plain words", () => {
+    mockLoads["/r0"] = { ...original, state: "receipt_finalized" };
+    wrap();
+    expect(screen.getByText("Receipt finalized")).toBeInTheDocument();
+  });
+
   it("shows BOARD the compare without actions", () => {
     mockRoles = { isFinance: false, isBoard: true };
     wrap();
@@ -152,14 +174,29 @@ describe("a suspected duplicate's detail page", () => {
     wrap();
     expect(mockShow).toHaveBeenCalledWith({ title: "Couldn't load the suspected original", message: "Receipt not found", color: "red", autoClose: false });
     expect(screen.getByText("The suspected original is not loaded.")).toBeInTheDocument();
+    expect(screen.getByText("The original's file is not loaded.")).toBeInTheDocument();
+    expect(screen.getByRole("figure", { name: "This receipt's file" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
   });
 
   it("links the original once the flag is cleared", () => {
     mockLoads["/r1"] = { ...flagged, state: "submitter_review", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
     wrap();
-    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/review/r0?queue=duplicate_flagged");
+    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
     expect(screen.getByText(/and cleared as not a duplicate/)).toBeInTheDocument();
     expect(screen.queryByText("Possible duplicate", { selector: "h5" })).toBeNull();
+  });
+
+  it("badges a receipt discarded while flagged as discarded as a duplicate", () => {
+    mockLoads["/r1"] = { ...flagged, state: "discarded", duplicateFlaggedAt: "2026-10-02T00:00:00Z" };
+    wrap();
+    expect(screen.getByText("Discarded as a duplicate")).toBeInTheDocument();
+  });
+
+  it("badges a receipt discarded after its flag was cleared as plainly discarded", () => {
+    mockLoads["/r1"] = { ...flagged, state: "discarded", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
+    wrap();
+    expect(screen.getByText("Discarded")).toBeInTheDocument();
+    expect(screen.queryByText("Discarded as a duplicate")).toBeNull();
   });
 });

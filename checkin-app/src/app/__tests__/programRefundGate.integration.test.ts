@@ -156,7 +156,7 @@ describe('a refunded order never activates a program place', () => {
         const oid = orderId('F');
         const a = await pendingChild();
         const b = await pendingChild();
-        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 2 }]);
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 2, currentQuantity: 2 }]);
 
         await raiseReversalByOrderId(oid, 'REFUND', [{ variantId: VARIANT, quantity: 2, lineQuantity: 2 }], `refund-${oid}`);
         expect(await reconcileForwardProgram(refundedMirrorOrder(oid, [a, b]))).toBe(true);
@@ -172,7 +172,7 @@ describe('a refunded order never activates a program place', () => {
     it('a reversal only the reconciler saw is written to the ledger, so a late orders/paid stays refused after the flag is resolved', async () => {
         const oid = orderId('G');
         const child = await pendingChild();
-        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1 }]);
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1, currentQuantity: 1 }]);
 
         await reconcileForwardProgram(refundedMirrorOrder(oid, [child]));
         await prisma.paymentException.updateMany({ where: { shopifyOrderId: oid }, data: { status: 'RESOLVED', resolvedAt: new Date() } });

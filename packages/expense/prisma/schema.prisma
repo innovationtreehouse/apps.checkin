@@ -163,11 +163,6 @@ model Expense {
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")
-  // The client never reads or writes these; the amounts alone decide whether a charge is Everyday.
-  /// @sensitivity:internal
-  singleSource       Boolean   @default(false) @map("single_source") @ignore
-  /// @sensitivity:internal
-  financeNotEveryday Boolean   @default(false) @map("finance_not_everyday") @ignore
   // What the Board authorized for a card charge, as recorded by FINANCE (or a Board member). It
   // stands in for the Board seat on the charge's org-level lines; null or blank does not.
   /// @sensitivity:internal
@@ -400,8 +395,9 @@ model ExpenseEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
+  /// Out of the client; nothing reads or writes it. A later migration drops the column.
   /// @sensitivity:personal
-  payload   String?
+  payload   String?  @ignore
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -681,8 +677,8 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: one of FLAG_KINDS in
-// src/lib/flags.ts. audience: FINANCE | BOARD.
+// A finance review: a judgment no other decision records, checked off with a note. kind:
+// QB_DUPLICATE_TO_VOID | QB_DRIFT | QB_POST_HELD; rows of retired kinds stay checked off. audience: FINANCE.
 model ExpenseFlag {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())

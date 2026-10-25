@@ -16,6 +16,7 @@ const inv = vi.hoisted(() => ({
   listSubcategories: vi.fn(),
   lookupItems: vi.fn(),
   getItem: vi.fn(),
+  getItemNames: vi.fn(),
 }));
 
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";

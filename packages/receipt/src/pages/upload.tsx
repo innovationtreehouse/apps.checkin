@@ -20,6 +20,7 @@ import {
 } from "@mantine/core";
 import { api, errorMessage, upload } from "../components/api";
 import { CURRENCY_CODE } from "../lib/schemas";
+import { listWords, missingDetails } from "../lib/missingDetails";
 
 interface Line {
   description: string;
@@ -94,6 +95,11 @@ export default function UploadPage() {
 
   async function submit() {
     if (!file || currencyError) return;
+    const missing = mode === "manual" ? missingDetails({ retailer, receiptDate, receiptTotalCents: total === "" ? null : total }) : [];
+    if (missing.length > 0) {
+      notifications.show({ title: "Receipt not uploaded", message: `Fill in the ${listWords(missing)}.`, color: "red", autoClose: false });
+      return;
+    }
     const data = {
       needsReimbursement: !isInKind && needsReimbursement,
       ...(!isInKind && needsReimbursement && reimbursee ? { reimburseePersonId: reimbursee.id } : {}),

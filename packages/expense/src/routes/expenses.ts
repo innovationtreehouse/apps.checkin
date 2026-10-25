@@ -12,6 +12,7 @@ import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
 import { callerId } from "../lib/caller";
 import { CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
+  APPROVABLE_STATUSES,
   approveLine,
   assignOwner,
   financeAssign,
@@ -67,7 +68,7 @@ function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInpu
     case "owner_approval":
       return scope.all
         ? { state: "owner_approval", approvals: { none: { status: "exception_raised" } } }
-        : { state: "owner_approval", approvals: { some: { status: "pending", ...scopedApprovals(scope) } } };
+        : { state: "owner_approval", approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...scopedApprovals(scope) } } };
     case "owner_exception":
       return { approvals: { some: { status: "exception_raised" } } };
     default:

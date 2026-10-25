@@ -58,6 +58,7 @@ export function configure(overrides: Partial<ReceiptConfig> = {}): void {
 
 export async function clearAll(): Promise<void> {
   await db.receiptAuditLog.deleteMany();
+  await db.receiptPairDecision.deleteMany();
   await db.receiptLineItem.deleteMany();
   await db.receiptDetail.deleteMany();
   await db.receipt.deleteMany();

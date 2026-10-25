@@ -37,10 +37,10 @@ function itemWhere(sp: URLSearchParams): Prisma.ItemWhereInput {
   if (!includeArchived) where.archivedAt = null;
   if (q) {
     where.OR = [
-      { name: { contains: q } },
+      { name: { contains: q, mode: "insensitive" } },
       { gtin13: { contains: q } },
-      { category: { name: { contains: q } } },
-      { subcategory: { name: { contains: q } } },
+      { category: { name: { contains: q, mode: "insensitive" } } },
+      { subcategory: { name: { contains: q, mode: "insensitive" } } },
     ];
   }
   return where;

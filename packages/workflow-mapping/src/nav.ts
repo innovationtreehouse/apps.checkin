@@ -8,4 +8,4 @@ export interface WorkflowMappingNavLink {
   href: string;
 }
 
-export const RECEIVING_NAV: WorkflowMappingNavLink = { name: "Receiving", href: "/inventory/receiving" };
+export const RECEIVING_NAV: WorkflowMappingNavLink = { name: "Part mapping", href: "/inventory/receiving" };

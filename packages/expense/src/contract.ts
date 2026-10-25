@@ -7,6 +7,7 @@ import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
   ItemInfoSchema,
+  ItemNameArraySchema,
   LookupResultArraySchema,
 } from "./lib/catalog-schemas";
 
@@ -95,6 +96,7 @@ export const inertSignoffDirectory: SignoffDirectory = {
 export type CatalogCategory = z.infer<typeof CatalogCategorySchema>;
 export type CatalogSubcategory = z.infer<typeof CatalogSubcategorySchema>;
 export type ItemInfo = NonNullable<z.infer<typeof ItemInfoSchema>>;
+export type ItemName = z.infer<typeof ItemNameArraySchema>[number];
 export type LookupResult = z.infer<typeof LookupResultArraySchema>[number];
 
 export interface LookupEntry {
@@ -109,6 +111,7 @@ export interface CatalogReader {
   listCategories(): Promise<unknown>;
   listSubcategories(): Promise<unknown>;
   getItem(gtin13: string): Promise<unknown>;
+  getItemNames(gtin13s: string[]): Promise<unknown>;
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
 
@@ -117,6 +120,7 @@ export const inertCatalogReader: CatalogReader = {
   listCategories: async () => [],
   listSubcategories: async () => [],
   getItem: async () => null,
+  getItemNames: async () => [],
   lookupItems: async () => [],
 };
 

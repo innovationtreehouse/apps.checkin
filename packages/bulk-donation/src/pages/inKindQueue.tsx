@@ -1,11 +1,10 @@
 "use client";
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Alert, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, Title } from "@mantine/core";
 import { act, api, cents, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
-
-type WaitingOn = "withdrawal" | "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "booking";
+import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface QueueLine {
   id: number;
@@ -18,7 +17,7 @@ interface QueueLine {
 
 interface QueueItem {
   id: number;
-  source: "receipt" | "manual";
+  source: InKindSource;
   receiptId: string | null;
   receiptDate: string | null;
   donationDate: string | null;
@@ -46,17 +45,6 @@ interface Bucket {
   archivedAt?: string | null;
   quickBooksClassId?: string | null;
 }
-
-const STATE: Record<WaitingOn, { label: string; color: string }> = {
-  withdrawal: { label: "Withdrawn after money", color: "red" },
-  replay: { label: "Receipt resent with different values", color: "red" },
-  donor: { label: "Donor needed", color: "yellow" },
-  uploader: { label: "Uploader not recorded", color: "yellow" },
-  value: { label: "Value needed", color: "yellow" },
-  decision: { label: "Waiting to be accepted", color: "blue" },
-  bucket: { label: "Bucket archived or has no Class", color: "orange" },
-  booking: { label: "Ready to book", color: "green" },
-};
 
 const WARNINGS: { key: "warnDonorSurnameMatch" | "warnDonorIsRecorder" | "warnLargeValue" | "warnDonorReplaced"; text: string }[] = [
   { key: "warnDonorSurnameMatch", text: "The donor's surname matches someone in your household." },
@@ -191,7 +179,7 @@ export default function InKindQueuePage() {
               return [
                 <Table.Tr key={key}>
                   <Table.Td><Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge></Table.Td>
-                  <Table.Td>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Table.Td>
+                  <Table.Td><Anchor href={`/donations/in-kind/${q.source}/${q.id}`}>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Anchor></Table.Td>
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
                   <Table.Td>{q.totalValueCents === null ? "—" : cents(q.totalValueCents)}</Table.Td>
                   <Table.Td>{q.budgetOwnerName ?? "—"}</Table.Td>

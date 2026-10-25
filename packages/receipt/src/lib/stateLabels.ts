@@ -10,5 +10,15 @@ export const STATE_LABELS: Record<string, string> = {
   flow_error: "Error",
   discarded: "Discarded",
   rejected: "Rejected",
-  receipt_finalized: "Done",
+  receipt_finalized: "Receipt finalized",
 };
+
+/** A receipt discarded while its duplicate flag stood open: a flag, once cleared, never returns. */
+export function isDiscardedDuplicate(r: { state: string; duplicateFlaggedAt?: string | Date | null; duplicateFlagClearedAt?: string | Date | null }): boolean {
+  return r.state === "discarded" && r.duplicateFlaggedAt != null && r.duplicateFlagClearedAt == null;
+}
+
+/** A receipt's state in plain words, naming a duplicate discard as one. */
+export function receiptStateLabel(r: Parameters<typeof isDiscardedDuplicate>[0]): string {
+  return isDiscardedDuplicate(r) ? "Discarded as a duplicate" : (STATE_LABELS[r.state] ?? r.state);
+}

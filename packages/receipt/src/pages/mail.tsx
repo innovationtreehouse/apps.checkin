@@ -40,7 +40,7 @@ function ReleaseAllButton({ ids, label, onDone }: { ids: number[]; label: string
     const summary = `Released ${out.released}, skipped ${out.skipped}`;
     notifications.show(
       out.error
-        ? { color: "red", message: `${summary}. Stopped: ${out.error}. ${out.notReached} not tried.` }
+        ? { color: "red", autoClose: false, message: `${summary}. Stopped: ${out.error}. ${out.notReached} not tried.` }
         : { color: "green", message: `${summary}.` },
     );
     onDone();

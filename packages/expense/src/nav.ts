@@ -1,14 +1,11 @@
 /**
  * Nav descriptors for the expense screens (#1272 §7). The library declares them; the host
- * places them: `EXPENSE_OPS_TABS` then `EXPENSE_TABS.settings` as the Expense Ops tabs, and
+ * places them: `EXPENSE_FINANCE_TABS` and `EXPENSE_TABS.settings` in the Finance section, and
  * `EXPENSE_TABS.approvals` under Programs I Lead.
  */
 
-/**
- * The Expense Ops nav counts expense reports to the host, one per badged tab. `actionable` is the
- * sum of the per-view action counts.
- */
-export type ExpenseNavCount = "holds" | "openFlags" | "actionable";
+/** The finance queue's actionable units, under this key in the expense library's nav counts. */
+export const FINANCE_QUEUE_COUNT_KEY = "financeQueue";
 
 /** The expense list views that carry an action count: the items in the view the viewer can act on. */
 export const EXPENSE_ACTION_VIEWS = [
@@ -31,8 +28,6 @@ export interface ExpenseNavLink {
   href: string;
   /** Emoji icon (the host's SectionTabs render an emoji string). */
   icon: string;
-  /** Which ExpenseNavCount badges this tab, if any. */
-  badge?: ExpenseNavCount;
 }
 
 export const EXPENSE_TABS = {
@@ -40,13 +35,13 @@ export const EXPENSE_TABS = {
   approvals: { name: "Expense approvals", href: "/programs-i-lead/expense-approvals", icon: "✍️" },
 } as const satisfies Record<string, ExpenseNavLink>;
 
-/** The FINANCE/Board expense screens, each an Expense Ops tab. */
-export const EXPENSE_OPS_TABS: readonly ExpenseNavLink[] = [
-  { name: "Expenses", href: "/expense/expenses", icon: "🧾", badge: "actionable" },
-  { name: "Holds", href: "/expense/holds", icon: "⛔", badge: "holds" },
-  { name: "Flags", href: "/expense/flags", icon: "🚩", badge: "openFlags" },
-  { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️" },
-  { name: "QuickBooks Accounts", href: "/expense/qb-accounts", icon: "📒" },
-  { name: "Part Buckets", href: "/expense/ownership-map", icon: "🪣" },
-  { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️" },
-];
+/** The FINANCE/Board expense screens: the browse list, then the bookkeeping setup screens. */
+export const EXPENSE_FINANCE_TABS = {
+  expenses: { name: "Expenses", href: "/expense/expenses", icon: "🧾" },
+  setup: [
+    { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️" },
+    { name: "QuickBooks Accounts", href: "/expense/qb-accounts", icon: "📒" },
+    { name: "Part Buckets", href: "/expense/ownership-map", icon: "🪣" },
+    { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️" },
+  ],
+} as const satisfies { expenses: ExpenseNavLink; setup: readonly ExpenseNavLink[] };

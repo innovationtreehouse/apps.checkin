@@ -175,7 +175,7 @@ export function missingSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] 
 /**
  * Seats nobody can fill: no eligible signer is available and the Board substitutions are used up,
  * or a Board seat no Board member can take. A card charge that needs a second substitution lands
- * here; it is held and flagged to the board.
+ * here; it is held, and shows in the finance queue as a held signer.
  */
 export function blockedSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const open = missingSeats(facts, filled).filter((s): s is Exclude<Seat, "SUBMITTER"> => s !== "SUBMITTER");

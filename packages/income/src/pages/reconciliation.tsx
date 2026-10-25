@@ -57,7 +57,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
       notifications.show({ message, color: "green" });
       onDone();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
@@ -65,7 +65,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
 
   const resolve = (body: unknown, message: string) => act(() => post(`/reconciliation/${row.id}/resolve`, body), message);
   const needReason = () => {
-    if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red" });
+    if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red", autoClose: false });
     return !!reason.trim();
   };
 
@@ -156,7 +156,7 @@ export default function ReconciliationPage() {
       });
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setRunning(false);
     }

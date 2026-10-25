@@ -17,10 +17,19 @@ export type WorkflowRouteHandler = (ctx: WorkflowRouteCtx) => Promise<WorkflowBa
 const receiptId = (params: Record<string, string>) => parseId(params.id, "receipt id");
 const lineId = (params: Record<string, string>) => parseId(params.lineStatusId, "line id");
 
-/** `?state=a,b` (or repeated `state`) filters the queue; absent lists every state. */
+/**
+ * `?state=a,b` (or repeated `state`) filters the queue by state, and repeated `receiptId`
+ * narrows it to those receipts; an absent filter does not narrow.
+ */
+export function listFilter(sp: URLSearchParams): { states?: string[]; receiptIds?: string[] } {
+  const states = sp.getAll("state").flatMap((s) => s.split(",")).filter(Boolean);
+  const receiptIds = sp.getAll("receiptId").filter(Boolean);
+  return { ...(states.length ? { states } : {}), ...(receiptIds.length ? { receiptIds } : {}) };
+}
+
 export const listReceipts: WorkflowRouteHandler = async ({ req }) => {
-  const states = new URL(req.url).searchParams.getAll("state").flatMap((s) => s.split(",")).filter(Boolean);
-  return { WorkflowReceiptSummary: await receiptService.list(states.length ? states : undefined) };
+  const { states, receiptIds } = listFilter(new URL(req.url).searchParams);
+  return { WorkflowReceiptSummary: await receiptService.list(states, receiptIds) };
 };
 
 export const receiptCounts: WorkflowRouteHandler = async () => ({

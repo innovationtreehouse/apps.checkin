@@ -16,7 +16,7 @@ import type { NavGate, NavSection, SubLink } from "@/lib/nav/types";
 import { anyRole, firstVisibleHref, signedIn } from "@/lib/nav/gates";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { libraryCount, type NavBadge } from "@/components/navBadges";
-import { RECEIPT_FLOW_LINK } from "@/lib/nav/sections/receiptReview";
+import { RECEIPT_FLOW_LINK } from "@/lib/nav/sections/finance";
 import { canSeeCatalog } from "@/lib/volunteer";
 
 const catalogViewer: NavGate = (u) => canSeeCatalog(u);
@@ -61,7 +61,7 @@ export const INVENTORY: NavSection = {
       },
     },
     { ...IN_KIND_TAB, library: "bulk-donation", visible: anyRole(IN_KIND_ROLES) },
-    // FINANCE and BOARD reach the flow status page from Receipt Review.
+    // FINANCE and BOARD reach the flow status page from Finance.
     { ...RECEIPT_FLOW_LINK, library: "workflow-mapping", visible: inventoryManager },
   ],
   visible: signedIn,

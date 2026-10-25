@@ -6,7 +6,6 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
-import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
 import { withinEverydayLimits } from "../lib/signoff";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
@@ -102,13 +101,10 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
-  const unresolvedDetail =
-    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     const settings = await readExpenseSettings(tx, receipt.orgId);
     const review = receiptReviewOf(receipt);
-    const { receiptReview } = await tx.expense.create({
-      include: { receiptReview: true },
+    await tx.expense.create({
       data: {
         id: receipt.receiptId,
         orgId: receipt.orgId,
@@ -157,17 +153,6 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         },
       });
     }
-
-    await tx.expenseFlag.createMany({
-      data: detectIntakeFlags({ ...receipt, reimburseePersonId, receiptReview }, settings).map((kind) => ({
-        orgId: receipt.orgId,
-        expenseId: receipt.receiptId,
-        kind,
-        audience: FLAG_AUDIENCE[kind],
-        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
-      })),
-      skipDuplicates: true,
-    });
   });
 }
 

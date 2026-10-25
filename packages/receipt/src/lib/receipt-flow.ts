@@ -1,21 +1,24 @@
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
-import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
+import { Prisma, type ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
+import { retailerKey } from "./retailer";
 import { resolveNextState } from "../workflows/receipt.invariants";
-import type { ReceiptMachineContext } from "../workflows/receipt.guards";
+import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
+import { receiptMath, type MathLine } from "./lineMath";
+import { missingDetails, missingDetailsNote } from "./missingDetails";
+import { describeCorrection, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
-  lineItems: Array<{ quantity: number; unitPriceCents: number }>,
+  lineItems: MathLine[],
   shippingCents: number,
   taxCents: number,
   discountCents: number,
   receiptTotalCents: number,
 ): boolean {
-  const lineSum = lineItems.reduce((acc, li) => acc + li.quantity * li.unitPriceCents, 0);
-  return lineSum + shippingCents + taxCents - discountCents === receiptTotalCents;
+  return receiptMath(lineItems, shippingCents, taxCents, discountCents, receiptTotalCents).balanced;
 }
 
 export function computeFinancialReviewFlags(
@@ -49,6 +52,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
       fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
     },
     select: { fieldChanged: true, valueBefore: true },
+    orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const before = (field: string) =>
     edits.flatMap((e) => (e.fieldChanged === field && e.valueBefore !== null ? [e.valueBefore] : []));
@@ -60,6 +64,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
     taxReview: current.taxReview || before("taxCents").some((t) => flags(Number(t), date).taxReview),
     ageReview: current.ageReview || before("receiptDate").some((d) => flags(row.taxCents, d).ageReview),
     corrected: edits.length > 0,
+    corrections: submitterCorrections(edits, row),
   };
 }
 
@@ -89,23 +94,33 @@ export const BODY_COPY_DISCARDED = "body_copy_discarded";
  * The receipt this one duplicates, or null. A body discarded as a copy of its message's other
  * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
  * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
- * person has cleared the flag, the receipt is never re-flagged.
+ * person has cleared the flag, the receipt is never re-flagged. The field matches compare
+ * retailers ignoring case and extra whitespace, in SQL that mirrors `retailerKey`.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
   if (row.duplicateFlagClearedAt) return null;
   if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
-  const { orgId, retailer, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
-  const notSelf = { id: { not: id }, receipt: { auditLogs: { none: { action: BODY_COPY_DISCARDED } } } };
+  const { orgId, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
+  const retailer = retailerKey(row.retailer);
+  const sameRetailer = async (match: Prisma.Sql) => {
+    const [hit] = await db.$queryRaw<{ id: string }[]>`
+      SELECT d.id FROM receipt_details d
+      WHERE d.org_id = ${orgId} AND d.id <> ${id} AND ${match}
+        AND lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) IS NOT DISTINCT FROM ${retailer}
+        AND NOT EXISTS (SELECT 1 FROM receipt_audit_log a WHERE a.receipt_id = d.id AND a.action = ${BODY_COPY_DISCARDED})
+      LIMIT 1`;
+    return hit?.id ?? null;
+  };
 
-  const composite = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptDate, receiptTotalCents, ...notSelf } });
-  if (composite) return composite.id;
+  const composite = await sameRetailer(Prisma.sql`d.receipt_date IS NOT DISTINCT FROM ${receiptDate} AND d.receipt_total_cents IS NOT DISTINCT FROM ${receiptTotalCents}`);
+  if (composite) return composite;
   if (orderNumber) {
-    const byOrder = await db.receiptDetail.findFirst({ where: { orgId, retailer, orderNumber, ...notSelf } });
-    if (byOrder) return byOrder.id;
+    const byOrder = await sameRetailer(Prisma.sql`d.order_number = ${orderNumber}`);
+    if (byOrder) return byOrder;
   }
   if (receiptNumber) {
-    const byNumber = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptNumber, ...notSelf } });
-    if (byNumber) return byNumber.id;
+    const byNumber = await sameRetailer(Prisma.sql`d.receipt_number = ${receiptNumber}`);
+    if (byNumber) return byNumber;
   }
   return null;
 }
@@ -197,24 +212,46 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
   await pushReceipt(row.id, actor);
 }
 
-/** Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. */
+/**
+ * Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. A
+ * receipt missing its retailer, date or total goes to its submitter before any other check.
+ */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
   const orgId = (await getOrg()).id;
   const row = await receiptRepo.find(receiptId, orgId);
   if (!row) return;
-  if (!row.retailer || !row.receiptDate || row.receiptTotalCents === null) return;
+
+  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
+    await receiptRepo.update(receiptId, { detail }, row.state);
+    await audit(db, receiptId, actor, {
+      action: "pipeline_transition",
+      fieldChanged: "state",
+      valueBefore: row.state,
+      valueAfter,
+    });
+  };
+
+  const total = row.receiptTotalCents;
+  const missing = missingDetails(row);
+  if (total === null || missing.length > 0) {
+    const held = resolveNextState(row.state, { type: "RUN_PIPELINE" }, { ...NEUTRAL_CONTEXT, detailsMissing: true });
+    if (held !== "submitter_review") throw new Error(`Unexpected next state '${held}' from '${row.state}' for a receipt missing details`);
+    await transition({ state: "submitter_review", validationNotes: missingDetailsNote(missing) }, `submitter_review (missing ${missing.join(", ")})`);
+    return;
+  }
 
   const lineItems = await receiptRepo.listLineItems(receiptId);
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
-  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, row.receiptTotalCents);
-  const { taxReview, ageReview, futureReview, corrected, ageLimitDays, diffDays } = await reviewFlags(row, settings);
+  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
   // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
   const isQbLinked = !!row.qbTxnId;
 
   const context: ReceiptMachineContext = {
+    detailsMissing: false,
     isDuplicate: !!dupId,
     mathValid: valid,
     needsReimbursement: row.needsReimbursement,
@@ -226,16 +263,6 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   };
 
   const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
-
-  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
-    await receiptRepo.update(receiptId, { detail }, row.state);
-    await audit(db, receiptId, actor, {
-      action: "pipeline_transition",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter,
-    });
-  };
 
   try {
     switch (nextState) {
@@ -259,7 +286,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
           taxReview && "tax review required (tax-exempt org with tax > 0)",
           ageReview && `age limit exceeded (${diffDays}d > ${ageLimitDays}d)`,
           futureReview && "future-dated receipt",
-          corrected && "submitter corrected the tax or date",
+          corrected && corrections.map(describeCorrection).join("; "),
         ]
           .filter(Boolean)
           .join("; ");

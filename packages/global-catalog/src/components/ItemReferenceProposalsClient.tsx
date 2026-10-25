@@ -41,7 +41,7 @@ export default function ItemReferenceProposalsClient() {
       await api(`/proposals/item-references/${id}/approve`, { method: "POST" });
       notifications.show({ message: "Mapping approved and written to item references", color: "green" });
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setApproving(null); }
   }
 
@@ -55,7 +55,7 @@ export default function ItemReferenceProposalsClient() {
       setRejectReason("");
       setRejectTarget(null);
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setRejecting(false); }
   }
 

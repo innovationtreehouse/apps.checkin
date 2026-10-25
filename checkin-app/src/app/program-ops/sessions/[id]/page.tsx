@@ -167,7 +167,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
       } else {
         const data = await res.json().catch(() => ({}));
         if (data.error === "Cannot edit a past event") {
-          notifications.show({ color: "red", message: data.error, autoClose: 4000 });
+          notifications.show({ color: "red", message: data.error, autoClose: false });
           setEditMode(false);
           fetchEvent();
         } else {

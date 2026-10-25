@@ -9,7 +9,6 @@ import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
-import { closeAnsweredFlag } from "../services/flagService";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -522,7 +521,6 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     return true;
   });
   if (!rearmed) return false;
-  const outcome = await postExpenseToQb(orgId, expenseId);
-  if (outcome === "posted" || outcome === "matched") await closeAnsweredFlag(db, expenseId, "QB_POST_FAILED", actor, "retry posted");
+  await postExpenseToQb(orgId, expenseId);
   return true;
 }

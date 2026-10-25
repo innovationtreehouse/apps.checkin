@@ -2,9 +2,8 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines } from "../helpers/seed";
-import { checkOffFlag, closeAnsweredFlag, raiseFlag } from "../../services/flagService";
-import { recordBoardAuthorization } from "../../services/signoffService";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { checkOffFlag, raiseFlag } from "../../services/flagService";
 import { approveTax } from "../../services/taxApprovalService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
@@ -23,51 +22,15 @@ describeDb("reviews need a note", () => {
     const id = await seedExpense({ state: "qb_complete" });
     await raiseFlag(id, "QB_DRIFT", "amount");
     await raiseFlag(id, "QB_POST_HELD", "closed but not posted: a line is missing a sign-off seat");
-    await raiseFlag(id, "QB_POST_FAILED", "QuickBooks Purchase 9 is already claimed by another expense or line; the entry posted for this expense needs voiding");
+    await raiseFlag(id, "QB_DUPLICATE_TO_VOID", "QuickBooks Purchase 9 is already claimed by another expense or line; the entry posted for this expense needs voiding");
 
-    for (const kind of ["QB_DRIFT", "QB_POST_HELD", "QB_POST_FAILED"]) {
+    for (const kind of ["QB_DRIFT", "QB_POST_HELD", "QB_DUPLICATE_TO_VOID"]) {
       const flag = (await openFlag(id, kind))!;
       await expect(checkOffFlag(FINANCE, flag.id, null)).rejects.toMatchObject({ status: 400 });
       await expect(checkOffFlag(FINANCE, flag.id, "   ")).rejects.toMatchObject({ status: 400 });
       await checkOffFlag(FINANCE, flag.id, "voided Purchase 9 on 2026-10-24");
       expect((await openFlag(id, kind))!.checkedOffAt).not.toBeNull();
     }
-  });
-
-  it("other kinds still check off without a note while /expense/flags lists them", async () => {
-    bind();
-    const id = await seedExpense();
-    await raiseFlag(id, "TAX_ATTACHED");
-    await checkOffFlag(FINANCE, (await openFlag(id, "TAX_ATTACHED"))!.id, null);
-    expect((await openFlag(id, "TAX_ATTACHED"))!.checkedOffAt).not.toBeNull();
-  });
-});
-
-describeDb("the fix closes the flag it answers", () => {
-  it("recording the Board's authorization closes THRESHOLD_CROSSED", async () => {
-    bind();
-    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500_000 });
-    const li = await seedLineItem(id, { manualQbAccount: "5000" });
-    await seedApproval(id, li, { ownerId: 100, status: "approved" });
-    await signAllLines(id);
-    await db.expense.update({ where: { id }, data: { boardAuthorization: null } });
-    await raiseFlag(id, "THRESHOLD_CROSSED");
-
-    await recordBoardAuthorization(FINANCE, id, "Board minutes 2026-10-01, item 4");
-
-    expect(await openFlag(id, "THRESHOLD_CROSSED")).toMatchObject({ checkedOffByUserId: 3, notes: "Board authorization recorded" });
-  });
-
-  it("a successful retry's close leaves a duplicate to void open", async () => {
-    const exhausted = await seedExpense();
-    const duplicate = await seedExpense();
-    await raiseFlag(exhausted, "QB_POST_FAILED", "Account is inactive");
-    await raiseFlag(duplicate, "QB_POST_FAILED", "already claimed; the entry posted for this expense needs voiding");
-
-    for (const id of [exhausted, duplicate]) await closeAnsweredFlag(db, id, "QB_POST_FAILED", { userId: 3, username: "person-3" }, "retry posted");
-
-    expect((await openFlag(exhausted, "QB_POST_FAILED"))!.checkedOffAt).not.toBeNull();
-    expect((await openFlag(duplicate, "QB_POST_FAILED"))!.checkedOffAt).toBeNull();
   });
 });
 
@@ -112,6 +75,27 @@ describeDb("expense reasons", () => {
     expect(await actionable(FINANCE)).toEqual([["REIMBURSEE_TO_NAME", true]]);
     expect(await actionable(CONFLICTED_FINANCE)).toEqual([["REIMBURSEE_TO_NAME", false]]);
     expect(await actionable(BOARD)).toEqual([["REIMBURSEE_TO_NAME", false]]);
+  });
+
+  it("bookkeeping is actionable for any finance holder, a conflicted one included", async () => {
+    bind();
+    const id = await seedExpense({ state: "capital_review" });
+    const line = await seedLineItem(id);
+    await db.expenseHold.create({ data: { orgId: "org-1", expenseId: id, lineItemId: line, reason: "NO_MATCH", matchedRows: "[]" } });
+    const actionable = async (p: ReturnType<typeof principal>) => (await expenseReasons(p, id)).map((r) => [r.code, r.actionable]);
+    expect(await actionable(CONFLICTED_FINANCE)).toEqual([["CAPITAL_REVIEW", true], ["ACCOUNT_HOLD", true]]);
+    expect(await actionable(BOARD)).toEqual([["CAPITAL_REVIEW", false], ["ACCOUNT_HOLD", false]]);
+  });
+
+  it("bookkeeping stays actionable for a conflicted finance holder, as the rules allow", async () => {
+    bind();
+    const id = await seedExpense({ state: "capital_review", taxCents: 500 });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    expect((await expenseReasons(CONFLICTED_FINANCE, id)).map((r) => [r.code, r.actionable])).toEqual([
+      ["CAPITAL_REVIEW", true],
+      ["TAX_NOT_REVIEWED", false],
+      ["QB_POST_FAILED", true],
+    ]);
   });
 
   it("an exhausted post carries the last error in plain words", async () => {

@@ -1,0 +1,69 @@
+# Cutover: duplicate receipts as groups
+
+The one-time part of `2516_RECEIPT_DUPLICATES.md`: the build order and the
+tests that change. Everything
+here stops being true once the last PR merges. Its last step is "extract the
+rules, delete both files".
+
+## Where it stands
+
+- Designed; no open question settled yet (design §10).
+- #2515 pins today's behaviour in ten DB-tier tests
+  (`packages/receipt/src/__tests__/integration/three-copies.test.ts`). It is
+  another session's draft. It merges as it is; PR 1 below flips its tests.
+- #2566 (open) makes every receipt date YYYY-MM-DD, including the editor's
+  date picker.
+- Production holds no receipts yet, so there is no existing data to carry
+  over: no cleared flags, no finalized pairs, no old date formats.
+- #2561 (retailer case and spaces) is merged. #2558 (fuzzy retailer) is open
+  and not part of this plan.
+
+- Today finance and the Board can discard any receipt they aren't conflicted
+  on. @thpr decided only the submitter (and mail intake) discards; finance
+  rejects; the Board does neither. That change is PR 0 below, and it is not
+  duplicate-specific.
+
+## Build plan
+
+Each PR is small and test first: the flipped test lands failing (`it.fails`)
+in the PR before the one that makes it pass, or in the same PR when the change
+is small. Every question is decided (design §10); PR numbers are fixed IDs, so a dropped PR leaves a gap.
+
+| PR | Kind | What | Needs |
+| --- | --- | --- | --- |
+| 0 | app | Discard is the submitter's and mail intake's only: finance and the Board are refused. Finance gets a `REJECT` edge, with a reason, from every open state it can discard from today. Its own issue; the duplicate PRs below depend on it | @thpr's decision |
+| 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) for re-check after discard (§6.4), and for the races in §5.5: a copy arriving after the panel was drawn stays held after **Different purchases** on the old ids; a group-wide action on a stale set of ids writes nothing and answers 409; two holders deciding one group at once, one wins | #2515 merged |
+| 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped) | none |
+| 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
+| 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision | none |
+| 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, the "expense rejected by finance" label (Q14: one field on the reimbursement-status port, a contract change), one queue row per group, the badge on open members, the submitter's message | Q6 |
+| 6 | app | Number folding per Q3. The ±7-day similar-date tier is not in this plan; it is #2591, after these ship | #2566 merged |
+| 7 | — | Dropped: the posting re-check (Q8 decided no) | — |
+| 8 | mig + docs | Drop `duplicateFlagClearedAt` and `duplicateSuspectReceiptId` once no deployed code reads them; extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
+
+## #2515's tests, flipped
+
+| # | Test today | Decided behaviour |
+| --- | --- | --- |
+| 1 | Same file three times: B and C flagged against A | Unchanged in outcome; assert B's and C's group is {A, B, C} in upload order, not a stored suspect |
+| 2 | Same fields: C flagged against A or B | C's group is {A, B}, always in that order |
+| 3 | C cleared against A goes through beside cleared B | C's compare shows B; clearing C records C≠A and C≠B, which finance saw |
+| 4 | Two cleared field copies never compared | Each copy's group contains the other until a decision covers that pair |
+| 5 | A discarded to keep B; C flagged against discarded A, clears beside B | "Keep this one" on B rejects A as a copy of B; C's group shows live B and A ("Rejected as a copy of B"); C cannot finalize without a decision against B |
+| 6 | Copies after A was discarded flag against A, both clear | A was withdrawn by its submitter, so per Q1 (decided) A raises nothing; B and C flag against each other. If finance had refused A, A is rejected and flags as such (test 7) |
+| 7 | Copies of a rejected A flag against it, both clear | Flagged, with A labelled "Rejected"; B and C are in one group with A |
+| 8 | Re-upload of B's file flagged against B, not A | C's group is {A, B} |
+| 9 | C's copy B discarded (now: rejected by finance as a copy of A); C clears beside A | C's group still holds live A; C stays held until decided against A |
+| 10 | C's copy B cleared; C stays flagged against finalized B | Unchanged in outcome; group is {A, B} |
+
+The 1265 race test ("two identical uploads at once, exactly one ends
+`duplicate_flagged`") may stop holding: with symmetric matching, the first
+upload is also held if its pipeline runs after the second is inserted. PR 3
+rewrites it as "at least one is held, and both are in one group", which is the
+guarantee that matters (one decision covers both).
+
+## Last step
+
+Extract the rules design §9 lists that @thpr accepted into
+`docs/rules/expenses.md`, then delete `2516_RECEIPT_DUPLICATES.md` and this
+file.
