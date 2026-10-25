@@ -98,6 +98,7 @@ describe("the receipt tabs", () => {
 
   it.each([
     ["submitter_review", "?state=submitter_review", "Submitter review"],
+    ["receipt_finalized", "?state=receipt_finalized", "Receipt finalized"],
     ["not_pushed", "?state=receipt_finalized&pushed=0", "Not delivered to part mapping"],
     ["discarded", "?state=discarded", "Discarded"],
   ])("?queue=%s lists %s and names it in the More picker", (queue, path, label) => {
