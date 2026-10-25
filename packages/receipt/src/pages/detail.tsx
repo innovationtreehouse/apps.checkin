@@ -9,7 +9,7 @@ import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, receiptStateLabel, send, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
+import { draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, signedDollars, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -116,6 +116,9 @@ export default function ReceiptDetailPage() {
   const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
+  const totalsOff = r.state === "validation_failed";
+  // A saved receipt whose lines already add up still needs a way out of Totals off.
+  const savedAddsUp = totalsOff && draftDifference(r, EMPTY_DRAFT) === 0;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -157,6 +160,39 @@ export default function ReceiptDetailPage() {
   const save = () =>
     exclusive(async () => {
       if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
+    });
+  const stillOff = (message: string) => notifications.show({ message, color: "yellow", autoClose: false });
+  /** Sends the saved receipt back through the flow and reports where it landed. */
+  const resubmit = async (saved: boolean) => {
+    let after: Receipt;
+    try {
+      after = await api<Receipt>(`/${id}/resubmit`, { method: "POST", body: "{}" });
+    } catch (err) {
+      receipt.reload();
+      audit.reload();
+      notifications.show({ title: saved ? "Saved, but couldn't resubmit" : "Couldn't resubmit this receipt", message: errorMessage(err), color: "red", autoClose: false });
+      return;
+    }
+    window.dispatchEvent(new Event("nav-counts-mutated"));
+    if (after.state === "validation_failed") {
+      stillOff(`${saved ? "Saved. " : ""}The totals still don't add up; stays in Totals off.`);
+    } else {
+      notifications.show({ message: `${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`, color: "green" });
+      if (fromReview) {
+        router.push(back.href);
+        return;
+      }
+    }
+    receipt.reload();
+    audit.reload();
+  };
+  /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
+  const saveTotalsOff = () =>
+    exclusive(async () => {
+      const difference = draftDifference(r, draft);
+      if (dirty && !(await saveDraft())) return;
+      if (difference === 0) await resubmit(dirty);
+      else stillOff(`Saved. Still ${difference === null ? "" : `${signedDollars(Math.round(Math.abs(difference)))} `}off; stays in Totals off.`);
     });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>
@@ -228,7 +264,7 @@ export default function ReceiptDetailPage() {
 
           {editing && (
             <Group gap="xs">
-              <Button size="xs" disabled={!dirty} loading={saving} onClick={() => void save()}>Save changes</Button>
+              <Button size="xs" disabled={!dirty && !savedAddsUp} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : save())}>Save changes</Button>
               {dirty && (
                 <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
@@ -248,11 +284,6 @@ export default function ReceiptDetailPage() {
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
               <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
-            )}
-            {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", "Couldn't resubmit this receipt", true))}>
-                {dirty ? "Save and resubmit" : "Resubmit"}
-              </Button>
             )}
             {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
