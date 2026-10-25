@@ -4,11 +4,11 @@ import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   calculatedCents,
   canAddLine,
+  draftDifference,
   draftHeader,
   EMPTY_LINE,
   lineCents,
   lineFromServer,
-  parseCents,
   signedDollars,
   type Draft,
   type DraftLine,
@@ -49,8 +49,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
   const subtotal = allLines.map(lineCents).reduce<number | null>((a, b) => (a === null || b === null ? null : a + b), 0);
   const calculated = calculatedCents(allLines, header);
-  const total = parseCents(header.receiptTotal);
-  const difference = calculated === null || total === null ? null : calculated - total;
+  const difference = draftDifference(receipt, draft);
 
   const row = (key: string, line: DraftLine, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
     <Table.Tr key={key}>

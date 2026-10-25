@@ -48,7 +48,7 @@ describeDb("finance decisions on one's own receipt", () => {
   });
 });
 
-describeDb("a receipt already sent to receiving", () => {
+describeDb("a receipt already sent to part mapping", () => {
   async function pushedThenReopened(state: string) {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     expect(ports.calls.pushes).toHaveLength(1);
@@ -59,7 +59,7 @@ describeDb("a receipt already sent to receiving", () => {
   it("refuses a restart, so no changed copy is re-sent", async () => {
     const id = await pushedThenReopened("flow_error");
     actAs(FINANCE);
-    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already sent to receiving/) });
+    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already sent to part mapping/) });
     expect(await stateOf(id)).toBe("flow_error");
     expect(ports.calls.pushes).toHaveLength(1);
   });

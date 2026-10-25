@@ -33,7 +33,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     // the reconciler's transitional amount-gate fallback. Tests of the variant path
     // set this explicitly.
     orderLineVariantIds: jest.fn(async () => [] as string[]),
-    orderLines: jest.fn(async () => [] as { variantId: string; quantity: number }[]),
+    orderLines: jest.fn(async () => [] as { variantId: string; quantity: number; currentQuantity: number }[]),
 }));
 import * as mirror from "@/lib/shopifyRead/client";
 jest.mock("@/lib/shopify/stock", () => ({
@@ -585,7 +585,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
         // The entitled money event: same code, same forward path, no flag.
         const oid = `${TAG}-502`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `prgent-${TAG}@ex.com`, status: "PENDING", membership: "ACTIVE" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([
             order({
                 legacyId: oid,
@@ -605,7 +605,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
         const email = `prgfwd-${TAG}@ex.com`;
         const oid = `${TAG}-510`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         // Preferred attribute path (mirrors the enroll checkout link) — no customer
         // email on the order at all, so the attribute alone must carry it.
         ordersChangedSince.mockResolvedValue([
@@ -645,7 +645,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     it("raises NO_ITEM and does not activate when the attributed order lacks the program variant", async () => {
         const oid = `${TAG}-600`;
         const { personId, programId } = await makeProgramEnrollment({ email: `ent-noitem-${TAG}@ex.com`, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
 
         await runReconcile();
@@ -660,7 +660,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-short-${TAG}@ex.com`;
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
 
         await runReconcile();
@@ -676,7 +676,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const otherHh = await prisma.household.create({ data: { name: `HH ${TAG} other-${email}` } });
         const other = await prisma.person.create({ data: { email: `other-${email}`, name: `Other ${email}`, householdId: otherHh.id } });
         await prisma.programParticipant.create({ data: { programId, personId: other.id, status: "PENDING" } });
-        orderLines.mockResolvedValue([{ variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${other.id}` }) })]);
 
         await runReconcile();
@@ -690,7 +690,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-full-${TAG}@ex.com`;
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
-        orderLines.mockResolvedValue([{ variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
 
         await runReconcile();
@@ -706,7 +706,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     ])("raises REVERSED_BEFORE_ACTIVATION and does not activate a %s order", async (label, over) => {
         const oid = `${TAG}-603-${label}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-rev-${label}-${TAG}@ex.com`, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
 
         await runReconcile();
@@ -723,7 +723,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     ])("raises DUPLICATE_PAYMENT, changing nothing, when the child is %s", async (_label, priorOrder) => {
         const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
 
         await runReconcile();
@@ -739,7 +739,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-608`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
         await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
 
         await runReconcile();
@@ -754,7 +754,28 @@ describe("program order entitlement (same check as the webhook)", () => {
         const audit = await prisma.auditLog.create({
             data: { actorId: personId, action: "DELETE", tableName: "ProgramParticipant", affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: enrollment },
         });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        try {
+            await runReconcile();
+            expect(await kinds(oid)).toEqual([]);
+        } finally {
+            await prisma.auditLog.delete({ where: { id: audit.id } });
+        }
+    });
+
+    it("raises nothing for an order whose child withdrew and was since comped back in", async () => {
+        const oid = `${TAG}-608r`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-reenrol-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const where = { programId_personId: { programId, personId } };
+        const withdrawn = await prisma.programParticipant.update({ where, data: { status: "WITHDRAWN", endedAt: new Date() } });
+        const audit = await prisma.auditLog.create({
+            data: { actorId: personId, action: "EDIT", tableName: "ProgramParticipant", affectedEntityId: personId, secondaryAffectedEntity: programId, newData: withdrawn },
+        });
+        // Re-enrolment clears the old order from the row.
+        await prisma.programParticipant.update({ where, data: { status: "ACTIVE", endedAt: null, shopifyOrderId: null } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
 
         try {
@@ -768,7 +789,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     it("activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting", async () => {
         const oid = `${TAG}-609`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 3 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 3, currentQuantity: 3 }]);
         ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
 
         await runReconcile();
@@ -780,7 +801,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-sibs-${TAG}@ex.com`;
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([attributed(`${TAG}-610a`, programId, String(personId)), attributed(`${TAG}-610b`, programId, String(sibId))]);
 
         await runReconcile();
@@ -793,7 +814,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     it("waits on an order not yet paid: no activation, no exception", async () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
 
         await runReconcile();
@@ -805,7 +826,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-605`;
         const email = `ent-merch-${TAG}@ex.com`;
         const { personId, programId } = await makeProgramEnrollment({ email, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
 
         await runReconcile();
@@ -818,7 +839,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { processId } = await makeApplicant({ email: `mixed-mem-${TAG}@ex.com`, status: "PENDING_PAYMENT", bgCleared: true });
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `mixed-prg-${TAG}@ex.com`, status: "PENDING" });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT, variantId]);
-        orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1 }, { variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1, currentQuantity: 1 }, { variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([
             order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId), Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) }),
         ]);
@@ -836,7 +857,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-606`;
         const email = `ent-fallback-${TAG}@ex.com`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
-        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
 
         await runReconcile();
@@ -861,6 +882,8 @@ describe("fast-path reversal webhook helper", () => {
         return kid.id;
     }
     const enrolled = (programId: number) => prisma.programParticipant.count({ where: { programId } });
+    const statusOf = async (programId: number, personId: number) =>
+        (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } }))?.status;
 
     const takenBack = () => adjustInventory.mock.calls.map(([, delta]) => delta);
     /** A refunds/create delivery; the same refundId again is a Shopify redelivery. */
@@ -877,7 +900,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-325`;
         const e = await makeOnSaleEnrollment({ email: `rs15-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         await prisma.program.update({ where: { id: e.programId }, data: { saleEndedAt: new Date() } });
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(0);
@@ -922,7 +945,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-323`;
         const e = await makeOnSaleEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: e.variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }, { variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
         const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1, personIds: [kidId] }];
         await refund(oid, lines);
         await refund(oid, lines);
@@ -935,7 +958,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-324`;
         const e = await makeOnSaleEnrollment({ email: `rs14-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         await addSibling(e, oid);
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2, currentQuantity: 2 }]);
         const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }];
         await Promise.all([refund(oid, lines), refund(oid, lines)]);
         await refund(oid, lines);
@@ -949,7 +972,7 @@ describe("fast-path reversal webhook helper", () => {
     it("a restocked refund removes the enrollment, flags it, and is idempotent", async () => {
         const oid = `${TAG}-310`;
         const e = await makeOnSaleEnrollment({ email: `rs1-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
         const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }];
         expect(await refund(oid, lines)).toBe(true);
         await refund(oid, lines);
@@ -957,6 +980,35 @@ describe("fast-path reversal webhook helper", () => {
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId, personId: e.personId } })).toBe(1);
         expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", tableName: "ProgramParticipant", secondaryAffectedEntity: e.programId } })).toBe(1);
         expect(takenBack()).toEqual([]);
+    });
+
+    it("a restocked refund on a withdrawn paid place records the refund on the row and keeps it; the restock stands", async () => {
+        const oid = `${TAG}-330`;
+        const e = await makeOnSaleEnrollment({ email: `rs20-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: e.programId, personId: e.personId } },
+            data: { status: "WITHDRAWN", endedAt: new Date() },
+        });
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
+        expect(await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }])).toBe(true);
+        const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId: e.programId, personId: e.personId } } });
+        expect(row?.status).toBe("WITHDRAWN");
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId, personId: e.personId } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", tableName: "ProgramParticipant", action: "EDIT", secondaryAffectedEntity: e.programId } })).toBe(1);
+        expect(takenBack()).toEqual([]);
+    });
+
+    it("a restocked refund on a withdrawn place whose withdrawal already returned the seat takes the extra unit back", async () => {
+        const oid = `${TAG}-331`;
+        const e = await makeOnSaleEnrollment({ email: `rs21-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: e.programId, personId: e.personId } },
+            data: { status: "WITHDRAWN", endedAt: new Date(), seatTakenWithoutSaleAt: new Date() },
+        });
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(takenBack()).toEqual([-1]);
     });
 
     it("a refund without restock only flags; the enrollment stays", async () => {
@@ -979,7 +1031,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-313`;
         const e = await makeOnSaleEnrollment({ email: `rs4-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2, currentQuantity: 2 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
         const flagged = await prisma.paymentException.findMany({ where: { kind: "REFUND", shopifyOrderId: oid }, select: { personId: true } });
         expect(flagged.map((f) => f.personId).sort()).toEqual([e.personId, kidId].sort());
@@ -991,7 +1043,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-318`;
         const e = await makeOnSaleEnrollment({ email: `rs9-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: e.variantId, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }, { variantId: e.variantId, quantity: 1, currentQuantity: 1 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1, personIds: [kidId] }]);
         const left = await prisma.programParticipant.findMany({ where: { programId: e.programId }, select: { personId: true } });
         expect(left.map((r) => r.personId)).toEqual([e.personId]);
@@ -1002,7 +1054,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-314`;
         const e = await makeOnSaleEnrollment({ email: `rs5-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         await addSibling(e, oid);
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2, currentQuantity: 2 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await enrolled(e.programId)).toBe(2);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
@@ -1022,7 +1074,7 @@ describe("fast-path reversal webhook helper", () => {
         const e = await makeOnSaleEnrollment({ email: `rs11-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const claimant = `claimant-${e.variantId}`;
         await prisma.program.update({ where: { id: e.programId }, data: { claimantShopifyVariantId: claimant } });
-        orderLines.mockResolvedValue([{ variantId: claimant, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: claimant, quantity: 1, currentQuantity: 1 }]);
         await refund(oid, [{ variantId: claimant, quantity: 1, lineQuantity: 1, personIds: [e.personId] }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
@@ -1035,7 +1087,7 @@ describe("fast-path reversal webhook helper", () => {
         await addSibling(e, oid);
         const claimant = `claimant-${e.variantId}`;
         await prisma.program.update({ where: { id: e.programId }, data: { claimantShopifyVariantId: claimant } });
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: claimant, quantity: 1 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1, currentQuantity: 1 }, { variantId: claimant, quantity: 1, currentQuantity: 1 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(2);
         expect(takenBack()).toEqual([-1]);
@@ -1044,20 +1096,25 @@ describe("fast-path reversal webhook helper", () => {
     it("one child on an order that bought 2 seats: restocking 1 keeps the child who paid", async () => {
         const oid = `${TAG}-316`;
         const e = await makeOnSaleEnrollment({ email: `rs7-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2, currentQuantity: 2 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
     });
 
-    it("siblings on one order, one withdrew: restocking the withdrawn seat keeps the other", async () => {
+    it("siblings on one order, one withdrew: an unnamed partial restock keeps both and takes the seat back", async () => {
         const oid = `${TAG}-317`;
         const e = await makeOnSaleEnrollment({ email: `rs8-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
-        await prisma.programParticipant.delete({ where: { programId_personId: { programId: e.programId, personId: kidId } } });
-        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: e.programId, personId: kidId } },
+            data: { status: "WITHDRAWN", endedAt: new Date() },
+        });
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2, currentQuantity: 2 }]);
         await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
-        expect(await prisma.programParticipant.count({ where: { programId: e.programId, personId: e.personId } })).toBe(1);
+        expect(await statusOf(e.programId, e.personId)).toBe("ACTIVE");
+        expect(await statusOf(e.programId, kidId)).toBe("WITHDRAWN");
+        expect(takenBack()).toEqual([-1]);
     });
 
     it("a restocked cancellation is not a refund: flags only", async () => {

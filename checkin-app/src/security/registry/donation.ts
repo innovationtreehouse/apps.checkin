@@ -57,6 +57,9 @@ defineRoute({ endpoint: 'GET /api/donations/disbursement-events/[disbursementId]
 defineRoute({ endpoint: 'GET /api/donations/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['DonationQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW });
+// One in-kind gift's page, with its donor, lines and history; same audience as the queue.
+defineRoute({ endpoint: 'GET /api/donations/in-kind/receipt/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/manual/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW });
 
 // The stored upload, served by fileHandler as a text/plain attachment.
 defineFileRoute({ endpoint: 'GET /api/donations/uploaded-files/[id]/blob', authorize: 'finance-or-board', orderedView: FINANCE_OR_BOARD_VIEW, file: { model: 'UploadedFile', field: 'fileBlob' } });
