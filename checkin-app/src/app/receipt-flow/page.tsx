@@ -75,10 +75,10 @@ export default function ReceiptFlowStatusPage() {
             <Section
               title="Receipts"
               section={data.receipt}
-              extra={data.receipt ? { state: "not_delivered", label: "Done, not yet sent to receiving", count: data.receipt.notDelivered } : undefined}
+              extra={data.receipt ? { state: "not_delivered", label: "Done, not yet sent to part mapping", count: data.receipt.notDelivered } : undefined}
             />
           )}
-          <Section title="Receiving" section={data.receiving} />
+          <Section title="Part mapping" section={data.receiving} />
           {data.expense !== undefined && <Section title="Expenses" section={data.expense} />}
         </>
       )}

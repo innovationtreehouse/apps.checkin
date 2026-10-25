@@ -27,10 +27,10 @@ describe("receipt flow status page", () => {
 
     const receipts = await section("Receipts");
     for (const s of ALL_ZERO.receipt.states) expect(within(receipts).getByText(s.label)).toBeInTheDocument();
-    expect(within(receipts).getByText("Done, not yet sent to receiving")).toBeInTheDocument();
+    expect(within(receipts).getByText("Done, not yet sent to part mapping")).toBeInTheDocument();
     expect(within(receipts).getAllByText("0")).toHaveLength(4);
 
-    const receiving = await section("Receiving");
+    const receiving = await section("Part mapping");
     expect(within(receiving).getByText("Label applying")).toBeInTheDocument();
     expect(within(receiving).getAllByText("0")).toHaveLength(4);
 
@@ -46,7 +46,7 @@ describe("receipt flow status page", () => {
     mockFetchJson({ "/api/receipt-flow/status": { asOf: ALL_ZERO.asOf, receiving: { states: [{ state: "applying", label: "Applying", count: 3 }] } } });
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    expect(within(await section("Receiving")).getByText("3")).toBeInTheDocument();
+    expect(within(await section("Part mapping")).getByText("3")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Receipts" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Expenses" })).toBeNull();
   });

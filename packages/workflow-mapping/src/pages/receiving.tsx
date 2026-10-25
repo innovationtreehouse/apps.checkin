@@ -62,7 +62,7 @@ export default function ReceivingPage() {
   return (
     <>
       <Group justify="space-between" mb="md">
-        <Title order={3}>Receiving</Title>
+        <Title order={3}>Part mapping</Title>
         <Anchor component={Link} href="/inventory/receiving/audit-log" size="sm">Audit log</Anchor>
       </Group>
       <SegmentedControl

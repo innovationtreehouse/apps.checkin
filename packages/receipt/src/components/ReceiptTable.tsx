@@ -33,7 +33,7 @@ export default function ReceiptTable({
             <Table.Th>Total</Table.Th>
             <Table.Th>State</Table.Th>
             {paid && <Table.Th>Reimbursement</Table.Th>}
-            {delivery && <Table.Th>Delivery to receiving</Table.Th>}
+            {delivery && <Table.Th>Delivery to part mapping</Table.Th>}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
