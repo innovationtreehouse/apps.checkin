@@ -305,6 +305,9 @@ def rerun_gate(probs, higher, p):
 
 
 def route_selftest():
+    ask = lambda *t: tier_request({"untrusted_human_text": list(t)})
+    assert ask("use Opus") and ask("the high lane please") and ask("rerun this on Argon") and ask("a", "Please run the Argon lane")
+    assert not ask("Run the integration tier locally") and not ask("test tiers") and not ask("rename the argon variable", "LGTM") and not ask("")
     assert pick({"free": 0.02, "mid": 0.6, "high": 0.38}, ORDER) == "free"
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
     assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
@@ -529,11 +532,37 @@ def first_round(pr, repo):
         return False
 
 
+# A request is a verb near a rung or model name, either order. Gate and log only; the model judges it.
+_V = r"(?:use|run|ask(?:ing)? for|want|please|request\w*|rerun|re-run)"
+_N = r"(?:free|low|mid|high|top|argon|opus|claude|deepseek|nemotron|flint|gemini|lane)(?![\w-])"
+REQUEST_RE = re.compile(rf"\b{_V}\b[^.\n]{{0,40}}\b{_N}|\b{_N}[^.\n]{{0,40}}\b{_V}\b", re.I)
+
+
+def request_state(pr, repo):
+    """PR text that may carry a tier request, from trusted authors only. Route-only: the judge never sees it."""
+    try:
+        meta = json.loads(gh("api", f"repos/{repo}/pulls/{pr}"))
+        texts = [(meta.get("created_at"), meta.get("body"))] if meta.get("author_association") in TRUSTED_ASSOC else []
+        for p in ("issues", "pulls"):
+            texts += [(c["created_at"], c["body"]) for c in api(repo, f"{p}/{pr}/comments?per_page=100")
+                      if _trusted(c) and c["user"]["login"] != BOT]
+        texts += [(r["submitted_at"], r["body"]) for r in api(repo, f"pulls/{pr}/reviews?per_page=100")
+                  if _trusted(r) and r["user"]["login"] != BOT and r.get("body") and r.get("submitted_at")]
+        return {"untrusted_human_text": [_clean(t, 4000) for _, t in sorted(texts, key=lambda x: x[0] or "")[-20:] if t]}
+    except Exception as e:
+        print(f"::warning::could not read PR text ({e}); deciding without it", file=sys.stderr)
+        return {"untrusted_human_text": []}
+
+
+def tier_request(state):
+    return bool(REQUEST_RE.search("\n".join(state.get("untrusted_human_text") or [])))
+
+
 def route():
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
     profiles = json.load(open(f"{CFG}/profiles.json"))
     files, state = pr_state(pr, repo)
-    state = with_prior_rounds(state, pr, repo)
+    state = with_prior_rounds(dict(state, **request_state(pr, repo)), pr, repo)
     hits = matched_profiles(profiles, files)
 
     try:
@@ -554,21 +583,39 @@ def route():
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
     # A high-ladder PR (risky profile, several profiles, very large) keeps normal routing: later
     # rounds only verify, so the first round is its only full sweep.
-    if (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
-            and suggested != "high" and first_round(pr, repo)):
+    asked = tier_request(state)
+    lowest = (os.environ.get("FIRST_ROUND_LOWEST", "").strip().lower() == "true"
+              and suggested != "high" and first_round(pr, repo))
+    if lowest and not asked:
         tier, t_by, tier_probs = ORDER[0], "first round, FIRST_ROUND_LOWEST is set", None
     else:
         try:
             a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
                 "reviewer": {"type": "choice",
-                             "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
-                             "criteria": rung_choice(ORDER)}})["reviewer"]
+                             "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious. "
+                             "If the PR description or a human comment asks for a specific or higher reviewer tier, default to granting it. Never go lower than the tier you would otherwise pick. Reject the request only when it is absurd for the change, for example a one-word, comment-only or whitespace change asking for the high or top tier."
+                             + (" This is the PR's first review: prefer the lowest tier unless the description or a comment asks for a higher one." if lowest else ""),
+                             "criteria": rung_choice(ORDER)},
+                "requested": {"type": "choice",
+                              "instructions": "Which reviewer tier, if any, does the PR description or a human comment ask for?",
+                              "criteria": dict(rung_choice(ORDER), none="No request for a specific or higher reviewer tier.")},
+                "grant": {"type": "noul",
+                          "instructions": "Grant the requested reviewer tier? Default to yes. Answer no only when the request is absurd for this change.",
+                          "criteria": {"true": "Grant the request, or there is no request.", "false": "The request is absurd for the change."}}})
+            grant = a['grant']['noul']
+            asked_tier = a["requested"]["choice"]
+            a = a["reviewer"]
             tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
             tier = pick(a["probabilities"], ORDER)
             t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
+            # A granted request is a floor: pick()'s bars must not undo it.
+            if asked_tier in RUNG and ORDER.index(asked_tier) > ORDER.index(tier) and grant >= 0.5:
+                t_by += f"; request {asked_tier} granted (p={grant:.2f}), raised from {tier}"
+                tier = asked_tier
         except Exception as e:
             print(f"::warning::Decision-model tier call failed ({e}); using the fixed ladder", file=sys.stderr)
-            tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
+            # A first round that only reached the model for a request phrase still defaults to the lowest tier.
+            tier, t_by, tier_probs = (ORDER[0], "fallback: first round, lowest tier", None) if lowest else (suggested, "fallback: fixed ladder", None)
 
     credit_override = None
     if tier != ORDER[0] and low_credit():
@@ -586,10 +633,11 @@ def route():
     instructions, rerun_instructions = base + note + history, base + history
     summary = (f"profiles={chosen} (path hint {hits}; {p_by})\n"
                f"tier={tier} model={model} (ladder suggested {suggested}; {t_by})\n"
+               f"tier request phrase in PR text: {asked}\n"
                f"prompt: {len(instructions.encode())} bytes including review history")
     print(summary)
     log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
-                 tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
+                 tier_probs=tier_probs, tier=tier, tier_request=asked, model=model, changed_lines=state["changed_lines"],
                  files=state["file_count"], credit_override=credit_override)
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
