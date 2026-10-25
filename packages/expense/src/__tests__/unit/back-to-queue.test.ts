@@ -12,5 +12,6 @@ describe("lineWaitsOnViewer", () => {
   it("is false when the viewer's only acts are under More, or there are none", () => {
     expect(lineWaitsOnViewer([line(false), line()])).toBe(false);
     expect(lineWaitsOnViewer([])).toBe(false);
+    expect(lineWaitsOnViewer([{}])).toBe(false);
   });
 });
