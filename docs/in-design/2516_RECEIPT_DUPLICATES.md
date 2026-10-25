@@ -190,9 +190,12 @@ member A by file and member B by fields. Every hit joins the group.
 - **Retailer:** case-folded, trimmed, inner spaces collapsed. Decided and
   shipped in #2561. Fuzzy matching is #2558 and is not part of this design's
   first PRs.
-- **Date:** stored as free text, and the receipt editor writes free text, so
-  `10/01/2026` and `2026-10-01` don't match. Proposed: compare parsed
-  calendar dates and make the editor a date input. Q3.
+- **Date:** stored as text, compared exactly. New dates are being made
+  uniform by #2566 (open): the editor becomes a date picker, and an edit or
+  import must send a real YYYY-MM-DD date. The upload form and OCR already
+  write that format. #2566 deliberately leaves dates already stored as they
+  are, so an old `10/01/2026` still won't match a new `2026-10-01`. What's
+  left for duplicates is those old rows. Q3.
 - **Order and receipt numbers:** compared exactly today. Proposed: fold case,
   drop spaces and a leading `#`, the same treatment #2561 gave the retailer.
   Q3.
@@ -451,7 +454,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | --- | --- | --- | --- |
 | Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. | **(a).** A discarded receipt is never paid; a copy of a live receipt matches that receipt directly. (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
 | Q2 | How much **stronger** is a match on a rejected receipt? | (a) Red label, listed first, rejection note shown, and a note required to clear. (b) Label only. (c) Route it to whoever rejected the first. | **(a).** It's the "check more carefully" @thpr asked for at the cost of one sentence. (c) adds a seat on a team where it's the same people. |
-| Q3 | **Normalise dates and numbers?** | (a) Compare parsed dates; fold case, spaces and a leading `#` in order and receipt numbers; make the editor's date a date input. (b) Dates only. (c) Neither. | **(a).** The same purchase typed two ways is the most common miss after vendor drift, and this is the same treatment #2561 gave the retailer. |
+| Q3 | **Normalise old dates and the numbers?** #2566 makes every new date YYYY-MM-DD; this is about dates already stored in another format, and about order and receipt numbers. | (a) Rewrite the old dates to YYYY-MM-DD once, where they parse unambiguously; list the rest for finance. Fold case, spaces and a leading `#` in order and receipt numbers when comparing. (b) Compare old dates by parsing them on every check, leaving the rows as they are. (c) Numbers only; leave old dates. | **(a).** Once the stored dates are uniform, the check stays a plain equality and no other reader has to parse two formats. Folding numbers is the treatment #2561 gave the retailer. |
 | Q4 | An **amount tolerance** tier (same vendor and date, totals within N cents)? The date window is Q13. | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** No source in §11 documents an amount tolerance, and two totals a few cents apart are usually two purchases; ship the exact tiers with groups first and see what's still missed. |
 | Q5 | When #2558's **fuzzy vendor** match lands, is a fuzzy hit flagged like an exact one? | (a) Same hold, weaker label. (b) A badge on the receipt but no hold. | **(a).** One kind of hold keeps the queue simple; the label tells finance how hard to look. |
 | Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |

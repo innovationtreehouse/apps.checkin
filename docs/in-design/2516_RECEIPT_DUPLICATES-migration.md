@@ -11,6 +11,8 @@ rules, delete both files".
 - #2515 pins today's behaviour in ten DB-tier tests
   (`packages/receipt/src/__tests__/integration/three-copies.test.ts`). It is
   another session's draft. It merges as it is; PR 1 below flips its tests.
+- #2566 (open) makes every new receipt date YYYY-MM-DD, including the
+  editor's date picker. It does not touch dates already stored.
 - #2561 (retailer case and spaces) is merged. #2558 (fuzzy retailer) is open
   and not part of this plan.
 
@@ -27,7 +29,7 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
 | 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7, Q12 |
 | 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
-| 6 | app | Date and number normalisation, and the editor's date input; the similar-date tier if Q13 says yes | Q3, Q13 |
+| 6 | mig + app | Old-date cleanup and number folding per Q3; the similar-date tier if Q13 says yes | #2566 merged; Q3, Q13 |
 | 7 | app | Posting re-check: the receipt push carries decided-different receipt ids (contract change in `receipt-types`), the derived QuickBooks-tab reason, the outbox skip, and the stop action | Q8, Q9 |
 | 8 | ops + docs | One-time list of finalized groups for finance (Q11); extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
 
