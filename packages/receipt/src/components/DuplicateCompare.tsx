@@ -171,7 +171,7 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
 
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <FileView title="This receipt's file" receipt={receipt} />
-          {original ? <FileView title="The original's file" receipt={original} /> : <Text size="sm" c="dimmed">The original's file is not loaded.</Text>}
+          {original ? <FileView title="The original's file" receipt={original} /> : <Text size="sm" c="dimmed">{"The original's file is not loaded."}</Text>}
         </SimpleGrid>
 
         <SimpleGrid cols={{ base: 1, md: 2 }}>
