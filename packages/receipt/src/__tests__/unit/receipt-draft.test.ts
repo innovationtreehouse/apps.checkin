@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculatedCents,
   canAddLine,
+  differenceCents,
+  differenceDollars,
   draftDifference,
   draftHeader,
   draftLines,
@@ -132,5 +134,29 @@ describe("draftProblem", () => {
   it("refuses a blank description or a bad quantity", () => {
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { description: " " } } })).toMatch(/description/);
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "0" } } })).toMatch(/quantity/);
+  });
+});
+
+describe("differenceDollars", () => {
+  it("shows whole cents from a cent up", () => {
+    expect(differenceDollars(-50)).toBe("-$0.50");
+    expect(differenceDollars(1234.4)).toBe("$12.34");
+  });
+
+  it("shows a difference under a cent at its real size, never $0.00", () => {
+    expect(differenceDollars(0.5)).toBe("$0.005");
+    expect(differenceDollars(-0.4)).toBe("-$0.004");
+    const epsilon = 0.1 * 3 * 100 - 30;
+    expect(epsilon).not.toBe(0);
+    expect(differenceDollars(epsilon)).not.toMatch(/^\$0(\.0+)?$/);
+  });
+});
+
+describe("differenceCents", () => {
+  it("is the calculated sum minus the header's total, null while either is unreadable", () => {
+    const header = draftHeader(receipt, EMPTY_DRAFT);
+    expect(differenceCents(2700, header)).toBe(50);
+    expect(differenceCents(null, header)).toBeNull();
+    expect(differenceCents(2650, { ...header, receiptTotal: "" })).toBeNull();
   });
 });

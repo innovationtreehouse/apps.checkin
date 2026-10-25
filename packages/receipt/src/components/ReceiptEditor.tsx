@@ -4,7 +4,8 @@ import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   calculatedCents,
   canAddLine,
-  draftDifference,
+  differenceCents,
+  differenceDollars,
   draftHeader,
   EMPTY_LINE,
   lineCents,
@@ -49,7 +50,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
   const subtotal = allLines.map(lineCents).reduce<number | null>((a, b) => (a === null || b === null ? null : a + b), 0);
   const calculated = calculatedCents(allLines, header);
-  const difference = draftDifference(receipt, draft);
+  const difference = differenceCents(calculated, header);
 
   const row = (key: string, line: DraftLine, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
     <Table.Tr key={key}>
@@ -135,7 +136,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
           <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : signedDollars(Math.round(calculated))}</Text></Text>
           {amount("Receipt total", "receiptTotal")}
           <Text size="sm" fw={600} c={difference === 0 ? "green" : "red"}>
-            {difference === null ? "Difference: —" : difference === 0 ? "Matches the receipt total" : `Difference: ${signedDollars(Math.round(difference))}`}
+            {difference === null ? "Difference: —" : difference === 0 ? "Matches the receipt total" : `Difference: ${differenceDollars(difference)}`}
           </Text>
           {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
         </Stack>

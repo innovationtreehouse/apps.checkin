@@ -9,7 +9,7 @@ import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, signedDollars, type Draft, type ServerLine } from "../components/receiptDraft";
+import { differenceDollars, draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -192,7 +192,7 @@ export default function ReceiptDetailPage() {
       const difference = draftDifference(r, draft);
       if (dirty && !(await saveDraft())) return;
       if (difference === 0) await resubmit(dirty);
-      else stillOff(`Saved. Still ${difference === null ? "" : `${signedDollars(Math.round(Math.abs(difference)))} `}off; stays in Totals off.`);
+      else stillOff(`Saved. Still ${difference === null ? "" : `${differenceDollars(Math.abs(difference))} `}off; stays in Totals off.`);
     });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>

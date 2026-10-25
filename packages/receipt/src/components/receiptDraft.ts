@@ -132,12 +132,26 @@ export function calculatedCents(lines: DraftLine[], header: Header): number | nu
   return (parts as number[]).reduce((a, b) => a + b, 0) - discount;
 }
 
-/** How far the draft's calculated sum is from its receipt total, in cents; 0 passes the server's math check. */
-export function draftDifference(r: ServerReceipt, draft: Draft): number | null {
-  const header = draftHeader(r, draft);
-  const calculated = calculatedCents(draftLines(r, draft), header);
+/** How far a calculated sum is from the header's receipt total, in cents; 0 passes the server's math check. */
+export function differenceCents(calculated: number | null, header: Header): number | null {
   const total = parseCents(header.receiptTotal);
   return calculated === null || total === null ? null : calculated - total;
+}
+
+/** How far the draft's calculated sum is from its receipt total, in cents. */
+export function draftDifference(r: ServerReceipt, draft: Draft): number | null {
+  const header = draftHeader(r, draft);
+  return differenceCents(calculatedCents(draftLines(r, draft), header), header);
+}
+
+/**
+ * A non-zero difference as signed dollars: whole cents from a cent up, and its real size under a
+ * cent, so a difference the math check still fails never reads as $0.00.
+ */
+export function differenceDollars(cents: number): string {
+  if (Math.abs(cents) >= 1) return signedDollars(Math.round(cents));
+  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", { maximumSignificantDigits: 2, maximumFractionDigits: 20 });
+  return `${cents < 0 ? "-" : ""}$${dollars}`;
 }
 
 /**

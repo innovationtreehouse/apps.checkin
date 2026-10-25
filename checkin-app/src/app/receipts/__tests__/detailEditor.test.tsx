@@ -100,6 +100,16 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(resubmitted()).toBe(false);
   });
 
+  it("names a difference under a cent rather than calling it $0", async () => {
+    wrap();
+    type("Line 2 quantity", "1.0005");
+    type("Receipt total", "26.50");
+    expect(screen.getByText("Difference: $0.005")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved. Still $0.005 off; stays in Totals off.", color: "yellow", autoClose: false }));
+    expect(resubmitted()).toBe(false);
+  });
+
   it("does not claim success or leave the page when the flow puts it back in Totals off", async () => {
     mockPathname = "/receipts/review/r1";
     mockLandsIn = "validation_failed";
