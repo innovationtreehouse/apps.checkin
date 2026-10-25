@@ -31,6 +31,11 @@ Things every domain takes as true because they are handled outside the app.
 
 - Every Board member is an insider. If an outside Board member ever joins, every
   rule that grants the Board access is reconsidered.
+- Conflicts of interest are checked by household. The app treats a person's
+  household as the practical stand-in for the Ethics Policy's "family". Family
+  outside the household, and business ties, are a deliberate limit: they are not
+  modelled, and people declare them themselves.
+  [Decision — *Policy: Ethics Policy, Art. III §III.2*]
 
 ---
 
