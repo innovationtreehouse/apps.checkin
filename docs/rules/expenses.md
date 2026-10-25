@@ -62,8 +62,8 @@ Income and donation rules are in `revenue.md`.
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
-  entered, where the field was blank (a tax of $0 counts as blank), or
-  changed, with the earlier value and the new one.
+  entered, where the field was blank, or changed, with the earlier value and
+  the new one. A tax of $0 is a value, so a tax raised from $0 is changed.
   [Decision]
 
 - A person conflicted on an expense may not choose which QuickBooks entry it is

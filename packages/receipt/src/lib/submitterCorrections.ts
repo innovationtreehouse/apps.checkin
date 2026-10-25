@@ -20,8 +20,8 @@ const isBlank = (value: string | null) => value === null || value.trim() === "" 
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /**
- * The corrections a receipt's submitter made, from their audited field edits oldest first. No tax is
- * stored as $0, so a tax that was $0 before counts as entered.
+ * The corrections a receipt's submitter made, from their audited field edits oldest first. Only a
+ * field that was truly blank counts as entered; a $0 tax was a value, so changing it is a change.
  */
 export function submitterCorrections(edits: FieldEdit[], current: { taxCents: number | null; receiptDate: string | null }): SubmitterCorrection[] {
   const first = (field: string) => edits.find((e) => e.fieldChanged === field);
@@ -33,8 +33,7 @@ export function submitterCorrections(edits: FieldEdit[], current: { taxCents: nu
   }
   const tax = first("taxCents");
   if (tax) {
-    const beforeCents = isBlank(tax.valueBefore) ? 0 : Number(tax.valueBefore);
-    const before = beforeCents === 0 ? null : dollars(beforeCents);
+    const before = isBlank(tax.valueBefore) ? null : dollars(Number(tax.valueBefore));
     corrections.push({ field: "tax", kind: before === null ? "entered" : "changed", before, after: dollars(current.taxCents ?? 0) });
   }
   return corrections;

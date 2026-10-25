@@ -56,6 +56,15 @@ describeDb("a receipt missing its retailer, date or total", () => {
     expect(row?.valueAfter).toBe(`financial_review (the submitter entered the date (${today}))`);
   });
 
+  it("labels a tax the submitter raised from $0 as changed, since $0 is a value", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    await receiptService.edit(r.id, "submitter", { tax: 1, receiptTotal: 6 });
+    expect((await receiptService.submitterConfirm(r.id)).state).toBe("financial_review");
+    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "pipeline_transition", valueAfter: { startsWith: "financial_review" } } });
+    expect(row?.valueAfter).toContain("the submitter changed the tax from $0.00 to $1.00");
+  });
+
   it("labels a tax the submitter changed with its earlier value and the new one", async () => {
     configure({ receiptSink: ports.receiptSink, ocr: okOcr({ tax: 1, receiptTotal: 6 }) });
     const r = await receiptService.upload(textFile(), "text/plain", {});

@@ -12,8 +12,9 @@ describe("submitterCorrections", () => {
     expect(submitterCorrections([edit("receiptDate", "2026-09-01")], now)).toEqual([{ field: "date", kind: "changed", before: "2026-09-01", after: "2026-10-01" }]);
   });
 
-  it("calls a tax entered where it was $0, and changed where it held an amount, in dollars", () => {
-    expect(submitterCorrections([edit("taxCents", "0")], now)).toEqual([{ field: "tax", kind: "entered", before: null, after: "$1.50" }]);
+  it("calls a tax changed from whatever it held, $0 included, in dollars; entered only where it was blank", () => {
+    expect(submitterCorrections([edit("taxCents", "0")], now)).toEqual([{ field: "tax", kind: "changed", before: "$0.00", after: "$1.50" }]);
+    expect(submitterCorrections([edit("taxCents", null)], now)).toEqual([{ field: "tax", kind: "entered", before: null, after: "$1.50" }]);
     expect(submitterCorrections([edit("taxCents", "100")], now)).toEqual([{ field: "tax", kind: "changed", before: "$1.00", after: "$1.50" }]);
   });
 
