@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { dollars, isDiscardedDuplicate, STATE_LABELS, type ReceiptListRow } from "./api";
+import { dollars, isDiscardedDuplicate, receiptStateLabel, type ReceiptListRow } from "./api";
 import { SUBMITTER_ACTION_STATES } from "../nav";
 
 /**
@@ -34,7 +34,7 @@ export default function ReceiptTable({
             <Table.Th>Total</Table.Th>
             <Table.Th>State</Table.Th>
             {paid && <Table.Th>Reimbursement</Table.Th>}
-            {delivery && <Table.Th>Delivery to receiving</Table.Th>}
+            {delivery && <Table.Th>Delivery to part mapping</Table.Th>}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -46,13 +46,9 @@ export default function ReceiptTable({
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
-                {isDiscardedDuplicate(r) ? (
-                  <>
-                    Discarded as a duplicate
-                    {r.duplicateSuspectReceiptId && <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>}
-                  </>
-                ) : (
-                  STATE_LABELS[r.state] ?? r.state
+                {receiptStateLabel(r)}
+                {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
+                  <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
                 )}
                 {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>

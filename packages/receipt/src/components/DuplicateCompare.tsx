@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
 import { BASE, dollars, STATE_LABELS } from "./api";
+import ReceiptFile from "./ReceiptFile";
 
 export interface CompareLine {
   id: number;
@@ -31,6 +32,20 @@ export interface CompareReceipt {
   receiptTotalCents: number | null;
   pushedAt?: string | null;
   lineItems: CompareLine[];
+}
+
+const fileHref = (r: CompareReceipt) => `${BASE}/${encodeURIComponent(r.id)}/file`;
+
+function FileView({ title, receipt }: { title: string; receipt: CompareReceipt }) {
+  return (
+    <Stack gap={4}>
+      <Group justify="space-between">
+        <Text fw={500} size="sm">{title}</Text>
+        <Anchor href={fileHref(receipt)} download size="xs">Download</Anchor>
+      </Group>
+      <ReceiptFile src={fileHref(receipt)} mimeType={receipt.mimeType} title={title} />
+    </Stack>
+  );
 }
 
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
@@ -148,16 +163,16 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
                 <Text size="xs" ff="monospace" title={receipt.fileHash}>{receipt.fileHash?.slice(0, 12) ?? "—"}</Text>
               </Table.Td>
               <Table.Td>
-                {original && (
-                  <Group gap="xs">
-                    <Text size="xs" ff="monospace" title={original.fileHash}>{original.fileHash?.slice(0, 12) ?? "—"}</Text>
-                    <Anchor href={`${BASE}/${encodeURIComponent(original.id)}/file`} target="_blank" size="xs">View its file</Anchor>
-                  </Group>
-                )}
+                {original && <Text size="xs" ff="monospace" title={original.fileHash}>{original.fileHash?.slice(0, 12) ?? "—"}</Text>}
               </Table.Td>
             </Table.Tr>
           </Table.Tbody>
         </Table>
+
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <FileView title="This receipt's file" receipt={receipt} />
+          {original ? <FileView title="The original's file" receipt={original} /> : <Text size="sm" c="dimmed">{"The original's file is not loaded."}</Text>}
+        </SimpleGrid>
 
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <Lines title="This receipt's lines" lines={receipt.lineItems} />

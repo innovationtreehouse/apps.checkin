@@ -53,8 +53,9 @@ const writes = endpoints.filter(e => !e.startsWith('GET '));
 const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
+const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
 const financeWrites = writes.filter(e => !DECISIONS.includes(e));
-const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e));
+const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
 async function callJson(endpoint: string) {
@@ -77,9 +78,9 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 30 JSON routes (14 reads, 16 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(30);
-        expect(reads).toHaveLength(14);
+    it('registers 32 JSON routes (16 reads, 16 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(32);
+        expect(reads).toHaveLength(16);
         expect(writes).toHaveLength(16);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
@@ -362,4 +363,49 @@ describe('in-kind settle route', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(settled);
     });
+});
+
+describe('in-kind gift detail routes', () => {
+    const gift = {
+        id: 1,
+        source: 'manual',
+        receiptId: null,
+        donationDate: '2026-10-01',
+        recordedByUsername: 'ops',
+        outcome: 'ACCEPTED',
+        state: null,
+        waitingOn: [],
+        inventorySourceKey: 'donation:1',
+        inventoryLoadedAt: '2026-10-01T12:00:00.000Z',
+        lines: [{ id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800 }],
+        events: [{ id: 5, eventType: 'IN_KIND_DECIDED', actorUsername: 'fin', occurredAt: '2026-10-02T00:00:00.000Z', payload: '{"outcome":"ACCEPTED"}' }],
+    };
+    const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
+
+    async function getAs(endpoint: string, flags: Flags) {
+        signIn(7, flags);
+        const impl = jest.fn(async () => ({
+            InKindGiftDetailView: {
+                ...gift,
+                ...donor,
+                uploadedByUserId: 9,
+                lines: [{ ...gift.lines[0], donorLastName: 'Doe' }],
+                events: [{ ...gift.events[0], actorUserId: 7, orgId: 'treehouse' }],
+            },
+        }));
+        const res = await handler(endpoint, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/x/1'),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        return { status: res.status, body: res.status === 200 ? await res.json() : undefined };
+    }
+
+    it.each(DETAILS.flatMap(e => [{ isFinance: true }, { isBoardMember: true }].map(flags => [e, flags] as const)))(
+        '%s shows %p the gift with its donor, lines and history and nothing else',
+        async (endpoint, flags) => {
+            const { status, body } = await getAs(endpoint, flags);
+            expect(status).toBe(200);
+            expect(body).toEqual({ ...gift, ...donor });
+        },
+    );
 });

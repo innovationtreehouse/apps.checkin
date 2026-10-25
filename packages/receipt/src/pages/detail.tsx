@@ -8,7 +8,7 @@ import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, T
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
-import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 
@@ -211,7 +211,7 @@ export default function ReceiptDetailPage() {
         <Title order={3}>{r.retailer ?? "Receipt"}</Title>
         <Group gap="xs">
           {r.isInKind && <Badge>Donation</Badge>}
-          <Badge variant="light">{STATE_LABELS[r.state] ?? r.state}</Badge>
+          <Badge variant="light">{receiptStateLabel(r)}</Badge>
         </Group>
       </Group>
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
