@@ -216,5 +216,6 @@ export function catalogResolving(gtinByItemId: Record<number, string>) {
     lookupItems: async () => Object.entries(gtinByItemId).map(([id, gtin13]) => ({ index: Number(id), gtin13, conversionVersion: 1 })),
     getItem: async (gtin13: string) =>
       Object.values(gtinByItemId).includes(gtin13) ? { gtin13, categoryId: 1, subcategoryId: 10 } : null,
+    getItemNames: async () => [],
   };
 }

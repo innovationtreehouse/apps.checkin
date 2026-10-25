@@ -19,6 +19,7 @@ const inv = vi.hoisted(() => ({
   listSubcategories: vi.fn(),
   lookupItems: vi.fn(),
   getItem: vi.fn(),
+  getItemNames: vi.fn(),
 }));
 
 /** The item sits in Hardware/Cables (account 4000) or Tools/Drills (account 5000). */

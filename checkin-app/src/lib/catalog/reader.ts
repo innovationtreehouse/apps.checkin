@@ -28,6 +28,8 @@ export const catalogReader = {
 
   getItem: (gtin13: string) => orInert("getItem", () => readService.getItem(gtin13), null),
 
+  getItemNames: (gtin13s: string[]) => orInert("getItemNames", () => readService.getItemNames(gtin13s), []),
+
   searchItems: (query: string) => orInert("searchItems", () => readService.searchItems(query), []),
 
   async lookupItems(retailer: string, lookups: CatalogItemsLookup["lookups"]) {
