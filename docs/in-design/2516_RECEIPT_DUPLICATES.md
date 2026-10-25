@@ -182,7 +182,7 @@ compare panel shows beside each member:
 | Same vendor and order number | "Same order number" | Strong |
 | Same vendor and receipt number | "Same receipt number" | Strong |
 | Same vendor, date and total | "Same vendor, date and total" | Medium: two equal purchases on one day are possible |
-| Fuzzy vendor, same date and total (#2558, later) | "Similar vendor, same date and total" | Weak; see Q5 |
+| Fuzzy vendor, same date and total (#2558, later) | "Similar vendor, same date and total" | Weak: same hold, weaker label (Q5, decided) |
 | Same vendor and total, similar date (proposed) | "Same vendor and total, 2 days apart" | Weak; see Q13 |
 
 All tiers are evaluated, not just the first that hits, so a receipt can match
@@ -526,7 +526,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q2 | ~~How much stronger is a match on a rejected receipt?~~ | **Decided by @thpr:** a readable label, red is fine; not listed first, no required note. "Don't go overboard." | — |
 | Q3 | ~~Fold order and receipt numbers when comparing?~~ | **Decided by @thpr: (a).** Fold case, spaces and a leading `#`, as #2561 did for the retailer. Dates need nothing beyond #2566. | — |
 | Q4 | ~~An amount tolerance tier?~~ | **Decided by @thpr: (a).** Not now; revisit with #2558's data. | — |
-| Q5 | When #2558's **fuzzy vendor** match lands, is a fuzzy hit flagged like an exact one? | (a) Same hold, weaker label. (b) A badge on the receipt but no hold. | **(a).** One kind of hold keeps the queue simple; the label tells finance how hard to look. |
+| Q5 | ~~Is a fuzzy vendor hit flagged like an exact one?~~ | **Decided by @thpr: (a).** Same hold, weaker label. | — |
 | Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |
 | Q7 | ~~When is a note required to say "different purchases"?~~ | **Settled by Q2:** never. | — |
 | Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case. |
