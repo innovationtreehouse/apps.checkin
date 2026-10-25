@@ -42,9 +42,8 @@ function visit(id: number, householdId: number, person: Record<string, unknown> 
 beforeEach(() => {
     findMany.mockReset();
     boardSettingsFindUnique.mockReset();
-    // No recheck policy configured — the default. Clearance never expires, but a
-    // person still needs one on file.
-    boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 });
+    // A recheck policy long enough that the default year-old check stays valid.
+    boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)), bgRecheckMonths: 24 });
 });
 
 async function count(rows: ReturnType<typeof visit>[]) {
@@ -100,6 +99,21 @@ describe("clearance validity", () => {
     it("keeps an adult whose clearance is inside the recheck window", async () => {
         boardSettingsFindUnique.mockResolvedValue(settings);
         expect(await count([visit(1, 10), visit(2, 20)])).toBe(2);
+    });
+
+    it("counts no one while the board has set no recheck policy", async () => {
+        boardSettingsFindUnique.mockResolvedValue({ ...settings, bgRecheckMonths: 0 });
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
+    });
+
+    it("counts no one when there is no settings row", async () => {
+        boardSettingsFindUnique.mockResolvedValue(null);
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
+    });
+
+    it("counts no one while no membership-year boundary is set", async () => {
+        boardSettingsFindUnique.mockResolvedValue({ ...settings, orgMembershipYearBoundary: null });
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
     });
 });
 

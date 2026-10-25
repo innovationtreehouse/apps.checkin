@@ -11,10 +11,13 @@ import {
   type PaidStatus,
   type ReceiptPrincipal,
   type ReimbursementAsk,
+  type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
+import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
+import { givenUp, pushRecords } from "./catchUp";
 import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
@@ -314,6 +317,20 @@ export async function discardBodyCopy(id: string, siblingIds: string[]): Promise
   });
 }
 
+/** The person the uploader names as reimbursee: themselves unless they picked a live adult. */
+async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undefined): Promise<ReimburseeOption> {
+  if (personId === undefined || personId === actor.id) {
+    return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
+  }
+  const person = await ports().reimbursees.byId(personId);
+  if (!person) throw new ServiceError(400, "The person to reimburse was not found");
+  if (!person.isAdult) throw new ServiceError(400, `${person.name} cannot be reimbursed: only an adult can be`);
+  return { id: person.id, name: person.name };
+}
+
+/** At most this many people answer one reimbursee search. */
+const REIMBURSEE_SEARCH_LIMIT = 20;
+
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);
@@ -332,8 +349,9 @@ export const receiptService = {
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
 
-    const reimbursement = input.needsReimbursement
-      ? { needsReimbursement: true, reimbursementFor: actor.name ?? `${actor.firstName} ${actor.lastName}`, reimburseePersonId: actor.id }
+    const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input.reimburseePersonId) : null;
+    const reimbursement = reimbursee
+      ? { needsReimbursement: true, reimbursementFor: reimbursee.name, reimburseePersonId: reimbursee.id }
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
@@ -360,6 +378,10 @@ export const receiptService = {
       lines: d ? d.lineItems.map(toLine) : [],
       auditAction: "uploaded",
       limits: limits(),
+      afterInsert: reimbursee
+        ? (tx, receiptId) =>
+            audit(tx, receiptId, actor, { action: "reimbursee_named", fieldChanged: "reimburseePersonId", valueAfter: String(reimbursee.id) })
+        : undefined,
     });
 
     if (input.isInKind) await sendDonorSync(id, actor);
@@ -558,6 +580,14 @@ export const receiptService = {
     return load(id, "finance", actor);
   },
 
+  /** People matching the typed name, for naming the reimbursee on upload. Under two characters matches nobody. */
+  async reimburseeOptions(rawQuery: string | null): Promise<ReimburseeOption[]> {
+    await requireActor();
+    const query = (rawQuery ?? "").trim().slice(0, 100);
+    if (query.length < 2) return [];
+    return ports().reimbursees.search(query, REIMBURSEE_SEARCH_LIMIT);
+  },
+
   async resubmit(id: string, access: Access) {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
@@ -585,7 +615,7 @@ export const receiptService = {
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
-  /** "I paid for this myself". The reimbursee is always the uploader, never a body field. */
+  /** "I paid for this myself": ticking it names the uploader as reimbursee. */
   async setReimbursement(id: string, rawInput: unknown) {
     const actor = await requireActor();
     const { needsReimbursement } = parse(z.object({ needsReimbursement: z.boolean() }).strict(), rawInput);
@@ -707,10 +737,40 @@ export const receiptService = {
     return receiptRepo.list({ orgId: (await getOrg()).id });
   },
 
-  /** An unknown state matches no rows. */
-  async listByState(state: string) {
+  /**
+   * The org's receipts narrowed by `filter`; an unknown state matches no rows. A finalized
+   * receipt not yet delivered to receiving carries its push record.
+   */
+  async list(filter: ReceiptListFilter) {
     await requireActor();
-    return receiptRepo.list({ orgId: (await getOrg()).id, details: { state } });
+    const orgId = (await getOrg()).id;
+    const rows = await receiptRepo.list(listFilterWhere(orgId, filter));
+    const undelivered = rows.filter((r) => r.state === "receipt_finalized" && !r.pushedAt).map((r) => r.id);
+    const records = await pushRecords(orgId, undelivered);
+    return rows.map((r) => ({ ...r, ...records.get(r.id) }));
+  },
+
+  /**
+   * How many of the org's receipts each review queue holds, for the review screen's tabs. For a
+   * FINANCE viewer the queues that wait on FINANCE leave out receipts the viewer is conflicted on,
+   * matching the nav pill; every other count is org-wide.
+   */
+  async queueCounts(financeViewerId: number | null): Promise<{ byState: Record<string, number>; notPushed: number; pushGivenUp: number }> {
+    await requireActor();
+    const orgId = (await getOrg()).id;
+    const [groups, undelivered, finance] = await Promise.all([
+      db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
+      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { id: true } }),
+      financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
+    ]);
+    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
+    if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
+    return {
+      byState,
+      notPushed: undelivered.length,
+      pushGivenUp: stopped.size,
+    };
   },
 
   /**

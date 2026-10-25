@@ -1,6 +1,7 @@
 "use client";
+import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Anchor, Badge, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
+import { Anchor, Badge, Checkbox, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
@@ -18,14 +19,42 @@ interface ExpenseRow {
 }
 
 const VIEWS = [
-  { value: "all", label: "All" },
-  { value: "assign_ownership", label: "Assign ownership" },
-  { value: "resolve_ownership", label: "Resolve ownership" },
-  { value: "owner_approval", label: "Owner approval" },
-  { value: "owner_exception", label: "Exceptions" },
-  { value: "capital_review", label: "Capital review" },
-  { value: "set_depreciation_cycle", label: "Depreciation" },
-  { value: "qb_pending", label: "QB pending" },
+  { value: "all", label: "All", description: "Every expense you can see, newest first. Open one to act on it." },
+  {
+    value: "assign_ownership",
+    label: "Assign ownership",
+    description: "Expenses with lines that have no owner yet. FINANCE assigns each line an owner.",
+  },
+  {
+    value: "resolve_ownership",
+    label: "Resolve ownership",
+    description: "Lines the submitter marked as owner unknown. FINANCE picks an owner for each.",
+  },
+  {
+    value: "owner_approval",
+    label: "Owner approval",
+    description: "Lines waiting on their bucket's approval. The bucket owner or a treasurer approves each or raises an exception.",
+  },
+  {
+    value: "owner_exception",
+    label: "Exceptions",
+    description: "Lines an approver raised an exception on. FINANCE settles each one.",
+  },
+  {
+    value: "capital_review",
+    label: "Capital review",
+    description: "Expenses at or over the capital thresholds. FINANCE decides which lines are capital assets.",
+  },
+  {
+    value: "set_depreciation_cycle",
+    label: "Depreciation",
+    description: "Capital expenses with no depreciation schedule yet. FINANCE sets the cycle and owner bucket.",
+  },
+  {
+    value: "qb_pending",
+    label: "QB pending",
+    description: "Signed-off expenses waiting for the app to post them to QuickBooks. Nobody needs to act.",
+  },
 ];
 
 /** /expense/expenses — FINANCE and Board's expense queue. */
@@ -35,23 +64,39 @@ export default function ExpensesPage() {
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Expense Ops and the approver's Programs I Lead tab.
+ * same list serves Expense Ops and the approver's Programs I Lead tab. `viewBadge` is the host's
+ * pill beside a view's label: what the viewer can act on there.
  */
-export function ExpenseList({ detailBase, defaultView }: { detailBase: string; defaultView: string }) {
+export function ExpenseList({
+  detailBase,
+  defaultView,
+  viewBadge,
+}: {
+  detailBase: string;
+  defaultView: string;
+  viewBadge?: (view: string) => ReactNode;
+}) {
   // The view and page ride in the URL, so an expense opened from here returns to the same slice.
   const router = useRouter();
   const params = useSearchParams();
-  const view = VIEWS.some((v) => v.value === params.get("view")) ? (params.get("view") as string) : defaultView;
+  const current = VIEWS.find((v) => v.value === params.get("view")) ?? VIEWS.find((v) => v.value === defaultView) ?? VIEWS[0];
+  const view = current.value;
   const page = Math.max(1, Number(params.get("page")) || 1);
-  const listHref = (v: string, p: number) => `${detailBase}?view=${v}&page=${p}`;
-  const show = (v: string, p: number) => router.replace(listHref(v, p), { scroll: false });
+  // Only the All view lists closed expenses; the other views are work still in progress.
+  const onlyActive = params.get("active") !== "0";
+  const activeOnly = view === "all" && onlyActive;
+  const listHref = (v: string, p: number, active = onlyActive) => `${detailBase}?view=${v}&page=${p}${active ? "" : "&active=0"}`;
+  const show = (v: string, p: number, active = onlyActive) => router.replace(listHref(v, p, active), { scroll: false });
   const counts = useLoad<Record<string, number>>("/counts");
-  const rows = useLoad<ExpenseRow[]>(`/expenses?view=${view}&page=${page}&limit=${PAGE_SIZE}`);
-  const total = useLoad<{ total: number }>(`/expenses/count?view=${view}`);
+  const filter = `view=${view}${activeOnly ? "&active=1" : ""}`;
+  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`);
+  const total = useLoad<{ total: number }>(`/expenses/count?${filter}`);
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
-    return n ? `${v.label} (${n})` : v.label;
+    const text = n ? `${v.label} (${n})` : v.label;
+    const badge = viewBadge?.(v.value);
+    return badge ? <Group gap={6} wrap="nowrap" justify="center">{text}{badge}</Group> : text;
   };
 
   return (
@@ -63,6 +108,15 @@ export function ExpenseList({ detailBase, defaultView }: { detailBase: string; d
         onChange={(v) => show(v, 1)}
         data={VIEWS.map((v) => ({ value: v.value, label: label(v) }))}
       />
+      <Text c="dimmed" size="sm" mb="md">{current.description}</Text>
+      {view === "all" && (
+        <Checkbox
+          mb="md"
+          label="Only show active"
+          checked={onlyActive}
+          onChange={(e) => show(view, 1, e.currentTarget.checked)}
+        />
+      )}
       {rows.error && <LoadError what="expenses" message={rows.error} onRetry={rows.reload} />}
       <Table striped highlightOnHover>
         <Table.Thead>

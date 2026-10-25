@@ -9,6 +9,7 @@ import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
+import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
 
 interface Line {
   id: number;
@@ -17,6 +18,7 @@ interface Line {
   partNumber: string | null;
   manufacturer: string | null;
   nonInventory?: boolean;
+  manualQbAccount?: string | null;
   quantity: number;
   unitPriceCents: number;
   totalPriceCents: number;
@@ -60,6 +62,7 @@ interface Expense {
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
+  holds?: Hold[];
 }
 interface SignoffStatus {
   lineItemId: number;
@@ -332,6 +335,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           })}
         </Table.Tbody>
       </Table>
+
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={reloadAll} />
 
       {(e.flags ?? []).filter((f) => !f.checkedOffAt).length > 0 && (
         <Paper withBorder p="sm">

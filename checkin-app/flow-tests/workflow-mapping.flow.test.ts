@@ -4,8 +4,8 @@
  * Real HTTP against the running dev server and the seeded workflow-mapping DB
  * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
  *
- * X3 (catalog reads), X4 and X5 are bound, so a pushed receipt resolves; the
- * catalog submissions port is inert, so propose answers 502.
+ * X3 (catalog reads), X4, X5 and X8 (catalog submissions) are bound, so a pushed
+ * receipt resolves and propose reaches the catalog, which validates what it is sent.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -28,7 +28,7 @@ const WRITES: Array<[string, unknown?]> = [
   ["/api/workflow-mapping/receipts/1/retry-apply"],
   ["/api/workflow-mapping/receipts/1/lines/1/associate", { gtin13: "0022222222220" }],
   ["/api/workflow-mapping/receipts/1/lines/1/propose", {
-    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
+    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable",
   }],
   ["/api/workflow-mapping/receipts/1/lines/1/non-inventory"],
 ];
@@ -153,7 +153,7 @@ describe("workflow mapping — manager journey", () => {
     const before = await stock(m);
     const line = `/api/workflow-mapping/receipts/${receipt.id}/lines/${open.id}`;
 
-    // Catalog submissions are not bound yet, so propose fails loudly.
+    // The catalog rejects a usage behavior outside its list; the failure surfaces as 502 and the line stays open.
     expect((await post(m, `${line}/propose`, {
       proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
     })).status).toBe(502);

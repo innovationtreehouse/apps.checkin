@@ -10,6 +10,7 @@ import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
@@ -475,7 +476,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         seesFinance ? prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }) : 0,
         // Required membership settings — count how many are still unset so the board
         // sees a red pill until all are configured. Empty string counts as unset for
-        // the Shopify fields; bgRecheckMonths <= 0 means the re-check interval is unset;
+        // the Shopify fields; isRecheckPolicySet says whether the re-check interval is set;
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
@@ -489,7 +490,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
     const settingsMisconfig =
         (boardSettings?.orgMembershipVariantId ? 0 : 1) +
         (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
-        ((boardSettings?.bgRecheckMonths ?? 0) > 0 ? 0 : 1) +
+        (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
