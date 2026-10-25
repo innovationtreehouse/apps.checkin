@@ -8,7 +8,7 @@ import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, catalogApi, errorMessage, formatCents, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
 import { type LineFormKind, lineFormBody } from "../lib/line-form";
-import { APPLIED_LINES_LOCKED, lineLockReason } from "../lib/line-lock";
+import { lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
   id: number;
@@ -159,9 +159,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       {receipt.state === "applying" && (
         <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>
       )}
-      {canManage && lockReason === APPLIED_LINES_LOCKED && (
+      {canManage && receipt.state === "apply_failed" && (
         <Alert color="gray" mb="md" title="Lines locked">
-          {lockReason} Retry sends the part that failed with the same lines.
+          Lines are locked once a receipt is sent to apply. Retry sends the part that failed with the same lines.
         </Alert>
       )}
       {canManage && (
