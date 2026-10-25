@@ -31,7 +31,7 @@ beforeEach(async () => {
 });
 
 describeDb("S5 remap", () => {
-  it("remaps lines on pending_review and apply_failed receipts only", async () => {
+  it("remaps lines on pending_review receipts only", async () => {
     const pending = await provisionalLine("pending_review");
     const failed = await provisionalLine("apply_failed");
     const applying = await provisionalLine("applying");
@@ -39,7 +39,7 @@ describeDb("S5 remap", () => {
 
     await orgEventConsumer.onOrgEvents([approved(5)]);
 
-    for (const ls of [pending, failed]) {
+    for (const ls of [pending]) {
       expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
         recognitionStatus: "recognized",
         assignedGtin13: REAL,
@@ -47,13 +47,13 @@ describeDb("S5 remap", () => {
         conversionVersion: 2,
       });
     }
-    for (const ls of [applying, resolved]) {
+    for (const ls of [failed, applying, resolved]) {
       expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
         recognitionStatus: "provisional",
         assignedGtin13: null,
       });
     }
-    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(2);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
     expect(await cursor()).toBe(5);
   });
 

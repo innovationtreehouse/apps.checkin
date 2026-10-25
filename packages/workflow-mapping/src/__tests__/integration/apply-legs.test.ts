@@ -1,4 +1,4 @@
-/** Per-leg applied state: a retry never re-sends an applied leg, and a receipt's lines lock once any leg applied. */
+/** Per-leg applied state: a retry never re-sends an applied leg, and an apply_failed receipt's lines stay locked. */
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { lineItemService } from "../../services/lineItemService";
@@ -56,7 +56,7 @@ describeDb("per-leg applied state", () => {
     expect(row.inventoryAppliedAt).toBeNull();
   });
 
-  const LOCKED = { status: 409, message: "Part of this receipt was already applied, so its lines are locked." };
+  const LOCKED = { status: 409, message: `Cannot edit lines of a receipt in state "apply_failed"` };
   const PROPOSAL = { proposedName: "W", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable" };
 
   async function expectLocked(receiptId: number, lineId: number) {
@@ -95,15 +95,20 @@ describeDb("per-leg applied state", () => {
     expect(sinks.calls.inventory[1].lineItems.map((li) => li.gtin13)).toEqual(["0000000000017"]);
   });
 
-  it("apply_failed with no leg applied stays editable", async () => {
+  it("locks the lines of an apply_failed receipt with no leg applied, and retry sends the same lines", async () => {
     const r = await makeReceipt({ state: "applying" });
     const ls = await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
     sinks.fail.expense = true;
     sinks.fail.inventory = true;
     expect((await receiptService.apply(r.id)).state).toBe("apply_failed");
-    await lineItemService.markNonInventory(r.id, ls.id);
-    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).recognitionStatus).toBe("non_inventory");
-    expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType: "line_marked_non_inventory" } })).toBe(1);
+    const [firstInventory, firstExpense] = [sinks.calls.inventory.at(-1), sinks.calls.expense.at(-1)];
+    await expectLocked(r.id, ls.id);
+    sinks.fail.expense = false;
+    sinks.fail.inventory = false;
+    await receiptService.retryApply(r.id);
+    expect(await receiptService.apply(r.id)).toEqual({ state: "resolved" });
+    expect(sinks.calls.inventory.at(-1)).toEqual(firstInventory);
+    expect(sinks.calls.expense.at(-1)).toEqual(firstExpense);
   });
 
   it("names each leg that failed in the reason", async () => {

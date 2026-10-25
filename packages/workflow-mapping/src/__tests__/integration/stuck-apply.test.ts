@@ -9,7 +9,6 @@ import {
   STUCK_APPLY_SWEEP_CAP,
   sweepStuckApplying,
 } from "../../lib/apply-receipt";
-import { APPLIED_LINES_LOCKED } from "../../lib/line-lock";
 import { lineItemService } from "../../services/lineItemService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
@@ -187,7 +186,7 @@ describeDb("sweepStuckApplying attempt cap", () => {
     expect((await row(r.id)).expenseAppliedAt).not.toBeNull();
 
     const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } });
-    const locked = { status: 409, message: APPLIED_LINES_LOCKED };
+    const locked = { status: 409, message: `Cannot edit lines of a receipt in state "apply_failed"` };
     await expect(lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" })).rejects.toMatchObject(locked);
     await expect(lineItemService.markNonInventory(r.id, ls.id)).rejects.toMatchObject(locked);
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toEqual(before);

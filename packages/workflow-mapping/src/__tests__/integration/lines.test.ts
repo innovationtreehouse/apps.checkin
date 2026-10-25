@@ -131,8 +131,8 @@ describeDb("non-inventory and auto-proceed", () => {
   });
 });
 
-describeDb("line edits are refused on applying and resolved receipts", () => {
-  for (const state of ["applying", "resolved"] as const) {
+describeDb("line edits are refused once a receipt is sent to apply", () => {
+  for (const state of ["applying", "apply_failed", "resolved"] as const) {
     it(`409 on ${state} for every line decision`, async () => {
       const r = await makeReceipt({ state });
       const ls = await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
@@ -148,14 +148,6 @@ describeDb("line edits are refused on applying and resolved receipts", () => {
       expect(submitted.proposals).toHaveLength(0);
     });
   }
-
-  it("edits stay allowed on apply_failed (and do not auto-proceed)", async () => {
-    const r = await makeReceipt({ state: "apply_failed" });
-    const ls = await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
-    await lineItemService.markNonInventory(r.id, ls.id);
-    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).recognitionStatus).toBe("non_inventory");
-    expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).state).toBe("apply_failed");
-  });
 });
 
 describeDb("an id-less session is unauthenticated", () => {

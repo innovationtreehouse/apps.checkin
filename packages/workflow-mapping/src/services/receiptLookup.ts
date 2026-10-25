@@ -28,10 +28,8 @@ export async function loadEditableLine(receiptId: number, lineId: number) {
   return { received, lineStatus, receipt: parsed.receipt, lineItem };
 }
 
-/** Lines are edited only in pending_review or apply_failed, and only while no leg has applied or may have applied. */
-export function assertEditable(
-  received: Pick<ReceivedReceipt, "state" | "inventoryAppliedAt" | "inventoryUnconfirmedAt" | "expenseAppliedAt" | "donationAppliedAt">,
-): void {
+/** Lines are edited only in pending_review. */
+export function assertEditable(received: Pick<ReceivedReceipt, "state">): void {
   const reason = lineLockReason(received);
   if (reason) throw httpError(409, reason);
 }
