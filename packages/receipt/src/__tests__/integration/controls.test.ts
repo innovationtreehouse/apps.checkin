@@ -250,7 +250,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
-  it("refuses every finance edit, line change and discard; an independent finance user makes them", async () => {
+  it("refuses every finance edit, line change, discard and reject; an independent finance user edits and rejects", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
@@ -261,13 +261,14 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     await expect(receiptService.editLine(r.id, "finance", line.id, { unitPrice: 1 })).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.deleteLine(r.id, "finance", line.id)).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.discard(r.id, "finance")).rejects.toMatchObject({ status: 403 });
-    expect((await refusals(r.id)).map(([, action]) => action)).toEqual(["edit", "edit", "add line", "edit line", "delete line", "discard"]);
+    await expect(receiptService.rejectFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
+    expect((await refusals(r.id)).map(([, action]) => action)).toEqual(["edit", "edit", "add line", "edit line", "delete line", "discard", "reject"]);
     expect(await stateOf(r.id)).toBe("submitter_review");
 
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { tax: 1, receiptDate: "2020-01-01" });
     await receiptService.editLine(r.id, "finance", line.id, { description: "Washer" });
-    await receiptService.discard(r.id, "finance");
-    expect(await stateOf(r.id)).toBe("discarded");
+    await receiptService.rejectFinancial(r.id, "personal purchase");
+    expect(await stateOf(r.id)).toBe("rejected");
   });
 });

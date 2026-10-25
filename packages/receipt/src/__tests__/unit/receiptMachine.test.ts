@@ -87,16 +87,18 @@ describe('intake pipeline transitions', () => {
     expect(transition('financial_review', 'FINANCIAL_APPROVED')).toBe('uploaded');
   });
 
-  it('financial_review → REJECT → rejected', () => {
-    expect(transition('financial_review', 'REJECT')).toBe('rejected');
+  it('REJECT reaches rejected from every open state', () => {
+    const open = [
+      'uploaded', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
+      'validation_failed', 'submitter_review', 'financial_review', 'flow_error',
+    ];
+    for (const state of open) {
+      expect(transition(state, 'REJECT')).toBe('rejected');
+    }
   });
 
-  it('REJECT is illegal from states other than financial_review', () => {
-    const nonRejectable = [
-      'uploaded', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
-      'validation_failed', 'submitter_review', 'receipt_finalized', 'discarded', 'rejected',
-    ];
-    for (const state of nonRejectable) {
+  it('REJECT is illegal from a terminal state', () => {
+    for (const state of ['receipt_finalized', 'discarded', 'rejected']) {
       expect(isLegalTransition(state, 'REJECT')).toBe(false);
     }
   });

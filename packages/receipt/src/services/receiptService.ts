@@ -530,20 +530,12 @@ export const receiptService = {
     return load(id, access, actor);
   },
 
-  /**
-   * Under finance access, discarding a suspected original decides each duplicate flagged
-   * against it, so a party to any of those is refused, and each one's log records the discard.
-   */
+  /** The uploader withdraws their own receipt; anyone else who can see it is refused. */
   async discard(id: string, access: Access) {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
-    const flaggedAgainst =
-      (await writeAccess(row, access, actor, "discard")) === "finance"
-        ? await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } })
-        : [];
-    for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "discard the suspected original");
+    if (row.uploadedByUserId !== actor.id) await refuse(row, actor, "discard", "Only the person who uploaded a receipt can discard it");
     await step(row, { type: "DISCARD" }, "discarded", {}, actor, "discarded");
-    for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_discarded", valueAfter: row.id });
     return load(id, access, actor);
   },
 
@@ -560,14 +552,22 @@ export const receiptService = {
     return load(id, "finance", actor);
   },
 
-  async rejectFinancial(id: string, reason?: string | null) {
+  /**
+   * Finance refuses an open receipt, with a reason. Rejecting a suspected original decides each
+   * duplicate flagged against it, so a party to any of those is refused, and each one's log records it.
+   */
+  async rejectFinancial(id: string, reason: string) {
+    const note = reason.trim();
+    if (!note) throw new ServiceError(400, "A reason is required to reject a receipt");
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "reject");
+    const flaggedAgainst = await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } });
+    for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "reject the suspected original");
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
-    const note = reason?.trim() || null;
     const set = { core: recordFinanceReview("rejected", row, reasons, actor, note, new Date()), detail: { validationNotes: note } };
     await step(row, { type: "REJECT" }, "rejected", set, actor, "reject_financial", note);
+    for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_rejected", valueAfter: row.id });
     return load(id, "finance", actor);
   },
 

@@ -128,21 +128,22 @@ describe("the finance decision on a receipt in financial review", () => {
 
   it("does not send the reject reason with an approval", async () => {
     wrap(<ReceiptDetailPage />);
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "personal purchase" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject" }), { target: { value: "personal purchase" } });
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt"));
   });
 
   it("rejects with the reason typed in its own field", async () => {
     wrap(<ReceiptDetailPage />);
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), { target: { value: "  personal purchase " } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject" }), { target: { value: "  personal purchase " } });
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "personal purchase" }, "Rejected", "Couldn't reject this receipt"));
   });
 
-  it("rejects without a reason", async () => {
+  it("holds Reject until a reason is typed", () => {
     wrap(<ReceiptDetailPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: null }, "Rejected", "Couldn't reject this receipt"));
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject" }), { target: { value: "   " } });
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
   });
 });

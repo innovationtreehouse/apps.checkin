@@ -85,7 +85,7 @@ describeDb("duplicate detection", () => {
 
 const HOUSEMATE: ReceiptPrincipal = { ...FINANCE, id: 970, name: "housemate" };
 
-describeDb("discarding a suspected original", () => {
+describeDb("deciding on a suspected original", () => {
   beforeEach(() => {
     const ports = recordingPorts();
     configure({ receiptSink: ports.receiptSink, households: { householdOf: async (ids) => (ids.includes(BOB.id) ? [BOB.id, HOUSEMATE.id] : []) } });
@@ -109,19 +109,19 @@ describeDb("discarding a suspected original", () => {
   ])("refuses %s, and audits the refusal on the flagged receipt", async (_who, actor) => {
     const { original, flagged } = await pair();
     actAs(actor);
-    await expect(receiptService.discard(original.id, "finance")).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.rejectFinancial(original.id, "a copy")).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(original.id)).toBe("financial_review");
     const refused = await db.receiptAuditLog.findFirst({ where: { receiptId: flagged.id, action: "decision_refused" } });
-    expect(refused).toMatchObject({ userId: actor.id, valueAfter: "discard the suspected original" });
+    expect(refused).toMatchObject({ userId: actor.id, valueAfter: "reject the suspected original" });
   });
 
-  it("discards it for unconflicted finance and records the discard on the flagged receipt", async () => {
+  it("rejects it for unconflicted finance and records the rejection on the flagged receipt", async () => {
     const { original, flagged } = await pair();
     actAs(FINANCE);
-    await receiptService.discard(original.id, "finance");
-    expect(await stateOf(original.id)).toBe("discarded");
+    await receiptService.rejectFinancial(original.id, "a copy");
+    expect(await stateOf(original.id)).toBe("rejected");
     expect(await stateOf(flagged.id)).toBe("duplicate_flagged");
-    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: flagged.id, action: "suspected_original_discarded" } });
+    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: flagged.id, action: "suspected_original_rejected" } });
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: original.id });
   });
 
@@ -130,6 +130,6 @@ describeDb("discarding a suspected original", () => {
     actAs(ALICE);
     await receiptService.discard(original.id, "submitter");
     expect(await stateOf(original.id)).toBe("discarded");
-    expect(await actions(flagged.id)).not.toContain("suspected_original_discarded");
+    expect(await actions(flagged.id)).not.toContain("suspected_original_rejected");
   });
 });

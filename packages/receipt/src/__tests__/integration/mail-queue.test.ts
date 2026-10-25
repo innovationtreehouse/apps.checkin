@@ -192,13 +192,23 @@ describeDb("mailbox ignore list", () => {
   it("lists a discarded receipt's file, once, with no audit row on its receipt", async () => {
     const r = { id: await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined) };
     await expect(mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" })).rejects.toMatchObject({ status: 409 });
-    await receiptService.discard(r.id, "finance");
+    actAs(ALICE);
+    await receiptService.discard(r.id, "submitter");
+    actAs(FINANCE);
     const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
     const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
     expect(await mailQueueService.ignoreReceiptFile(r.id, { reason: "again" })).toMatchObject({ id: entry.id, reason: "logo" });
     expect(await ignoreRows()).toEqual([expect.objectContaining({ receiptId: null, fieldChanged: "receipt", valueBefore: r.id, valueAfter: "logo" })]);
     await expect(mailQueueService.ignoreReceiptFile("no-such-receipt", { reason: "logo" })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("lists a rejected receipt's file", async () => {
+    const r = { id: await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined) };
+    await receiptService.rejectFinancial(r.id, "not a receipt");
+    const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
+    const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
   });
 
   it("removes an entry, audited like an add", async () => {

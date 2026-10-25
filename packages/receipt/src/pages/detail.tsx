@@ -128,9 +128,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       audit.reload();
     }
   };
-  const discardOriginal = async () => {
+  const rejectOriginal = async (reason: string) => {
     if (!suspectId) return;
-    if (await send(`/${suspectId}/discard`, "POST", {}, "The original is discarded", "Couldn't discard the original")) {
+    if (await send(`/${suspectId}/reject`, "POST", { reason }, "The original is rejected", "Couldn't reject the original")) {
       receipt.reload();
       original.reload();
       audit.reload();
@@ -249,8 +249,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           isFinance={isFinance}
           own={own}
           onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}
-          onDiscardReceipt={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}
-          onDiscardOriginal={() => void discardOriginal()}
+          onRejectOriginal={(reason) => void rejectOriginal(reason)}
         />
       )}
       {!comparing && suspectId && (
@@ -311,7 +310,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             {(own || isFinance) && r.state === "ocr_failed" && (
               <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
             )}
-            {(own || isFinance) && !TERMINAL.has(r.state) && !(comparing && isFinance) && (
+            {own && !TERMINAL.has(r.state) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
@@ -321,13 +320,13 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
               <Stack gap="xs">
                 <Text fw={500} size="sm">Finance</Text>
                 {r.state === "financial_review" && !own && (
-                  <>
-                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
-                    <Group align="end" gap="xs">
-                      <Textarea label="Reason (optional)" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
-                    </Group>
-                  </>
+                  <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
+                )}
+                {!TERMINAL.has(r.state) && !r.pushedAt && !own && (
+                  <Group align="end" gap="xs">
+                    <Textarea label="Reason to reject" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
+                    <Button size="xs" color="red" variant="light" disabled={!rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
+                  </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
                 {r.state === "duplicate_flagged" && !comparing && !own && (
@@ -336,7 +335,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
-                {r.state === "discarded" && (
+                {(r.state === "discarded" || r.state === "rejected") && (
                   <Group align="end">
                     <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
                     <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on", "Couldn't ignore this file")}>

@@ -1,6 +1,7 @@
 "use client";
+import { useState } from "react";
 import Link from "next/link";
-import { Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { BASE, dollars, STATE_LABELS } from "./api";
 import ReceiptFile from "./ReceiptFile";
 
@@ -109,12 +110,15 @@ interface Props {
   /** The caller uploaded this receipt, so someone else in finance decides it. */
   own: boolean;
   onClear: () => void;
-  onDiscardReceipt: () => void;
-  onDiscardOriginal: () => void;
+  onRejectOriginal: (reason: string) => void;
 }
 
-/** A suspected duplicate beside the receipt it was matched to, with the decisions finance takes on either. */
-export default function DuplicateCompare({ receipt, original, originalHref, isFinance, own, onClear, onDiscardReceipt, onDiscardOriginal }: Props) {
+/**
+ * A suspected duplicate beside the receipt it was matched to, with finance's decisions on the
+ * original. Rejecting this receipt, or its uploader discarding it, sits with its other actions.
+ */
+export default function DuplicateCompare({ receipt, original, originalHref, isFinance, own, onClear, onRejectOriginal }: Props) {
+  const [reason, setReason] = useState("");
   const sameFile = original != null && same(receipt.fileHash, original.fileHash);
   return (
     <Paper withBorder p="sm">
@@ -184,11 +188,11 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
             {receipt.state === "duplicate_flagged" && !own && (
               <Button size="xs" onClick={onClear}>Not a duplicate</Button>
             )}
-            {!TERMINAL.has(receipt.state) && (
-              <Button size="xs" variant="light" color="red" onClick={onDiscardReceipt}>Discard this receipt</Button>
-            )}
             {original && !own && !TERMINAL.has(original.state) && !original.pushedAt && (
-              <Button size="xs" variant="light" color="red" onClick={onDiscardOriginal}>Discard the original</Button>
+              <Group align="end" gap="xs">
+                <TextInput size="xs" label="Reason to reject the original" value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
+                <Button size="xs" variant="light" color="red" disabled={!reason.trim()} onClick={() => onRejectOriginal(reason.trim())}>Reject the original</Button>
+              </Group>
             )}
             {own && <Text size="sm" c="dimmed">Someone else in finance decides whether your own receipt is a duplicate.</Text>}
           </Group>
