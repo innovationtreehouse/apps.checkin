@@ -12,7 +12,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { createAnthropicOcr, fixtureOcr, mapRawToOcrData, parseMoney } from "../../lib/ocr";
+import { createAnthropicOcr, EXTRACT_SCHEMA, fixtureOcr, mapRawToOcrData, parseMoney } from "../../lib/ocr";
 
 const VALID_INPUT = {
   retailer: "Acme Hardware",
@@ -124,11 +124,21 @@ describe("createAnthropicOcr — results", () => {
     expect(res.success).toBe(false);
   });
 
-  it("rejects incomplete data (missing retailer or no lines)", async () => {
-    createMock.mockResolvedValue(jsonResponse({ ...VALID_INPUT, retailer: "" }));
-    expect((await ocr.extract(TXT, "text/plain")).success).toBe(false);
+  it("rejects a reading with no lines", async () => {
     createMock.mockResolvedValue(jsonResponse({ ...VALID_INPUT, lineItems: [] }));
-    expect((await ocr.extract(TXT, "text/plain")).success).toBe(false);
+    expect(await ocr.extract(TXT, "text/plain")).toEqual({ success: false, error: "OCR returned no line items" });
+  });
+
+  it("keeps a reading without its retailer, date or total, for the submitter to fill in", async () => {
+    const noTotal: Record<string, unknown> = { ...VALID_INPUT };
+    delete noTotal.receiptTotal;
+    createMock.mockResolvedValue(jsonResponse({ ...noTotal, retailer: "", receiptDate: "" }));
+    const res = await ocr.extract(TXT, "text/plain");
+    expect(res.success && res.data).toMatchObject({ retailer: "", receiptDate: "", receiptTotal: null });
+  });
+
+  it("does not ask the model to invent a total", () => {
+    expect(EXTRACT_SCHEMA.required).not.toContain("receiptTotal");
   });
 
   it("wraps SDK errors instead of throwing", async () => {
@@ -145,7 +155,7 @@ describe("pure helpers", () => {
 
   it("mapRawToOcrData defaults omitted fields", () => {
     const d = mapRawToOcrData({ retailer: "A", receiptDate: "2026-05-01", lineItems: [{ description: "x" }] });
-    expect(d).toMatchObject({ currency: "USD", shipping: 0, tax: 0, discount: 0 });
+    expect(d).toMatchObject({ currency: "USD", shipping: 0, tax: 0, discount: 0, receiptTotal: null });
     expect(d.lineItems[0]).toMatchObject({ quantity: 1, unitPrice: 0, isDelayed: false });
   });
 

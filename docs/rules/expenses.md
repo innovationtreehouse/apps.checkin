@@ -60,6 +60,12 @@ Income and donation rules are in `revenue.md`.
   goes to finance review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A tax or date the submitter fills in where the field was blank goes to
+  finance review the same as one they changed. Finance sees which it was:
+  entered, where the field was blank, or changed, with the earlier value and
+  the new one. A tax of $0 is a value, so a tax raised from $0 is changed.
+  [Decision]
+
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
   match.
@@ -69,6 +75,13 @@ Income and donation rules are in `revenue.md`.
   check can refuse it, because a QuickBooks entry names no person. Every
   exclusion records who made it and why, so it stays visible.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- A receipt's lines, plus shipping and tax, less discount, must equal its
+  total. The check is exact unless a line's cost (quantity × unit price) is a
+  fraction of a cent. Then the total may differ by up to one cent for each
+  such line. The receipt editor applies the same check, so it shows a
+  receipt as balanced exactly when the check passes.
+  [Decision]
 
 ### Budget buckets
 

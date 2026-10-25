@@ -36,6 +36,12 @@ const ctx = {
 // ── RUN_PIPELINE guard priority ───────────────────────────────────────────────
 
 describe('RUN_PIPELINE guard priority', () => {
+  it('missing details go to the submitter ahead of every other check', () => {
+    const c = { ...ctx.dup, detailsMissing: true, mathValid: false, needsFinancialReview: true, submitterReviewed: true };
+    expect(transition('uploaded', 'RUN_PIPELINE', c)).toBe('submitter_review');
+    expect(transition('flow_error', 'RUN_PIPELINE', c)).toBe('submitter_review');
+  });
+
   it('duplicate takes priority over all', () => {
     const c = { ...ctx.dup, mathValid: false };
     expect(transition('uploaded', 'RUN_PIPELINE', c)).toBe('duplicate_flagged');

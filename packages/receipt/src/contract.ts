@@ -103,7 +103,8 @@ export const OcrDataSchema = z.object({
   shipping: ocrMoney,
   tax: ocrMoney,
   discount: ocrMoney,
-  receiptTotal: ocrMoney,
+  // Null when the reading found no total; the submitter fills it in.
+  receiptTotal: ocrMoney.nullable(),
   receiptTotalText: z.string().max(100).optional(),
   lineItems: z.array(OcrLineItemSchema).max(200),
 });

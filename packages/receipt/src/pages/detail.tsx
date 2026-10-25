@@ -9,8 +9,9 @@ import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { draftDifference, draftProblem, EMPTY_DRAFT, isDirty, planSave, signedDollars, type Draft, type ServerLine } from "../components/receiptDraft";
+import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
+import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -44,9 +45,18 @@ interface Receipt extends ReceiptListRow {
 interface AuditRow {
   id: number;
   action: string;
+  userId: number | null;
   username: string | null;
+  fieldChanged: string | null;
+  valueBefore: string | null;
   valueAfter: string | null;
   changedAt: string;
+}
+
+/** How a submitter's correction to a field reads beside it: "entered by the submitter", or the earlier value. */
+function correctionNote(c: SubmitterCorrection | undefined): string {
+  if (!c) return "";
+  return c.kind === "entered" ? " (entered by the submitter)" : ` (the submitter changed it from ${c.before})`;
 }
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
@@ -90,6 +100,18 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const reasons = r.financialReviewReasons;
   const dateFlagged = reasons.includes("old_date") || reasons.includes("future_date");
   const taxFlagged = reasons.includes("tax");
+  // Finance and the Board read the audit log, so they see whether each correction entered a value or changed one.
+  const corrections = audit.data
+    ? submitterCorrections(
+        audit.data.filter((a) => a.action === "field_edit" && a.userId === r.uploadedByUserId),
+        { taxCents: r.taxCents, receiptDate: r.receiptDate },
+      )
+    : [];
+  const correctionOf = (field: SubmitterCorrection["field"]) => corrections.find((c) => c.field === field);
+  const reasonLabel = (reason: string) =>
+    reason === "submitter_correction" && corrections.length > 0
+      ? corrections.map(describeCorrection).join("; ")
+      : (REVIEW_REASON_LABELS[reason] ?? reason);
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
@@ -119,7 +141,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const dirty = editing && isDirty(r, draft);
   const totalsOff = r.state === "validation_failed";
   // A saved receipt whose lines already add up still needs a way out of Totals off.
-  const savedAddsUp = totalsOff && draftDifference(r, EMPTY_DRAFT) === 0;
+  const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -190,10 +212,13 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
   const saveTotalsOff = () =>
     exclusive(async () => {
-      const difference = draftDifference(r, draft);
+      const math = draftMath(r, draft);
       if (dirty && !(await saveDraft())) return;
-      if (difference === 0) await resubmit(dirty);
-      else stillOff(`Saved. Still ${difference === null ? "" : `${signedDollars(Math.round(Math.abs(difference)))} `}off; stays in Totals off.`);
+      if (math?.balanced) await resubmit(dirty);
+      else {
+        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        stillOff(`Saved. Still ${off}; stays in Totals off.`);
+      }
     });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>
@@ -214,7 +239,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       </Group>
       {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
       {r.financialReviewReasons.length > 0 && (
-        <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+        <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
       )}
       {comparing && (
         <DuplicateCompare
@@ -240,9 +265,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
-          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged></Text>
+          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>
           <Text>
-            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>, shipping {dollars(r.shippingCents)}
+            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>{correctionNote(correctionOf("tax"))}, shipping {dollars(r.shippingCents)}
             {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
           </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}

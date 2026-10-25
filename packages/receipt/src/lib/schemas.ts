@@ -1,6 +1,7 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
 import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { isIsoDate } from "./missingDetails";
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
@@ -14,6 +15,10 @@ const cents = z.number().int().nonnegative();
 /** An ISO 4217 code; money formatting throws on anything else. */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
+/** Text a receipt cannot be checked without; blank or spaces-only is refused. */
+const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
+/** A calendar date as the date picker sends it. */
+const isoDate = requiredText("The date", 50).refine(isIsoDate, { message: "The date must be a real date written YYYY-MM-DD" });
 
 export const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
@@ -26,8 +31,8 @@ export const LineItemSchema = z.object({
 
 /** Details typed by the uploader. Present ⇒ manual upload; absent ⇒ OCR reads the file. */
 export const ManualDetailsSchema = z.object({
-  retailer: z.string().min(1).max(500),
-  receiptDate: z.string().min(1).max(50),
+  retailer: requiredText("The retailer", 500),
+  receiptDate: isoDate,
   receiptTotal: dollarString,
   currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
   shipping: dollarString.optional(),
@@ -93,8 +98,8 @@ export const AddLineItemSchema = z.object({
 
 export const EditReceiptSchema = z
   .object({
-    retailer: z.string().min(1).max(500).optional(),
-    receiptDate: z.string().min(1).max(50).optional(),
+    retailer: requiredText("The retailer", 500).optional(),
+    receiptDate: isoDate.optional(),
     currency: z.string().min(1).max(10).optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),
@@ -144,15 +149,15 @@ export const ImportReceiptSchema = z
     importSourceId: z.string().min(1).max(200),
     qbTxnId: z.string().min(1).max(100),
     qbEntity: z.string().max(50).nullable().optional(),
-    retailer: z.string().min(1).max(500),
+    retailer: requiredText("The retailer", 500),
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
-    receiptDate: z.string().max(50).nullable().optional(),
+    receiptDate: isoDate,
     currency: z.string().max(10).default("USD"),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,
-    receiptTotalCents: cents,
+    receiptTotalCents: z.number({ error: "The total is required" }).int().nonnegative(),
     mimeType: z.string().max(100),
     fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),
