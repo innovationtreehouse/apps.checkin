@@ -15,12 +15,14 @@ Sign as Program approver, record the same judgment twice ("this spending
 belongs to my budget"), and the rest are refused when clicked. A Board member
 sees Approve on every line, and the server refuses it every time. A finance
 holder who also sits on the Board can see six buttons on one line. Four of them
-work one at a time, but two are seats and they may fill only one. The submitter, whose signature every line needs, has no
-button anywhere, so their expense never reaches the books.
+work one at a time, but two are seats and they may fill only one. A submitter
+with no other role, whose signature every line needs, has no button anywhere,
+so their expense never reaches the books.
 
-The counts don't match the pages either. The approver's pill counts signatures
-waiting on them, while the page it opens lists expenses waiting for approval,
-so each line is one decision, counted once and shown twice.
+The counts don't match the pages either. The approver's pill counts open
+program-approver seats, one per line, while the page it opens lists expenses
+waiting for owner approval. One decision is asked as two acts, and the pill
+counts one of them while the page lists the other.
 
 ## Objective
 
@@ -82,8 +84,10 @@ adds are marked as proposed.
 | Proposed in #2224: finance decides each line's bucket before the program approver signs | Procedure, `[Decision]` | Consistent |
 | Proposed in #2224: a line in an org-wide bucket takes a Board member as program approver; at most two Board substitutions on a reimbursement line, one on a card charge | Procedure, `[Decision]` | Consistent. The org-level line's Board member approves the line instead of signing a seat, so the line is no longer pre-approved at intake (C′.4) |
 
-No Policy-tier line changes. Four Procedure lines that cite a policy are
-touched. The conflict line, the three-signatures line and the
+No Policy-tier line changes: the Policy line's own text stays. But the app's
+reading of two articles it cites changes, Financial Policy Art. IX §IX.2 and
+§IX.3, so check those articles before accepting the lines below. Four
+Procedure lines that cite a policy are touched. The conflict line, the three-signatures line and the
 Treasurer-conflict line keep their substance; approving gets stricter. The
 non-member line changes the app's reading of Financial Policy Art. IX §IX.2, as
 you decided, and keeps its citation. The three-signatures line splits in two.
@@ -159,7 +163,10 @@ refused when the approver's household already holds a seat on the expense, or
 when the approver has signed the Treasurer seat on that line. The reverse holds
 too: whoever approved a line doesn't sign its Treasurer seat. That closes a gap
 in today's code: a bucket treasurer who is also FINANCE can approve a line and
-then sign it as Treasurer. The approver counts as seated on the expense, so
+then sign it as Treasurer. The Treasurer-seat refusal (`signoffRefusal` in
+`packages/expense/src/lib/signoff.ts`) checks the bucket owner's household and
+the line's other seats, and owner approval isn't a seat, so a treasurer who
+isn't the owner passes it. The approver counts as seated on the expense, so
 their household holds no other seat on it.
 
 **C′.3 A Board member may always step in.** You decided that a Board member
@@ -185,7 +192,8 @@ approvers to stand in for, the Board member gives no reason (you decided this;
 sign-off at all.
 
 **C′.5 After finance reassigns a line.** Today, when FINANCE settles an exception
-by moving the line to another bucket, the approval closes as finance-assigned,
+by moving the line to another bucket, the approval closes as finance-assigned
+(status `finance_assigned`),
 and nobody in the new bucket approves it. Under C′ that line would have no
 program approver. So a finance-assigned line waits for an approver of its new
 bucket, who approves it as they would a pending one. The status keeps its name
@@ -245,8 +253,10 @@ well. For example:
 - A finance change to a confirmed reimbursement clears the submitter's
   confirmation (§3), so the line's approval returns to pending and its
   Treasurer and Board signatures are deleted.
-- An approval that reopens, for example when a line moves after an exception,
-  clears the Treasurer and Board signatures.
+- Any later step cleared the same way takes everything after it: a cleared
+  Treasurer signature takes the line's Board signature with it. Under this
+  design the confirmation clearing is the only way an approval reopens once
+  later signatures exist, because a line moves only before it is approved.
 - An expense that returns to owner approval from capital review, the
   depreciation cycle or the books queue clears its capital-review and
   depreciation decisions, and finance makes them again once every line is
@@ -269,14 +279,16 @@ returns to owner approval, which the state machine needs a new transition for.
 | Voiding the seats on a line whose bucket changes, in the three bucket-assignment services | Deleted, as you decided. With signatures in order (C′.9), a line moves only before any Treasurer or Board signature exists, so nothing needs voiding |
 | Seat conflict checks: the household already seated, another seat on the line, the Treasurer exclusion | Move into the approve service and the line-actions function (C′.2); the Treasurer-seat refusal reads the approver from the approval row |
 | The catalog snapshot and the drain that run when the last seat is signed | Also run when the approval meets the last requirement |
-| Org-level pre-approval at intake and at bucket assignment | Deleted; org-level lines start pending (C′.4) |
+| Org-level pre-approval at intake and at bucket assignment (`initFinancialFlow` in `lib/financial-flow.ts`; `assignOwner` and `resolveUnknown` in `services/approvalService.ts`) | Deleted; org-level lines start pending (C′.4). No rule names the pre-approval, so this is a code change, not a rule edit |
 | A finance-assigned approval counting as finished | Deleted; the line waits for its new bucket's approver (C′.5) |
-| The Board seat, today only on a non-Everyday card charge | Also on a non-member reimbursement line, signable only after approval (C′.6) |
+| The Board seat, today only on a non-Everyday card-charge line without written Board authorization (a program-bucket line has it through the approved budget; an org-level line has it only once one is recorded) | Also on a non-member reimbursement line, signable only after approval (C′.6) |
 
 ### Migration
 
-There are no live receipts in production, so nothing there needs moving. The
-C′ PR carries one data-only migration: it deletes every `PROGRAM_APPROVER`
+There are no live receipts in production, so nothing there needs moving. That
+is true as this is written; the C′ PR checks it again before it merges, and if
+production then holds any `PROGRAM_APPROVER` sign-off on an open expense, it
+stops for a migration plan instead of deleting. The C′ PR carries one data-only migration: it deletes every `PROGRAM_APPROVER`
 sign-off row, which would otherwise count as a seated signer, and leaves their
 audit rows as history. The seat column is plain text, so there is no schema
 change. Open expenses on the dev instance with an org-level line pre-approved,
@@ -304,10 +316,13 @@ caller may take there:
 | --- | --- |
 | `actions[]` | Each act the caller may take now: `approve` (the program approver's sign-off, by a bucket approver or a Board stand-in), `sign` (Treasurer or Board), `raise-exception`, `reject-exception`, `assign-bucket`, `resolve-bucket` |
 | `actions[].primary` | True on at most one act per line |
-| `awaiting[]` | Open seats and holds the caller can't act on, as plain status: "Awaiting Submitter", "Awaiting approval", "Awaiting Treasurer", "Awaiting a Board stand-in", "Board approval after the line is approved", "Held: no one without a conflict can sign", "Held until finance names the reimbursee", "Held until the Board's approval is recorded" |
+| `awaiting[]` | Open seats and holds the caller can't act on, as plain status: "Awaiting Submitter", "Awaiting approval", "Awaiting Treasurer", "Awaiting Board signature", "Awaiting a Board stand-in" (a line only a Board member can approve), "Board approval after the line is approved", "Held: no one without a conflict can sign", "Held until finance names the reimbursee", "Held until the Board's approval is recorded" |
 
-The expense gains `mayRecordBoardAuthorization`, from the same check the
-recording route runs.
+The caller's expense-level permission, `mayRecordBoardAuthorization`, comes
+from the same check the recording route runs. The signoffs GET returns its
+lines under the `ExpenseLineSignoffStatus` key today; the permission goes
+beside them under a second key, `ExpenseSignoffCaller`, a new synthetic model
+classified in the boundary PR. The line array keeps its shape.
 
 One pure function computes these from the facts the services already read: the
 line's sign-off facts, its filled seats, its approval row, the expense state and
@@ -328,12 +343,9 @@ Program approver", "Sign as Treasurer", "Sign as Board", "Approve as Board
 (program approver)". Other acts go in a "More" menu on the same line: Raise
 exception, and any other part the caller could take instead.
 
-When the caller could take more than one part on a line (a bucket owner who
-holds FINANCE, or a Board member eligible for the Board seat and as a stand-in),
-taking one rules out the others, because one person takes one part per line.
-The main act is the part with the fewest other people available to take it,
-ties going approval, then Treasurer, then Board. So the button asks the caller
-for the part that is hardest to fill without them.
+Because signatures come in order (C′.9), only one step is open on a line at a
+time, so a caller never has two parts to choose between on one line. Raise
+exception is part of the approval step, in More.
 
 On a line with an exception raised, FINANCE's main act is Assign bucket, with
 Reject exception in More. Those screens belong to #2482; this design only gives
@@ -496,16 +508,19 @@ view for browsing. The list prefilters in the database as the badge does
 (the caller's buckets, approval pending, not their own receipt) and then applies the
 function, so the list and the pill always agree.
 
-Open PR #2500 (for #2492) adds per-queue counts, and they are a different
+#2500 (for #2492, now merged) added per-queue counts, and they are a different
 measure. Its owner-approval count counts expenses, not lines, and leaves out
 only expenses the viewer is conflicted on as submitter or reimbursee, or a
 member of either household. So it differs from this pill. That count
 is the one that changes: step 5 moves it onto the same function, refusing
 everything an approval refuses under C′, and keeps it per expense because it labels an
 expense-list view. The pill stays per line. Both then come from one rule and
-only the unit differs. #2500's QB-pending count already counts expenses with an
-open Treasurer, Board or Board-substituted program-approver seat the viewer can
-fill; under C′ its program-approver part goes, because a Board stand-in approves
+only the unit differs. #2500's QB-pending count counts expenses with an open
+Treasurer, Board or Board-substituted program-approver seat the viewer can
+fill, but only expenses in the books queue. Under the signature order a
+Treasurer seat opens as soon as the line is approved, so it can be open while
+the expense is still in capital review or the depreciation cycle, and that
+count misses it until step 9 lands; under C′ its program-approver part goes, because a Board stand-in approves
 in owner approval before the expense is QB pending. Its Treasurer and Board
 seat counts move to Finance review (below). Treasurer and Board seats stay off
 this pill.
@@ -680,19 +695,22 @@ a decision you made:
   chosen as for any line, and then a Board member's approval. A Board member
   without a conflict signs a Board seat on each line once the line is approved.
   What counts is the person reimbursed, not whoever submitted the receipt, and a
-  card charge is not a reimbursement. *(replaces the existing line; keeps*
-  `[Decision — Policy: Financial Policy, Art. IX §IX.2]`*)*
+  card charge is not a reimbursement. (Replaces the existing line and keeps its
+  tag.) `[Decision — Policy: Financial Policy, Art. IX §IX.2]`
 - A reimbursement reaches the books only once each of its lines is signed by
-  the person reimbursed, by confirming the receipt; by a program approver, who is an
-  owner or treasurer of the line's bucket, or, for a line outside a
-  Board-approved program budget (an org-level bucket), a Board member without a
-  conflict who is not the Treasurer; and by the Treasurer. Every signer is a
-  different person from a different household. *(replaces the
+  the person reimbursed, by confirming the receipt; by a program approver, who
+  is an owner or treasurer of the line's bucket or a Board member without a
+  conflict in their place (on a line outside a Board-approved program budget,
+  an org-level bucket, only a Board member who is not the Treasurer can be
+  the program approver); and by the Treasurer. A line that takes a Board seat
+  also needs that signature. Every signer is a different person from a
+  different household. *(replaces the
   three-signatures line for reimbursements)*
   `[Decision — Policy: Financial Policy, Art. IX §IX.3]`
 - A card charge reaches the books only once each of its lines is signed by a
   program approver, chosen as for a reimbursement, and the Treasurer, two
-  different people from different households. The submitter does not sign a
+  different people from different households, and by a Board member where the
+  line takes a Board seat. The submitter does not sign a
   card charge. *(replaces the three-signatures line for card charges; the
   policy does not address card charges)* `[Decision — owner]`
 - The person reimbursed signs a reimbursement by confirming its receipt as
@@ -741,7 +759,7 @@ a decision you made:
 | `GET /api/expense/expenses/[id]/signoffs` | Gains `actions` and `awaiting` per line and `mayRecordBoardAuthorization`. These describe the caller only, so they name no one else |
 | `POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve` | Under C′, takes the seat's refusals and admits a Board stand-in |
 | `POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs` | Refuses `PROGRAM_APPROVER`, which leaves the seat list, and `SUBMITTER`, which comes only from the confirmation; the route and its registry entry are unchanged |
-| `POST /api/expense/expenses/[id]/approve-lines` | New, for Approve All; `expense-approver`, with the library checking each line |
+| `POST /api/expense/expenses/[id]/approve-lines` | New, for Approve All. The gate stays `expense-approver`, which admits bucket approvers, FINANCE and Board; the library does every refusal per line under the expense lock, including the Board stand-in limits and reason |
 | `POST /api/expense/expenses/[id]/sign-lines` | New, for "Sign all N as Treasurer"; `finance-or-board`, with the library checking each line |
 | `GET /api/expense/queue`, `GET /api/expense/expenses` | Accept the `awaiting_me` view; no new route |
 | Receipt submitter review | The confirm admits the person reimbursed, or a Board member with a reason for someone with no account, and records who confirmed; the receipt-to-expense contract gains the confirmation, alongside the review outcome theme 2 adds |
@@ -760,8 +778,9 @@ Each PR is based on `main`, not stacked.
    `sign-lines` entries. Coordinate with #2482's registry PR A.
 2. **Line actions PR** (3.14, 3.15, 3.16, #2433): the function, the new fields,
    the page drawing only returned acts with one main act per line, bold lines,
-   required marks. No server behaviour or rule changes, so it can ship before
-   step 3, computing today's acts, and step 3 updates the function.
+   required marks. The server gains the function and the fields, but what it
+   accepts and refuses doesn't change, and no rule changes, so it can ship
+   before step 3, computing today's acts, and step 3 updates the function.
 3. **C′ PR** (central decision, 3.29): the posting gate reads the approval; the
    program-approver seat, its button and its seat voiding are deleted; the
    approve service takes the seat's refusals and admits a Board stand-in;
@@ -775,7 +794,7 @@ Each PR is based on `main`, not stacked.
 4. **Approve All PR** (3.13): the batch route and button. After steps 1 and 3.
 5. **Pill and landing PR** (3.25): the badge from the function and the "Waiting
    on you" view, and #2500's owner-approval count moved onto the same function
-   (§8). After #2500 merges.
+   (§8). #2500 has merged.
 6. **Back to the queue PR** (3.12): after #2482's expense detail PR, so the two
    share one helper.
 7. **Submitter seat PR** (#2432): the confirmation on the reimbursement
@@ -872,7 +891,10 @@ who approves a line in place of its approvers.
 
 Design for #2501. Items from the receipt-flow conversion audit, Stage 3 and
 theme 4: 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.25, 3.29. Open issues: #2432,
-#2433, #1272. Related: #2482 (finance exception queue, design for #2481), #2224
+#2433, #1272. Related: #2482 (finance exception queue, design for #2481; its
+doc is `docs/in-design/2481_FINANCE_EXCEPTION_QUEUE.md` on that PR's branch
+until it merges, and its "§4" is cited here for the return-to-queue and
+required-note rules), #2224
 (rule additions), #2483 (rule corrections and open questions), #2492 (queue
 counts).
 
