@@ -18,6 +18,12 @@ jest.mock("@checkin/expense/components/api", () => ({
 }));
 
 beforeAll(() => {
+  // Mantine's Select measures itself; jsdom has no ResizeObserver.
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
   window.matchMedia =
     window.matchMedia ||
     ((query: string) =>
@@ -182,6 +188,18 @@ describe("back to the queue", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry QuickBooks post" }));
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/expenses/e1"));
     expect(mockGoTo).not.toHaveBeenCalled();
+  });
+
+  it("returns to the Account holds tab after Resubmit clears the last hold", async () => {
+    const line = { id: 1, lineNumber: 1, description: "Bolts", partNumber: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isCapital: false, depreciationYears: null, capitalOwnerId: null, manualQbAccount: "6110" };
+    load(
+      expense({ lineItems: [line], holds: [{ id: 3, lineItemId: 1, reason: "NO_PART_NUMBER", matchedRows: "[]", status: "PENDING" }] }),
+      [reason("ACCOUNT_HOLD", { tab: "holds", count: 1 })],
+    );
+    mockApi.mockResolvedValue({ Expense: expense(), ExpenseQueueReason: [] });
+    wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=holds" />);
+    fireEvent.click(screen.getByRole("button", { name: "Resubmit" }));
+    await waitFor(() => expect(mockGoTo).toHaveBeenCalledWith("/finance/review?queue=holds"));
   });
 
   it("always reloads in place when opened from anywhere else", async () => {
