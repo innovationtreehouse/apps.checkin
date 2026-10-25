@@ -8,6 +8,7 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { db } from "../../db";
 import { expenseActionCounts } from "../../services/badgeCounts";
+import { financeQueueCounts } from "../../services/financeQueueService";
 import type { ExpensePrincipal } from "../../contract";
 import type { Seat } from "../../lib/signoff";
 
@@ -145,12 +146,13 @@ describeDb("expense action counts", () => {
       expect(await counts(BOARD)).toEqual(NONE);
     });
 
-    it("counts an open Treasurer seat for a FINANCE holder who may sign it, and not for the Board", async () => {
+    it("leaves an open Treasurer seat to the finance queue's To sign count", async () => {
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
       await sign(id, li, { SUBMITTER: 1, PROGRAM_APPROVER: 2 });
-      expect(await counts(FINANCE)).toEqual({ ...NONE, qb_pending: 1 });
-      expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
-      expect(await counts(BOARD)).toEqual(NONE);
+      expect(await counts(FINANCE)).toEqual(NONE);
+      expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1 });
+      expect((await financeQueueCounts(CONFLICTED_FINANCE)).toSign).toMatchObject({ actionable: 0 });
+      expect((await financeQueueCounts(BOARD)).toSign).toMatchObject({ actionable: 0 });
     });
 
     it("freezes no Everyday check while counting", async () => {
@@ -169,10 +171,11 @@ describeDb("expense action counts", () => {
       expect(await counts(FINANCE)).toEqual(NONE);
     });
 
-    it("counts a Board seat on an org-level card charge for the Board", async () => {
+    it("leaves a Board seat on an org-level card charge to the finance queue's Board count", async () => {
       bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
       await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
-      expect(await counts(BOARD)).toEqual({ ...NONE, qb_pending: 1 });
+      expect(await counts(BOARD)).toEqual(NONE);
+      expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE).toBeGreaterThan(0);
     });
 
     it("leaves a FINANCE holder's own program-approver seat to the sign-off count", async () => {

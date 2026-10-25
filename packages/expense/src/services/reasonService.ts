@@ -5,7 +5,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
 import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
-import { deriveReasons, type DerivedReason, type QueueReason } from "../lib/reasons";
+import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
@@ -15,10 +15,11 @@ import { reimburseeVendorId } from "./reimburseeVendorService";
 export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: null, kind: { in: [...REVIEW_KINDS] } };
 
 /**
- * Bookkeeping any finance holder may do, a conflicted one included (docs/rules/expenses.md):
- * capital designation, the depreciation cycle, and the account on a mapping hold.
+ * Bookkeeping on a purchase already signed off, which any finance holder does, conflicted or not
+ * (docs/rules/expenses.md, Receipts): capital designation, depreciation, a hold's account, and
+ * resubmitting a held or failed post.
  */
-const BOOKKEEPING: ReadonlySet<string> = new Set(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD"]);
+const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
 
 /** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
 const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
@@ -90,8 +91,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const actionable = (r: DerivedReason): boolean => {
     if (!principal.isFinance) return false;
     if (BOOKKEEPING.has(r.code)) return true;
-    if (conflicted) return false;
-    if (r.code === "SIGNER_HELD") return false;
+    if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.
     if (r.code === "BOARD_APPROVAL") return !reimburseeUnknown(expense) && boardAuthorizationRefusal(lineFacts, me) === null;
     return true;
