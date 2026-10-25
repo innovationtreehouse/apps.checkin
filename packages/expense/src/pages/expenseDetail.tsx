@@ -75,8 +75,8 @@ interface SignoffStatus {
   filled: string[];
   missing: string[];
   blocked: string[];
-  actions: LineAction[];
-  awaiting: string[];
+  actions?: LineAction[];
+  awaiting?: string[];
   /** Same on every line: whether the caller may record the expense's Board authorization. */
   mayRecordBoardAuthorization: boolean;
 }
@@ -207,7 +207,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
   const bucketNames = new Map((Array.isArray(approvalBag) ? [] : approvalBag?.ExpenseBucketView ?? []).map((b) => [b.id, b.name]));
-  const statusOf = new Map((signoffs.data ?? []).map((s) => [s.lineItemId, s]));
+  // A status without acts draws none, so a short response leaves the line as plain status.
+  const statuses = (signoffs.data ?? []).map((s) => ({ ...s, actions: s.actions ?? [], awaiting: s.awaiting ?? [] }));
+  const statusOf = new Map(statuses.map((s) => [s.lineItemId, s]));
 
   async function runAction() {
     if (!dialog) return;
@@ -381,7 +383,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
-      {(signoffs.data ?? []).some((s) => s.mayRecordBoardAuthorization) && (
+      {statuses.some((s) => s.mayRecordBoardAuthorization) && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Board authorization</Text>
           <Textarea

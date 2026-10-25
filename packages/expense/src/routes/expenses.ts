@@ -21,7 +21,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus, signoffStatusFor } from "../services/signoffService";
+import { recordBoardAuthorization, setReimbursee, signLine, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
@@ -237,7 +237,7 @@ export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   });
   if (!line || !(await maySign(principal, line))) throw httpError(404, "Line item not found");
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
-  const status = await signoffStatus(params.id);
+  const status = await signoffStatusFor(principal, params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };
 };
 
@@ -246,7 +246,7 @@ export const boardAuthorization: ExpenseRouteHandler = async ({ req, params }) =
   const { authorization } = await parseBody(req, z.object({ authorization: z.string().trim().min(1, "Say what the Board authorized") }));
   const principal = await getPrincipal();
   await mapServiceErrors(() => recordBoardAuthorization(principal, params.id, authorization));
-  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
+  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatusFor(principal, params.id)) };
 };
 
 async function expenseWithLines(id: string) {

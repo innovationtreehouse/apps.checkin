@@ -109,6 +109,24 @@ describe("only the acts the server returns are drawn (3.15, #2433)", () => {
   });
 });
 
+describe("a status without acts", () => {
+  it("draws no act and does not break the page", () => {
+    mockLoads = {
+      "/expenses/e1": {
+        id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000, taxCents: 0, shippingCents: 0, discountCents: 0,
+        currency: "USD", submittedAt: "2026-10-01T00:00:00Z", state: "owner_approval", needsReimbursement: false, reimburseePersonId: null, backfill: false,
+        lineItems: [line(1)], approvals: [],
+      },
+      "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "pending" }],
+      "/expenses/e1/signoffs": [{ lineItemId: 1, filled: [], missing: ["SUBMITTER", "TREASURER"], blocked: [] }],
+    };
+    render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
+    expect(screen.getByText("Part 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve|Sign as|More/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/wait on you/)).not.toBeInTheDocument();
+  });
+});
+
 describe("a final bucket", () => {
   it("finance's Assign bucket on an exception offers Make this final, which asks for a required note", async () => {
     load([{ status: "exception_raised", actions: [{ act: "assign-bucket", primary: true, noteRequired: false }] }]);
