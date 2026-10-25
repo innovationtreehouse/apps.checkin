@@ -734,7 +734,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     });
 
     it("raises nothing for an activated order whose current seats still cover everyone on it", async () => {
-        const oid = `${TAG}-604`;
+        const oid = `${TAG}-612`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-covered-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const o = order({ legacyId: oid });
         ordersByLegacyIds.mockResolvedValue([o]);
@@ -746,8 +746,8 @@ describe("program order entitlement (same check as the webhook)", () => {
     });
 
     it("does not count a withdrawn person on the order as a seat holder", async () => {
-        const oid = `${TAG}-605`;
-        const email = `ent-withdrawn-${TAG}@ex.com`;
+        const oid = `${TAG}-613`;
+        const email = `ent-seat-withdrawn-${TAG}@ex.com`;
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
         await prisma.programParticipant.update({ where: { programId_personId: { programId, personId } }, data: { status: "WITHDRAWN", endedAt: new Date() } });
         const sib = await prisma.person.create({ data: { email: `sib-${email}`, name: `Sib ${email}`, householdId } });
