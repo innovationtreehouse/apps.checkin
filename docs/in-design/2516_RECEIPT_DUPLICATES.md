@@ -228,14 +228,28 @@ submission). What each state contributes:
 | Open (any non-terminal state, including `duplicate_flagged`) | Yes | Yes | its state, e.g. "Waiting for finance review" |
 | `receipt_finalized` | Yes | Yes | "Finalized" and, if pushed, "Sent to expenses" |
 | `rejected` | Yes, **marked stronger** | Yes, first, in red, with the rejection note | "Rejected on 2 Oct: <note>" |
-| `discarded` | **No** on its own (Q1) | Yes, greyed, when the group exists for another reason | "Discarded on 2 Oct by <name>" |
+| `discarded`, as a refusal: by finance outside a duplicate decision, or by its submitter while finance was reviewing it | Yes, **marked stronger**, like rejected (Q1) | Yes, with rejected ones | "Discarded by finance on 2 Oct" or "Withdrawn during finance review on 2 Oct" |
+| `discarded`, as a tidy-up: by its submitter before finance saw it, as a copy in a duplicate decision, or a mailed body copy | **No** on its own (Q1) | Yes, greyed, when the group exists for another reason | "Withdrawn by its submitter on 2 Oct", "Discarded as a copy of <receipt>" |
 
-Why discarded doesn't raise a flag on its own (recommended in Q1): a
-discarded receipt will never be paid, and the risk being guarded is paying
-twice. A copy of a discarded receipt is either a resend of something thrown
-away by mistake (no risk) or a copy of a live receipt, which matches that live
-receipt directly. Scenario 3 of #2516 (C re-uploads discarded B's file) is
-caught because C's fields also match live A.
+Why discarded splits in two (recommended in Q1): "discarded" covers two
+different acts. One is a refusal. Finance can discard a receipt instead of
+rejecting it, and a submitter can withdraw a receipt that is sitting in
+finance review, before a rejection lands. Either way the same purchase coming
+back is exactly @thpr's "check more carefully" case, so it is treated like
+rejected. The other is tidying up: a submitter withdrawing a mistake before
+finance looked, a copy discarded by a duplicate decision, or a mailed body
+copy. A resend of those carries no risk, and a copy of a live receipt matches
+that live receipt directly. Scenario 3 of #2516 (C re-uploads discarded B's
+file) is caught because C's fields also match live A.
+
+Which kind a discard was is read from what is already recorded: who discarded
+it (finance or the submitter, in the audit log), the state it was discarded
+from, and whether a duplicate decision recorded it as a copy. Nothing new is
+stored. A discard carries no note today, so the stronger flag shows who and
+when, not why.
+
+The expense side has no discarded state; an expense is only ever rejected.
+So this split is receipt-side only, and Q14 covers rejected expenses.
 
 Why rejected does (per @thpr): a rejected receipt was refused for a reason,
 and the same purchase coming back is the case where that reason most needs
@@ -507,7 +521,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 
 | ID | Question | Options | Recommendation |
 | --- | --- | --- | --- |
-| Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. | **(a).** A discarded receipt is never paid; a copy of a live receipt matches that receipt directly. (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
+| Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. (d) Split by kind (§4): a discard that acted as a refusal (by finance outside a duplicate decision, or a withdrawal during finance review) flags like rejected; a tidy-up discard shows only as context. | **(d).** A refusal by discard is the same signal as a rejection and shouldn't escape the careful look by taking a different button. (a) lets it; (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
 | Q2 | How much **stronger** is a match on a rejected receipt? | (a) Red label, listed first, rejection note shown, and a note required to clear. (b) Label only. (c) Route it to whoever rejected the first. | **(a).** It's the "check more carefully" @thpr asked for at the cost of one sentence. (c) adds a seat on a team where it's the same people. |
 | Q3 | **Fold order and receipt numbers** when comparing? (Dates need nothing: #2566 makes them uniform and there are no older rows.) | (a) Fold case, spaces and a leading `#`. (b) Compare exactly, as today. | **(a).** The same number typed `#A-123` and `a-123` is one order. It is the treatment #2561 gave the retailer. |
 | Q4 | An **amount tolerance** tier (same vendor and date, totals within N cents)? The date window is Q13. | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** No source in §11 documents an amount tolerance, and two totals a few cents apart are usually two purchases; ship the exact tiers with groups first and see what's still missed. |
