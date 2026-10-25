@@ -39,6 +39,7 @@ const ORACLES = [
     'expense-card-charge-routes.test.ts',
     'expense-finance-queue-routes.test.ts',
     'expense-line-actions-routes.test.ts',
+    'expense-ownership-map-route.test.ts',
     'expense-reimbursee-vendor-routes.test.ts',
     'expense-strip.test.ts',
     'expense-test-data-route.test.ts',
