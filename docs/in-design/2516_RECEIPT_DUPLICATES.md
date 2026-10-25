@@ -1,4 +1,4 @@
-# Duplicate receipts: one group, one decision, checked again before posting
+# Duplicate receipts: one group, one decision
 
 Design for #2516. Research and design only; no app code changes here. The
 PR plan is in `2516_RECEIPT_DUPLICATES-migration.md`.
@@ -42,9 +42,8 @@ first decision. A fix that adds steps buys nothing.
 - Finance sees every copy together and decides once. The decision covers the
   whole group and is remembered, so the same pair is never asked about again.
 - A copy that matches a rejected receipt is marked so finance looks harder.
-- One more check runs at QuickBooks posting, inside the finance queue that
-  already exists, for anything the receipt check missed.
-- No new receipt states, no new sign-off seats.
+- No new receipt states, no new sign-off seats, and nothing added on the
+  expense side.
 
 ## Executive summary
 
@@ -52,28 +51,16 @@ first decision. A fix that adds steps buys nothing.
 | --- | --- | --- |
 | Finance | The Duplicates tab shows one row per **group** of matching receipts. The compare panel shows every member side by side, each with its state and why it matched. Actions: **Not this one** per match, **Different purchases**, **Keep this one** (rejects the other open copies as copies of it, in the same act) and **Reject**. Finance never discards. A rejected member is labelled in red with its rejection reason. | Finance decides, as today. The conflict rule applies to every receipt in the group. |
 | Submitter | When every match is their own earlier upload, they see "You already sent this receipt on 3 Oct" and can withdraw the new copy, which they can already do today. A match on someone else's receipt shows only "Finance will check this for a possible duplicate". | Nobody's receipt is refused automatically. |
-| QuickBooks posting | An expense whose vendor, date and total match another expense, with no decision saying they differ, is held with the reason "Possible duplicate of the Home Depot expense of 3 Oct" in the QuickBooks tab of Finance review. | The posting queue, tabs and counts are #2481's; this adds one reason. |
-| States | No receipt state added. `duplicate_flagged` is reused for every member that reaches the check. On the expense side, Q9 may add one transition and one end state for a duplicate found only at posting. | The receipt machine's states and guard order. |
+| QuickBooks posting | Nothing. Every expense comes from a receipt that passed the duplicate check (§7). | Posting as it is. |
+| States | No receipt state added. `duplicate_flagged` is reused for every member that reaches the check. The expense machine is untouched. | The receipt machine's states and guard order. |
 
 What it costs: one small table of decisions, one read-time query in place of
-the stored single suspect, a group compare panel, one derived expense reason
-and, depending on Q9, one expense transition. About nine small PRs, test
-first (see the migration file).
+the stored single suspect, a group compare panel, and reject edges for
+finance. About eight small PRs, test first (see the migration file).
 
 ## Waiting on @thpr
 
-Two questions are open. Everything decided so far is logged in §10.
-
-**Q8. Should the app check again for duplicates when an expense is about to post to QuickBooks?**
-- (a) Yes: an expense that matches another live expense is held in the QuickBooks tab until finance decides (§7).
-- (b) No: trust the check made when the receipt came in.
-- **Recommended: (a).** It's one more hold reason, not a new step, and it catches a copy cleared by mistake against a receipt that was already finalized.
-
-**Q9. If the posting check finds a real duplicate, how does finance stop that expense?** Today an expense waiting to post can only post. The copy isn't a real expense (its twin is), so it needs a way out.
-- (a) A new "withdrawn as a duplicate" step that ends the copy without posting it, with a note naming its twin. It would reuse the expense's existing end state `rejected`, the one Q14 says is not used in practice; or (a′) a new end state named for what happened.
-- (b) Reuse "not posted" (`qb_skipped`). That state today means "already in QuickBooks from before the app", so reusing it blurs the two.
-- (c) Let it post, then void it in QuickBooks.
-- **Recommended: (a′).** A copy ending as "withdrawn as a duplicate" says what happened, and keeps `rejected` out of it. It's one new end state on the expense side; the receipt side gains none. If you'd rather add no state at all, (a).
+Nothing is open. Every question is decided or dropped; see the log in §10.
 
 ---
 
@@ -293,9 +280,9 @@ Until then A stays where it is, in submitter or finance review, and carries a
 badge: "Possible duplicate: in a group of 3". Finance can decide the group
 from A's page or from the Duplicates tab.
 
-A member that was **already finalized** before the copy arrived can't be held
-on the receipt side; it is a terminal state. That case is what the posting
-re-check (§7) is for.
+A member that was **already finalized** before the copy arrived can't be
+held; it is a terminal state. It doesn't need to be: the copy is open, so the
+copy is held against it, and the group decision is made on the copy.
 
 ### 5.3 The compare panel
 
@@ -370,11 +357,6 @@ Each case is handled on the server, and the screen is only a convenience:
   left open over lunch is usually current before anyone clicks. This only
   saves a refusal; it isn't what keeps the data right.
 
-The posting re-check (§7) has the same shape: the outbox already re-checks an
-expense under a row lock before it posts, and the duplicate condition joins
-that re-check. Two matching expenses can't both slip through by checking at
-the same moment, because each counts the other in any state but rejected.
-
 ---
 
 ## 6. Deciding
@@ -439,51 +421,30 @@ what's left. This is the re-check #2516 asks for, and it replaces the
 
 ---
 
-## 7. The re-check at QuickBooks posting
+## 7. No re-check at QuickBooks posting
 
-The receipt-side check covers receipts. Two cases slip past it:
+The AP tools in §11 re-check at payment because invoices reach them through
+several channels. Here every expense comes through one: a finalized receipt,
+whose vendor, date, total and receipt number the expense keeps unchanged, and
+a receipt can't change once it is sent to expenses. So two matching expenses
+always come from two matching receipts, and the receipt check has already
+compared those two, in both directions (§5.1), and seen a person decide them.
+The only way both get through is finance saying *different purchases*. That
+is a decision, not a miss.
 
-- a finalized member that predates its copy (§5.2), when the copy is cleared
-  as different by mistake, or a receipt is edited after finalizing;
-- whatever the next change to the receipt side breaks.
-
-Posting is the last point before money is booked. Concur Detect, AppZen and
-BILL all claim a pre-payment check (§11), though none documents how it works.
-Here it is one derived reason in #2481's model, not a new step:
-
-- **The condition.** The expense is waiting to post, and another expense in
-  the org has the same vendor key, receipt date and total, or the same vendor
-  key and receipt number, and no pair decision says they differ. "Another
-  expense" means one in **any** state except `rejected`: still in sign-off
-  (`pending` through `set_depreciation_cycle`), waiting to post or held
-  (`qb_pending`, `qb_on_hold`, `qb_error`), or done (`qb_complete`,
-  `qb_skipped`). It is not limited to posted expenses, so two copies moving
-  through sign-off together hold each other. Nothing dead holds up posting: a
-  rejected expense is left out, and a discarded receipt never becomes an
-  expense.
-- **What it doesn't need to cover.** A receipt that hasn't become an expense
-  yet is the receipt-side check's job. That receipt can't finalize past its
-  own duplicate guard (§5.2), so it never reaches posting undecided. The
-  expense library can't read receipts anyway (library boundary).
-- **The reason.** QuickBooks tab: "Possible duplicate of the Home Depot
-  expense of 3 Oct ($84.12)". While it holds, the outbox skips the expense,
-  the same way an unknown reimbursee holds it today.
-- **Deciding.** On the expense page, side by side with the other expense:
-  **Different purchases** (records the pair; the next drain posts it) or
-  **Duplicate, don't post** (Q9).
-- **No double asking.** A pair already decided *different* on the receipt
-  side counts as decided here. The receipt push carries the receipt's
-  decided-different receipt ids, and the expense side reads them, so the
-  receipt library is never imported by the expense library.
-
-Counts: in a normal week this reason should be zero. Each one that shows up is
-a sign the receipt-side check missed something.
+A check at posting could therefore fire only if the receipt check has a bug,
+and it would see less than that check does (an expense has no file hash).
+The receipt check's tests are where that bug gets caught: #2515's tests
+flipped to the decided behaviour, and the race tests in §5.5. A real
+duplicate that still reached QuickBooks is voided there, as today. Decided:
+Q8 and Q9 in §10.
 
 ---
 
 ## 8. States
 
-No receipt state is added. Every change maps onto what exists:
+No state is added, and the expense machine is untouched. Every change maps
+onto what exists:
 
 | Change | Receipt machine | Expense machine |
 | --- | --- | --- |
@@ -492,14 +453,6 @@ No receipt state is added. Every change maps onto what exists:
 | Keep this one, Reject | `REJECT` on each other open member. Today `REJECT` exists only from `financial_review`; with finance no longer discarding (§9), finance needs a `REJECT` edge from every open state where it discards today, `duplicate_flagged` among them. New edges into the existing `rejected`, no new state. The kept member takes `DUPLICATE_CLEARED` if it was held | none |
 | Re-check after a decision | existing `RUN_PIPELINE` on each affected open member | none |
 | Badge on an open earlier copy | none: a read-time marker | none |
-| Posting hold | none | none: a derived reason, the outbox skips it, as with an unknown reimbursee |
-| Duplicate found only at posting | none | **Q9**: a "withdrawn as a duplicate" event from `qb_pending`/`qb_on_hold`, into a new end state (recommended) or the existing `rejected` |
-
-The one possible addition is on the expense side (Q9). Today an expense
-waiting to post has no way out except posting, so a duplicate found there
-could only be voided in QuickBooks after the fact. One event, and at most one
-end state named for what happened, is the smallest change that lets finance
-stop it.
 
 New data: one table of pair decisions (§6.3). Nothing else.
 
@@ -522,13 +475,6 @@ doesn't was an open question (§10, and "Waiting on @thpr").
 - Finance decides a group of matching receipts once, and the decision is
   remembered per pair. Nobody decides a group in which they are conflicted on
   any member. [Decision — owner; conflict part from the existing receipts rule]
-- An expense is not posted to QuickBooks while another live expense in the
-  org has the same vendor, date and total, or the same vendor and receipt
-  number, and no decision says the two are different purchases. Live means
-  in sign-off, waiting to post, or already posted or skipped. Nothing dead
-  holds up posting: neither a rejected expense nor a discarded receipt (a
-  discarded receipt never becomes an expense).
-  [Decision — owner]
 
 ---
 
@@ -545,6 +491,8 @@ IDs are fixed; the open ones are in "Waiting on @thpr" near the top.
 | Q5 | Is a fuzzy vendor hit held like an exact one? | **Yes,** same hold, weaker label. |
 | Q6 | May a submitter withdraw their own repeat upload when every match is theirs? | **Yes,** with the match shown; another person's receipt is never shown. |
 | Q7 | When is a note needed to say "different purchases"? | **Never** (follows from Q2). |
+| Q8 | Re-check for duplicates at QuickBooks posting? | **No.** Every expense comes from a receipt that passed the duplicate check, so a hold at posting would only mean the receipt check had a bug (§7). |
+| Q9 | How finance stops a duplicate found only at posting | **Goes away with Q8.** The expense side gains no state or transition. |
 | Q10 | Existing cleared receipts at cutover | **Dropped:** production holds no receipts. |
 | Q11 | Already-finalized groups at cutover | **Dropped:** production holds no receipts. |
 | Q12 | A "hide for now" button besides Not this one? | **No:** "too much complexity". Not this one with Undo is the only dismiss. |
@@ -645,7 +593,7 @@ out of the comparison.
 | One suspect only | Group computed at read time, every tier, every member | §5.1 |
 | Matches against dead copies | Discarded never raises a flag; rejected does, labelled in red with its reason | §4 |
 | No re-check after clear or discard | Pairwise decisions replace the blanket exemption; every decision re-checks the rest of the group | §6.3, §6.4 |
-| Only the later copy is flagged | Symmetric match; every open member meets the guard before it can finalize; finalized members caught at posting | §5.2, §7 |
+| Only the later copy is flagged | Symmetric match; every open member meets the guard before it can finalize; a finalized member is matched by the open copy, which is held | §5.2 |
 | Nondeterministic suspect | Members ordered by upload time; no single suspect | §5.1 |
 
 ## Appendix: alternatives considered
