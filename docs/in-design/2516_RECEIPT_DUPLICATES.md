@@ -312,6 +312,50 @@ per group, not per receipt: vendor, date, total, member count, "includes a
 rejected receipt" when it does, and how long the oldest held member has
 waited. Its count is groups waiting.
 
+### 5.5 When the group changes after the screen is drawn
+
+Because the group is computed on read, the panel is a snapshot. Between
+drawing it and finance clicking, a new copy can arrive, the submitter can
+withdraw a member, or a second finance holder can decide the same group.
+Each case is handled on the server, and the screen is only a convenience:
+
+- **A decision names exactly what it covers.** The request carries the ids
+  of the receipts the panel showed. A pair decision is written only for pairs
+  of those ids, and **Keep this one** discards only those ids. No decision
+  can ever reach a receipt finance didn't see.
+- **A new copy can't be cleared by an old screen.** Its own check runs after
+  it is inserted, and no pair decision can name it yet, so it is held against
+  every member it matches, whatever anyone clicks on a screen drawn before it
+  existed. The worst a race can do is refuse a click, never let a copy
+  through.
+- **Group-wide actions check the group first.** **Different purchases** and
+  **Keep this one** claim to settle the whole group, so the server
+  recomputes the group under a lock in the same transaction (row locks on the
+  members, as the expense outbox does on an expense). If it differs from the
+  ids sent, because a member was added, changed state, or another holder
+  decided a pair, nothing is written and the server answers 409. The panel
+  shows a red chip that stays until dismissed, naming the change: "A new
+  possible copy arrived after you opened this: Home Depot, 3 Oct, $84.12" or
+  "Pat already decided this group". It redraws from the fresh group, with a
+  "New" tag on any column that wasn't there before. This is the "Refresh and
+  retry" pattern mail intake already uses, with the refresh done for the
+  user.
+- **Not this one isn't refused for a newcomer.** It decides one named pair,
+  and a new arrival doesn't make that pair wrong. The response carries the
+  fresh group, so the panel redraws with the new column tagged "New". It is
+  refused (409, as above) only when that pair or either receipt changed
+  underneath it.
+- **The receipt's own state is checked as today.** Every step already moves
+  a receipt only from the state it was read in, and answers 409 otherwise.
+- **The panel refreshes itself when the tab regains focus**, so a screen
+  left open over lunch is usually current before anyone clicks. This only
+  saves a refusal; it isn't what keeps the data right.
+
+The posting re-check (§7) has the same shape: the outbox already re-checks an
+expense under a row lock before it posts, and the duplicate condition joins
+that re-check. Two matching expenses can't both slip through by checking at
+the same moment, because each counts the other in any state but rejected.
+
 ---
 
 ## 6. Deciding

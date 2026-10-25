@@ -24,7 +24,7 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 
 | PR | Kind | What | Needs |
 | --- | --- | --- | --- |
-| 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) and for re-check after discard (§6.4) | #2515 merged |
+| 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) for re-check after discard (§6.4), and for the races in §5.5: a copy arriving after the panel was drawn stays held after **Different purchases** on the old ids; a group-wide action on a stale set of ids writes nothing and answers 409; two holders deciding one group at once, one wins | #2515 merged |
 | 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped). Fill it from today's cleared receipts per Q10 | Q10 |
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
 | 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7, Q12 |
