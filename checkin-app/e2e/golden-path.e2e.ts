@@ -110,7 +110,8 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
     await lineAct(page, LINE, "Assign bucket");
     const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("Bucket").click();
+    // "Always use this bucket for this part" also carries the word, so take the picker by its role.
+    await dialog.getByRole("textbox", { name: "Bucket", exact: true }).click();
     await page.getByRole("option", { name: bucketName }).click();
     await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(dialog).toBeHidden();
