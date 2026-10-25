@@ -50,7 +50,7 @@ first decision. A fix that adds steps buys nothing.
 
 | Who | What changes | What stays |
 | --- | --- | --- |
-| Finance | The Duplicates tab shows one row per **group** of matching receipts. The compare panel shows every member side by side, each with its state and why it matched. Three actions: **Different purchases**, **Keep this one** (discards the other open copies in the same act) and **Discard**. A group with a rejected member says so in red and asks for a note to clear it. | Finance decides, as today. The conflict rule applies to every receipt in the group, as it already does for discard. |
+| Finance | The Duplicates tab shows one row per **group** of matching receipts. The compare panel shows every member side by side, each with its state and why it matched. Actions: **Not this one** per match, **Different purchases**, **Keep this one** (rejects the other open copies as copies of it, in the same act) and **Reject**. Finance never discards. A rejected member is labelled in red with its rejection reason. | Finance decides, as today. The conflict rule applies to every receipt in the group. |
 | Submitter | When every match is their own earlier upload, they see "You already sent this receipt on 3 Oct" and can withdraw the new copy, which they can already do today. A match on someone else's receipt shows only "Finance will check this for a possible duplicate". | Nobody's receipt is refused automatically. |
 | QuickBooks posting | An expense whose vendor, date and total match another expense, with no decision saying they differ, is held with the reason "Possible duplicate of the Home Depot expense of 3 Oct" in the QuickBooks tab of Finance review. | The posting queue, tabs and counts are #2481's; this adds one reason. |
 | States | None added. `duplicate_flagged` is reused for every member that reaches the check. One expense transition is proposed for a duplicate found only at posting (Q9). | The receipt machine's states and guard order. |
@@ -67,7 +67,7 @@ first (see the migration file).
 From `docs/rules/expenses.md`:
 
 - Nobody takes a step on a receipt they are conflicted on: uploader, their
-  household, or the person reimbursed. Clearing or discarding a duplicate is
+  household, or the person reimbursed. Clearing or rejecting a duplicate is
   such a step. [Decision — *Ethics Policy, Art. III §III.5*]
 - Approval stays with FINANCE. A submitter sees only their own receipts,
   without other people's details. [Decision — owner]
@@ -84,6 +84,9 @@ Stated for this work but not yet in `docs/rules/`:
     should check more carefully the second time."
   - "We need to recognize we are a small team, so lots of duplicate
     cross-checking and approvals is silly — it ends up with the same people."
+  - On who discards: "A submitter discards, finance rejects. Board does
+    neither. System can also discard in mail intake." And so: "that makes all
+    discards innocent", "thus q1 becomes no flag".
 
 §9 lists the rules this design would establish.
 Everything else that would need a rule is an open question (§10).
@@ -196,10 +199,10 @@ member A by file and member B by fields. Every hit joins the group.
   Production holds no receipts yet, so there are no older formats to clean
   up, and once #2566 merges an exact comparison is enough. Nothing more is
   needed here.
-- **Order and receipt numbers:** compared exactly today. Proposed: fold case,
-  drop spaces and a leading `#`, the same treatment #2561 gave the retailer.
-  Q3.
-- **Total:** exact cents, same currency. No tolerance. Q4.
+- **Order and receipt numbers:** compared exactly today. Decided (Q3): fold
+  case, drop spaces and a leading `#`, the same treatment #2561 gave the
+  retailer.
+- **Total:** exact cents, same currency. No tolerance (Q4, decided).
 
 ### 3.3 Windows
 
@@ -213,7 +216,7 @@ due date; Stampli's relaxed tier is the same vendor and amount within a date
 window (§11). The same purchase can carry two dates here too: an online order
 confirmation and its shipping receipt, the date a card was charged and the
 date on the slip, or an OCR misread. Whether to add that tier, and how wide,
-is Q13. Amount tolerance is Q4.
+is Q13. Amount tolerance is not added (Q4, decided).
 
 ---
 
@@ -227,19 +230,22 @@ submission). What each state contributes:
 | --- | --- | --- | --- |
 | Open (any non-terminal state, including `duplicate_flagged`) | Yes | Yes | its state, e.g. "Waiting for finance review" |
 | `receipt_finalized` | Yes | Yes | "Finalized" and, if pushed, "Sent to expenses" |
-| `rejected` | Yes, **marked stronger** | Yes, first, in red, with the rejection note | "Rejected on 2 Oct: <note>" |
-| `discarded` | **No** on its own (Q1) | Yes, greyed, when the group exists for another reason | "Discarded on 2 Oct by <name>" |
+| `rejected` | Yes | Yes, labelled in red with its rejection reason | "Rejected on 2 Oct: <reason>" |
+| `discarded` | **No** (Q1, decided) | Yes, greyed, when the group exists for another reason | "Withdrawn by its submitter on 2 Oct" or "Discarded at mail intake as a copy of its attachment" |
 
-Why discarded doesn't raise a flag on its own (recommended in Q1): a
-discarded receipt will never be paid, and the risk being guarded is paying
-twice. A copy of a discarded receipt is either a resend of something thrown
-away by mistake (no risk) or a copy of a live receipt, which matches that live
-receipt directly. Scenario 3 of #2516 (C re-uploads discarded B's file) is
-caught because C's fields also match live A.
+Why discarded raises no flag (decided, Q1): only a submitter discards a
+receipt, withdrawing their own, and mail intake discards a body that copies
+its own attachment. Finance refuses a receipt by rejecting it, and the Board
+does neither (§9). So every discard is innocent, in @thpr's word, and refusal
+always leaves a rejection behind, which is labelled. A copy of a live
+receipt still matches that live receipt directly: scenario 3 of #2516 (C
+re-uploads B's file after B is withdrawn) is caught because C's fields also
+match live A.
 
 Why rejected does (per @thpr): a rejected receipt was refused for a reason,
 and the same purchase coming back is the case where that reason most needs
-re-reading. The flag says so and shows the note.
+re-reading. The label says so, readably, and shows the reason (Q2, decided).
+Nothing more: no reordering and no extra step to clear it.
 
 ---
 
@@ -279,7 +285,7 @@ re-check (§7) is for.
 ### 5.3 The compare panel
 
 #2549's two-way compare becomes N-way. The receipt being viewed is the left
-column; every other member follows, in upload order, rejected first. Each
+column; every other member follows, in upload order. Each
 column shows the file, vendor, date, numbers, totals, lines, state, uploader
 (finance view only) and the tier labels that tie it to the group. On a phone
 the columns stack, as #2549's do.
@@ -295,8 +301,6 @@ has a **Not this one** button, as in a shop's product compare:
   Depot, 3 Oct · Undo". Undo deletes that pair decision, and the column
   returns. Undo is offered while the viewed receipt is still held; once it
   has moved on, the decision stands like any other.
-- Dismissing a rejected match asks for the note Q7 requires, so the careful
-  second look can't be skipped a column at a time.
 - The same people may dismiss as may decide the group (§6.1). A submitter
   never sees another person's receipt, so never sees this button.
 - A dismissed match can still be in the group through another member: if B
@@ -321,7 +325,7 @@ Each case is handled on the server, and the screen is only a convenience:
 
 - **A decision names exactly what it covers.** The request carries the ids
   of the receipts the panel showed. A pair decision is written only for pairs
-  of those ids, and **Keep this one** discards only those ids. No decision
+  of those ids, and **Keep this one** rejects only those ids. No decision
   can ever reach a receipt finance didn't see.
 - **A new copy can't be cleared by an old screen.** Its own check runs after
   it is inserted, and no pair decision can name it yet, so it is held against
@@ -363,8 +367,7 @@ the same moment, because each counts the other in any state but rejected.
 ### 6.1 Who
 
 FINANCE, as today, and no new seat. The person deciding must not be
-conflicted on **any** member of the group, the rule discard already applies to
-receipts held against the one discarded. When every FINANCE holder is
+conflicted on **any** member of the group. When every FINANCE holder is
 conflicted, the group waits: the same fall-back as any other receipt decision
 today, and not changed here.
 
@@ -381,10 +384,10 @@ with **Not this one** (§5.3):
 
 | Action | What it does | Required |
 | --- | --- | --- |
-| **Not this one** (per match) | Records that the viewed receipt and that one match are different purchases. The group is recomputed and the panel redraws. When no undecided match is left, the receipt re-runs the pipeline. | A note, when that match is rejected (Q7) |
-| **Different purchases** | Dismisses every remaining match at once: records, for every pair in the group, that they are different purchases. Every held member re-runs the pipeline and carries on to arithmetic, submitter and finance checks. | A note, only when the group has a rejected member (Q7) |
-| **Keep this one** | Discards every other *open* member and records each as a copy of the kept one. The kept receipt then has no undecided live match, so it leaves the hold and re-runs the pipeline. Finalized and rejected members are left as they are. | Nothing; picking the keeper is the decision |
-| **Discard** | Discards this receipt only, as today. The rest of the group is recomputed. | Nothing |
+| **Not this one** (per match) | Records that the viewed receipt and that one match are different purchases. The group is recomputed and the panel redraws. When no undecided match is left, the receipt re-runs the pipeline. | Nothing |
+| **Different purchases** | Dismisses every remaining match at once: records, for every pair in the group, that they are different purchases. Every held member re-runs the pipeline and carries on to arithmetic, submitter and finance checks. | Nothing |
+| **Keep this one** | Rejects every other *open* member with the reason "Copy of <kept receipt>", and records each as a copy of the kept one. The kept receipt then has no undecided live match, so it leaves the hold and re-runs the pipeline. Finalized and rejected members are left as they are. | Nothing; picking the keeper is the decision |
+| **Reject** | Rejects this receipt only, with a reason, as finance rejects any receipt. The rest of the group is recomputed. | The rejection reason, as today |
 
 Keep this one replaces today's two-step "discard the original, then clear the
 copy", which is the path that left #2516's scenario 2 holding two live
@@ -392,7 +395,11 @@ copies.
 
 "Keep this one" is offered only on an open member. If the group already has a
 finalized member, the panel says so at the top ("A finalized copy exists:
-keep it and discard this one?") and the one-click choice is Discard.
+keep it and reject this one as a copy?") and the one-click choice is Reject,
+with the reason filled in.
+
+A receipt rejected as a copy is still a rejected receipt, so a later copy is
+compared with it. Its label reads "Rejected as a copy of <kept receipt>".
 
 ### 6.3 Remembered as pairs
 
@@ -409,7 +416,7 @@ receipts yet, so no existing clearance needs carrying over; the column and
 
 ### 6.4 Re-checks after a decision
 
-A discard or a decision changes the group, so every other open member's
+A withdrawal, a rejection or a decision changes the group, so every other open member's
 group is recomputed in the same transaction. A member left with no undecided
 match re-runs its pipeline; one still matching stays held, and the panel shows
 what's left. This is the re-check #2516 asks for, and it replaces the
@@ -467,7 +474,7 @@ No receipt state is added. Every change maps onto what exists:
 | --- | --- | --- |
 | Symmetric match, group, lazy hold | `uploaded`/`flow_error` → `duplicate_flagged` via the existing `isDuplicate` guard | none |
 | Different purchases | existing `DUPLICATE_CLEARED`, `duplicate_flagged` → `uploaded` | none |
-| Keep this one | existing `DISCARD` on each other open member; the kept member takes `DUPLICATE_CLEARED` if it was held | none |
+| Keep this one, Reject | `REJECT` on each other open member. Today `REJECT` exists only from `financial_review`; with finance no longer discarding (§9), finance needs a `REJECT` edge from every open state where it discards today, `duplicate_flagged` among them. New edges into the existing `rejected`, no new state. The kept member takes `DUPLICATE_CLEARED` if it was held | none |
 | Re-check after a decision | existing `RUN_PIPELINE` on each affected open member | none |
 | Badge on an open earlier copy | none: a read-time marker | none |
 | Posting hold | none | none: a derived reason, the outbox skips it, as with an unknown reimbursee |
@@ -489,6 +496,10 @@ doesn't is in §10.
 
 - A receipt that matches another receipt is held for finance, never refused
   automatically. [Decision — owner]
+- Only a receipt's submitter discards it, and mail intake discards a body
+  that copies its own attachment. Finance refuses a receipt by rejecting it,
+  with a reason. The Board neither discards nor rejects. A discarded receipt
+  raises no duplicate flag. [Decision — owner]
 - A receipt is checked against every receipt in the org that could still be,
   or already was, paid: open, finalized and rejected. A match on a rejected
   receipt is shown as such. [Decision — owner]
@@ -511,20 +522,20 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 
 | ID | Question | Options | Recommendation |
 | --- | --- | --- | --- |
-| Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. | **(a).** A discarded receipt is never paid; a copy of a live receipt matches that receipt directly. (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
-| Q2 | How much **stronger** is a match on a rejected receipt? | (a) Red label, listed first, rejection note shown, and a note required to clear. (b) Label only. (c) Route it to whoever rejected the first. | **(a).** It's the "check more carefully" @thpr asked for at the cost of one sentence. (c) adds a seat on a team where it's the same people. |
-| Q3 | **Fold order and receipt numbers** when comparing? (Dates need nothing: #2566 makes them uniform and there are no older rows.) | (a) Fold case, spaces and a leading `#`. (b) Compare exactly, as today. | **(a).** The same number typed `#A-123` and `a-123` is one order. It is the treatment #2561 gave the retailer. |
-| Q4 | An **amount tolerance** tier (same vendor and date, totals within N cents)? The date window is Q13. | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** No source in §11 documents an amount tolerance, and two totals a few cents apart are usually two purchases; ship the exact tiers with groups first and see what's still missed. |
+| Q1 | ~~Does a discarded receipt raise a flag?~~ | **Decided by @thpr: no flag.** Only a submitter or mail intake discards, so every discard is innocent; finance's refusals are rejections. A discarded receipt still shows, greyed, in a group that exists for another reason. | — |
+| Q2 | ~~How much stronger is a match on a rejected receipt?~~ | **Decided by @thpr:** a readable label, red is fine; not listed first, no required note. "Don't go overboard." | — |
+| Q3 | ~~Fold order and receipt numbers when comparing?~~ | **Decided by @thpr: (a).** Fold case, spaces and a leading `#`, as #2561 did for the retailer. Dates need nothing beyond #2566. | — |
+| Q4 | ~~An amount tolerance tier?~~ | **Decided by @thpr: (a).** Not now; revisit with #2558's data. | — |
 | Q5 | When #2558's **fuzzy vendor** match lands, is a fuzzy hit flagged like an exact one? | (a) Same hold, weaker label. (b) A badge on the receipt but no hold. | **(a).** One kind of hold keeps the queue simple; the label tells finance how hard to look. |
 | Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |
-| Q7 | When is a **note required** to say "different purchases"? | (a) Only when the group has a rejected member. (b) Always. (c) Never. | **(a).** Ties the extra effort to the case @thpr singled out. |
+| Q7 | ~~When is a note required to say "different purchases"?~~ | **Settled by Q2:** never. | — |
 | Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case. |
 | Q9 | A duplicate found **only at posting**: how does finance stop it? | (a) New `DUPLICATE_WITHDRAWN` event to the existing `rejected`, with a note naming the other expense. (b) Reuse `qb_skipped` ("not posted"). (c) Leave it posted and void in QuickBooks. | **(a).** (b) means "already booked in QuickBooks" for backfill, and reusing it would blur that; (c) books it first and undoes it later. |
 | Q10 | ~~Existing cleared receipts at cutover~~ | Dropped: production holds no receipts. | — |
 | Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
 | Q12 | Besides **Not this one**, a **hide for now** that records nothing and only tidies the view? | (a) No; Not this one with Undo covers it. (b) Yes, as a second button. | **(a).** Undo makes a recorded dismissal as cheap as a hidden one, and two near-identical buttons, one that saves a decision and one that doesn't, are easy to confuse. |
 | Q13 | A weak **similar date** tier: same vendor and same total, receipt dates within N days of each other? | (a) Yes, N = 3, the same hold as the other tiers with a weak label naming the gap ("2 days apart"), built after the exact tiers ship. (b) Yes, with a wider N such as 7. (c) A badge on the receipt but no hold. (d) No. | **(a).** It catches the order-versus-shipping and charge-versus-slip pairs the exact tiers miss. Three days stays clear of a weekly purchase of the same thing, which (b) would flag every week. Each false flag costs one **Not this one**, remembered per pair. The value of N is @thpr's call. |
-| Q14 | Should a match on an expense **rejected at sign-off** get the stronger "rejected" flag? Its receipt reads "Finalized" on the receipt side, and the posting check skips rejected expenses, so the careful second look @thpr asked for doesn't happen for it today. | (a) Yes: the posting check includes rejected expenses, flagged as rejected with the sign-off note, and a note is required to clear (as Q7). (b) Yes, on the receipt side: the compare shows the expense's outcome, which needs the expense status sent back to the receipt library. (c) No: a rejected expense is never paid. | **(a).** It keeps the change inside the expense library, and uses the hold and note already designed. |
+| Q14 | Should a match on an expense **rejected at sign-off** get the "rejected" label? Its receipt reads "Finalized" on the receipt side, and the posting check skips rejected expenses, so the careful second look @thpr asked for doesn't happen for it today. | (a) Yes: the posting check includes rejected expenses, flagged as rejected with the sign-off note, labelled as on the receipt side (Q2). (b) Yes, on the receipt side: the compare shows the expense's outcome, which needs the expense status sent back to the receipt library. (c) No: a rejected expense is never paid. | **(a).** It keeps the change inside the expense library, and uses the hold already designed. |
 
 ---
 
@@ -618,7 +629,7 @@ out of the comparison.
 | Failure | Fix | Section |
 | --- | --- | --- |
 | One suspect only | Group computed at read time, every tier, every member | §5.1 |
-| Matches against dead copies | Discarded never raises a flag alone; rejected raises a stronger one; both labelled | §4 |
+| Matches against dead copies | Discarded never raises a flag; rejected does, labelled in red with its reason | §4 |
 | No re-check after clear or discard | Pairwise decisions replace the blanket exemption; every decision re-checks the rest of the group | §6.3, §6.4 |
 | Only the later copy is flagged | Symmetric match; every open member meets the guard before it can finalize; finalized members caught at posting | §5.2, §7 |
 | Nondeterministic suspect | Members ordered by upload time; no single suspect | §5.1 |
@@ -632,8 +643,8 @@ out of the comparison.
   arrives.** Rejected: it moves a receipt out from under its submitter or
   finance mid-review. The lazy hold (§5.2) reaches the same guarantee, since
   nothing finalizes without passing the guard.
-- **A second sign-off for clearing a match on a rejected receipt.** Rejected
-  per @thpr's small-team point; a required note gives the second look without
-  a second person.
+- **A second sign-off, or a required note, for clearing a match on a rejected
+  receipt.** Rejected per @thpr: the label is enough ("don't go overboard"),
+  and on a small team a second sign-off lands on the same people.
 - **A unique constraint on the file hash.** Rejected long ago (1265 §2): it
   would refuse the upload instead of letting a person decide.

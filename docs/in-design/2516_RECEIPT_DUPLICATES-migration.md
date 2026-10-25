@@ -18,6 +18,11 @@ rules, delete both files".
 - #2561 (retailer case and spaces) is merged. #2558 (fuzzy retailer) is open
   and not part of this plan.
 
+- Today finance and the Board can discard any receipt they aren't conflicted
+  on. @thpr decided only the submitter (and mail intake) discards; finance
+  rejects; the Board does neither. That change is PR 0 below, and it is not
+  duplicate-specific.
+
 ## Build plan
 
 Each PR is small and test first: the flipped test lands failing (`it.fails`)
@@ -26,10 +31,11 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 
 | PR | Kind | What | Needs |
 | --- | --- | --- | --- |
+| 0 | app | Discard is the submitter's and mail intake's only: finance and the Board are refused. Finance gets a `REJECT` edge, with a reason, from every open state it can discard from today. Its own issue; the duplicate PRs below depend on it | @thpr's decision |
 | 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) for re-check after discard (§6.4), and for the races in §5.5: a copy arriving after the panel was drawn stays held after **Different purchases** on the old ids; a group-wide action on a stale set of ids writes nothing and answers 409; two holders deciding one group at once, one wins | #2515 merged |
 | 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped) | none |
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
-| 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7, Q12 |
+| 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision | Q12 |
 | 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
 | 6 | app | Number folding per Q3; the similar-date tier if Q13 says yes | #2566 merged; Q3, Q13 |
 | 7 | app | Posting re-check: the receipt push carries decided-different receipt ids (contract change in `receipt-types`), the derived QuickBooks-tab reason, the outbox skip, and the stop action | Q8, Q9 |
@@ -43,11 +49,11 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 2 | Same fields: C flagged against A or B | C's group is {A, B}, always in that order |
 | 3 | C cleared against A goes through beside cleared B | C's compare shows B; clearing C records C≠A and C≠B, which finance saw |
 | 4 | Two cleared field copies never compared | Each copy's group contains the other until a decision covers that pair |
-| 5 | A discarded to keep B; C flagged against discarded A, clears beside B | "Keep this one" on B discards A; C's group shows live B (and A greyed); C cannot finalize without a decision against B |
-| 6 | Copies after A was discarded flag against A, both clear | Per Q1(a), A alone raises nothing; B and C flag against each other |
-| 7 | Copies of a rejected A flag against it, both clear | Flagged with the rejected marker; clearing needs a note (Q7); B and C are in one group |
+| 5 | A discarded to keep B; C flagged against discarded A, clears beside B | "Keep this one" on B rejects A as a copy of B; C's group shows live B and A ("Rejected as a copy of B"); C cannot finalize without a decision against B |
+| 6 | Copies after A was discarded flag against A, both clear | A was withdrawn by its submitter, so per Q1 (decided) A raises nothing; B and C flag against each other. If finance had refused A, A is rejected and flags as such (test 7) |
+| 7 | Copies of a rejected A flag against it, both clear | Flagged, with A labelled "Rejected"; B and C are in one group with A |
 | 8 | Re-upload of B's file flagged against B, not A | C's group is {A, B} |
-| 9 | C's copy B discarded; C clears beside A | C's group still holds live A; C stays held until decided against A |
+| 9 | C's copy B discarded (now: rejected by finance as a copy of A); C clears beside A | C's group still holds live A; C stays held until decided against A |
 | 10 | C's copy B cleared; C stays flagged against finalized B | Unchanged in outcome; group is {A, B} |
 
 The 1265 race test ("two identical uploads at once, exactly one ends
