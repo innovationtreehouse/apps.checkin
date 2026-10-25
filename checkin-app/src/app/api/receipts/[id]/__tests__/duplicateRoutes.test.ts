@@ -103,12 +103,12 @@ describe("POST /api/receipts/[id]/clear-duplicate", () => {
 });
 
 describe("POST /api/receipts/[id]/discard on either receipt of a pair", () => {
-  it("discards the suspected original org-wide for FINANCE", async () => {
+  it("runs FINANCE's discard as a submitter, so it reaches only their own receipts", async () => {
     signIn({ isFinance: true });
-    service.discard.mockResolvedValue({ ...FLAGGED, id: "r-orig", state: "discarded" });
+    service.discard.mockRejectedValue(new ServiceError(404, "Receipt not found"));
     const res = await discard(req("/r-orig/discard", "POST"), params("r-orig"));
-    expect(res.status).toBe(200);
-    expect(service.discard).toHaveBeenCalledWith("r-orig", "finance");
+    expect(res.status).toBe(404);
+    expect(service.discard).toHaveBeenCalledWith("r-orig", "submitter");
   });
 
   it("runs a BOARD member's discard as a submitter, so it reaches only their own receipts", async () => {
