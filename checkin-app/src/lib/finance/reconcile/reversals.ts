@@ -354,7 +354,7 @@ export async function reconcileReversals(): Promise<number> {
     // A withdrawn row keeps its order, so a late reversal is raised against it.
     const enrolls = await prisma.programParticipant.findMany({
         where: { shopifyOrderId: { not: null }, status: { not: "PENDING" } },
-        select: { programId: true, personId: true, shopifyOrderId: true },
+        select: { programId: true, personId: true, shopifyOrderId: true, status: true },
     });
 
     const orderIds = [
@@ -424,7 +424,7 @@ export async function reconcileReversals(): Promise<number> {
             unreversed.set(e.shopifyOrderId!, o);
         }
     }
-    raised += await raiseUnderSeatedOrders(enrolls.filter((e) => unreversed.has(e.shopifyOrderId!)), unreversed);
+    raised += await raiseUnderSeatedOrders(enrolls.filter((e) => e.status === "ACTIVE" && unreversed.has(e.shopifyOrderId!)), unreversed);
     return raised;
 }
 

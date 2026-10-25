@@ -745,6 +745,22 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual([]);
     });
 
+    it("does not count a withdrawn person on the order as a seat holder", async () => {
+        const oid = `${TAG}-605`;
+        const email = `ent-withdrawn-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({ where: { programId_personId: { programId, personId } }, data: { status: "WITHDRAWN", endedAt: new Date() } });
+        const sib = await prisma.person.create({ data: { email: `sib-${email}`, name: `Sib ${email}`, householdId } });
+        await prisma.programParticipant.create({ data: { programId, personId: sib.id, status: "ACTIVE", shopifyOrderId: oid } });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue([{ orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 2, currentQuantity: 1, priceCents: 5000, discountCents: 0 }]);
+
+        await runReconcile();
+        expect(await statusOf(programId, sib.id)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
     it.each([
         ["PARTIALLY_REFUNDED", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }],
         ["VOIDED", { financialStatus: "VOIDED" }],
