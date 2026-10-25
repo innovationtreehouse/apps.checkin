@@ -17,9 +17,35 @@ const PERSONAS = [FINANCE, BOARD, APPROVER, TREASURER, INVENTORY_MANAGER, MEMBER
 
 /** A page that fails today: skipped by the sweep and asserted on its own as `test.fail` until its fix lands. */
 interface KnownFailure { page: string; personas: string[]; bug: string }
-const KNOWN_FAILURES: KnownFailure[] = [];
+const KNOWN_FAILURES: KnownFailure[] = [
+  {
+    page: "/attendance/certifications",
+    personas: [FINANCE, INVENTORY_MANAGER, MEMBER],
+    bug: "the nav offers it, but /api/kioskdisplay/certifications answers 403 and the page shows Forbidden",
+  },
+  {
+    page: "/my-household",
+    personas: [FINANCE, APPROVER, TREASURER, INVENTORY_MANAGER],
+    bug: "the nav offers it, but /api/household/emergency-contacts answers 403",
+  },
+  {
+    page: "/safety/trusted-adults",
+    personas: [APPROVER, TREASURER],
+    bug: "the nav offers it, but the page sends them to the home page",
+  },
+];
+
+/** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
+interface SeedPrompt { page: string; personas: string[]; text: RegExp }
+const SEED_PROMPTS: SeedPrompt[] = [
+  { page: "/settings", personas: [BOARD], text: /Background-check interval is not set/ },
+  { page: "/settings/membership", personas: [BOARD], text: /Background-check interval is not set/ },
+  { page: "/my-household", personas: [MEMBER], text: /No emergency contact on file/ },
+];
 
 const isKnown = (email: string, page: string) => KNOWN_FAILURES.some((k) => k.page === page && k.personas.includes(email));
+const isSeedPrompt = (email: string, page: string, problem: string) =>
+  problem.startsWith("error alert: ") && SEED_PROMPTS.some((p) => p.page === page && p.personas.includes(email) && p.text.test(problem));
 
 /** A page's share of its persona's test time: a cold compile, the load, and the settle. */
 const PAGE_BUDGET_MS = 75_000;
@@ -77,7 +103,7 @@ test.describe("nav pages in the browser", () => {
           problems.push(...(await watch.problems()));
           // A role gate sends a viewer it refuses to the home page.
           if (href !== "/" && new URL(page.url()).pathname === "/") problems.unshift("sent to the home page");
-          for (const problem of problems) {
+          for (const problem of problems.filter((p) => !isSeedPrompt(email, href, p))) {
             failures.push(`${href}: ${problem}`);
             console.log(`  ✘ ${email} ${href}: ${problem}`);
           }
@@ -95,9 +121,10 @@ test.describe("nav pages in the browser", () => {
         const { context } = await signIn(browser, email);
         const page = await context.newPage();
         const watch = watchPage(page);
-        await page.goto(known.page);
-        await page.waitForLoadState("networkidle");
-        expect(await watch.problems()).toEqual([]);
+        const problems = await openPage(page, known.page);
+        problems.push(...(await watch.problems()));
+        if (new URL(page.url()).pathname === "/") problems.push("sent to the home page");
+        expect(problems).toEqual([]);
       });
     }
   }

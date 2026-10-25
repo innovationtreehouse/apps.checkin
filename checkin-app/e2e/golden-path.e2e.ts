@@ -1,13 +1,15 @@
 /**
- * The golden path in the browser: the inventory manager uploads a receipt and reviews it, maps
- * its line to a catalog part in Part mapping (the last line resolved applies it), FINANCE puts
+ * The golden path in the browser: the inventory manager uploads a receipt, which the local OCR
+ * mock reads, and reviews it (names its retailer and line, then confirms); Part mapping links
+ * its line to a catalog part (the last line resolved applies it), FINANCE puts
  * the expense line in a bucket, the bucket's owner approves it, and FINANCE sees the approved
  * line in its expense review. Every page on the way must show no error.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { api } from "../flow-tests/helpers";
 import { lineAct, lineRow } from "./support/expenseLines";
 import { watchPage, type PageWatch } from "./support/pageErrors";
-import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
+import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, send, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -15,8 +17,6 @@ const RETAILER = `E2E Hardware ${stamp}`;
 const LINE = `Golden path part ${stamp}`;
 /** A seeded catalog item (packages/global-catalog/prisma/seed.ts). */
 const CATALOG_ITEM = "Power Distribution Hub";
-/** Yesterday, so no time zone makes it future-dated, which would route it to finance review. */
-const RECEIPT_DATE = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
 const undo: Undo[] = [];
 let bucketName: string;
@@ -58,18 +58,19 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const watch = watchPage(page);
     await page.goto("/receipts/upload");
     await page.locator('input[type="file"]').setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from(`golden path ${stamp}`) });
-    await page.getByText("I'll type the details").click();
-    await page.getByLabel("Retailer").fill(RETAILER);
-    await page.getByLabel("Date", { exact: true }).fill(RECEIPT_DATE);
-    await page.getByLabel("Total", { exact: true }).fill("12.34");
-    await page.getByLabel("Item 1 description").fill(LINE);
-    await page.getByLabel("Item 1 quantity").fill("1");
-    await page.getByLabel("Item 1 unit price").fill("12.34");
     await page.getByRole("button", { name: "Upload", exact: true }).click();
-
     await page.waitForURL(/\/receipts\/[^/]+$/);
     receiptId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() ?? "");
+    // The local OCR mock reads every upload as the same purchase, so an earlier upload may flag this one.
+    const read = await api<{ state: string }>(finance.session, `/api/receipts/${receiptId}`);
+    if (read.json.state === "duplicate_flagged") {
+      expect((await send(finance.session, "POST", `/api/receipts/${receiptId}/clear-duplicate`)).status).toBe(200);
+    }
+
+    // The submitter's review: name the retailer and the line as the receipt reads, then confirm.
     await eventually(page, page.getByText("Needs your review", { exact: true }));
+    await page.getByLabel("Retailer", { exact: true }).fill(RETAILER);
+    await page.getByRole("textbox", { name: / description$/ }).first().fill(LINE);
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
     await eventually(page, page.getByText("Receipt finalized", { exact: true }));
     await noProblems(watch, "receipt upload and review");
