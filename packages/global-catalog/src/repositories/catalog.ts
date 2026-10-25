@@ -103,7 +103,12 @@ export function createCatalogRepository(db: PrismaClient) {
       db.item.findMany({
         where: {
           archivedAt: null,
-          OR: [{ name: { contains: query, mode: "insensitive" } }, { gtin13: { contains: query } }],
+          OR: [
+            { name: { contains: query, mode: "insensitive" } },
+            { gtin13: { contains: query } },
+            { category: { name: { contains: query, mode: "insensitive" } } },
+            { subcategory: { name: { contains: query, mode: "insensitive" } } },
+          ],
         },
         select: { gtin13: true, name: true },
         orderBy: { name: "asc" },
