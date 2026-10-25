@@ -1,4 +1,4 @@
-import { parse } from "csv-parse/sync";
+import { CsvError, parse } from "csv-parse/sync";
 import { z } from "zod";
 import { dollarsToCents } from "@checkin/money";
 
@@ -37,17 +37,26 @@ export interface BenevityRow {
   donorComment: string;
 }
 
+/** Issues spelled out in the message; the rest are counted. */
+const MESSAGE_ISSUE_LIMIT = 5;
+
 export class CsvValidationError extends Error {
   constructor(public readonly issues: string[]) {
-    super(`CSV validation failed: ${issues.join("; ")}`);
+    const shown = issues.slice(0, MESSAGE_ISSUE_LIMIT).join("; ");
+    const more = issues.length > MESSAGE_ISSUE_LIMIT ? `; and ${issues.length - MESSAGE_ISSUE_LIMIT} more` : "";
+    super(`Could not import the CSV: ${shown}${more}`);
     this.name = "CsvValidationError";
   }
 }
+
+/** "1,500.00" as Benevity's Donations Report writes it; only well-formed thousands groups. */
+const THOUSANDS = /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
 
 /** Empty -> 0 cents; otherwise must be a finite number, else throw via refine. */
 const moneyCents = z
   .string()
   .transform((s) => s.trim())
+  .transform((s) => (THOUSANDS.test(s) ? s.replace(/,/g, "") : s))
   .superRefine((s, ctx) => {
     if (s !== "" && !Number.isFinite(Number(s))) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });
@@ -68,20 +77,32 @@ const rateNullable = z
 
 const str = z.string().default("");
 
+const MONTHS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
+/** "Thu 16 Apr 2026 0:00:00", the Donations Report's Period Ending, as YYYY-MM-DD; anything else unchanged. */
+function dayMonthYearToIso(s: string): string {
+  const m = /^(?:[A-Za-z]{3},? )?(\d{1,2}) ([A-Za-z]{3}) (\d{4})(?: .*)?$/.exec(s);
+  const month = m && MONTHS[m[2].toLowerCase()];
+  return m && month ? `${m[3]}-${month}-${m[1].padStart(2, "0")}` : s;
+}
+
 /**
  * Empty -> ""; otherwise an ISO date (YYYY-MM-DD, optionally with a time part, which is
- * dropped). Stored dates are YYYY-MM-DD so they order correctly as strings.
+ * dropped) or a "16 Apr 2026" day. Stored dates are YYYY-MM-DD so they order correctly as strings.
  */
 const isoDate = z
   .string()
-  .transform((s) => s.trim())
+  .transform((s) => dayMonthYearToIso(s.trim()))
   .superRefine((s, ctx) => {
     if (s === "") return;
     const day = s.slice(0, 10);
     const parsed = new Date(`${day}T00:00:00Z`);
     const valid =
       /^\d{4}-\d{2}-\d{2}(?:[T ].*)?$/.test(s) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
-    if (!valid) ctx.addIssue({ code: "custom", message: `not an ISO date (YYYY-MM-DD): "${s}"` });
+    if (!valid) ctx.addIssue({ code: "custom", message: `not a date (YYYY-MM-DD or 16 Apr 2026): "${s}"` });
   })
   .transform((s) => s.slice(0, 10));
 
@@ -115,64 +136,126 @@ const benevityRowSchema = z.object({
   donorComment: str,
 });
 
-function mapRaw(r: Record<string, string>): Record<string, string> {
-  return {
-    nonprofitName: r["Nonprofit Name"] ?? "",
-    nonprofitId: r["Nonprofit ID"] ?? "",
-    disbursementId: r["Disbursement ID"] ?? "",
-    disbursementDate: r["Disbursement Date"] ?? "",
-    bankDate: r["Bank Date"] ?? "",
-    bankReferenceId: r["Bank Reference ID"] ?? "",
-    paymentMethod: r["Payment Method"] ?? "",
-    disbursementFrom: r["Disbursement From (Grantor)"] ?? "",
-    companyName: r["Company Name"] ?? "",
-    corporatePeerCampaign: r["Corporate / Peer Campaign"] ?? "",
-    projectName: r["Project Name"] ?? "",
-    projectId: r["Project ID"] ?? "",
-    transactionId: r["Transaction ID"] ?? "",
-    donationDate: r["Donation Date"] ?? "",
-    donationAmountCents: r["Donation Amount"] ?? "",
-    matchAmountCents: r["Match Amount"] ?? "",
-    currency: r["Donation Currency"] ?? "",
-    foreignExchangeRate: r["Foreign Exchange Rate"] ?? "",
-    causeSupportFeeCents: r["Cause Support Fee"] ?? "",
-    merchantFeeCents: r["Merchant Fee"] ?? "",
-    checkFeeCents: r["Check Fee"] ?? "",
-    donationFrequency: r["Donation Frequency"] ?? "",
-    donationMethod: r["Donation Method"] ?? "",
-    donationType: r["Donation Type"] ?? "",
-    donorFirstName: r["Donor First Name"] ?? "",
-    donorLastName: r["Donor Last Name"] ?? "",
-    donorComment: r["Donor Comment"] ?? "",
-  };
+type RawRow = Record<keyof BenevityRow, string>;
+
+/**
+ * Where each field is read from. `columns` lists the header names, the flat
+ * disbursement export's first and the Donations Report's second; `preamble` is
+ * the Donations Report's file-level key above the header, used when no column has it.
+ */
+const SOURCES: Record<keyof BenevityRow, { columns: string[]; preamble?: string }> = {
+  nonprofitName: { columns: ["Nonprofit Name"], preamble: "Charity Name" },
+  nonprofitId: { columns: ["Nonprofit ID"], preamble: "Charity ID" },
+  disbursementId: { columns: ["Disbursement ID"], preamble: "Disbursement ID" },
+  disbursementDate: { columns: ["Disbursement Date"], preamble: "Period Ending" },
+  bankDate: { columns: ["Bank Date"] },
+  bankReferenceId: { columns: ["Bank Reference ID"] },
+  paymentMethod: { columns: ["Payment Method"], preamble: "Payment Method" },
+  disbursementFrom: { columns: ["Disbursement From (Grantor)"] },
+  companyName: { columns: ["Company Name", "Company"] },
+  corporatePeerCampaign: { columns: ["Corporate / Peer Campaign"] },
+  projectName: { columns: ["Project Name", "Project"] },
+  projectId: { columns: ["Project ID"] },
+  transactionId: { columns: ["Transaction ID"] },
+  donationDate: { columns: ["Donation Date"] },
+  donationAmountCents: { columns: ["Donation Amount", "Total Donation to be Acknowledged"] },
+  matchAmountCents: { columns: ["Match Amount"] },
+  currency: { columns: ["Donation Currency", "Currency"], preamble: "Currency" },
+  foreignExchangeRate: { columns: ["Foreign Exchange Rate"] },
+  causeSupportFeeCents: { columns: ["Cause Support Fee"] },
+  merchantFeeCents: { columns: ["Merchant Fee"] },
+  checkFeeCents: { columns: ["Check Fee"] },
+  donationFrequency: { columns: ["Donation Frequency"] },
+  donationMethod: { columns: ["Donation Method"] },
+  donationType: { columns: ["Donation Type"] },
+  donorFirstName: { columns: ["Donor First Name"] },
+  donorLastName: { columns: ["Donor Last Name"] },
+  donorComment: { columns: ["Donor Comment", "Comment"] },
+};
+
+const FIELDS = Object.keys(SOURCES) as (keyof BenevityRow)[];
+
+interface Located {
+  record: string[];
+  info: { lines: number };
 }
 
+function readRecords(buffer: Buffer): Located[] {
+  try {
+    return parse(buffer, {
+      bom: true,
+      trim: true,
+      skip_empty_lines: true,
+      relax_column_count: true,
+      info: true,
+    }) as Located[];
+  } catch (err) {
+    if (err instanceof CsvError) throw new CsvValidationError([err.message]);
+    throw err;
+  }
+}
+
+/** Where a field comes from in this file: a header column's index, else a preamble value. */
+type Binding = { label: string; index: number } | { label: string; value: string } | null;
+
+function bind(field: keyof BenevityRow, header: string[], preamble: Map<string, string>): Binding {
+  const { columns, preamble: key } = SOURCES[field];
+  for (const label of columns) {
+    const index = header.indexOf(label);
+    if (index >= 0) return { label, index };
+  }
+  if (key !== undefined && preamble.has(key)) return { label: key, value: preamble.get(key) ?? "" };
+  return null;
+}
+
+/**
+ * Parses either Benevity layout: the flat disbursement export (header on the first
+ * line, disbursement fields on every row) or the Donations Report (a key/value
+ * preamble carrying the disbursement fields, the gift table, then a totals footer).
+ */
 export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
-  const records = parse(buffer, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    bom: true,
-  }) as Record<string, string>[];
+  const records = readRecords(buffer);
+  const headerAt = records.findIndex(({ record }) => record.includes("Transaction ID"));
+  if (headerAt < 0) {
+    throw new CsvValidationError(['no header row with a "Transaction ID" column; upload a Benevity donations export']);
+  }
+  const header = records[headerAt].record;
+  const preamble = new Map<string, string>();
+  for (const { record } of records.slice(0, headerAt)) {
+    if (record.length >= 2 && record[0] !== "") preamble.set(record[0], record[1]);
+  }
+  const bindings = new Map(FIELDS.map((f) => [f, bind(f, header, preamble)] as const));
+  const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? String(field);
 
   const rows: BenevityRow[] = [];
   const issues: string[] = [];
 
-  records.forEach((raw, idx) => {
-    const mapped = mapRaw(raw);
-    // Skip blank trailing rows that carry no Transaction ID at all.
-    if (mapped.transactionId.trim() === "") return;
+  for (const { record, info } of records.slice(headerAt + 1)) {
+    const mapped = {} as RawRow;
+    for (const field of FIELDS) {
+      const b = bindings.get(field) ?? null;
+      mapped[field] = b === null ? "" : "value" in b ? b.value : (record[b.index] ?? "");
+    }
+    if (mapped.transactionId.trim() === "") {
+      // A Donations Report footer row; its disbursement-level check fee has no gift to land on.
+      if (record[0] === "Check Fee") {
+        const fee = moneyCents.safeParse(record[1] ?? "");
+        if (!fee.success || fee.data !== 0) {
+          issues.push(`line ${info.lines}, "Check Fee": "${record[1] ?? ""}" is a disbursement-level fee this import cannot assign to a gift`);
+        }
+      }
+      continue;
+    }
 
     const parsed = benevityRowSchema.safeParse(mapped);
     if (!parsed.success) {
-      const line = idx + 2; // +1 for header, +1 for 1-based
       for (const issue of parsed.error.issues) {
-        issues.push(`row ${line} (${mapped.transactionId || "no id"}): ${issue.path.join(".")} ${issue.message}`);
+        issues.push(`line ${info.lines} (${mapped.transactionId}), "${labelOf(issue.path[0])}": ${issue.message}`);
       }
-      return;
+      continue;
     }
     rows.push(parsed.data);
-  });
+  }
 
   if (issues.length > 0) throw new CsvValidationError(issues);
   return rows;

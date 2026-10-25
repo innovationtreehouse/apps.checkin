@@ -79,8 +79,7 @@ describe('parseBenevityCsv', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(CsvValidationError);
       const issues = (err as CsvValidationError).issues.join(' ');
-      expect(issues).toContain('TXN-BAD');
-      expect(issues).toContain('donationAmountCents');
+      expect(issues).toContain('line 2 (TXN-BAD), "Donation Amount": not a number: "oops"');
     }
   });
 
@@ -152,15 +151,11 @@ describe('parseBenevityCsv', () => {
     expect(result[0].transactionId).toBe('TXN-001');
   });
 
-  it('documents that missing Transaction ID column silently produces empty result', () => {
-    // Missing header → all rows map to transactionId="" and are filtered.
-    // This test pins the current behaviour so a future stricter fix can be
-    // validated against it.
+  it('fails the file when no header has a Transaction ID column', () => {
     const rows = [makeRow()];
     const headers = Object.keys(rows[0]).filter((h) => h !== 'Transaction ID');
     const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => r[h] ?? '').join(','))];
-    const result = parseBenevityCsv(Buffer.from(lines.join('\n')));
-    expect(result).toHaveLength(0);
+    expect(() => parseBenevityCsv(Buffer.from(lines.join('\n')))).toThrow('no header row with a "Transaction ID" column');
   });
 
   it('collects validation issues from multiple bad rows before throwing', () => {
@@ -204,3 +199,80 @@ describe('date normalisation', () => {
   });
 });
 
+
+/**
+ * Benevity's Donations Report: a key/value preamble, the gift table, a totals
+ * footer; CRLF line endings, no BOM, quoted amounts with thousands separators
+ * and a trailing empty Fee Comment cell. Names and ids here are synthetic.
+ */
+describe('Donations Report layout', () => {
+  const HEADER = [
+    'Company', 'Project', 'Donation Date', 'Donor First Name', 'Donor Last Name', 'Email', 'Address', 'City',
+    'State/Province', 'Postal Code', 'Activity', 'Comment', 'Transaction ID', 'Donation Frequency', 'Currency',
+    'Project Remote ID', 'Source', 'Reason', 'Total Donation to be Acknowledged', 'Match Amount',
+    'Cause Support Fee', 'Merchant Fee', 'Fee Comment',
+  ].join(',');
+  const gift = (txn: string, date: string, comment: string, gross: string, match: string) =>
+    `Example Co,Example Nonprofit,${date},Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
+    `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
+  const report = (opts: { checkFee?: string; match?: string } = {}) => Buffer.from([
+    'Donations Report,',
+    '"#-------------------------------------------",',
+    'Charity Name,Example Nonprofit',
+    'Charity ID,000-000000000',
+    'Period Ending,Thu 16 Apr 2026 0:00:00',
+    'Currency,USD',
+    'Payment Method,EFT',
+    'Disbursement ID,DISB0000AA',
+    'Note,Synthetic report for tests.',
+    '"#-------------------------------------------",',
+    '',
+    HEADER,
+    gift('TXNAAAA001', '2026-02-06T15:03:38Z', 'For the robotics team', '"1,500.00"', `"${opts.match ?? '3,000.00'}"`),
+    gift('TXNAAAA002', '2026-03-29T17:03:08Z', '', '200.00', '200.00'),
+    'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00',
+    'Total Donations (Gross),"4,900.00"',
+    `Check Fee,${opts.checkFee ?? '0.00'}`,
+    'Net Total Payment,"4,900.00"',
+    '',
+  ].join('\r\n'));
+
+  it('reads gifts from the table and the disbursement fields from the preamble', () => {
+    const rows = parseBenevityCsv(report());
+    expect(rows.map((r) => r.transactionId)).toEqual(['TXNAAAA001', 'TXNAAAA002']);
+    expect(rows[0]).toMatchObject({
+      nonprofitName: 'Example Nonprofit',
+      nonprofitId: '000-000000000',
+      disbursementId: 'DISB0000AA',
+      disbursementDate: '2026-04-16',
+      paymentMethod: 'EFT',
+      currency: 'USD',
+      companyName: 'Example Co',
+      projectName: 'Example Nonprofit',
+      donationDate: '2026-02-06',
+      donationAmountCents: 150000,
+      matchAmountCents: 300000,
+      checkFeeCents: 0,
+      donorFirstName: 'Pat',
+      donorComment: 'For the robotics team',
+    });
+    expect(rows[1]).toMatchObject({ donationAmountCents: 20000, matchAmountCents: 20000, donorComment: '' });
+  });
+
+  it('names the line, the gift and the column of a bad value', () => {
+    expect(() => parseBenevityCsv(report({ match: '3,0x0.00' })))
+      .toThrow('line 13 (TXNAAAA001), "Match Amount": not a number: "3,0x0.00"');
+  });
+
+  it('fails the file on a non-zero footer check fee rather than dropping it', () => {
+    expect(() => parseBenevityCsv(report({ checkFee: '5.00' })))
+      .toThrow('line 17, "Check Fee": "5.00" is a disbursement-level fee this import cannot assign to a gift');
+  });
+});
+
+describe('malformed CSV', () => {
+  it('reports the line of an unclosed quote', () => {
+    expect(() => parseBenevityCsv(Buffer.from('Transaction ID,Donation Amount\nT1,"5.00\n')))
+      .toThrow(/Could not import the CSV: .*line/i);
+  });
+});
