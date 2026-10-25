@@ -62,7 +62,8 @@ jobs:
     # A skipped job passes; run anyway and fail below, so a broken detector is visible.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Seven persona sweeps and the journeys on a cold dev server; each test has its own limit.
+    timeout-minutes: 60
     steps:
       - name: Change detection must succeed
         if: needs.changes.result != 'success'
@@ -98,8 +99,9 @@ jobs:
         run: docker compose -f deploy/docker-compose.flow.yml exec -T -e CI=true app sh -lc "cd checkin-app && npm run test:e2e"
 
       # The repo is bind-mounted, so the container's report and traces land in the workspace.
+      # always(): a run cut off by the job limit is cancelled, not failed, and still needs them.
       - name: Upload report and traces
-        if: failure() && needs.changes.outputs.e2e == 'true'
+        if: always() && needs.changes.outputs.e2e == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: playwright-report
@@ -109,7 +111,7 @@ jobs:
           retention-days: 7
 
       - name: App logs on failure
-        if: failure() && needs.changes.outputs.e2e == 'true'
+        if: (failure() || cancelled()) && needs.changes.outputs.e2e == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml logs --no-color --tail 300 app
 
       - name: Tear down

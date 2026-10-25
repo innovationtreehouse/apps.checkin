@@ -4,7 +4,7 @@
  * makes, or a bounce to sign-in or access-denied. The page list is the nav's own
  * (test-support/navPages), so a new tab is covered once it is in the nav.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { api, type Session } from "../flow-tests/helpers";
@@ -20,6 +20,22 @@ interface KnownFailure { page: string; personas: string[]; bug: string }
 const KNOWN_FAILURES: KnownFailure[] = [];
 
 const isKnown = (email: string, page: string) => KNOWN_FAILURES.some((k) => k.page === page && k.personas.includes(email));
+
+/** A page's share of its persona's test time: a cold compile, the load, and the settle. */
+const PAGE_BUDGET_MS = 75_000;
+/** How long a page may keep requesting before the check reads it anyway. */
+const SETTLE_MS = 15_000;
+
+/** Opens a page and lets it settle; a page that never finishes loading is itself a problem. */
+async function openPage(page: Page, href: string): Promise<string[]> {
+  try {
+    const res = await page.goto(href);
+    await page.waitForLoadState("networkidle", { timeout: SETTLE_MS }).catch(() => undefined);
+    return res && res.status() >= 400 ? [`page answered ${res.status()}`] : [];
+  } catch (err) {
+    return [`did not load: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`];
+  }
+}
 
 let sections: NavSection[];
 const undo: Undo[] = [];
@@ -52,17 +68,19 @@ test.describe("nav pages in the browser", () => {
       const watch = watchPage(page);
       const pages = (await pagesFor(session)).filter((p) => !isKnown(email, p));
       expect(pages.length).toBeGreaterThan(0);
+      test.setTimeout(60_000 + pages.length * PAGE_BUDGET_MS);
 
       const failures: string[] = [];
       for (const href of pages) {
         await test.step(href, async () => {
-          const res = await page.goto(href);
-          await page.waitForLoadState("networkidle");
-          const problems = await watch.problems();
-          if (res && res.status() >= 400) problems.unshift(`page answered ${res.status()}`);
+          const problems = await openPage(page, href);
+          problems.push(...(await watch.problems()));
           // A role gate sends a viewer it refuses to the home page.
           if (href !== "/" && new URL(page.url()).pathname === "/") problems.unshift("sent to the home page");
-          failures.push(...problems.map((p) => `${href}: ${p}`));
+          for (const problem of problems) {
+            failures.push(`${href}: ${problem}`);
+            console.log(`  ✘ ${email} ${href}: ${problem}`);
+          }
         });
       }
       await context.close();
