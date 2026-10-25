@@ -5,6 +5,7 @@
  * line in its expense review. Every page on the way must show no error.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { lineAct, lineRow } from "./support/expenseLines";
 import { watchPage, type PageWatch } from "./support/pageErrors";
 import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
@@ -43,19 +44,7 @@ async function noProblems(watch: PageWatch, where: string): Promise<void> {
   expect([where, await watch.problems()]).toEqual([where, []]);
 }
 
-const lineRow = (page: Page) => page.getByRole("row").filter({ hasText: LINE });
-
-/** Takes a line act: the row's main button when it is that act, else the row's More menu. */
-async function lineAct(page: Page, label: string): Promise<void> {
-  const row = lineRow(page);
-  await expect(row.getByRole("button").first()).toBeVisible();
-  const main = row.getByRole("button", { name: label, exact: true });
-  if (await main.count()) await main.click();
-  else {
-    await row.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("menuitem", { name: label, exact: true }).click();
-  }
-}
+const line = (page: Page) => lineRow(page, LINE);
 
 test("a receipt goes from upload to an approved line in finance review", async ({ browser }) => {
   test.setTimeout(300_000);
@@ -93,7 +82,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await page.getByRole("row").filter({ hasText: RETAILER }).getByRole("link").click();
     await expect(page.getByText("Needs mapping", { exact: true })).toBeVisible();
 
-    await lineRow(page).getByRole("button", { name: "Associate" }).click();
+    await line(page).getByRole("button", { name: "Associate" }).click();
     await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(CATALOG_ITEM);
     await page.getByRole("option", { name: new RegExp(CATALOG_ITEM) }).click();
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -105,7 +94,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const page = await finance.context.newPage();
     const watch = watchPage(page);
     await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
-    await lineAct(page, "Assign bucket");
+    await lineAct(page, LINE, "Assign bucket");
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Bucket").click();
     await page.getByRole("option", { name: bucketName }).click();
@@ -113,7 +102,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await expect(dialog).toBeHidden();
     // A decision with nothing left for FINANCE returns to the list, so read the line afresh.
     await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
-    await expect(lineRow(page).getByText("pending", { exact: true })).toBeVisible();
+    await expect(line(page).getByText("pending", { exact: true })).toBeVisible();
     await noProblems(watch, "FINANCE assigns the bucket");
   });
 
@@ -121,11 +110,11 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const page = await approver.context.newPage();
     const watch = watchPage(page);
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
-    await lineAct(page, "Approve as bucket approver");
+    await lineAct(page, LINE, "Approve as bucket approver");
     await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
-    await expect(lineRow(page).getByText("approved", { exact: true })).toBeVisible();
+    await expect(line(page).getByText("approved", { exact: true })).toBeVisible();
     await noProblems(watch, "the owner approves");
   });
 
@@ -134,7 +123,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const watch = watchPage(page);
     await page.goto("/expense/expenses?view=all&page=1");
     await page.getByRole("row").filter({ hasText: RETAILER }).getByRole("link").first().click();
-    await expect(lineRow(page).getByText("approved", { exact: true })).toBeVisible();
+    await expect(line(page).getByText("approved", { exact: true })).toBeVisible();
     await noProblems(watch, "FINANCE review");
   });
 
