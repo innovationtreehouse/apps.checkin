@@ -1,4 +1,4 @@
-export type InKindSource = "receipt" | "manual";
+export type { InKindSource } from "../services/inKindAcceptService";
 export type WaitingOn = "withdrawal" | "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "booking";
 
 /** A gift's most urgent wait, as a badge. */

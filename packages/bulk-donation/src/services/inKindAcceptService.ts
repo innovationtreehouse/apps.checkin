@@ -475,13 +475,13 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
 const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
 
 /** What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its recorder and inventory load. */
-async function readPageExtras(source: InKindSource, id: number) {
+async function readPageExtras(orgId: string, source: InKindSource, id: number) {
   if (source === "receipt") {
-    const donor = await db.inKindDonation.findUniqueOrThrow({ where: { id }, select: DONOR_SELECT });
+    const donor = await db.inKindDonation.findFirstOrThrow({ where: { id, orgId }, select: DONOR_SELECT });
     return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null };
   }
-  return db.manualInKindDonation.findUniqueOrThrow({
-    where: { id },
+  return db.manualInKindDonation.findFirstOrThrow({
+    where: { id, orgId },
     select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
   });
 }
@@ -506,7 +506,7 @@ async function getGift(orgId: string, source: InKindSource, id: number, reader: 
   const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
   const entityId = source === "receipt" && gift.receiptId ? gift.receiptId : String(id);
   const [extras, buckets, bookings, events] = await Promise.all([
-    readPageExtras(source, id),
+    readPageExtras(orgId, source, id),
     readBuckets(),
     readBookings(db, orgId, { source, giftId: id }),
     readHistory(orgId, entityType, entityId),
