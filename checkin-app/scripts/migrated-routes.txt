@@ -108,6 +108,7 @@ POST /api/expense/qb-accounts
 GET /api/expense/expenses/[id]
 POST /api/expense/expenses/[id]/set-depreciation-cycle/submit
 PUT /api/expense/expenses/[id]/reimbursee
+POST /api/expense/expenses/[id]/tax-approval
 GET /api/expense/expenses/[id]/reimbursee-vendor
 PUT /api/expense/expenses/[id]/reimbursee-vendor
 GET /api/expense/expenses/[id]/reimbursee-vendor/options
