@@ -8,7 +8,7 @@
  * merged-away (tombstoned) person is refused as not found, and an org-level
  * bucket takes no approvers.
  */
-import { createBudgetOwner, listQuickBooksClasses, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
+import { createBudgetOwner, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
@@ -179,6 +179,25 @@ describe('listQuickBooksClasses', () => {
         jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
         jest.spyOn(console, 'error').mockImplementation(() => {});
         await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks did not return its Classes. Try again shortly.' });
+    });
+
+    describe('by CHECKIN_ENV', () => {
+        const saved = process.env.CHECKIN_ENV;
+        afterEach(() => { process.env.CHECKIN_ENV = saved; });
+
+        test('local lists the stand-in Classes without asking QuickBooks', async () => {
+            process.env.CHECKIN_ENV = 'local';
+            jest.mocked(getQuickBooks).mockClear();
+            await expect(listQuickBooksClasses()).resolves.toEqual(LOCAL_QUICKBOOKS_CLASSES);
+            expect(getQuickBooks).not.toHaveBeenCalled();
+        });
+
+        test.each(['prod', 'dev', '', 'stg'])('%p asks QuickBooks and never lists the stand-ins', async (env) => {
+            process.env.CHECKIN_ENV = env;
+            jest.mocked(getQuickBooks).mockResolvedValue(null);
+            await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks is not connected.' });
+            expect(getQuickBooks).toHaveBeenCalled();
+        });
     });
 
     test('an empty company lists no Classes', async () => {

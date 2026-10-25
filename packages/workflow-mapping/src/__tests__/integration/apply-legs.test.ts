@@ -106,6 +106,24 @@ describeDb("per-leg applied state", () => {
     expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType: "line_marked_non_inventory" } })).toBe(1);
   });
 
+  it("names each leg that failed in the reason", async () => {
+    const r = await makeReceipt({ state: "applying" });
+    await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
+    sinks.fail.expense = true;
+    sinks.fail.inventory = true;
+    const result = await receiptService.apply(r.id);
+    expect(result).toMatchObject({ state: "apply_failed", error: expect.stringMatching(/^Expense: .+; Inventory: .+$/) });
+    expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).validationNotes).toBe(result.state === "resolved" ? null : result.error);
+  });
+
+  it("names the donation leg when an in-kind receipt fails", async () => {
+    const r = await makeReceipt({ state: "applying", isInKind: true });
+    await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
+    sinks.fail.donation = true;
+    sinks.fail.inventory = true;
+    expect(await receiptService.apply(r.id)).toMatchObject({ state: "apply_failed", error: expect.stringMatching(/^Donation: donations down; Inventory: .+$/) });
+  });
+
   it("retry re-pushes only the legs that have not applied", async () => {
     const { r } = await failedAfterPartialApply("expense");
     await receiptService.retryApply(r.id);
@@ -205,7 +223,7 @@ describeDb("an inventory leg that applied but lost its stamp", () => {
 
     expect(await receiptService.apply(r.id)).toEqual({
       state: "apply_failed",
-      error: "This source was already applied with a different inventory delta.",
+      error: "Inventory: This source was already applied with a different inventory delta.",
     });
     expect(await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({
       state: "apply_failed",

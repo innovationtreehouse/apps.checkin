@@ -40,7 +40,7 @@ const ROOTS = ['app', 'lib'].map((d) => join(SRC, d));
 const ALLOWLIST: Record<string, string> = {
     // ── money: an order or refund must still find the row it paid for ─────────
     'lib/finance/reconcile/program.ts': 'Payment reconciler: matches Shopify orders to enrollment rows by order id. A withdrawn row keeps its shopifyOrderId, and a late order or refund must still land on it rather than read as unmatched.',
-    'lib/finance/reconcile/reversals.ts': 'Refund/chargeback reconciler: matches by shopifyOrderId. A late refund on a withdrawn row must attach to it (design §5). The delete path\'s status guard lands with the withdraw write path.',
+    'lib/finance/reconcile/reversals.ts': 'Refund/chargeback reconciler: matches by shopifyOrderId. A late refund on a withdrawn row must attach to it rather than delete it.',
     'lib/finance/matchAudit.ts': 'Order-match audit: a historical report over which orders claimed which enrollments. A withdrawn row still claimed its order.',
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim check: "has any enrollment claimed this order". A withdrawn row still holds its order; filtering it would report the order unmatched.',
 
@@ -51,7 +51,6 @@ const ALLOWLIST: Record<string, string> = {
     'lib/person/merge/plan.ts': 'Person merge plan: moves every enrollment row, withdrawn ones included, so history follows the surviving person.',
     'app/api/membership-ops/participants/merge/analyze/route.ts': 'Person merge analysis: shows every enrollment row the merge will move, withdrawn ones included.',
     'lib/programs/events.ts': 'Attendance-correction IDOR guard pinned to one target: a correction to a past session must still be allowed for someone who was enrolled then and has since withdrawn.',
-    'app/api/programs/[id]/eligible-participants/route.ts': 'Excludes anyone with a row for this program, withdrawn included, because enrolling them would collide with the composite key. Letting WITHDRAWN back in ships with the re-enrol upsert.',
 
     // ── dev-only tooling ──────────────────────────────────────────────────────
     'app/api/dev/shopify/orders-paid/route.ts': 'Dev-only mock-webhook firer (isDevInstance gated). Reads the rows named in the request body. No production effect.',
