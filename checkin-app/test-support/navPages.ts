@@ -12,7 +12,12 @@ import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 const isSection = (v: unknown): v is NavSection =>
-  typeof v === "object" && v !== null && "links" in v && Array.isArray(v.links) && "visible" in v && typeof v.visible === "function";
+  typeof v === "object" && v !== null
+  && "id" in v && typeof v.id === "string"
+  && "label" in v && typeof v.label === "string"
+  && "href" in v && typeof v.href === "string"
+  && "links" in v && Array.isArray(v.links)
+  && "visible" in v && typeof v.visible === "function";
 
 /**
  * Every section descriptor in src/lib/nav/sections, so a new section is covered without a list to update.

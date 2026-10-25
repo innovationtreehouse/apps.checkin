@@ -6,15 +6,13 @@
  * evaluated against the persona's session and nav counts exactly as the browser does, so a new
  * tab is covered once it is in the nav. Real HTTP against the running dev server.
  */
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
-import { PAGES } from "@/components/pageRegistry";
 import { LIBRARY_KEYS, type LibraryKey } from "@/lib/libraryRelease";
-import { hasAnyRole, sectionShown, tabHrefs, visibleLinks } from "@/lib/nav/gates";
+import { hasAnyRole } from "@/lib/nav/gates";
 import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath } from "../../packages/receipt/src/components/reviewQueue";
+import { navPages as viewerPages, navSections } from "../test-support/navPages";
 import { api, loginAs, type Session } from "./helpers";
 
 // The first persona pays the dev server's compile of every page and route it opens.
@@ -32,14 +30,7 @@ const CONCURRENCY = 6;
 
 /** A page or API that fails today, skipped by the sweep and asserted on its own as `test.failing` until its fix lands. */
 interface KnownFailure { path: string; personas: string[]; fix: string; why: string }
-const KNOWN_FAILURES: KnownFailure[] = [
-  {
-    path: "/api/budget-owners/quickbooks-classes",
-    personas: [FINANCE, BOARD],
-    fix: "#2550",
-    why: "/budgets reads QuickBooks Classes live; with no QuickBooks on CHECKIN_ENV=local the route answers 503",
-  },
-];
+const KNOWN_FAILURES: KnownFailure[] = [];
 
 /** Pages a persona's nav must show, so a nav that renders nothing cannot pass the sweep by opening nothing. */
 const EXPECTED_PAGES: Record<string, string[]> = {
@@ -182,31 +173,7 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
   "/donations/qb-exclusions": () => [paged("/api/donations/qb-exclusions")],
 };
 
-const isSection = (v: unknown): v is NavSection =>
-  typeof v === "object" && v !== null
-  && "id" in v && typeof v.id === "string"
-  && "href" in v && typeof v.href === "string"
-  && "links" in v && Array.isArray(v.links)
-  && "visible" in v && typeof v.visible === "function";
-
-/** Every section descriptor in src/lib/nav/sections, so a new section is covered without a list to update. */
-async function navSections(): Promise<NavSection[]> {
-  const dir = join(__dirname, "../src/lib/nav/sections");
-  const modules = await Promise.all(readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => import(join(dir, f)) as Promise<Record<string, unknown>>));
-  return [...new Set(modules.flatMap((m) => Object.values(m).filter(isSection)))];
-}
-
-/** The pages the nav shows this viewer: shown sections' destinations and tabs, and the directory's visible pages. */
-function navPages(sections: NavSection[], { user, counts }: Viewer): string[] {
-  const hrefs = new Set<string>();
-  for (const section of sections) {
-    if (!sectionShown(section, user, counts)) continue;
-    hrefs.add(section.hrefFor?.(user, counts) ?? section.href);
-    for (const link of visibleLinks(section, user, counts)) for (const href of tabHrefs(link)) hrefs.add(href);
-  }
-  for (const page of PAGES) if (page.visible(user, counts)) hrefs.add(page.href);
-  return [...hrefs].filter((h) => h.startsWith("/") && !h.includes("["));
-}
+const navPages = (sections: NavSection[], { user, counts }: Viewer): string[] => viewerPages(sections, user, counts);
 
 async function viewer(email: string): Promise<Viewer> {
   const session = await loginAs(email);
@@ -258,7 +225,7 @@ const release = (board: Session, library: LibraryKey, released: boolean) =>
   send(board, "PUT", "/api/settings/membership", { releaseLibrary: { library, released } });
 
 beforeAll(async () => {
-  sections = await navSections();
+  sections = navSections();
   const finance = await loginAs(FINANCE);
   const board = await loginAs(BOARD);
   // A fresh seed releases no library, which hides every library page from everyone but the Board.
