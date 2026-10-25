@@ -450,7 +450,9 @@ Here it is one derived reason in #2481's model, not a new step:
   (`pending` through `set_depreciation_cycle`), waiting to post or held
   (`qb_pending`, `qb_on_hold`, `qb_error`), or done (`qb_complete`,
   `qb_skipped`). It is not limited to posted expenses, so two copies moving
-  through sign-off together hold each other.
+  through sign-off together hold each other. Nothing dead holds up posting: a
+  rejected expense is left out, and a discarded receipt never becomes an
+  expense.
 - **What it doesn't need to cover.** A receipt that hasn't become an expense
   yet is the receipt-side check's job. That receipt can't finalize past its
   own duplicate guard (§5.2), so it never reaches posting undecided. The
@@ -507,10 +509,12 @@ doesn't is in §10.
 - Finance decides a group of matching receipts once, and the decision is
   remembered per pair. Nobody decides a group in which they are conflicted on
   any member. [Decision — owner; conflict part from the existing receipts rule]
-- An expense is not posted to QuickBooks while another expense in the org,
-  in any state but rejected (in sign-off, waiting to post, or already posted
-  or skipped), has the same vendor, date and total, or the same vendor and
-  receipt number, and no decision says the two are different purchases.
+- An expense is not posted to QuickBooks while another live expense in the
+  org has the same vendor, date and total, or the same vendor and receipt
+  number, and no decision says the two are different purchases. Live means
+  in sign-off, waiting to post, or already posted or skipped. Nothing dead
+  holds up posting: neither a rejected expense nor a discarded receipt (a
+  discarded receipt never becomes an expense).
   [Decision — owner]
 
 ---
