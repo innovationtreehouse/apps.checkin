@@ -16,8 +16,10 @@ const BOARD = principal(5, { isBoard: true });
 async function expenseWith(approvals: Array<{ status: string; decidedByUserId?: number }>, opts: Parameters<typeof seedExpense>[0] = {}) {
   const id = await seedExpense({ state: "qb_pending", submitterId: 1, ...opts });
   const lines: number[] = [];
-  for (const a of approvals) {
+  for (const [i, a] of approvals.entries()) {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    // The seed numbers every line 1; a refusal names its line by number.
+    await db.expenseLineItem.update({ where: { id: li }, data: { lineNumber: i + 1 } });
     await seedApproval(id, li, { ownerId: 100, ...a });
     lines.push(li);
   }
