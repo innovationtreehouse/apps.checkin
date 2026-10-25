@@ -111,6 +111,10 @@ export interface ReceiptListRow {
   pushGivenUp?: boolean;
   lastPushFailedAt?: string | null;
   lastPushFailure?: string | null;
+  duplicateFlaggedAt?: string | null;
+  duplicateFlagClearedAt?: string | null;
+  /** The receipt this one was flagged against; finance views only. */
+  duplicateSuspectReceiptId?: string | null;
 }
 
-export { STATE_LABELS } from "../lib/stateLabels";
+export { isDiscardedDuplicate, STATE_LABELS } from "../lib/stateLabels";
