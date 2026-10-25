@@ -4,7 +4,8 @@
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
 import { getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
-import { recordEvent } from "../repositories/audit";
+import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
@@ -471,4 +472,83 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
   }));
 }
 
-export const inKindAcceptService = { listQueue, decide, listByBucket };
+const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
+
+/** What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its recorder and inventory load. */
+async function readPageExtras(orgId: string, source: InKindSource, id: number) {
+  if (source === "receipt") {
+    const donor = await db.inKindDonation.findFirstOrThrow({ where: { id, orgId }, select: DONOR_SELECT });
+    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null };
+  }
+  return db.manualInKindDonation.findFirstOrThrow({
+    where: { id, orgId },
+    select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
+  });
+}
+
+/** The gift's history, oldest first; donor-read audit rows are left out. */
+function readHistory(orgId: string, entityType: "in_kind" | "manual_in_kind", entityId: string) {
+  return db.workflowEvent.findMany({
+    where: { orgId, entityType, entityId, eventType: { not: "DONOR_DATA_READ" } },
+    select: { id: true, eventType: true, actorUsername: true, occurredAt: true, payload: true },
+    orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+  });
+}
+
+/**
+ * One gift for its own page: header, donor, lines, state, history and where it went. The donor
+ * read is audited. A gift without a receipt loads its goods under its own inventory source key;
+ * a receipt gift's goods are received through its receipt, so it has none.
+ */
+async function getGift(orgId: string, source: InKindSource, id: number, reader: DonorReadContext) {
+  const gift = await loadGift(db, orgId, source, id);
+  if (!gift) throw new ServiceError(404, "In-kind gift not found");
+  const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
+  const entityId = source === "receipt" && gift.receiptId ? gift.receiptId : String(id);
+  const [extras, buckets, bookings, events] = await Promise.all([
+    readPageExtras(orgId, source, id),
+    readBuckets(),
+    readBookings(db, orgId, { source, giftId: id }),
+    readHistory(orgId, entityType, entityId),
+  ]);
+  await recordDonorDataReads(db, orgId, entityType, reader, [entityId]);
+  const sides = bookings.get(bookingKey(source, id)) ?? [];
+  const waits = waitingOn(gift, buckets, sides);
+  const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);
+  return {
+    id,
+    source,
+    receiptId: gift.receiptId,
+    receiptTotalCents: gift.receiptTotalCents,
+    receiptDate: gift.receiptDate,
+    donationDate: gift.donationDate,
+    moneyReceivedAt: source === "receipt" ? gift.moneyReceivedAt : null,
+    recordedAt: extras.recordedAt,
+    recordedByUsername: extras.recordedByUsername,
+    donorFirstName: extras.donorFirstName,
+    donorLastName: extras.donorLastName,
+    donorCompanyName: extras.donorCompanyName,
+    donorRecordedAt: gift.donorRecordedAt,
+    donorReplacedAt: gift.donorReplacedAt,
+    withdrawnAfterMoneyAt: gift.withdrawnAfterMoneyAt,
+    withdrawalSettledAt: gift.withdrawalSettledAt,
+    replayConflictAt: gift.replayConflictAt,
+    outcome: gift.decisionOutcome,
+    decidedAt: gift.decidedAt,
+    budgetOwnerId: gift.budgetOwnerId,
+    budgetOwnerName: bucket?.name ?? null,
+    bucketHeld: gift.budgetOwnerId !== null && bucket?.held !== false,
+    bucketAssignedAt: gift.bucketAssignedAt,
+    totalValueCents: totalValueCents(gift),
+    state: waits[0] ?? null,
+    waitingOn: waits,
+    revenueBooking: sideState(sides, "revenue"),
+    expenseBooking: sideState(sides, "expense"),
+    inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
+    inventoryLoadedAt: extras.inventoryLoadedAt,
+    lines: gift.lines,
+    events,
+  };
+}
+
+export const inKindAcceptService = { listQueue, decide, listByBucket, getGift };
