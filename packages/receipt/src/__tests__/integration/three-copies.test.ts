@@ -80,7 +80,7 @@ describeDb("three copies of one purchase", () => {
     ]);
   });
 
-  it("after the original is discarded to keep B, C stays flagged against the discarded original and clears through beside B", async () => {
+  it("after its uploader discards the original to keep B, C stays flagged against the discarded original and clears through beside B", async () => {
     const file = textFile();
     const a = await receiptService.upload(file, "text/plain", {});
     expect(a.state).toBe("submitter_review");
@@ -89,8 +89,8 @@ describeDb("three copies of one purchase", () => {
     expect(await suspectOf(b.id)).toBe(a.id);
     expect(await suspectOf(c.id)).toBe(a.id);
 
+    await receiptService.discard(a.id, "submitter");
     actAs(FINANCE);
-    await receiptService.discard(a.id, "finance");
     await receiptService.clearDuplicate(b.id);
     expect(await stateOf(b.id)).toBe("receipt_finalized");
 
@@ -155,10 +155,10 @@ describeDb("three copies of one purchase", () => {
     expect(await suspectOf(c.id)).toBe(b.id);
   });
 
-  it("when the copy C points at is discarded, C stays flagged against the discarded copy and clears through beside the original", async () => {
+  it("when the copy C points at is discarded by its uploader, C stays flagged against the discarded copy and clears through beside the original", async () => {
     const { a, b, c } = await chainedThroughB();
+    await receiptService.discard(b.id, "submitter");
     actAs(FINANCE);
-    await receiptService.discard(b.id, "finance");
 
     expect(await stateOf(c.id)).toBe("duplicate_flagged");
     expect(await suspectOf(c.id)).toBe(b.id);
