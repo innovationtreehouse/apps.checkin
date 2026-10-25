@@ -118,3 +118,29 @@ describe("reviewKindOf", () => {
     expect(reviewKindOf({ kind: "TAX_ATTACHED" })).toBeNull();
   });
 });
+
+describe("reasonText", () => {
+  const r = (over: Partial<QueueReason>): QueueReason => ({ code: "CAPITAL_REVIEW", tab: "expenses", actionable: true, amountCents: null, count: null, detail: null, ...over });
+
+  it("words each reason without a code or id", () => {
+    expect(reasonText(r({ code: "TAX_NOT_REVIEWED", amountCents: 1240 }), "USD")).toBe("Tax $12.40 not reviewed on the receipt");
+    expect(reasonText(r({ code: "BOARD_APPROVAL", amountCents: 234_000 }), "USD")).toBe("Board approval of a $2,340.00 purchase not recorded");
+    expect(reasonText(r({ code: "QB_POST_FAILED", count: 5, detail: "Account is inactive" }), "USD")).toBe("Posting failed 5 times: Account is inactive");
+    expect(reasonText(r({ code: "QB_DRIFT", detail: "amount, accounts" }), "USD")).toBe("Changed in QuickBooks after posting: amount, account");
+    expect(reasonText(r({ code: "QB_POST_HELD", detail: "closed but not posted: a line is missing a sign-off seat" }), "USD"))
+      .toBe("Closed but not posted: a line is missing a sign-off seat");
+    expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 1 }), "USD")).toBe("1 line has no account rule");
+    expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
+    expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
+    expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
+  });
+});
+
+describe("backToQueue", () => {
+  it("returns to the queue only when the page came from one and nothing is left for the viewer", () => {
+    expect(backToQueue("/finance/review?queue=qb", false)).toBe("/finance/review?queue=qb");
+    expect(backToQueue("/finance/review?queue=qb", true)).toBeNull();
+    expect(backToQueue(undefined, false)).toBeNull();
+    expect(backToQueue(null, false)).toBeNull();
+  });
+});
