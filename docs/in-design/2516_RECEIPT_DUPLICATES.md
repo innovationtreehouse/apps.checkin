@@ -60,22 +60,7 @@ finance. About eight small PRs, test first (see the migration file).
 
 ## Waiting on @thpr
 
-One question is open. Everything else is decided or dropped; see the log in §10.
-
-**Q14. When a new copy matches a receipt whose expense finance rejected, should the compare say so?**
-Finance can reject an expense (by rejecting a budget owner's exception), which
-ends it as rejected. Its receipt still reads "Finalized", because the receipt
-side never hears what happened to the expense. So if the same purchase is
-uploaded again, the compare shows the first copy as "Finalized", and the red
-"Rejected" label from Q2 never appears.
-- (a) Show it: the first copy reads "Finalized · expense rejected by finance:
-  <reason>". The receipt side would need to hear the expense's outcome. The
-  port it already uses for reimbursement status carries only the paid date
-  today, so it would gain one field.
-- (b) Leave it: finance still sees the match and decides; the label is just
-  less informative in this one case.
-- **Recommended: (a).** It's the "check more carefully the second time" case
-  @thpr named, and costs one field on an existing port.
+Nothing is open. Every question is decided or dropped; see the log in §10.
 
 ---
 
@@ -246,7 +231,7 @@ submission). What each state contributes:
 | Other receipt's state | Raises a flag? | Shown in the group? | Label |
 | --- | --- | --- | --- |
 | Open (any non-terminal state, including `duplicate_flagged`) | Yes | Yes | its state, e.g. "Waiting for finance review" |
-| `receipt_finalized` | Yes | Yes | "Finalized" and, if pushed, "Sent to expenses" |
+| `receipt_finalized` | Yes | Yes | "Finalized" and, if pushed, "Sent to expenses". If finance rejected its expense, red: "Finalized · expense rejected by finance: <reason>" (Q14) |
 | `rejected` | Yes | Yes, labelled in red with its rejection reason | "Rejected on 2 Oct: <reason>" |
 | `discarded` | **No** (Q1, decided) | Yes, greyed, when the group exists for another reason | "Withdrawn by its submitter on 2 Oct" or "Discarded at mail intake as a copy of its attachment" |
 
@@ -508,6 +493,7 @@ IDs are fixed; the open ones are in "Waiting on @thpr" near the top.
 | Q7 | When is a note needed to say "different purchases"? | **Never** (follows from Q2). |
 | Q8 | Re-check for duplicates at QuickBooks posting? | **No.** Every expense comes from a receipt that passed the duplicate check, so a hold at posting would only mean the receipt check had a bug (§7). |
 | Q9 | How finance stops a duplicate found only at posting | **Goes away with Q8.** The expense side gains no state or transition. |
+| Q14 | When a copy matches a receipt whose expense finance rejected, should the compare say so? | **Yes:** "Finalized · expense rejected by finance: <reason>", in red like a rejected receipt. The reimbursement-status port gains one field for the expense's outcome. |
 | Q10 | Existing cleared receipts at cutover | **Dropped:** production holds no receipts. |
 | Q11 | Already-finalized groups at cutover | **Dropped:** production holds no receipts. |
 | Q12 | A "hide for now" button besides Not this one? | **No:** "too much complexity". Not this one with Undo is the only dismiss. |

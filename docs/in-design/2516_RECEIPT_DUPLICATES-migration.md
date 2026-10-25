@@ -36,7 +36,7 @@ is small. Every question is decided (design §10); PR numbers are fixed IDs, so 
 | 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped) | none |
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
 | 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision | none |
-| 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
+| 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, the "expense rejected by finance" label (Q14: one field on the reimbursement-status port, a contract change), one queue row per group, the badge on open members, the submitter's message | Q6 |
 | 6 | app | Number folding per Q3. The ±7-day similar-date tier is not in this plan; it is #2591, after these ship | #2566 merged |
 | 7 | — | Dropped: the posting re-check (Q8 decided no) | — |
 | 8 | mig + docs | Drop `duplicateFlagClearedAt` and `duplicateSuspectReceiptId` once no deployed code reads them; extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
