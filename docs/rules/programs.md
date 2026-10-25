@@ -173,11 +173,24 @@ Things the app takes as true because they are handled outside it.
 - Registration signs someone in before intake begins, so whether an account
   exists is answered by signing in and never by a public reply.  [Decision — *Principle: no existence oracle*]
 
-- Removing a paid enrollment returns nothing to sale. A person decides whether
+- Leaving a program is recorded, not erased. Someone who took part and left is
+  withdrawn: their enrollment stays, marked as ended on the day they left. A place
+  nobody took up, unpaid or never attended, is removed outright. Whoever removes
+  the place chooses which; unchosen, an unpaid place is removed and an active one
+  withdrawn. The expiry sweeps only ever remove.  [Decision — *Principle: people decide about people*]
+
+- A withdrawn person is no longer enrolled: they hold no seat and are treated as
+  not in the program everywhere enrollment is read.  [Decision]
+
+- Re-enrolling someone who withdrew starts a fresh stint on the same enrollment.
+  Nothing from the last stint carries over: not its order, its payment-plan
+  request, its denial or its clocks. Only the last stint's exit is kept.  [Decision — deliberate limit]
+
+- Removing or withdrawing a paid enrollment returns nothing to sale. A person decides whether
   the freed seat goes back, and does it at the store.  [Decision — deliberate limit; *Principle: people decide about people*]
 
-- Removing a comped or approved enrollment puts its seat back on sale, the same
-  as returning any seat taken off sale without a payment. Every removal does it:
+- Removing or withdrawing a comped or approved enrollment puts its seat back on sale, the same
+  as returning any seat taken off sale without a payment. Every exit does it:
   a family's withdrawal, the board's removal, and the expiry sweeps. A seat goes
   back only when the app recorded taking it; a place that never took one (its
   hold failed, or it joined while the program was free) returns nothing, so a
