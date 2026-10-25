@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { MEMBERSHIP_FEE_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
 import { handler, notFound, badRequest } from "@/security/handler";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { checkProgramAge } from "@/lib/programAge";
 
@@ -25,7 +25,8 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
         {
             NOT: {
                 OR: [
-                    { programParticipants: { some: { programId } } },
+                    // A withdrawn person can be enrolled again: re-enrolment reactivates their row.
+                    { programParticipants: { some: { programId, ...ENROLLED_PARTICIPANT } } },
                     { programVolunteers: { some: { programId } } }
                 ]
             }

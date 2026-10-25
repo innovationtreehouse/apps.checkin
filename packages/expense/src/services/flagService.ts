@@ -1,10 +1,12 @@
 // GC-FIN-CONTROL flags: raised for awareness, checked off by the audience they route to, audited.
+import type { Prisma } from "../generated/prisma/client";
 import { db, type Db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { FLAG_AUDIENCE, HOLD_FLAGS, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
+import { FLAG_AUDIENCE, HOLD_FLAGS, NEEDS_VOIDING, reviewKindOf, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
+import type { Actor } from "../lib/workflow-engine";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
@@ -19,6 +21,18 @@ export async function raiseFlag(expenseId: string, kind: FlagKind, detail: strin
   const reopen = await client.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
   if (reopen.count > 0) return;
   await client.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
+}
+
+/**
+ * Checks off the expense's open `kind` flag as answered by the act that fixed its condition. A
+ * QB_POST_FAILED duplicate to void is a review, which only a note closes, so it stays open.
+ */
+export async function closeAnsweredFlag(client: Db, expenseId: string, kind: FlagKind, actor: Actor, notes: string): Promise<void> {
+  const notVoiding: Prisma.ExpenseFlagWhereInput = kind === "QB_POST_FAILED" ? { OR: [{ detail: null }, { NOT: { detail: { contains: NEEDS_VOIDING } } }] } : {};
+  await client.expenseFlag.updateMany({
+    where: { expenseId, kind, checkedOffAt: null, ...notVoiding },
+    data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username ?? null, notes },
+  });
 }
 
 /** Whether the stored expense's tax still waits on finance, from its stored receipt review. */
@@ -56,6 +70,8 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
     throw new ServiceError(403, `Only ${flag.audience} can check off this flag`);
   }
   if (flag.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
+  // A review is a finance to-do; the note says what finance did.
+  if (reviewKindOf(flag) && !notes?.trim()) throw new ServiceError(400, "Say what finance did");
   const expense = (await db.expense.findFirst({ where: { id: flag.expenseId } }))!;
   // A control flag is checked off by someone independent of the expense, never by its submitter,
   // its reimbursee, or anyone in their households.

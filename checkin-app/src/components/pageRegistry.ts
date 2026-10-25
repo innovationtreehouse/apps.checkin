@@ -34,7 +34,9 @@ const CATALOG = linkGate(INVENTORY, '/catalog/items');
 const ORG_INVENTORY = linkGate(INVENTORY, '/inventory/org-items');
 const INVENTORY_MANAGER = linkGate(INVENTORY, '/inventory/merge-conflicts');
 const INVENTORY_RECEIVING = linkGate(INVENTORY, '/inventory/receive-queue');
-const RECEIVING = linkGate(INVENTORY, '/inventory/receiving');
+const INVENTORY_UNLOCATED = linkGate(INVENTORY, '/inventory/unlocated');
+const INVENTORY_LOG = linkGate(INVENTORY, '/inventory/inventory-log');
+const PART_MAPPING = linkGate(INVENTORY, '/inventory/receiving');
 const INCOME = linkGate(REVENUE_OPS, '/income');
 const DONATIONS = linkGate(REVENUE_OPS, '/donations');
 // The hub redirects to the first finance tool, so it is listed to their audience.
@@ -112,18 +114,20 @@ export const PAGES: PageEntry[] = [
   // INVENTORY_MANAGER, FINANCE or BOARD (#2384) and the work-queue screens
   // INVENTORY_MANAGER-only, like their routes.
   { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: ORG_INVENTORY },
+  { href: '/inventory/unlocated', label: 'Needs a Location', section: 'Inventory', keywords: 'unlocated no location shelf', visible: INVENTORY_UNLOCATED },
+  { href: '/inventory/inventory-log', label: 'Inventory Log', section: 'Inventory', keywords: 'stock change history quantity', visible: INVENTORY_LOG },
   { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: ORG_INVENTORY },
   { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: INVENTORY_RECEIVING },
   { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: INVENTORY_RECEIVING },
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
-  // Receiving (#1289) — receipt mapping. Mirrors the routes' read gate:
+  // Part mapping (#1289) — receipt mapping. Mirrors the routes' read gate:
   // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
-  { href: '/inventory/receiving', label: 'Receiving', section: 'Inventory', keywords: 'receipt mapping proceed apply failed', visible: RECEIVING },
+  { href: '/inventory/receiving', label: 'Part Mapping', section: 'Inventory', keywords: 'receiving receipt mapping proceed apply failed', visible: PART_MAPPING },
   // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
   { href: '/inventory/in-kind', label: 'In-kind Gifts', section: 'Inventory', keywords: 'donation donor gift no receipt', visible: linkGate(INVENTORY, '/inventory/in-kind') },
-  { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: RECEIVING },
+  { href: '/inventory/receiving/audit-log', label: 'Part Mapping Audit Log', section: 'Inventory', keywords: 'receiving receipt mapping history', visible: PART_MAPPING },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
   // The index redirects to Item Categories; Payouts and Reconciliation sit under the Shopify tab.

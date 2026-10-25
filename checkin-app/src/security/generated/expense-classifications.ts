@@ -77,6 +77,13 @@ export const classifications = {
         note: 'personal',
         approvedAt: 'internal',
     },
+    ExpenseTaxApproval: {
+        expenseId: 'internal',
+        taxCents: 'internal',
+        approvedByUserId: 'pii',
+        note: 'personal',
+        approvedAt: 'internal',
+    },
     ExpenseLineItem: {
         id: 'internal',
         expenseId: 'internal',
@@ -288,8 +295,12 @@ export const relations = {
         auditLog: { model: 'ExpenseAuditLog', isList: true },
         flags: { model: 'ExpenseFlag', isList: true },
         receiptReview: { model: 'ExpenseReceiptReview', isList: false },
+        taxApproval: { model: 'ExpenseTaxApproval', isList: false },
     },
     ExpenseReceiptReview: {
+        expense: { model: 'Expense', isList: false },
+    },
+    ExpenseTaxApproval: {
         expense: { model: 'Expense', isList: false },
     },
     ExpenseLineItem: {

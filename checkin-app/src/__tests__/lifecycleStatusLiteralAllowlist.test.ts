@@ -52,7 +52,7 @@ import { join, relative, sep } from 'node:path';
 
 const SRC = join(__dirname, '..');
 
-const PP_LITERALS = ['PENDING', 'ACTIVE'] as const;
+const PP_LITERALS = ['PENDING', 'ACTIVE', 'WITHDRAWN'] as const;
 const OMP_LITERALS = [
     'INTAKE',
     'PENDING_EXTERNAL_ACTION',

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Group, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Alert, Button, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from "@/components/TimezoneProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
@@ -10,29 +10,30 @@ import { RECEIPT_FLOW_ROLES } from "@/lib/nav/sections/receiptReview";
 
 const UNREACHABLE = "Couldn't load the counts. Check your connection and try again.";
 
-function Tile({ label, count }: { label: string; count: number }) {
-  return (
-    <Card withBorder padding="sm">
-      <Text size="sm" c="dimmed">{label}</Text>
-      <Text size="xl" fw={700}>{count}</Text>
-    </Card>
-  );
+interface FlowRow {
+  section: string;
+  state: string;
+  label: string;
+  count: number | null;
 }
 
-function Section({ title, section, extra }: { title: string; section: { states: StateCount[] } | null; extra?: StateCount }) {
-  return (
-    <Stack gap="xs" component="section" aria-label={title}>
-      <Title order={3}>{title}</Title>
-      {section ? (
-        <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }}>
-          {section.states.map((s) => <Tile key={s.state} label={s.label} count={s.count} />)}
-          {extra && <Tile label={extra.label} count={extra.count} />}
-        </SimpleGrid>
-      ) : (
-        <Text c="dimmed">Not set up here.</Text>
-      )}
-    </Stack>
-  );
+function sectionRows(section: string, states: StateCount[] | null | undefined): FlowRow[] {
+  if (states === undefined) return [];
+  if (states === null) return [{ section, state: "not_set_up", label: "Not set up here.", count: null }];
+  return states.map((s) => ({ section, state: s.state, label: s.label, count: s.count }));
+}
+
+/** One row per state, in the order the flow runs: receipts, then part mapping, then expenses. */
+function flowRows(data: ReceiptFlowStatus): FlowRow[] {
+  const receipt = data.receipt && [
+    ...data.receipt.states,
+    { state: "not_delivered", label: "Done, not yet sent to part mapping", count: data.receipt.notDelivered },
+  ];
+  return [
+    ...sectionRows("Receipts", data.receipt === undefined ? undefined : receipt ?? null),
+    ...sectionRows("Part mapping", data.receiving?.states ?? null),
+    ...sectionRows("Expenses", data.expense === undefined ? undefined : data.expense?.states ?? null),
+  ];
 }
 
 /** How many receipts, receiving records and expenses sit in each state. Counts only. */
@@ -70,17 +71,24 @@ export default function ReceiptFlowStatusPage() {
       {error && <Alert color="red">{error}</Alert>}
       {!data && !error && <PageLoader minHeight="20vh" />}
       {data && (
-        <>
-          {data.receipt !== undefined && (
-            <Section
-              title="Receipts"
-              section={data.receipt}
-              extra={data.receipt ? { state: "not_delivered", label: "Done, not yet sent to receiving", count: data.receipt.notDelivered } : undefined}
-            />
-          )}
-          <Section title="Receiving" section={data.receiving} />
-          {data.expense !== undefined && <Section title="Expenses" section={data.expense} />}
-        </>
+        <Table striped verticalSpacing={4} aria-label="Records in each state">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Section</Table.Th>
+              <Table.Th>State</Table.Th>
+              <Table.Th ta="right">Count</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {flowRows(data).map((row) => (
+              <Table.Tr key={`${row.section}:${row.state}`}>
+                <Table.Td>{row.section}</Table.Td>
+                <Table.Td c={row.count === null ? "dimmed" : undefined}>{row.label}</Table.Td>
+                <Table.Td ta="right">{row.count}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
       )}
     </Stack>
   );

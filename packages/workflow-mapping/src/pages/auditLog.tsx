@@ -89,9 +89,9 @@ export default function AuditLogPage() {
 
   return (
     <>
-      <Anchor component={Link} href="/inventory/receiving" size="sm">← Receiving</Anchor>
+      <Anchor component={Link} href="/inventory/receiving" size="sm">← Part mapping</Anchor>
       <Group justify="space-between" my="md">
-        <Title order={3}>Receiving audit log</Title>
+        <Title order={3}>Part mapping audit log</Title>
         <Group gap="sm">
           <Select label="Rows" data={LIMIT_OPTIONS} value={limit} onChange={(v) => setLimit(v ?? "100")} allowDeselect={false} w={90} size="xs" />
           {log.data && <Text size="sm" c="dimmed">{log.data.length} entries</Text>}

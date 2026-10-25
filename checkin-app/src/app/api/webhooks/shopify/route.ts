@@ -17,7 +17,8 @@ import { isShopifyTestNotification, logRejectedShopifyWebhook, recordShopifyWebh
 interface ShopifyOrder {
     id?: number | string;
     note_attributes?: { name: string; value: string }[];
-    line_items?: { variant_id?: number | string; quantity?: number }[];
+    /** `quantity` is the original count; `current_quantity` excludes units an edit or refund removed. */
+    line_items?: { variant_id?: number | string; quantity?: number; current_quantity?: number | null }[];
     financial_status?: string | null;
     cancelled_at?: string | null;
     /** Coupons applied at checkout — the program member-code entitlement check below. */
@@ -79,7 +80,10 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
             financialStatus: order.financial_status ?? null,
             cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
             totalRefundedCents: 0,
-            lines: (order.line_items ?? []).map((li) => ({ variantId: String(li.variant_id), quantity: li.quantity ?? 1 })),
+            lines: (order.line_items ?? []).map((li) => {
+                const quantity = li.quantity ?? 1;
+                return { variantId: String(li.variant_id), quantity, currentQuantity: li.current_quantity ?? quantity };
+            }),
         };
         const topic = req.headers.get("x-shopify-topic");
         if (topic !== "orders/paid" || !isPaid(facts)) {
