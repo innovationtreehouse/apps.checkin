@@ -53,12 +53,27 @@ first decision. A fix that adds steps buys nothing.
 | Finance | The Duplicates tab shows one row per **group** of matching receipts. The compare panel shows every member side by side, each with its state and why it matched. Actions: **Not this one** per match, **Different purchases**, **Keep this one** (rejects the other open copies as copies of it, in the same act) and **Reject**. Finance never discards. A rejected member is labelled in red with its rejection reason. | Finance decides, as today. The conflict rule applies to every receipt in the group. |
 | Submitter | When every match is their own earlier upload, they see "You already sent this receipt on 3 Oct" and can withdraw the new copy, which they can already do today. A match on someone else's receipt shows only "Finance will check this for a possible duplicate". | Nobody's receipt is refused automatically. |
 | QuickBooks posting | An expense whose vendor, date and total match another expense, with no decision saying they differ, is held with the reason "Possible duplicate of the Home Depot expense of 3 Oct" in the QuickBooks tab of Finance review. | The posting queue, tabs and counts are #2481's; this adds one reason. |
-| States | None added. `duplicate_flagged` is reused for every member that reaches the check. One expense transition is proposed for a duplicate found only at posting (Q9). | The receipt machine's states and guard order. |
+| States | No receipt state added. `duplicate_flagged` is reused for every member that reaches the check. On the expense side, Q9 may add one transition and one end state for a duplicate found only at posting. | The receipt machine's states and guard order. |
 
 What it costs: one small table of decisions, one read-time query in place of
 the stored single suspect, a group compare panel, one derived expense reason
-and, depending on Q9, one expense transition. About seven small PRs, test
+and, depending on Q9, one expense transition. About nine small PRs, test
 first (see the migration file).
+
+## Waiting on @thpr
+
+Two questions are open. Everything decided so far is logged in §10.
+
+**Q8. Should the app check again for duplicates when an expense is about to post to QuickBooks?**
+- (a) Yes: an expense that matches another live expense is held in the QuickBooks tab until finance decides (§7).
+- (b) No: trust the check made when the receipt came in.
+- **Recommended: (a).** It's one more hold reason, not a new step, and it catches a copy cleared by mistake against a receipt that was already finalized.
+
+**Q9. If the posting check finds a real duplicate, how does finance stop that expense?** Today an expense waiting to post can only post. The copy isn't a real expense (its twin is), so it needs a way out.
+- (a) A new "withdrawn as a duplicate" step that ends the copy without posting it, with a note naming its twin. It would reuse the expense's existing end state `rejected`, the one Q14 says is not used in practice; or (a′) a new end state named for what happened.
+- (b) Reuse "not posted" (`qb_skipped`). That state today means "already in QuickBooks from before the app", so reusing it blurs the two.
+- (c) Let it post, then void it in QuickBooks.
+- **Recommended: (a′).** A copy ending as "withdrawn as a duplicate" says what happened, and keeps `rejected` out of it. It's one new end state on the expense side; the receipt side gains none. If you'd rather add no state at all, (a).
 
 ---
 
@@ -89,7 +104,7 @@ Stated for this work but not yet in `docs/rules/`:
     discards innocent", "thus q1 becomes no flag".
 
 §9 lists the rules this design would establish.
-Everything else that would need a rule is an open question (§10).
+Everything else that would need a rule was an open question; see §10 and "Waiting on @thpr".
 
 ---
 
@@ -478,12 +493,13 @@ No receipt state is added. Every change maps onto what exists:
 | Re-check after a decision | existing `RUN_PIPELINE` on each affected open member | none |
 | Badge on an open earlier copy | none: a read-time marker | none |
 | Posting hold | none | none: a derived reason, the outbox skips it, as with an unknown reimbursee |
-| Duplicate found only at posting | none | **Q9**: either a new `DUPLICATE_WITHDRAWN` event from `qb_pending`/`qb_on_hold` to the existing `rejected`, or reuse of `qb_skipped` |
+| Duplicate found only at posting | none | **Q9**: a "withdrawn as a duplicate" event from `qb_pending`/`qb_on_hold`, into a new end state (recommended) or the existing `rejected` |
 
-The one possible addition is that expense transition. Today an expense waiting
-to post has no way out except posting, so a duplicate found there could only
-be voided in QuickBooks after the fact. One event into a state that already
-exists is the smallest change that lets finance stop it.
+The one possible addition is on the expense side (Q9). Today an expense
+waiting to post has no way out except posting, so a duplicate found there
+could only be voided in QuickBooks after the fact. One event, and at most one
+end state named for what happened, is the smallest change that lets finance
+stop it.
 
 New data: one table of pair decisions (§6.3). Nothing else.
 
@@ -492,7 +508,7 @@ New data: one table of pair decisions (§6.3). Nothing else.
 ## 9. Rules this design establishes
 
 If @thpr accepts them. Each traces to the sources above; anything that
-doesn't is in §10.
+doesn't was an open question (§10, and "Waiting on @thpr").
 
 - A receipt that matches another receipt is held for finance, never refused
   automatically. [Decision — owner]
@@ -516,26 +532,24 @@ doesn't is in §10.
 
 ---
 
-## 10. Open questions for @thpr
+## 10. Decisions log
 
-Numbered as fixed IDs; a settled one is struck, not renumbered.
+IDs are fixed; the open ones are in "Waiting on @thpr" near the top.
 
-| ID | Question | Options | Recommendation |
-| --- | --- | --- | --- |
-| Q1 | ~~Does a discarded receipt raise a flag?~~ | **Decided by @thpr: no flag.** Only a submitter or mail intake discards, so every discard is innocent; finance's refusals are rejections. A discarded receipt still shows, greyed, in a group that exists for another reason. | — |
-| Q2 | ~~How much stronger is a match on a rejected receipt?~~ | **Decided by @thpr:** a readable label, red is fine; not listed first, no required note. "Don't go overboard." | — |
-| Q3 | ~~Fold order and receipt numbers when comparing?~~ | **Decided by @thpr: (a).** Fold case, spaces and a leading `#`, as #2561 did for the retailer. Dates need nothing beyond #2566. | — |
-| Q4 | ~~An amount tolerance tier?~~ | **Decided by @thpr: (a).** Not now; revisit with #2558's data. | — |
-| Q5 | ~~Is a fuzzy vendor hit flagged like an exact one?~~ | **Decided by @thpr: (a).** Same hold, weaker label. | — |
-| Q6 | ~~May a submitter withdraw their own repeat upload when every match is theirs?~~ | **Decided by @thpr: (a).** Yes, with the match shown; another person's receipt is never shown. | — |
-| Q7 | ~~When is a note required to say "different purchases"?~~ | **Settled by Q2:** never. | — |
-| Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case. |
-| Q9 | A duplicate found **only at posting**: how does finance stop it? | (a) New `DUPLICATE_WITHDRAWN` event to the existing `rejected`, with a note naming the other expense. (b) Reuse `qb_skipped` ("not posted"). (c) Leave it posted and void in QuickBooks. | **(a).** (b) means "already booked in QuickBooks" for backfill, and reusing it would blur that; (c) books it first and undoes it later. |
-| Q10 | ~~Existing cleared receipts at cutover~~ | Dropped: production holds no receipts. | — |
-| Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
-| Q12 | ~~A "hide for now" button besides Not this one?~~ | **Decided by @thpr: no**, "too much complexity". Not this one with Undo is the only dismiss. | — |
-| Q13 | ~~A weak similar-date tier?~~ | **Decided by @thpr:** yes, ±7 days, weak label, not in the first pass. Filed as #2591. | — |
-| Q14 | ~~Should a match on an expense rejected at sign-off get the "rejected" label?~~ | **Dropped.** @thpr: a budget owner can't reject an expense outright; it is a real expense of the corporation, and finance has to place it somewhere. The code still lets finance end one as `rejected` by rejecting a budget owner's exception, which is a question for the expense design, not this one. | — |
+| ID | Question | Outcome |
+| --- | --- | --- |
+| Q1 | Does a discarded receipt raise a flag? | **No.** Only a submitter or mail intake discards, so every discard is innocent; finance's refusals are rejections. A discarded receipt still shows, greyed, in a group that exists for another reason. |
+| Q2 | How is a match on a rejected receipt shown? | A readable label, red is fine, with the rejection reason. Not listed first, no required note: "don't go overboard". |
+| Q3 | Fold order and receipt numbers when comparing? | **Yes:** case, spaces and a leading `#`, as #2561 did for the retailer. Dates need nothing beyond #2566. |
+| Q4 | An amount tolerance tier? | **Not now;** revisit with #2558's data. |
+| Q5 | Is a fuzzy vendor hit held like an exact one? | **Yes,** same hold, weaker label. |
+| Q6 | May a submitter withdraw their own repeat upload when every match is theirs? | **Yes,** with the match shown; another person's receipt is never shown. |
+| Q7 | When is a note needed to say "different purchases"? | **Never** (follows from Q2). |
+| Q10 | Existing cleared receipts at cutover | **Dropped:** production holds no receipts. |
+| Q11 | Already-finalized groups at cutover | **Dropped:** production holds no receipts. |
+| Q12 | A "hide for now" button besides Not this one? | **No:** "too much complexity". Not this one with Undo is the only dismiss. |
+| Q13 | A weak similar-date tier? | **Yes,** ±7 days, weak label, not in the first pass: #2591. |
+| Q14 | A "rejected" label for a match on an expense rejected at sign-off? | **Dropped:** a budget owner can't reject an expense outright; it is a real expense of the corporation, and finance places it somewhere. (The code still lets finance end one as `rejected` by rejecting a budget owner's exception; that belongs to the expense design.) |
 
 ---
 
