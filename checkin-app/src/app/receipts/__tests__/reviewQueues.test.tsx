@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ReceiptsReviewPage from "@checkin/receipt/pages/review";
 
@@ -160,5 +160,26 @@ describe("the not-delivered view", () => {
     expect(acme).toHaveTextContent("workflow-mapping down");
     expect(bolt).not.toHaveTextContent("Catch-up stopped");
     expect(bolt).toHaveTextContent("No failed attempt recorded");
+  });
+});
+
+describe("the discarded view", () => {
+  it("names a duplicate discard and links the receipt it duplicates", () => {
+    mockSearch = new URLSearchParams("queue=discarded");
+    const base = { uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, receiptDate: null, receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false };
+    mockLoaded = {
+      data: [
+        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateSuspectReceiptId: "r0" },
+        { ...base, id: "r2", retailer: "Bolt" },
+      ],
+      error: null,
+    };
+    wrap();
+    const [acme, bolt] = ["Acme", "Bolt"].map((name) => screen.getByText(name).closest("tr") as HTMLElement);
+    expect(acme).toHaveTextContent("Discarded as a duplicate of another receipt");
+    expect(within(acme).getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/review/r0?queue=discarded");
+    expect(bolt).toHaveTextContent("Discarded");
+    expect(bolt).not.toHaveTextContent("as a duplicate");
+    expect(within(bolt).queryByRole("link", { name: "another receipt" })).toBeNull();
   });
 });

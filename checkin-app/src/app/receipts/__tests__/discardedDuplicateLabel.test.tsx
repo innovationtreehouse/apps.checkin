@@ -7,8 +7,8 @@ const row = (retailer: string, extra: Record<string, string>) => ({
   receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false, ...extra,
 });
 const flagged = "2026-10-02T00:00:00Z";
+// Rows as GET /api/receipts/mine returns them: the stripper drops the pii suspect id.
 const rows = [
-  row("Acme", { duplicateFlaggedAt: flagged, duplicateSuspectReceiptId: "orig-1" }),
   row("Bolt", { duplicateFlaggedAt: flagged }),
   row("Cogs", { duplicateFlaggedAt: flagged, duplicateFlagClearedAt: "2026-10-03T00:00:00Z" }),
   row("Dyna", {}),
@@ -32,10 +32,8 @@ beforeAll(() => {
 const rowOf = (retailer: string) => screen.getByText(retailer).closest("tr") as HTMLElement;
 
 describe("A discarded receipt's state on My receipts", () => {
-  it("says a receipt discarded while flagged was discarded as a duplicate, linking its suspect when the row carries it", () => {
+  it("says a receipt discarded while flagged was discarded as a duplicate, without a link to another submitter's receipt", () => {
     render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
-    expect(within(rowOf("Acme")).getByText(/Discarded as a duplicate of/)).toBeInTheDocument();
-    expect(within(rowOf("Acme")).getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/orig-1");
     expect(within(rowOf("Bolt")).getByText("Discarded as a duplicate")).toBeInTheDocument();
     expect(within(rowOf("Bolt")).queryByRole("link", { name: "another receipt" })).not.toBeInTheDocument();
   });
