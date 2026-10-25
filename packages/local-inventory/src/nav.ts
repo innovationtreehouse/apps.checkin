@@ -30,7 +30,6 @@ export const INVENTORY_NAV_LINKS: readonly InventoryNavLink[] = [
       { name: "Inventory log", href: "/inventory/inventory-log", icon: "📜", receiving: true },
     ],
   },
-  { name: "Applied Deltas", href: "/inventory/received-deltas", icon: "🧾", receiving: true },
   { name: "Merge Conflicts", href: "/inventory/merge-conflicts", icon: "⚠️", managerOnly: true },
   { name: "Provisional Map", href: "/inventory/provisional-items", icon: "🧩", managerOnly: true },
   { name: "Org Events", href: "/inventory/org-events", icon: "📨", managerOnly: true },
