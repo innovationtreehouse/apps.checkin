@@ -12,7 +12,12 @@ module.exports = createJestConfig({
     testEnvironment: 'node',
     setupFilesAfterEnv: [],
     testMatch: ['<rootDir>/flow-tests/**/*.flow.test.[jt]s'],
-    moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },
+    testSequencer: '<rootDir>/flow-tests/sequencer.mjs',
+    // A library's nav module exports only an `import` condition, which jest's require cannot resolve.
+    moduleNameMapper: {
+        '^@/(.*)$': '<rootDir>/src/$1',
+        '^@checkin/([a-z-]+)/nav$': '<rootDir>/../packages/$1/src/nav.ts',
+    },
     // The standalone build nests a package.json named "checkmein" under .next/,
     // which collides with the app's own in jest's haste map.
     modulePathIgnorePatterns: ['<rootDir>/.next/'],
