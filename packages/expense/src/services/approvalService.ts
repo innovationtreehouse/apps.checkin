@@ -135,6 +135,7 @@ export async function raiseException(
   await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
     await transition(tx, approval, { status: "exception_raised", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, { expenseId, action: "exception_raised", lineItemId: approval.lineItemId, valueAfter: notes });
   });
@@ -153,6 +154,7 @@ export async function rejectException(
   await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
     await transition(tx, approval, { status: "rejected", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, {
       expenseId,

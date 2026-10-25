@@ -157,14 +157,16 @@ export async function seedPartOwner(opts: {
 /**
  * Fills the submitter and Treasurer seats on every line of an expense with distinct people and
  * records a Board authorization, so the expense is postable whatever its size once its lines
- * are approved.
+ * are approved. A reimbursement also takes the Board seat, which it needs whenever the directory
+ * does not know its reimbursee as a member (the inert one knows nobody).
  */
 export async function signAllLines(expenseId: string): Promise<void> {
-  await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
+  const { needsReimbursement } = await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });
+  const seats = needsReimbursement ? (["SUBMITTER", "TREASURER", "BOARD"] as const) : (["SUBMITTER", "TREASURER"] as const);
   for (const { id } of lines) {
     await db.expenseLineSignoff.createMany({
-      data: (["SUBMITTER", "TREASURER"] as const).map((seat, i) => ({
+      data: seats.map((seat, i) => ({
         expenseId, lineItemId: id, seat, signerUserId: 9000 + i,
       })),
     });
