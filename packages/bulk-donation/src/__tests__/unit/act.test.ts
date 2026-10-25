@@ -15,11 +15,11 @@ describe("act", () => {
     const ok = await act(() => Promise.reject(new Error('Could not import the CSV: line 13 (T1), "Match Amount": not a number: "x"')), "Upload imported", reload);
     expect(ok).toBe(false);
     expect(reload).not.toHaveBeenCalled();
-    expect(show).toHaveBeenCalledWith({
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({
       message: 'Could not import the CSV: line 13 (T1), "Match Amount": not a number: "x"',
       color: "red",
       autoClose: false,
-    });
+    }));
   });
 
   it("lets a success chip close on its own", async () => {

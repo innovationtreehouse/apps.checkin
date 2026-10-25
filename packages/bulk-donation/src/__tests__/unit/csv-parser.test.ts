@@ -215,7 +215,7 @@ describe('Donations Report layout', () => {
   const gift = (txn: string, date: string, comment: string, gross: string, match: string) =>
     `Example Co,Example Nonprofit,${date},Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
     `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
-  const report = (opts: { checkFee?: string; match?: string } = {}) => Buffer.from([
+  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string } = {}) => Buffer.from([
     'Donations Report,',
     '"#-------------------------------------------",',
     'Charity Name,Example Nonprofit',
@@ -230,9 +230,10 @@ describe('Donations Report layout', () => {
     HEADER,
     gift('TXNAAAA001', '2026-02-06T15:03:38Z', 'For the robotics team', '"1,500.00"', `"${opts.match ?? '3,000.00'}"`),
     gift('TXNAAAA002', '2026-03-29T17:03:08Z', '', '200.00', '200.00'),
+    ...(opts.extraGift === undefined ? [] : [opts.extraGift]),
     'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00',
     'Total Donations (Gross),"4,900.00"',
-    `Check Fee,${opts.checkFee ?? '0.00'}`,
+    `${opts.checkFeeLabel ?? 'Check Fee'},${opts.checkFee ?? '0.00'}`,
     'Net Total Payment,"4,900.00"',
     '',
   ].join('\r\n'));
@@ -267,12 +268,44 @@ describe('Donations Report layout', () => {
   it('fails the file on a non-zero footer check fee rather than dropping it', () => {
     expect(() => parseBenevityCsv(report({ checkFee: '5.00' })))
       .toThrow('line 17, "Check Fee": "5.00" is a disbursement-level fee this import cannot assign to a gift');
+    expect(() => parseBenevityCsv(report({ checkFee: '5.00', checkFeeLabel: '" CHECK FEE "' })))
+      .toThrow('line 17, "CHECK FEE": "5.00" is a disbursement-level fee');
+  });
+
+  it('fails a gift row with fewer cells than the header', () => {
+    const short = gift('TXNAAAA003', '2026-03-30T10:00:00Z', '', '50.00', '0.00').replace(/,0\.00,0\.00,$/, '');
+    expect(() => parseBenevityCsv(report({ extraGift: short })))
+      .toThrow('line 15: 20 cells, but the header has 23');
+  });
+
+  it('fails a gift row whose unquoted comma adds a cell', () => {
+    const long = gift('TXNAAAA003', '2026-03-30T10:00:00Z', 'In memory of Sam, with love', '50.00', '0.00');
+    expect(() => parseBenevityCsv(report({ extraGift: long })))
+      .toThrow('line 15: 24 cells, but the header has 23');
+  });
+
+  it('fails a short row that lost its Transaction ID rather than skipping it', () => {
+    expect(() => parseBenevityCsv(report({ extraGift: 'Example Co,Example Nonprofit' })))
+      .toThrow('line 15: 2 cells, but the header has 23');
+  });
+
+  it('lists every problem and counts them', () => {
+    const bad = (n: number) => gift(`TXNBAD000${n}`, '2026-03-30T10:00:00Z', '', 'x', '0.00');
+    const csv = report({ extraGift: [1, 2, 3, 4, 5, 6].map(bad).join('\r\n') });
+    try {
+      parseBenevityCsv(csv);
+      throw new Error('expected throw');
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message.startsWith('Could not import the CSV (6 problems):\n')).toBe(true);
+      expect(message).toContain('line 20 (TXNBAD0006), "Total Donation to be Acknowledged": not a number: "x"');
+    }
   });
 });
 
 describe('malformed CSV', () => {
   it('reports the line of an unclosed quote', () => {
     expect(() => parseBenevityCsv(Buffer.from('Transaction ID,Donation Amount\nT1,"5.00\n')))
-      .toThrow(/Could not import the CSV: .*line/i);
+      .toThrow(/Could not import the CSV \(1 problem\):\n.*line/i);
   });
 });

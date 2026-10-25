@@ -100,7 +100,12 @@ export async function act(call: () => Promise<unknown>, ok: string | ((result: u
     reload();
     return true;
   } catch (e) {
-    notifications.show({ message: errorMessage(e), color: "red", autoClose: false });
+    notifications.show({
+      message: errorMessage(e),
+      color: "red",
+      autoClose: false,
+      styles: { description: { whiteSpace: "pre-line", maxHeight: "50vh", overflowY: "auto" } },
+    });
     return false;
   }
 }

@@ -37,14 +37,11 @@ export interface BenevityRow {
   donorComment: string;
 }
 
-/** Issues spelled out in the message; the rest are counted. */
-const MESSAGE_ISSUE_LIMIT = 5;
-
+/** Every issue, one per line, so the upload's error chip shows them all. */
 export class CsvValidationError extends Error {
   constructor(public readonly issues: string[]) {
-    const shown = issues.slice(0, MESSAGE_ISSUE_LIMIT).join("; ");
-    const more = issues.length > MESSAGE_ISSUE_LIMIT ? `; and ${issues.length - MESSAGE_ISSUE_LIMIT} more` : "";
-    super(`Could not import the CSV: ${shown}${more}`);
+    const count = issues.length === 1 ? "1 problem" : `${issues.length} problems`;
+    super(`Could not import the CSV (${count}):\n${issues.join("\n")}`);
     this.name = "CsvValidationError";
   }
 }
@@ -195,6 +192,9 @@ function readRecords(buffer: Buffer): Located[] {
   }
 }
 
+/** The Donations Report's footer labels, which sit under the gift table with fewer cells than the header. */
+const FOOTER_LABELS = new Set(["totals", "total donations (gross)", "check fee", "net total payment"]);
+
 /** Where a field comes from in this file: a header column's index, else a preamble value. */
 type Binding = { label: string; index: number } | { label: string; value: string } | null;
 
@@ -222,7 +222,8 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
   const header = records[headerAt].record;
   const preamble = new Map<string, string>();
   for (const { record } of records.slice(0, headerAt)) {
-    if (record.length >= 2 && record[0] !== "") preamble.set(record[0], record[1]);
+    const [key = "", value = ""] = record;
+    if (key !== "" && !key.startsWith("#") && value !== "") preamble.set(key, value);
   }
   const bindings = new Map(FIELDS.map((f) => [f, bind(f, header, preamble)] as const));
   const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? String(field);
@@ -236,16 +237,24 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
       const b = bindings.get(field) ?? null;
       mapped[field] = b === null ? "" : "value" in b ? b.value : (record[b.index] ?? "");
     }
-    if (mapped.transactionId.trim() === "") {
-      // A Donations Report footer row; its disbursement-level check fee has no gift to land on.
-      if (record[0] === "Check Fee") {
+    const label = record[0].trim().toLowerCase();
+    const footer = FOOTER_LABELS.has(label) ? label : null;
+    if (footer !== null && mapped.transactionId.trim() === "") {
+      // The disbursement-level check fee has no gift to land on.
+      if (footer === "check fee") {
         const fee = moneyCents.safeParse(record[1] ?? "");
         if (!fee.success || fee.data !== 0) {
-          issues.push(`line ${info.lines}, "Check Fee": "${record[1] ?? ""}" is a disbursement-level fee this import cannot assign to a gift`);
+          issues.push(`line ${info.lines}, "${record[0].trim()}": "${record[1] ?? ""}" is a disbursement-level fee this import cannot assign to a gift`);
         }
       }
       continue;
     }
+    // A miscounted row's cells are shifted, so its Transaction ID cannot be trusted to name it.
+    if (record.length !== header.length) {
+      issues.push(`line ${info.lines}: ${record.length} cells, but the header has ${header.length}`);
+      continue;
+    }
+    if (mapped.transactionId.trim() === "") continue;
 
     const parsed = benevityRowSchema.safeParse(mapped);
     if (!parsed.success) {
