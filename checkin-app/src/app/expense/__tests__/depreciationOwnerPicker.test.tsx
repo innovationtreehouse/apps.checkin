@@ -62,6 +62,7 @@ describe("depreciation owner picker", () => {
 
     fireEvent.click(screen.getByRole("textbox", { name: "Owner bucket for Bandsaw" }));
     fireEvent.click(screen.getByRole("option", { name: "Woodshop" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/set-depreciation-cycle/submit", "POST", {
