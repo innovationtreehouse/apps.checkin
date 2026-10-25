@@ -83,6 +83,10 @@ describe("checkImportBatch", () => {
     expect(!checked.ok && checked.problems).toEqual([expect.stringMatching(/^row 2 \(pdf\): file: /)]);
   });
 
+  it("names a row whose importSourceId repeats an earlier row", () => {
+    expect(checkImportBatch([textRow("a"), textRow("b"), textRow("a")])).toEqual({ ok: false, problems: ["row 3 (a): importSourceId: repeats row 1"] });
+  });
+
   it("names a problem with the batch itself", () => {
     expect(checkImportBatch([])).toEqual({ ok: false, problems: [expect.stringMatching(/^the batch: /)] });
   });

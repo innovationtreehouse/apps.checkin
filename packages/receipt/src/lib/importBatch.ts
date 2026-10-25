@@ -35,7 +35,11 @@ export function checkImportBatch(batch: unknown): CheckedImportBatch {
   }
   const rows: CheckedImportRow[] = [];
   if (parsed.success) {
+    const firstRowOf = new Map<string, number>();
     parsed.data.forEach((row, index) => {
+      const first = firstRowOf.get(row.importSourceId);
+      if (first === undefined) firstRowOf.set(row.importSourceId, index);
+      else add(index, `importSourceId: repeats row ${first + 1}`);
       const file = Buffer.from(row.fileBase64, "base64");
       const check = checkReceiptFile(file, row.mimeType);
       if (check.ok) rows.push({ row, file, mimeType: check.mimeType });

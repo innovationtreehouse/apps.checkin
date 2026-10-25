@@ -65,32 +65,46 @@ export interface NewReceipt {
  */
 export async function insertReceipt(r: NewReceipt): Promise<string> {
   const id = randomUUID();
-  const fileHash = createHash("sha256").update(r.file).digest("hex");
-  await db.$transaction(async (tx) => {
-    if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
-    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
-    const suspect = await tx.receipt.findFirst({
-      where: { orgId: r.orgId, fileHash },
-      orderBy: [{ uploadedAt: "asc" }, { id: "asc" }],
-      select: { id: true },
-    });
-    await tx.receipt.create({
-      data: {
-        ...r.core,
-        id,
-        orgId: r.orgId,
-        uploadedByUserId: r.actor.id,
-        fileBlob: new Uint8Array(r.file),
-        fileHash,
-        mimeType: r.mimeType,
-        details: { create: { ...r.detail, orgId: r.orgId, duplicateSuspectReceiptId: suspect?.id ?? null } },
-        lineItems: { create: toLineRows(r.lines) },
-      },
-    });
-    await audit(tx, id, r.actor, { action: r.auditAction });
-    await r.afterInsert?.(tx, id);
-  });
+  await db.$transaction((tx) => insertInto(tx, id, r));
   return id;
+}
+
+/** Insert several receipts in one transaction: every one of them, or none if any insert fails. */
+export async function insertReceiptsTogether(rs: NewReceipt[], timeoutMs: number): Promise<string[]> {
+  const ids = rs.map(() => randomUUID());
+  await db.$transaction(
+    async (tx) => {
+      for (const [i, r] of rs.entries()) await insertInto(tx, ids[i], r);
+    },
+    { timeout: timeoutMs },
+  );
+  return ids;
+}
+
+async function insertInto(tx: Prisma.TransactionClient, id: string, r: NewReceipt): Promise<void> {
+  const fileHash = createHash("sha256").update(r.file).digest("hex");
+  if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
+  await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
+  const suspect = await tx.receipt.findFirst({
+    where: { orgId: r.orgId, fileHash },
+    orderBy: [{ uploadedAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  await tx.receipt.create({
+    data: {
+      ...r.core,
+      id,
+      orgId: r.orgId,
+      uploadedByUserId: r.actor.id,
+      fileBlob: new Uint8Array(r.file),
+      fileHash,
+      mimeType: r.mimeType,
+      details: { create: { ...r.detail, orgId: r.orgId, duplicateSuspectReceiptId: suspect?.id ?? null } },
+      lineItems: { create: toLineRows(r.lines) },
+    },
+  });
+  await audit(tx, id, r.actor, { action: r.auditAction });
+  await r.afterInsert?.(tx, id);
 }
 
 /**

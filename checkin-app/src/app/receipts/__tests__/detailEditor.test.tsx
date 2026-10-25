@@ -228,6 +228,16 @@ describe("correcting a receipt whose totals don't add up", () => {
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ receiptDate: "2026-09-30" }) }));
   });
 
+  it("shows a stored retailer of only spaces as blank, and asks for it on save", async () => {
+    mockReceipt = { ...receipt, retailer: "   " };
+    wrap();
+    expect(screen.getByLabelText("Retailer")).toHaveValue("");
+    type("+ Shipping", "5.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(shown()).toContainEqual({ title: "Receipt not saved", message: "The retailer is required.", color: "red", autoClose: false }));
+    expect(mockApi).not.toHaveBeenCalled();
+  });
+
   it("is read-only once the receipt was sent to receiving", () => {
     mockReceipt = { ...receipt, pushedAt: "2026-10-02T00:00:00Z" };
     wrap();

@@ -98,8 +98,9 @@ export function lineFromServer(l: ServerLine): DraftLine {
 
 export function headerFromServer(r: ServerReceipt): Header {
   return {
-    retailer: r.retailer ?? "",
-    receiptDate: r.receiptDate ?? "",
+    // Trimmed, so a stored value of only spaces shows as the blank it is and the save asks for it.
+    retailer: (r.retailer ?? "").trim(),
+    receiptDate: (r.receiptDate ?? "").trim(),
     shipping: toDollars(r.shippingCents),
     tax: toDollars(r.taxCents),
     discount: toDollars(r.discountCents),

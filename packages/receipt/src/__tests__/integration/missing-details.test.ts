@@ -40,7 +40,9 @@ describeDb("a receipt missing its retailer, date or total", () => {
   });
 
   it("goes to its submitter on a restart from flow_error rather than staying stuck", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    // Totals off, so the receipt is never finalized or sent downstream, which would lock it.
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    expect(r.state).toBe("validation_failed");
     await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error", receiptDate: "" } });
     actAs(FINANCE);
     await receiptService.restartFlow(r.id);

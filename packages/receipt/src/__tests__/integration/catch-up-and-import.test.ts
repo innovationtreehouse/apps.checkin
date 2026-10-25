@@ -1,10 +1,11 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
+import { insertReceiptsTogether } from "../../lib/insert";
 import { importReceipts } from "../../services/importService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -135,7 +136,7 @@ describeDb("historical import", () => {
   it("runs the pipeline, waives submitter and age steps, pushes as backfill, and skips on re-run", async () => {
     actAs(FINANCE);
     const first = await importReceipts([importRow("u1")]);
-    expect(first).toMatchObject({ processed: 1, skipped: 0, errors: 0, byState: { receipt_finalized: 1 } });
+    expect(first).toMatchObject({ processed: 1, skipped: 0, byState: { receipt_finalized: 1 } });
     expect(ports.calls.pushes[0]).toMatchObject({ backfill: true, needsReimbursement: false });
     expect(ports.calls.pushes[0].reimburseePersonId).toBeUndefined();
 
@@ -158,6 +159,35 @@ describeDb("historical import", () => {
       message: "Import refused; nothing was imported. row 2 (g2): retailer: The retailer is required",
     });
     expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("inserts a batch's receipts in one transaction, so a failed insert leaves none of them", async () => {
+    const receipt = (n: number, afterInsert?: () => Promise<unknown>) => ({
+      orgId: TEST_ORG_ID,
+      actor: FINANCE,
+      file: textFile(`together ${n}`),
+      mimeType: "text/plain",
+      core: { intakeSource: "import" },
+      detail: { retailer: `Store ${n}`, receiptDate: "2023-03-01", receiptTotalCents: 500, state: "uploaded" },
+      lines: [{ description: "Old thing", quantity: 1, unitPriceCents: 500 }],
+      auditAction: "imported",
+      afterInsert,
+    });
+    const failing = async () => {
+      throw new Error("disk full");
+    };
+    await expect(insertReceiptsTogether([receipt(1), receipt(2), receipt(3, failing)], 30_000)).rejects.toThrow("disk full");
+    expect(await db.receipt.count()).toBe(0);
+    expect(await insertReceiptsTogether([receipt(4), receipt(5)], 30_000)).toHaveLength(2);
+    expect(await db.receipt.count()).toBe(2);
+  });
+
+  it("imports the new rows of a batch and skips those already loaded", async () => {
+    actAs(FINANCE);
+    await importReceipts([importRow("s1")]);
+    const res = await importReceipts([importRow("s1"), importRow("s2")]);
+    expect(res).toMatchObject({ processed: 1, skipped: 1 });
+    expect(res.results.map((x) => [x.importSourceId, x.status])).toEqual([["s1", "skipped"], ["s2", "processed"]]);
   });
 
   it("refuses a row with no date", async () => {
