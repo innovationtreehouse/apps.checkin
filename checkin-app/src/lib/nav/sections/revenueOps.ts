@@ -1,12 +1,11 @@
 /**
  * The Revenue Ops section (path /finance-ops; finance-ops/layout.tsx, shared by
- * /income and /donations). It admits FINANCE or BOARD; the finance tools are
- * board-only, and Income and Donations are the libraries' tabs. The Shopify tab
+ * /income). It admits FINANCE or BOARD; the finance tools are board-only, and
+ * Income is the library's tab. The Shopify tab
  * groups the Board-only Shopify tools with income's Shopify payout screens.
  */
 import type { RoleFlag } from "@/lib/roles";
 import { INCOME_NAV_LINKS, INCOME_TAB, type IncomeNavCount, type IncomeNavLink } from "@checkin/income/nav";
-import { DONATIONS_TAB } from "@checkin/bulk-donation/nav";
 import type { NavSection, SectionLink } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
@@ -57,14 +56,6 @@ export const REVENUE_OPS: NavSection = {
   links: [
     ...FINANCE_NAV_LINKS,
     { ...incomeScreen(INCOME_TAB), subLinks: INCOME_SCREEN_LINKS },
-    {
-      ...DONATIONS_TAB,
-      library: "bulk-donation",
-      badge: (c) => {
-        const n = libraryCount(c, "bulk-donation", "unassignedQueue") + libraryCount(c, "bulk-donation", "disbursementHolds");
-        return n > 0 ? { count: n, color: "red", label: `${n} unassigned gifts and disbursement holds` } : null;
-      },
-    },
   ],
   visible: anyRole(REVENUE_OPS_ROLES),
   hrefFor: (u, c) => firstVisibleHref(REVENUE_OPS, u, c),

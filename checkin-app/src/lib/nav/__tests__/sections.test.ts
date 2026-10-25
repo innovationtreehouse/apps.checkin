@@ -13,6 +13,7 @@ import { MEMBERSHIP_OPS } from "@/lib/nav/sections/membershipOps";
 import { MEMBERSHIP_AUDIT } from "@/lib/nav/sections/membershipAudit";
 import { PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
+import { DONATIONS } from "@/lib/nav/sections/donations";
 import { FINANCE } from "@/lib/nav/sections/finance";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 import { SETTINGS } from "@/lib/nav/sections/settings";
@@ -21,7 +22,7 @@ import { tabBadgeFor } from "@/components/navBadges";
 
 const SECTIONS: NavSection[] = [
   SAFETY, MY_ACTIVITIES, MY_RECEIPTS, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
-  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, FINANCE, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
+  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, FINANCE, DONATIONS, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
 ];
 
 const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
@@ -94,10 +95,10 @@ describe("the Receipts split", () => {
     expect(list?.badge?.(counts)).toBeNull();
   });
 
-  it("Finance holds the queue, flow status, mail and the settings group for FINANCE or BOARD; mail for FINANCE alone", () => {
+  it("Finance holds the queue, flow status, mail and receipt settings for FINANCE or BOARD; mail for FINANCE alone", () => {
     const hrefs = (user: NavUser) => visibleLinks(FINANCE, user, counts).map((l) => l.href);
-    expect(hrefs(PERSONAS.finance)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/mail", "/expense/settings"]));
-    expect(hrefs(PERSONAS.board)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/expense/settings"]));
+    expect(hrefs(PERSONAS.finance)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/mail", "/receipts/settings"]));
+    expect(hrefs(PERSONAS.board)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/settings"]));
     expect(hrefs(PERSONAS.board)).not.toContain("/receipts/mail");
     expect(linkGate(FINANCE, "/receipts/settings")(PERSONAS.board, counts)).toBe(true);
     for (const name of ["member", "sysadmin", "operations"]) {

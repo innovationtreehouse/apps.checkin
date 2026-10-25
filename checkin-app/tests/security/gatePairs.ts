@@ -153,7 +153,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'tab /inventory/receiving counts route', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
     { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('POST /api/workflow-mapping/receipts/[id]/apply') },
     { name: 'Finance section', client: (u) => FINANCE.visible(u, null), token: 'finance-or-board' },
-    { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
+    { name: 'page /settings/finance', client: page('/settings/finance'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
     { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
     { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },

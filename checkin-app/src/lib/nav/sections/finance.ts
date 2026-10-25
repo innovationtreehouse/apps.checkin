@@ -1,9 +1,10 @@
 /**
  * The Finance section (#2481 §3): the finance queue, the expense list and the receipt flow
  * status, the bookkeeping setup screens, budgets, the held-mail queue (FINANCE alone: it shows
- * sender addresses), and the expense and receipt settings. FINANCE or BOARD.
+ * sender addresses), and the receipt settings. FINANCE or BOARD. The expense settings sit
+ * under Settings.
  */
-import { EXPENSE_FINANCE_TABS, EXPENSE_TABS, FINANCE_QUEUE_COUNT_KEY } from "@checkin/expense/nav";
+import { EXPENSE_FINANCE_TABS, FINANCE_QUEUE_COUNT_KEY } from "@checkin/expense/nav";
 import { RECEIPT_FINANCE_NAV, RECEIPT_MAIL_NAV } from "@checkin/receipt/nav";
 import type { RoleFlag } from "@/lib/roles";
 import type { NavLink, NavSection, SectionLink } from "@/lib/nav/types";
@@ -43,12 +44,7 @@ export const FINANCE: NavSection = {
     ...EXPENSE_FINANCE_TABS.setup.map(expense),
     { name: "Budgets", href: "/budgets", icon: "💰", library: "expense" },
     ...RECEIPT_MAIL_NAV.map((l) => ({ ...receipt(l), visible: anyRole(["isFinance"]) })),
-    {
-      name: "Settings",
-      href: EXPENSE_TABS.settings.href,
-      icon: "⚙️",
-      subLinks: [expense({ ...EXPENSE_TABS.settings, name: "Expense" }), ...RECEIPT_FINANCE_NAV.map((l) => receipt({ ...l, name: "Receipt" }))],
-    },
+    ...RECEIPT_FINANCE_NAV.map(receipt),
   ],
   visible: anyRole(FINANCE_ROLES),
   hrefFor: (u, c) => firstVisibleHref(FINANCE, u, c),

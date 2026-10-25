@@ -23,7 +23,7 @@ function reachOf(key: Key, savedCents: number, minCents: number): Reach {
   return { ceilingCents: ceiling, readOnly: false, note: `Only the Board can raise this above ${formatCents(ceiling)}.` };
 }
 
-/** /expense/settings — the org's money thresholds. FINANCE or Board edits; every change is audited. */
+/** /settings/finance — the org's money thresholds. FINANCE or Board edits; every change is audited. */
 export default function SettingsPage() {
   const settings = useLoad<Record<Key, number>>("/org-settings");
   const { isBoard } = useRoles();

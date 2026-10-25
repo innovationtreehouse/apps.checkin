@@ -54,7 +54,7 @@ function useCatalogSearch(q: string): CatalogItem[] {
   return items;
 }
 
-/** /inventory/in-kind — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
+/** /donations/in-kind-gifts — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
 export default function ManualInKindPage() {
   const canRecord = useCanRecord();
   const [page, setPage] = useState(1);

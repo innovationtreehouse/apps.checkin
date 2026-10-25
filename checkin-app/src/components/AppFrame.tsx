@@ -23,6 +23,7 @@ import {
   IconCalendarEvent,
   IconClipboardList,
   IconCoin,
+  IconGift,
   IconHome,
   IconList,
   IconBug,
@@ -66,6 +67,7 @@ import { MEMBERSHIP_OPS } from '@/lib/nav/sections/membershipOps';
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
 import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
+import { DONATIONS } from '@/lib/nav/sections/donations';
 import { FINANCE } from '@/lib/nav/sections/finance';
 import { SYSTEM_STATUS } from '@/lib/nav/sections/systemStatus';
 import { SETTINGS } from '@/lib/nav/sections/settings';
@@ -90,13 +92,14 @@ const NAV_ITEMS: NavItem[] = [
   { section: PROGRAMS, icon: <IconCalendarEvent size={18} /> },
   { section: COMMUNICATION, icon: <IconMail size={18} /> },
   { section: SHOP_OPS, icon: <IconTool size={18} /> },
-  { section: FINANCE, icon: <IconReportMoney size={18} /> },
   { section: INVENTORY, icon: <IconPackage size={18} /> },
   { section: FACILITY_OPS, icon: <IconBuildingWarehouse size={18} /> },
   { section: MEMBERSHIP_OPS, icon: <IconUsers size={18} /> },
   { section: MEMBERSHIP_AUDIT, icon: <IconUserSearch size={18} /> },
   { section: PROGRAM_OPS, icon: <IconBriefcase size={18} /> },
   { section: REVENUE_OPS, icon: <IconCoin size={18} /> },
+  { section: FINANCE, icon: <IconReportMoney size={18} /> },
+  { section: DONATIONS, icon: <IconGift size={18} /> },
   { section: SYSTEM_STATUS, icon: <IconSettings size={18} /> },
   { section: SETTINGS, icon: <IconAdjustments size={18} /> },
   { section: INDEX, icon: <IconList size={18} /> },

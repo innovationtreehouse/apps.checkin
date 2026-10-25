@@ -1,7 +1,7 @@
 /**
  * Nav descriptors for the expense screens (#1272 §7). The library declares them; the host
- * places them: `EXPENSE_FINANCE_TABS` and `EXPENSE_TABS.settings` in the Finance section, and
- * `EXPENSE_TABS.approvals` under Programs I Lead.
+ * places them: `EXPENSE_FINANCE_TABS` in the Finance section, `EXPENSE_TABS.settings` under
+ * Settings, and `EXPENSE_TABS.approvals` under Programs I Lead.
  */
 
 /** The finance queue's actionable units, under this key in the expense library's nav counts. */
@@ -31,7 +31,7 @@ export interface ExpenseNavLink {
 }
 
 export const EXPENSE_TABS = {
-  settings: { name: "Settings", href: "/expense/settings", icon: "⚙️" },
+  settings: { name: "Finance", href: "/settings/finance", icon: "⚙️" },
   approvals: { name: "Expense approvals", href: "/programs-i-lead/expense-approvals", icon: "✍️" },
 } as const satisfies Record<string, ExpenseNavLink>;
 

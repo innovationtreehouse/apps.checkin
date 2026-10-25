@@ -22,6 +22,13 @@ describe("SettingsIndex", () => {
         expect(router.replace).toHaveBeenCalledWith("/settings/outreach");
     });
 
+    // FINANCE reaches only Finance.
+    it("lands a FINANCE-only user on Finance", () => {
+        setSession({ id: 3, isFinance: true });
+        renderWithProviders(<SettingsIndex />);
+        expect(router.replace).toHaveBeenCalledWith("/settings/finance");
+    });
+
     it("does not redirect before the session is authenticated", () => {
         setSession(null);
         renderWithProviders(<SettingsIndex />);
