@@ -12,7 +12,6 @@ import { ServiceError } from "@checkin/component-kit";
 export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {
   capitalTotalThresholdCents: 0,
   capitalLineItemThresholdCents: 0,
-  capitalEquipmentUnitCents: 50_000,
   boardReviewTotalCents: 200_000,
   everydayTotalLimitCents: 50_000,
   everydayItemLimitCents: 25_000,
@@ -25,7 +24,6 @@ const cents = z.number().int().max(MAX_THRESHOLD_CENTS);
 export const ExpenseSettingsPatchSchema = z.object({
   capitalTotalThresholdCents: cents.nonnegative(),
   capitalLineItemThresholdCents: cents.nonnegative(),
-  capitalEquipmentUnitCents: cents.positive(),
   boardReviewTotalCents: cents.positive(),
   everydayTotalLimitCents: cents.positive(),
   everydayItemLimitCents: cents.positive(),
@@ -39,7 +37,6 @@ export const ExpenseSettingsPatchSchema = z.object({
  * Board's to change in either direction. Every field must be listed here.
  */
 export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number; boardOnly?: true }> = {
-  capitalEquipmentUnitCents: { loosens: "up", policyCents: 50_000 },
   boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
   everydayTotalLimitCents: { loosens: "up", policyCents: 50_000, boardOnly: true },
   everydayItemLimitCents: { loosens: "up", policyCents: 25_000, boardOnly: true },
@@ -66,7 +63,6 @@ export function boardOnlyChanges(current: ExpenseSettings, changes: Partial<Expe
 const SELECT = {
   capitalTotalThresholdCents: true,
   capitalLineItemThresholdCents: true,
-  capitalEquipmentUnitCents: true,
   boardReviewTotalCents: true,
   everydayTotalLimitCents: true,
   everydayItemLimitCents: true,

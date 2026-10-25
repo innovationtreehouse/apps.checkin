@@ -380,8 +380,9 @@ Procedure below is built on them.
 ### Renewal
 
 - A renewal needs a new background check unless a lead's is still valid at the
-  boundary. Where the validity length is unset, no clearance counts as fresh and
-  the compliance view reports nothing stale.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*; *Principle: fail closed*]
+  boundary. Where the validity length is unset, every background check counts as
+  expired, so no clearance counts as fresh, and the compliance view reports
+  nothing stale.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*; *Principle: fail closed*]
 
 - A membership stays active while its renewal is in progress.  [Decision]
 

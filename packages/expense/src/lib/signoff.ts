@@ -25,7 +25,7 @@ export interface SignoffFacts {
   conflicted: number[];
   /** The line's bucket owner and their household: conflicted for the Treasurer seat. */
   ownerHousehold: number[];
-  /** Who named the reimbursee; null when it came with the receipt. They never sign the Treasurer seat. */
+  /** Who named the reimbursee: FINANCE's setter, else the uploader; null while unknown. They never sign the Treasurer seat. */
   reimburseeSetter: number | null;
   /** Household members of the people already seated on this expense, other than those people. */
   seatedHouseholds: number[];

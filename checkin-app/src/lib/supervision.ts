@@ -52,18 +52,17 @@ function programInSessionNow(now: Date, today: Date): Prisma.ProgramWhereInput {
 
 /**
  * Is this person's background clearance still valid today? Reuses the renewal
- * rule ({@link bgValidUntilBoundary}), which returns null when the board has set
- * no recheck policy — that means "never expires", not "expired". No check on file
- * is never valid: missing data fails closed, same as an unknown date of birth.
+ * rule ({@link bgValidUntilBoundary}). No check on file, no recheck policy, or no
+ * membership-year boundary is never valid: missing data fails closed, same as an
+ * unknown date of birth.
  */
 function clearanceIsValid(
     lastBackgroundCheck: Date | null,
     settings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number },
     today: Date,
 ): boolean {
-    if (!lastBackgroundCheck) return false;
     const validUntil = bgValidUntilBoundary(lastBackgroundCheck, settings);
-    return validUntil === null || validUntil.getTime() >= today.getTime();
+    return validUntil !== null && validUntil.getTime() >= today.getTime();
 }
 
 /**

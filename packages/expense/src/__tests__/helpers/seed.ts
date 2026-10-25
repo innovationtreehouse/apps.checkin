@@ -192,6 +192,7 @@ export function directory(d: {
   board?: number[];
   households?: number[][];
   nonMembers?: number[];
+  minors?: number[];
   unknownPeople?: number[];
   /** Merged-away person id → the survivor it resolves to. */
   merged?: Record<number, number>;
@@ -205,6 +206,7 @@ export function directory(d: {
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
     livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
+    isAdult: async (id) => !(d.minors ?? []).includes(id),
   };
 }
 

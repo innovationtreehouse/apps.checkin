@@ -174,6 +174,11 @@ async function resolveAccountsForExpense(
   const conflicts: ConflictItem[] = [];
 
   for (const li of lineItems) {
+    // An account finance set by hand on a held line wins over every rule, whatever the hold reason.
+    if (li.manualQbAccount) {
+      resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
+      continue;
+    }
     if (!resolvesThroughCatalog(li)) continue;
 
     const info = itemInfoByItemId.get(li.id);
@@ -200,13 +205,9 @@ async function resolveAccountsForExpense(
 
   if (conflicts.length === 0) {
     for (const li of lineItems) {
-      if (resolvesThroughCatalog(li)) continue;
-      if (li.manualQbAccount) {
-        resolved.push({ ...li, account: li.manualQbAccount, category: null, subcategory: null });
-      } else {
-        const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
-        conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
-      }
+      if (resolvesThroughCatalog(li) || li.manualQbAccount) continue;
+      const reason = li.nonInventory ? HoldReason.NON_INVENTORY : HoldReason.NO_PART_NUMBER;
+      conflicts.push({ lineItem: li, reason, matchedRows: [], category: null, subcategory: null });
     }
   }
 

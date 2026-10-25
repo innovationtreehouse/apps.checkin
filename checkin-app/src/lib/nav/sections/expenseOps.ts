@@ -6,7 +6,11 @@ import { libraryCount } from "@/components/navBadges";
 
 export const EXPENSE_OPS_ROLES = FINANCE_OR_BOARD;
 
-const COUNT_NOUNS: Record<ExpenseNavCount, string> = { holds: "expense holds", openFlags: "open expense flags" };
+const COUNT_BADGES: Record<ExpenseNavCount, { noun: string; color: "red" | "treehouseGreen" }> = {
+  holds: { noun: "expense holds", color: "red" },
+  openFlags: { noun: "open expense flags", color: "red" },
+  actionable: { noun: "expense items you can act on", color: "treehouseGreen" },
+};
 
 export const EXPENSE_OPS: NavSection = {
   id: "expense-ops",
@@ -19,7 +23,8 @@ export const EXPENSE_OPS: NavSection = {
       badge: key
         ? (c) => {
             const n = libraryCount(c, "expense", key);
-            return n > 0 ? { count: n, color: "red", label: `${n} ${COUNT_NOUNS[key]}` } : null;
+            const { noun, color } = COUNT_BADGES[key];
+            return n > 0 ? { count: n, color, label: `${n} ${noun}` } : null;
           }
         : undefined,
     })),

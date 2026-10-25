@@ -25,9 +25,9 @@ model ExpenseOrgSettings {
   capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
   /// @sensitivity:internal
   capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
-  // Unit price at or over which a line raises CAPITAL_EQUIPMENT for finance.
+  // The client never reads or writes it.
   /// @sensitivity:internal
-  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents")
+  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents") @ignore
   // Receipt total at or over which THRESHOLD_CROSSED goes to the board and the expense is held
   // until the Board's approval is recorded. A single line's total never counts.
   /// @sensitivity:internal
@@ -661,7 +661,7 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
+// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED |
 // THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
 // REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
 model ExpenseFlag {

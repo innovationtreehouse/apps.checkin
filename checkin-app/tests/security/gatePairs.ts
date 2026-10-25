@@ -132,7 +132,10 @@ export type GatePair = {
     differsFor?: readonly PersonaName[];
 };
 
-/** Count providers pair as `counts:<library>`; gateEquality fails on a provider with no pair. */
+/**
+ * Count providers pair as `counts:<library>`; gateEquality fails on a provider with no pair.
+ * A red-pill provider pairs with the route that acts on what it counts.
+ */
 export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSeeCatalog', client: canSeeCatalog, token: 'catalog-viewer' },
     { name: 'page /catalog', client: page('/catalog'), token: 'catalog-viewer' },
@@ -145,7 +148,8 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
-    { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
+    { name: 'tab /inventory/receiving counts route', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
+    { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('POST /api/workflow-mapping/receipts/[id]/apply') },
     { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
@@ -153,8 +157,10 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
     { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
     { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
-    { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
+    { name: 'sub-tab /income/reconciliation count route', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation/count') },
+    { name: 'counts:income', client: counts('income'), token: routeToken('POST /api/income/reconciliation/[id]/resolve') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
+    { name: 'page /donations nav-counts route', client: page('/donations'), token: routeToken('GET /api/donations/nav-counts') },
     {
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),
@@ -168,5 +174,5 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'counts:receipt', client: counts('receipt'), token: 'receipt-submitter' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
-    { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: 'finance-or-board' },
+    { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: routeToken('PATCH /api/donations/transactions/[id]/owner') },
 ];

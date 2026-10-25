@@ -72,6 +72,9 @@ model ReceivedReceipt {
   // Sweep attempts in a row that left the receipt applying; the sweep moves it to apply_failed at the cap.
   /// @sensitivity:public
   applySweepAttempts Int       @default(0) @map("apply_sweep_attempts")
+  // Set when inventory may have taken the delta without its stamp (a lost stamp, or a sweep give-up); never cleared, so lines stay locked.
+  /// @sensitivity:public
+  inventoryUnconfirmedAt DateTime? @map("inventory_unconfirmed_at")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public
