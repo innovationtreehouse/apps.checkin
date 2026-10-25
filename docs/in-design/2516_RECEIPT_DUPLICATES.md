@@ -430,9 +430,17 @@ BILL all claim a pre-payment check (§11), though none documents how it works.
 Here it is one derived reason in #2481's model, not a new step:
 
 - **The condition.** The expense is waiting to post, and another expense in
-  the org (any state except rejected) has the same vendor key, receipt date and
-  total, or the same vendor key and receipt number, and no pair decision says
-  they differ.
+  the org has the same vendor key, receipt date and total, or the same vendor
+  key and receipt number, and no pair decision says they differ. "Another
+  expense" means one in **any** state except `rejected`: still in sign-off
+  (`pending` through `set_depreciation_cycle`), waiting to post or held
+  (`qb_pending`, `qb_on_hold`, `qb_error`), or done (`qb_complete`,
+  `qb_skipped`). It is not limited to posted expenses, so two copies moving
+  through sign-off together hold each other.
+- **What it doesn't need to cover.** A receipt that hasn't become an expense
+  yet is the receipt-side check's job. That receipt can't finalize past its
+  own duplicate guard (§5.2), so it never reaches posting undecided. The
+  expense library can't read receipts anyway (library boundary).
 - **The reason.** QuickBooks tab: "Possible duplicate of the Home Depot
   expense of 3 Oct ($84.12)". While it holds, the outbox skips the expense,
   the same way an unknown reimbursee holds it today.
@@ -485,8 +493,11 @@ doesn't is in §10.
 - Finance decides a group of matching receipts once, and the decision is
   remembered per pair. Nobody decides a group in which they are conflicted on
   any member. [Decision — owner; conflict part from the existing receipts rule]
-- An expense is not posted to QuickBooks while it matches another expense and
-  no decision says they differ. [Decision — owner]
+- An expense is not posted to QuickBooks while another expense in the org,
+  in any state but rejected (in sign-off, waiting to post, or already posted
+  or skipped), has the same vendor, date and total, or the same vendor and
+  receipt number, and no decision says the two are different purchases.
+  [Decision — owner]
 
 ---
 
@@ -509,6 +520,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
 | Q12 | Besides **Not this one**, a **hide for now** that records nothing and only tidies the view? | (a) No; Not this one with Undo covers it. (b) Yes, as a second button. | **(a).** Undo makes a recorded dismissal as cheap as a hidden one, and two near-identical buttons, one that saves a decision and one that doesn't, are easy to confuse. |
 | Q13 | A weak **similar date** tier: same vendor and same total, receipt dates within N days of each other? | (a) Yes, N = 3, the same hold as the other tiers with a weak label naming the gap ("2 days apart"), built after the exact tiers ship. (b) Yes, with a wider N such as 7. (c) A badge on the receipt but no hold. (d) No. | **(a).** It catches the order-versus-shipping and charge-versus-slip pairs the exact tiers miss. Three days stays clear of a weekly purchase of the same thing, which (b) would flag every week. Each false flag costs one **Not this one**, remembered per pair. The value of N is @thpr's call. |
+| Q14 | Should a match on an expense **rejected at sign-off** get the stronger "rejected" flag? Its receipt reads "Finalized" on the receipt side, and the posting check skips rejected expenses, so the careful second look @thpr asked for doesn't happen for it today. | (a) Yes: the posting check includes rejected expenses, flagged as rejected with the sign-off note, and a note is required to clear (as Q7). (b) Yes, on the receipt side: the compare shows the expense's outcome, which needs the expense status sent back to the receipt library. (c) No: a rejected expense is never paid. | **(a).** It keeps the change inside the expense library, and uses the hold and note already designed. |
 
 ---
 
