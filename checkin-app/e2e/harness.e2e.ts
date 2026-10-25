@@ -36,7 +36,7 @@ test("the page watch sees a red inline alert", async ({ browser }) => {
   const page = await context.newPage();
   const watch = watchPage(page);
   // A receipt that does not exist loads as a red alert on its detail page.
-  await page.goto("/receipts/review/no-such-receipt?queue=all");
+  await page.goto("/receipts/no-such-receipt");
   await expect(page.locator(".mantine-Alert-root")).toBeVisible();
   expect((await watch.problems()).some((p) => p.startsWith("error alert:"))).toBe(true);
   await context.close();

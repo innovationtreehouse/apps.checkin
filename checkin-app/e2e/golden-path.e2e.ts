@@ -32,13 +32,15 @@ test.afterAll(async () => {
   for (const step of undo.reverse()) await step();
 });
 
-/** Reloads until `locator` shows, for state a page reads once on load. */
+/** Waits for `locator`, reloading for state a page reads once on load; never reloads before a first look. */
 async function eventually(page: Page, locator: Locator): Promise<void> {
+  if (await locator.isVisible()) return;
   await expect(async () => {
     await page.reload();
     await expect(locator).toBeVisible({ timeout: 5_000 });
   }).toPass({ timeout: 60_000 });
 }
+
 
 async function noProblems(watch: PageWatch, where: string): Promise<void> {
   expect([where, await watch.problems()]).toEqual([where, []]);
@@ -73,7 +75,10 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await eventually(page, page.getByText("Needs your review", { exact: true }));
     await page.getByLabel("Retailer", { exact: true }).fill(RETAILER);
     await page.getByRole("textbox", { name: / description$/ }).first().fill(LINE);
+    // Confirm saves the edits first, then confirms; reloading before it answers would abort the save.
+    const confirmed = page.waitForResponse((res) => res.url().endsWith(`/api/receipts/${receiptId}/submitter-confirm`));
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    expect((await confirmed).status()).toBe(200);
     await eventually(page, page.getByText("Receipt finalized", { exact: true }));
     await noProblems(watch, "receipt upload and review");
   });
