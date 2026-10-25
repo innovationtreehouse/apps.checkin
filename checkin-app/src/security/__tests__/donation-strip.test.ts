@@ -153,4 +153,23 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
         };
         expect(stripValue('InKindQueueItemView', row, FINANCE_VIEW, ctx())).toEqual(accept);
     });
+
+    it('an in-kind gift page shows the donor to finance, strips it from the internal-only view, and drops unclassified fields', () => {
+        const page = {
+            id: 3,
+            source: 'receipt',
+            receiptId: 'r-3',
+            receiptTotalCents: 2500,
+            outcome: null,
+            state: 'decision',
+            waitingOn: ['decision'],
+            inventorySourceKey: null,
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null }],
+            events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
+        };
+        const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
+        const row = { ...page, ...donor, orgId: 'treehouse', uploadedByUserId: 9, events: [{ ...page.events[0], actorUserId: 9 }] };
+        expect(stripValue('InKindGiftDetailView', row, FINANCE_VIEW, ctx())).toEqual({ ...page, ...donor });
+        expect(stripValue('InKindGiftDetailView', row, INTERNAL_ONLY, ctx())).toEqual(page);
+    });
 });
