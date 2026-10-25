@@ -146,13 +146,19 @@ export default function HouseholdPage() {
   useEffect(() => {
     if (ready) {
       fetchHousehold();
-      fetchContacts();
       fetch('/api/membership/renewal-status')
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => setRenewalDue(!!d?.renewalDue))
         .catch(() => {});
     }
-  }, [ready, fetchHousehold, fetchContacts]);
+  }, [ready, fetchHousehold]);
+
+  const userId = (sessionUser as { id: number } | undefined)?.id;
+  const viewerIsLead = household?.householdMembers?.find((m) => m.id === userId)?.isHouseholdLead ?? false;
+  // The contacts card, and the API behind it, are the household lead's.
+  useEffect(() => {
+    if (viewerIsLead) fetchContacts();
+  }, [viewerIsLead, fetchContacts]);
 
   const handleSaveSettings = async () => {
     const errors = validateAddress(address);
@@ -345,12 +351,10 @@ export default function HouseholdPage() {
 
   if (!ready) return null;
 
-  const userId = (sessionUser as { id: number })?.id;
   // Staff (@innovationtreehouse.org) accounts aren't real member families; the add-member
   // control is hidden for them (server also enforces this — see /api/household PATCH).
   const isStaffAccount = isOrgAccount(sessionUser as { hd?: string | null; email?: string | null });
   const isLead = (pid: number) => household?.householdMembers?.find((m) => m.id === pid)?.isHouseholdLead ?? false;
-  const viewerIsLead = isLead(userId);
 
   const sortedHouseholdMembers = (household?.householdMembers || []).slice().sort((a, b) => {
     const isLeadA = isLead(a.id) ? 1 : 0;

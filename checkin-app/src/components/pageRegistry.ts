@@ -8,7 +8,7 @@
 
 import type { NavGate } from '@/lib/nav/types';
 import { everyone, linkGate, signedIn } from '@/lib/nav/gates';
-import { isHouseholdLead } from '@/lib/nav/sections/personal';
+import { isHouseholdLead, seesCertificationGrid } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
 import { MY_RECEIPTS } from '@/lib/nav/sections/myReceipts';
@@ -81,7 +81,7 @@ export const PAGES: PageEntry[] = [
   { href: '/attendance/manual', label: 'Manual Check-In', section: 'Attendance', visible: SIGNED_IN },
   { href: '/attendance/my-visits', label: 'My Visits', section: 'Attendance', keywords: 'hours correction edit delete', visible: SIGNED_IN },
   { href: '/attendance/household', label: 'Household Check-ins', section: 'Attendance', keywords: 'visits history dependents', visible: SIGNED_IN },
-  { href: '/attendance/certifications', label: 'Certifications', section: 'Attendance', visible: SIGNED_IN },
+  { href: '/attendance/certifications', label: 'Certifications', section: 'Attendance', visible: seesCertificationGrid },
 
   // Programs — public
   { href: '/programs', label: 'Programs', section: 'Programs', visible: PUBLIC },
@@ -94,7 +94,7 @@ export const PAGES: PageEntry[] = [
   { href: '/safety/board-contacts', label: 'Board Contacts', section: 'Safety', visible: SAFETY_SECTION },
   { href: '/safety/emergency-contacts', label: 'Emergency Contacts', section: 'Safety', visible: SAFETY_SECTION },
   { href: '/safety/pickup', label: 'Pickup', section: 'Safety', visible: SAFETY_SECTION },
-  { href: '/safety/trusted-adults', label: 'Trusted Adults (Safety)', section: 'Safety', visible: SAFETY_SECTION },
+  { href: '/safety/trusted-adults', label: 'Trusted Adults (Safety)', section: 'Safety', visible: linkGate(SAFETY, '/safety/trusted-adults') },
 
   // Shop Ops — board or certifier
   { href: '/shop-ops', label: 'Shop Ops', section: 'Shop Ops', visible: SHOP },
