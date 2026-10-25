@@ -51,7 +51,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
       exitEdit();
       notifications.show({ message: "Reference updated", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }
@@ -142,7 +142,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       setShowAdd(false);
       notifications.show({ message: "Reference added", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     } finally { setCreating(false); }
   }
 
@@ -152,7 +152,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       await loadRefs();
       notifications.show({ message: "Reference archived", color: "orange" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     }
   }
 

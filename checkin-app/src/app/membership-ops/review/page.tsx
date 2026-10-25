@@ -86,7 +86,7 @@ export default function MembershipReviewPage() {
         await Promise.all([load(), loadMine()]);
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: false });
         await loadMine();
       }
     } catch {
@@ -124,7 +124,7 @@ export default function MembershipReviewPage() {
         notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
       }
       await Promise.all([load(), loadMine()]);
     } catch {
@@ -152,7 +152,7 @@ export default function MembershipReviewPage() {
       closeOnConfirm: false,
       onConfirm: () => {
         if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: 4000 });
+          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: false });
           return;
         }
         modals.close(modalId);
@@ -178,7 +178,7 @@ export default function MembershipReviewPage() {
         await load();
         notifyNavRefresh();
       } else if (data.code === "already_attested") {
-        notifications.show({ color: "red", message: data.error || "Already attested.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Already attested.", autoClose: false });
         await load();
       } else {
         setMessage({ processId, text: data.error || "Could not record your attestation.", tone: "error" });

@@ -155,7 +155,7 @@ function ApplicationsBoard() {
         await load(showArchived);
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
         await load(showArchived);
       } else {
         setMessage(data.error || "Override failed.");
@@ -248,7 +248,7 @@ function ApplicationsBoard() {
         await load(showArchived);
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -273,7 +273,7 @@ function ApplicationsBoard() {
         await load(showArchived);
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
         await load(showArchived);
       } else {
         setMessage(data.error || "Certification failed.");

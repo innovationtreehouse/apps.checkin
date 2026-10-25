@@ -41,7 +41,7 @@ export default function MergeConflictsPage() {
       notifications.show({ message: "Conflict resolved", color: "green" });
       conflicts.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(null);
     }

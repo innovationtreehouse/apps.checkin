@@ -129,10 +129,10 @@ export default function CompliancePage() {
         notifications.show({ message: "Submitted for background-check review." });
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Could not submit for review." });
+        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not submit for review." });
       }
     } catch {
-      notifications.show({ color: "red", message: "Network error." });
+      notifications.show({ color: "red", autoClose: false, message: "Network error." });
     } finally {
       setBusyId(null);
     }
@@ -154,10 +154,10 @@ export default function CompliancePage() {
         notifications.show({ message: "Individual agreement requested." });
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Could not request an agreement." });
+        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not request an agreement." });
       }
     } catch {
-      notifications.show({ color: "red", message: "Network error." });
+      notifications.show({ color: "red", autoClose: false, message: "Network error." });
     } finally {
       setBusyId(null);
     }
@@ -181,10 +181,10 @@ export default function CompliancePage() {
         notifications.show({ message: "Date removed — they will show up as needing a check." });
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Could not remove the date." });
+        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not remove the date." });
       }
     } catch {
-      notifications.show({ color: "red", message: "Network error." });
+      notifications.show({ color: "red", autoClose: false, message: "Network error." });
     } finally {
       setBusyId(null);
     }

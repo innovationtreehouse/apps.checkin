@@ -33,7 +33,7 @@ export default function ReceiveQueuePage() {
       notifications.show({ message, color: "green" });
       queue.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }

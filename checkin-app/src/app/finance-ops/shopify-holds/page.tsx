@@ -90,7 +90,7 @@ export default function ShopifyHoldsPage() {
         notifications.show({ message: successMsg });
       } else {
         const data = await res.json();
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: 4000 });
+        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
         fetchRows();
       }
     } catch {
