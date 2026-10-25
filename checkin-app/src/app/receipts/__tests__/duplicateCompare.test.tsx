@@ -117,19 +117,23 @@ describe("a suspected duplicate's detail page", () => {
     expect(mockSend).toHaveBeenCalledWith("/r1/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag");
   });
 
-  it("discards this receipt and returns to the queue", async () => {
+  it("rejects this receipt with a reason and returns to the queue, offering finance no discard", async () => {
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Discard this receipt" }));
-    await waitFor(() => expect(mockPush).toHaveBeenCalled());
-    expect(mockSend).toHaveBeenCalledWith("/r1/discard", "POST", {}, "Discarded", "Couldn't discard this receipt");
     expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject" }), { target: { value: "a copy of r0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "a copy of r0" }, "Rejected", "Couldn't reject this receipt");
   });
 
-  it("discards the original and stays to decide this receipt", async () => {
+  it("rejects the original with a reason and stays to decide this receipt", async () => {
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Discard the original" }));
+    expect(screen.getByRole("button", { name: "Reject the original" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject the original" }), { target: { value: " a copy " } });
+    fireEvent.click(screen.getByRole("button", { name: "Reject the original" }));
     await waitFor(() => expect(mockReload).toHaveBeenCalled());
-    expect(mockSend).toHaveBeenCalledWith("/r0/discard", "POST", {}, "The original is discarded", "Couldn't discard the original");
+    expect(mockSend).toHaveBeenCalledWith("/r0/reject", "POST", { reason: "a copy" }, "The original is rejected", "Couldn't reject the original");
     expect(mockPush).not.toHaveBeenCalled();
   });
 
@@ -137,10 +141,10 @@ describe("a suspected duplicate's detail page", () => {
     ["is finalized", { state: "receipt_finalized" }],
     ["is discarded", { state: "discarded" }],
     ["was sent to receiving", { pushedAt: "2026-10-01T00:00:00Z" }],
-  ])("offers no discard of an original that %s", (_why, change) => {
+  ])("offers no reject of an original that %s", (_why, change) => {
     mockLoads["/r0"] = { ...original, ...change };
     wrap();
-    expect(screen.queryByRole("button", { name: "Discard the original" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject the original" })).toBeNull();
     expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
   });
 
@@ -149,16 +153,18 @@ describe("a suspected duplicate's detail page", () => {
     wrap();
     expect(within(row("Vendor")).getByText("Same")).toBeInTheDocument();
     expect(screen.getByText("Finance decides whether this is a duplicate.")).toBeInTheDocument();
-    for (const name of ["Not a duplicate", "Discard this receipt", "Discard the original", "Discard"]) {
+    for (const name of ["Not a duplicate", "Reject the original", "Reject", "Discard"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
   });
 
-  it("does not offer the uploader in finance to clear their own receipt or discard its original", () => {
+  it("offers the uploader in finance a discard of their own receipt, and no clear or reject", () => {
     mockUserId = 1;
     wrap();
-    expect(screen.queryByRole("button", { name: "Not a duplicate" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Discard the original" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    for (const name of ["Not a duplicate", "Reject the original", "Reject"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
     expect(screen.getByText("Someone else in finance decides whether your own receipt is a duplicate.")).toBeInTheDocument();
   });
 

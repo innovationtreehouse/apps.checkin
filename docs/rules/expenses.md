@@ -47,6 +47,13 @@ Income and donation rules are in `revenue.md`.
 
 ### Receipts
 
+- Only a receipt's uploader discards it, withdrawing their own receipt in any
+  open state; mail intake also discards a mailed body that copies an attachment
+  of the same message. Finance refuses a receipt by rejecting it, with a reason,
+  from any open state. The Board neither discards nor rejects. An open receipt
+  is one not yet finalized, discarded or rejected.
+  [Decision — owner]
+
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
   conflicted when they, or someone in their household, uploaded the receipt or

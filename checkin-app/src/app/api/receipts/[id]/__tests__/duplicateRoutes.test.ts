@@ -6,16 +6,15 @@ import { ServiceError } from "@checkin/component-kit";
 import { getServerSession } from "next-auth/next";
 import { GET as get } from "../route";
 import { POST as clearDuplicate } from "../clear-duplicate/route";
-import { POST as discard } from "../discard/route";
 
 jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
-  receiptService: { get: jest.fn(), clearDuplicate: jest.fn(), discard: jest.fn() },
+  receiptService: { get: jest.fn(), clearDuplicate: jest.fn() },
 }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
-const service = jest.requireMock<{ receiptService: { get: jest.Mock; clearDuplicate: jest.Mock; discard: jest.Mock } }>("@checkin/receipt").receiptService;
+const service = jest.requireMock<{ receiptService: { get: jest.Mock; clearDuplicate: jest.Mock } }>("@checkin/receipt").receiptService;
 
 function signIn(flags: Record<string, boolean | string | number> = {}) {
   mockSession.mockResolvedValue({
@@ -99,23 +98,5 @@ describe("POST /api/receipts/[id]/clear-duplicate", () => {
     const res = await clearDuplicate(req("/r-dup/clear-duplicate", "POST"), params());
     expect(res.status).toBe(403);
     expect((await res.json()).error).toMatch(/you or your household/);
-  });
-});
-
-describe("POST /api/receipts/[id]/discard on either receipt of a pair", () => {
-  it("runs FINANCE's discard as a submitter, so it reaches only their own receipts", async () => {
-    signIn({ isFinance: true });
-    service.discard.mockRejectedValue(new ServiceError(404, "Receipt not found"));
-    const res = await discard(req("/r-orig/discard", "POST"), params("r-orig"));
-    expect(res.status).toBe(404);
-    expect(service.discard).toHaveBeenCalledWith("r-orig", "submitter");
-  });
-
-  it("runs a BOARD member's discard as a submitter, so it reaches only their own receipts", async () => {
-    signIn({ isBoardMember: true, ageBand: "adult", isActiveOrgMember: true });
-    service.discard.mockRejectedValue(new ServiceError(404, "Receipt not found"));
-    const res = await discard(req("/r-orig/discard", "POST"), params("r-orig"));
-    expect(res.status).toBe(404);
-    expect(service.discard).toHaveBeenCalledWith("r-orig", "submitter");
   });
 });

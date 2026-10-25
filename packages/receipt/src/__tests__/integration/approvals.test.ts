@@ -103,13 +103,11 @@ describeDb("financial review", () => {
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: "personal purchase" });
   });
 
-  it("rejects without a reason", async () => {
+  it("refuses a reject without a reason", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
-    await receiptService.rejectFinancial(r.id, "   ");
-    expect(await stateOf(r.id)).toBe("rejected");
-    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
-    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
+    await expect(receiptService.rejectFinancial(r.id, "   ")).rejects.toMatchObject({ status: 400 });
+    expect(await stateOf(r.id)).toBe("financial_review");
   });
 
   it("a submitter's tax correction drops the earlier finance decision", async () => {
