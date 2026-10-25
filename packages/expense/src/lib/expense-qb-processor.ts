@@ -9,6 +9,7 @@ import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
+import { closeAnsweredFlag } from "../services/flagService";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -498,7 +499,8 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
  * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
- * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once.
+ * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
+ * post that books closes the exhausted QB_POST_FAILED flag as answered by the retry.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
 export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
@@ -519,6 +521,8 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });
-  if (rearmed) await postExpenseToQb(orgId, expenseId);
-  return rearmed;
+  if (!rearmed) return false;
+  const outcome = await postExpenseToQb(orgId, expenseId);
+  if (outcome === "posted" || outcome === "matched") await closeAnsweredFlag(db, expenseId, "QB_POST_FAILED", actor, "retry posted");
+  return true;
 }

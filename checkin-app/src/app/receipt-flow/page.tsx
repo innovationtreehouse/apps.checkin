@@ -23,15 +23,15 @@ function sectionRows(section: string, states: StateCount[] | null | undefined): 
   return states.map((s) => ({ section, state: s.state, label: s.label, count: s.count }));
 }
 
-/** One row per state, in the order the flow runs: receipts, then receiving, then expenses. */
+/** One row per state, in the order the flow runs: receipts, then part mapping, then expenses. */
 function flowRows(data: ReceiptFlowStatus): FlowRow[] {
   const receipt = data.receipt && [
     ...data.receipt.states,
-    { state: "not_delivered", label: "Done, not yet sent to receiving", count: data.receipt.notDelivered },
+    { state: "not_delivered", label: "Done, not yet sent to part mapping", count: data.receipt.notDelivered },
   ];
   return [
     ...sectionRows("Receipts", data.receipt === undefined ? undefined : receipt ?? null),
-    ...sectionRows("Receiving", data.receiving?.states ?? null),
+    ...sectionRows("Part mapping", data.receiving?.states ?? null),
     ...sectionRows("Expenses", data.expense === undefined ? undefined : data.expense?.states ?? null),
   ];
 }

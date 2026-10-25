@@ -11,7 +11,8 @@ import { isPaid, isReversed } from "./orderStatus";
 /** The order facts a program entitlement is judged on — built from the webhook
  *  payload or the mirror, so both paths judge the same thing. */
 export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
-    lines: { variantId: string; quantity: number }[];
+    /** `quantity` is the original count; `currentQuantity` excludes units an edit or refund took off. */
+    lines: { variantId: string; quantity: number; currentQuantity: number }[];
 }
 
 /** A paid seat no pending enrollment consumes, raised for the board alongside (or instead of) activation. */
@@ -81,20 +82,33 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
     return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
 }
 
-/** People this order activated who have since been withdrawn: their seat was claimed, so it is not unclaimed. */
+/** People this order activated who have since left (removed or withdrawn): their seat was claimed, so it is not unclaimed. */
 async function withdrawnAfterActivation(order: EntitlementOrder, programId: number, personIds: number[]): Promise<number> {
     if (!order.legacyId) return 0;
-    const deleted = await prisma.auditLog.findMany({
+    // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
+    const withdrawn = await prisma.programParticipant.findMany({
+        where: { programId, personId: { in: personIds }, status: "WITHDRAWN", shopifyOrderId: order.legacyId },
+        select: { personId: true },
+    });
+    const left = await prisma.auditLog.findMany({
         where: {
             tableName: "ProgramParticipant",
-            action: "DELETE",
             secondaryAffectedEntity: programId,
             affectedEntityId: { in: personIds },
-            oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
+            OR: [
+                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                {
+                    action: "EDIT",
+                    AND: [
+                        { newData: { path: ["status"], equals: "WITHDRAWN" } },
+                        { newData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                    ],
+                },
+            ],
         },
         select: { affectedEntityId: true },
     });
-    return new Set(deleted.map((d) => d.affectedEntityId)).size;
+    return new Set([...withdrawn.map((w) => w.personId), ...left.map((d) => d.affectedEntityId)]).size;
 }
 
 /**

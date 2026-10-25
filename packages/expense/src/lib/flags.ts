@@ -2,7 +2,7 @@
 import type { ExpenseSettings } from "../contract";
 import { reimburseeUnknown } from "./signoff";
 
-export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "MISSING_RECEIPT", "NON_EVERYDAY", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP", "QB_DRIFT", "QB_NO_CLASS", "QB_POST_HELD"] as const;
+export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP", "QB_DRIFT", "QB_NO_CLASS", "QB_POST_HELD"] as const;
 export type FlagKind = (typeof FLAG_KINDS)[number];
 export type FlagAudience = "FINANCE" | "BOARD";
 
@@ -10,8 +10,6 @@ export type FlagAudience = "FINANCE" | "BOARD";
 export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
   TAX_ATTACHED: "FINANCE",
   THRESHOLD_CROSSED: "BOARD",
-  MISSING_RECEIPT: "FINANCE",
-  NON_EVERYDAY: "FINANCE",
   COI: "BOARD",
   REIMBURSEE_UNKNOWN: "FINANCE",
   QB_POST_FAILED: "FINANCE",
@@ -25,6 +23,19 @@ export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
 export const HOLD_FLAGS: ReadonlyMap<string, string> = new Map<FlagKind, string>([
   ["REIMBURSEE_UNKNOWN", "Set the reimbursee to clear this flag"],
 ]);
+
+/** What the duplicate path writes into a QB_POST_FAILED flag's detail when the entry it posted needs voiding. */
+export const NEEDS_VOIDING = "needs voiding";
+
+/** The three questions finance decides as a review, each with a required note. */
+export const REVIEW_KINDS = ["QB_DUPLICATE_TO_VOID", "QB_DRIFT", "QB_POST_HELD"] as const;
+export type ReviewKind = (typeof REVIEW_KINDS)[number];
+
+/** The review a flag row asks for, or null when it is not one; a duplicate to void is still raised as QB_POST_FAILED. */
+export function reviewKindOf(flag: { kind: string; detail: string | null }): ReviewKind | null {
+  if (flag.kind === "QB_POST_FAILED") return flag.detail?.includes(NEEDS_VOIDING) ? "QB_DUPLICATE_TO_VOID" : null;
+  return (REVIEW_KINDS as readonly string[]).includes(flag.kind) ? (flag.kind as ReviewKind) : null;
+}
 
 /** The expense's stored receipt review (ExpenseReceiptReview), or null when the receipt sent none. */
 export interface StoredReceiptReview {
@@ -42,10 +53,7 @@ export function taxNeedsFinance(taxCents: number, review: StoredReceiptReview | 
   return !(review?.reasons.includes("tax") && review.approvedTaxCents === taxCents);
 }
 
-/**
- * Flags derivable from the expense and the org's thresholds, raised at intake. MISSING_RECEIPT
- * and NON_EVERYDAY are raised by hand.
- */
+/** Flags derivable from the expense and the org's thresholds, raised at intake. */
 export function detectIntakeFlags(
   expense: {
     taxCents: number;
