@@ -74,10 +74,7 @@ function payloadFacts(payloadJson: string) {
   }
 }
 
-/**
- * A seat this viewer signs as a Board member: the Board seat, or a Treasurer or program-approver
- * seat nobody eligible can fill. A bucket approver's own program-approver seat is theirs, not the Board's.
- */
+/** A seat this viewer signs as a Board member: the Board seat, or a Treasurer seat no FINANCE holder can fill. */
 function boardSignature(f: SignoffFacts, seats: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">, me: number): boolean {
   if (!f.board.includes(me)) return false;
   return seat === "BOARD" || availableSigners(f, seats, seat).length === 0;

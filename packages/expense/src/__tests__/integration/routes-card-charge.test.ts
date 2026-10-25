@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { expenses } from "../../routes";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
@@ -37,6 +37,8 @@ describeDb("card-charge sign-off routes", () => {
     };
     expect(res.ExpenseLineSignoffStatus).toHaveLength(1);
     expect(res.ExpenseLineSignoffStatus[0].missing).not.toContain("BOARD");
+    // The same shape as GET signoffs: the caller's acts and what the line waits on.
+    expect(res.ExpenseLineSignoffStatus[0]).toMatchObject({ actions: expect.any(Array), awaiting: expect.any(Array), mayRecordBoardAuthorization: false });
     expect((await db.expense.findUnique({ where: { id } }))?.boardAuthorization).toBe("Board vote, 2026-10-01");
   });
 
@@ -65,5 +67,17 @@ describeDb("card-charge sign-off routes", () => {
     const id = await cardCharge();
     await call(expenses.boardAuthorization, id, { authorization: "Board vote" });
     await expect(call(expenses.boardAuthorization, id, { authorization: "again" })).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describeDb("the sign route's response", () => {
+  it("carries the caller's acts and what the line waits on, as GET signoffs does", async () => {
+    as(FINANCE);
+    const id = await seedExpense({ state: "qb_pending" });
+    const lineItemId = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, lineItemId, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+    const req = new Request(`http://test/api/expense/expenses/${id}/line-items/${lineItemId}/signoffs`, { method: "POST", body: JSON.stringify({ seat: "TREASURER" }) });
+    const res = (await expenses.sign({ req, params: { id, lineItemId: String(lineItemId) } })) as { ExpenseLineSignoffStatus: { filled: string[]; actions: unknown[]; awaiting: string[] }[] };
+    expect(res.ExpenseLineSignoffStatus).toEqual([expect.objectContaining({ filled: ["TREASURER"], actions: [], awaiting: ["Awaiting Submitter"] })]);
   });
 });

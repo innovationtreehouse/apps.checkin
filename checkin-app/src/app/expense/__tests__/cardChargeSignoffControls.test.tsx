@@ -43,7 +43,7 @@ function load(roles: { isFinance?: boolean; isBoard?: boolean }, opts: { missing
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: 3, status: "approved" }],
     "/expenses/e1/signoffs": [{
-      lineItemId: 1, filled: ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"], missing: opts.missing ?? ["BOARD"], blocked: [], actions: [], awaiting: [],
+      lineItemId: 1, filled: ["SUBMITTER", "TREASURER"], missing: opts.missing ?? ["BOARD"], blocked: [], actions: [], awaiting: [],
       mayRecordBoardAuthorization: opts.mayRecord ?? false,
     }],
   };

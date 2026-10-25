@@ -77,6 +77,7 @@ const card: SignoffFacts = {
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3, 4],
   board: [5, 6],
   conflicted: [1, 8],
@@ -84,7 +85,10 @@ const card: SignoffFacts = {
   reimburseeSetter: null,
   seatedHouseholds: [],
   boardSeat: true,
+  approved: true,
+  approver: 2,
 };
+const treasurer = [{ seat: "TREASURER" as const, signerUserId: 3 }];
 
 describe("who records the Board authorization", () => {
   it("a FINANCE holder without a conflict records it; nobody else does while one exists", () => {
@@ -128,34 +132,32 @@ describe("the Treasurer seat on a card charge", () => {
 
 describe("the Board seat on a card charge", () => {
   it("is missing on a line that takes it, and absent otherwise", () => {
-    expect(missingSeats(card, [])).toEqual(["SUBMITTER", "PROGRAM_APPROVER", "TREASURER", "BOARD"]);
-    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"]);
+    expect(missingSeats(card, [])).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
+    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["SUBMITTER", "TREASURER"]);
   });
 
   it("a Board member without a conflict with the purchaser signs it, alongside the Treasurer", () => {
-    const filled = [{ seat: "TREASURER" as const, signerUserId: 3 }];
-    expect(signoffRefusal(card, filled, "BOARD", 5)).toBeNull();
-    expect(signoffRefusal(card, filled, "BOARD", 3)).toMatch(/another seat/);
-    expect(signoffRefusal(card, filled, "BOARD", 4)).toMatch(/Board member/);
+    expect(signoffRefusal(card, treasurer, "BOARD", 5)).toBeNull();
+    expect(signoffRefusal(card, treasurer, "BOARD", 3)).toMatch(/another seat/);
+    expect(signoffRefusal(card, treasurer, "BOARD", 4)).toMatch(/Board member/);
   });
 
   it("a Board member in the purchaser's household is refused", () => {
-    expect(signoffRefusal({ ...card, conflicted: [1, 5, 8] }, [], "BOARD", 5)).toMatch(/household/);
+    expect(signoffRefusal({ ...card, conflicted: [1, 5, 8] }, treasurer, "BOARD", 5)).toMatch(/household/);
   });
 
   it("the bucket owner's household conflict is the Treasurer seat's, not the Board seat's", () => {
-    expect(signoffRefusal({ ...card, ownerHousehold: [2, 5] }, [], "BOARD", 5)).toBeNull();
+    expect(signoffRefusal({ ...card, ownerHousehold: [2, 5] }, treasurer, "BOARD", 5)).toBeNull();
   });
 
   it("a line that takes no Board seat refuses it", () => {
     expect(signoffRefusal({ ...card, boardSeat: false }, [], "BOARD", 5)).toMatch(/no Board seat/);
   });
 
-  it("is not a Board substitution: an org-level line still has its one substitution for the program-approver seat", () => {
-    const org = { ...card, orgLevel: true, approvers: [] };
-    const filled = [{ seat: "BOARD" as const, signerUserId: 5 }];
-    expect(signoffRefusal(org, filled, "PROGRAM_APPROVER", 6)).toBeNull();
-    expect(blockedSeats(org, filled)).toEqual([]);
+  it("is not a Board substitution: an org-level line approved by a Board member still takes the Board seat", () => {
+    const org = { ...card, orgLevel: true, approvers: [], approver: 6 };
+    expect(signoffRefusal(org, treasurer, "BOARD", 5)).toBeNull();
+    expect(blockedSeats(org, treasurer)).toEqual([]);
   });
 
   it("is blocked when no Board member without a conflict is free", () => {

@@ -1,7 +1,9 @@
 // Sign-off seats on money leaving the org (Financial Policy F2 / F2-COI). Pure rules over facts
-// the service gathers through the SignoffDirectory port.
+// the service gathers through the SignoffDirectory port. The program approver signs a line by
+// approving it, so the approval is not a seat.
 
-export const SEATS = ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER", "BOARD"] as const;
+/** The seats in the order they are signed; the line's approval comes between the first two. */
+export const SEATS = ["SUBMITTER", "TREASURER", "BOARD"] as const;
 export type Seat = (typeof SEATS)[number];
 
 /** A reimbursement becomes a Bill; every other line is a card charge (a Purchase). */
@@ -15,6 +17,8 @@ export interface SignoffFacts {
   orgLevel: boolean;
   /** False only for a reimbursement whose known reimbursee holds no org membership. */
   reimburseeIsMember: boolean;
+  /** A reimbursement whose reimbursee is not named yet: nobody signs or approves it until they are. */
+  reimburseeUnknown: boolean;
   finance: number[];
   board: number[];
   /** The submitter, the reimbursee, and their households. */
@@ -25,8 +29,12 @@ export interface SignoffFacts {
   reimburseeSetter: number | null;
   /** Household members of the people already seated on this expense, other than those people. */
   seatedHouseholds: number[];
-  /** The line takes the Board seat: a non-Everyday card-charge line without written Board authorization. */
+  /** A non-Everyday card-charge line without written Board authorization. */
   boardSeat: boolean;
+  /** The line's approval is `approved`: the program approver's sign-off. */
+  approved: boolean;
+  /** Who approved the line; null while it is not approved, or for a line approved at intake. */
+  approver: number | null;
 }
 
 export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
@@ -114,34 +122,43 @@ export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: n
 }
 
 /**
- * A Board member, not a program approver, fills the program-approver seat for an org-level bucket
- * or a reimbursement owed to a non-member. The Treasurer seat stays.
+ * The line takes the Board seat: a non-Everyday card charge without written Board authorization,
+ * or a reimbursement owed to a non-member, whose Board signature follows the line's approval.
  */
-export function boardFillsProgramSeat(facts: SignoffFacts): boolean {
-  return facts.orgLevel || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
+export function takesBoardSeat(facts: SignoffFacts): boolean {
+  return facts.boardSeat || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
 }
 
 /** Who the seat belongs to before any Board substitution. */
 function eligible(facts: SignoffFacts, seat: Exclude<Seat, "SUBMITTER">): number[] {
-  if (seat === "TREASURER") return facts.finance;
-  if (seat === "BOARD") return facts.board;
-  return boardFillsProgramSeat(facts) ? [] : facts.approvers;
+  return seat === "TREASURER" ? facts.finance : facts.board;
+}
+
+/** Whoever approved the line or signs a seat on it, other than `except`. */
+function onLine(facts: SignoffFacts, filled: FilledSeat[], except?: Seat): number[] {
+  const out = filled.filter((f) => f.seat !== except).map((f) => f.signerUserId);
+  return facts.approver === null ? out : [...out, facts.approver];
 }
 
 /**
- * Eligible people who can still sign the seat: not conflicted, not in another seat on the line, and
- * not in the household of someone seated on the expense. The Treasurer seat also excludes the
- * reimbursee's setter and the bucket owner's household.
+ * Eligible people who can still sign the seat: not conflicted, not the line's approver or in
+ * another seat on it, and not in the household of someone seated on the expense. The Treasurer
+ * seat also excludes the reimbursee's setter and the bucket owner's household.
  */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
-  const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...filled.filter((f) => f.seat !== seat).map((f) => f.signerUserId)]);
+  const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...onLine(facts, filled, seat)]);
   if (seat === "TREASURER") for (const id of treasurerConflicted(facts)) blocked.add(id);
   return eligible(facts, seat).filter((id) => !blocked.has(id));
 }
 
-/** Seats filled by a Board member standing in for a seat nobody eligible could fill; the Board seat is not one. */
+/**
+ * Board members standing in for someone nobody eligible could replace: an approval by anyone
+ * but a bucket approver, and a Treasurer seat signed by anyone without FINANCE. The Board seat
+ * is not one.
+ */
 function boardSubstitutions(facts: SignoffFacts, filled: FilledSeat[]): number {
-  return filled.filter((f) => f.seat !== "SUBMITTER" && !eligible(facts, f.seat).includes(f.signerUserId)).length;
+  const approval = facts.approver !== null && !facts.approvers.includes(facts.approver) ? 1 : 0;
+  return approval + filled.filter((f) => f.seat === "TREASURER" && !facts.finance.includes(f.signerUserId)).length;
 }
 
 /** Policy allows two Board substitutions on a reimbursement, one on a card charge. */
@@ -152,13 +169,13 @@ function maxBoardSubstitutions(facts: SignoffFacts): number {
 /** The line's unfilled seats; the Board seat counts only on a line that takes it. */
 export function missingSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const done = new Set(filled.map((f) => f.seat));
-  return SEATS.filter((s) => !done.has(s) && (s !== "BOARD" || facts.boardSeat));
+  return SEATS.filter((s) => !done.has(s) && (s !== "BOARD" || takesBoardSeat(facts)));
 }
 
 /**
  * Seats nobody can fill: no eligible signer is available and the Board substitutions are used up,
  * or a Board seat no Board member can take. A card charge that needs a second substitution lands
- * here; it is held and flagged to the board.
+ * here; it is held, and shows in the finance queue as a held signer.
  */
 export function blockedSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const open = missingSeats(facts, filled).filter((s): s is Exclude<Seat, "SUBMITTER"> => s !== "SUBMITTER");
@@ -166,6 +183,21 @@ export function blockedSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] 
   const needBoard = unfillable.filter((s) => s !== "BOARD");
   const room = maxBoardSubstitutions(facts) - boardSubstitutions(facts, filled);
   return [...needBoard.slice(Math.max(0, room)), ...unfillable.filter((s) => s === "BOARD")];
+}
+
+const REIMBURSEE_UNKNOWN = "the reimbursee is unknown; FINANCE names them before any sign-off";
+
+/**
+ * Why the seat may not be signed yet: nothing is signed while the reimbursee is unknown, the
+ * Treasurer signs after the line's approval, and the Board after the Treasurer. A reimbursement
+ * line's approval waits for the submitter seat (approvalRefusal).
+ */
+function orderRefusal(facts: SignoffFacts, filled: FilledSeat[], seat: Seat): string | null {
+  if (facts.reimburseeUnknown) return REIMBURSEE_UNKNOWN;
+  if (seat === "SUBMITTER") return null;
+  if (!facts.approved) return `the line is not approved yet; the ${seat === "TREASURER" ? "Treasurer" : "Board"} signs after its approval`;
+  if (seat === "BOARD" && !filled.some((f) => f.seat === "TREASURER")) return "the Treasurer has not signed yet; the Board signs after the Treasurer";
+  return null;
 }
 
 /** Why `signerUserId` may not fill `seat`, or null when the sign-off is allowed. */
@@ -179,9 +211,12 @@ export function signoffRefusal(
   if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
 
   if (seat === "SUBMITTER") {
-    return signerUserId === facts.submitterId ? null : "only the submitter fills the submitter seat";
+    return signerUserId === facts.submitterId ? orderRefusal(facts, filled, seat) : "only the submitter fills the submitter seat";
   }
-  if (seat === "BOARD" && !facts.boardSeat) return "this line takes no Board seat";
+  if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";
+  const outOfOrder = orderRefusal(facts, filled, seat);
+  if (outOfOrder) return outOfOrder;
+  if (signerUserId === facts.approver) return "whoever approved the line does not sign another seat on it";
   if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
   if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
   if (seat === "TREASURER" && facts.ownerHousehold.includes(signerUserId)) return "the bucket owner or their household cannot fill the Treasurer seat";
@@ -189,17 +224,37 @@ export function signoffRefusal(
   if (seat === "BOARD") return facts.board.includes(signerUserId) ? null : "signer is not a Board member";
 
   const available = availableSigners(facts, filled, seat);
-  if (available.length > 0) {
-    return available.includes(signerUserId)
-      ? null
-      : seat === "TREASURER"
-        ? "signer does not hold FINANCE"
-        : "signer is not an approver of this line's bucket";
-  }
-  // Nobody eligible can sign: a non-conflicted Board member fills the seat instead.
+  if (available.length > 0) return available.includes(signerUserId) ? null : "signer does not hold FINANCE";
+  // No FINANCE holder can sign: a non-conflicted Board member fills the seat instead.
   if (!facts.board.includes(signerUserId)) return "signer is not a Board member";
   if (boardSubstitutions(facts, filled) >= maxBoardSubstitutions(facts)) {
     return "no Board substitution left for this line";
   }
+  return null;
+}
+
+/** A Board member approving a line they are not a bucket approver of, in place of its approvers. */
+export function approvesAsStandIn(facts: SignoffFacts, userId: number): boolean {
+  return !facts.approvers.includes(userId);
+}
+
+/**
+ * Why `userId` may not approve the line, or null. The approval is the program approver's
+ * sign-off, so it takes a seat's refusals: the reimbursee is known, and the approver is not
+ * conflicted, signs no other seat on the line, and has no household member seated on the expense.
+ * A reimbursement line is approved only once its submitter has signed. A bucket approver approves; any
+ * Board member without a conflict may approve instead, within the Board substitution limit.
+ */
+export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userId: number): string | null {
+  if (facts.reimburseeUnknown) return REIMBURSEE_UNKNOWN;
+  if (facts.kind === "reimbursement" && !filled.some((f) => f.seat === "SUBMITTER")) {
+    return "The submitter has not confirmed this reimbursement yet; the approval follows";
+  }
+  if (facts.conflicted.includes(userId)) return "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for";
+  if (filled.some((f) => f.signerUserId === userId)) return "You already sign another seat on this line";
+  if (facts.seatedHouseholds.includes(userId)) return "Someone in your household already holds a seat on this expense";
+  if (!approvesAsStandIn(facts, userId)) return null;
+  if (!facts.board.includes(userId)) return "This line item is not in a bucket you approve";
+  if (boardSubstitutions(facts, filled) >= maxBoardSubstitutions(facts)) return "No Board substitution left for this line";
   return null;
 }
