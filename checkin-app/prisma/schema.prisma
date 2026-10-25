@@ -1917,8 +1917,6 @@ model BudgetOwner {
   /// @sensitivity:internal
   quickBooksClassId    String?   @unique
 
-  // Restrict: a program with a bucket is not deleted out from under it, and
-  // SetNull would silently turn a program bucket into an org-level one.
   owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   treasurers BudgetOwnerTreasurer[]
 
