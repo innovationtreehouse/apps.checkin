@@ -37,7 +37,7 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
 | 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision | none |
 | 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
-| 6 | app | Number folding per Q3; the similar-date tier if Q13 says yes | #2566 merged; Q3, Q13 |
+| 6 | app | Number folding per Q3. The ±7-day similar-date tier is not in this plan; it is #2591, after these ship | #2566 merged |
 | 7 | app | Posting re-check: the receipt push carries decided-different receipt ids (contract change in `receipt-types`), the derived QuickBooks-tab reason, the outbox skip, and the stop action | Q8, Q9 |
 | 8 | mig + docs | Drop `duplicateFlagClearedAt` and `duplicateSuspectReceiptId` once no deployed code reads them; extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
 

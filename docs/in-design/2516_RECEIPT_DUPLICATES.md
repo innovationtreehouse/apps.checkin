@@ -183,7 +183,7 @@ compare panel shows beside each member:
 | Same vendor and receipt number | "Same receipt number" | Strong |
 | Same vendor, date and total | "Same vendor, date and total" | Medium: two equal purchases on one day are possible |
 | Fuzzy vendor, same date and total (#2558, later) | "Similar vendor, same date and total" | Weak: same hold, weaker label (Q5, decided) |
-| Same vendor and total, similar date (proposed) | "Same vendor and total, 2 days apart" | Weak; see Q13 |
+| Same vendor and total, dates within 7 days (#2591, later) | "Same vendor and total, 2 days apart" | Weak; same hold, weaker label (Q13, decided) |
 
 All tiers are evaluated, not just the first that hits, so a receipt can match
 member A by file and member B by fields. Every hit joins the group.
@@ -215,8 +215,8 @@ check-in, check-out or transaction date, and invoices on any date up to the
 due date; Stampli's relaxed tier is the same vendor and amount within a date
 window (§11). The same purchase can carry two dates here too: an online order
 confirmation and its shipping receipt, the date a card was charged and the
-date on the slip, or an OCR misread. Whether to add that tier, and how wide,
-is Q13. Amount tolerance is not added (Q4, decided).
+date on the slip, or an OCR misread. That tier is decided as ±7 days with a
+weak label, and deferred past the first pass to #2591 (Q13). Amount tolerance is not added (Q4, decided).
 
 ---
 
@@ -534,7 +534,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q10 | ~~Existing cleared receipts at cutover~~ | Dropped: production holds no receipts. | — |
 | Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
 | Q12 | ~~A "hide for now" button besides Not this one?~~ | **Decided by @thpr: no**, "too much complexity". Not this one with Undo is the only dismiss. | — |
-| Q13 | A weak **similar date** tier: same vendor and same total, receipt dates within N days of each other? | (a) Yes, N = 3, the same hold as the other tiers with a weak label naming the gap ("2 days apart"), built after the exact tiers ship. (b) Yes, with a wider N such as 7. (c) A badge on the receipt but no hold. (d) No. | **(a).** It catches the order-versus-shipping and charge-versus-slip pairs the exact tiers miss. Three days stays clear of a weekly purchase of the same thing, which (b) would flag every week. Each false flag costs one **Not this one**, remembered per pair. The value of N is @thpr's call. |
+| Q13 | ~~A weak similar-date tier?~~ | **Decided by @thpr:** yes, ±7 days, weak label, not in the first pass. Filed as #2591. | — |
 | Q14 | Should a match on an expense **rejected at sign-off** get the "rejected" label? Its receipt reads "Finalized" on the receipt side, and the posting check skips rejected expenses, so the careful second look @thpr asked for doesn't happen for it today. | (a) Yes: the posting check includes rejected expenses, flagged as rejected with the sign-off note, labelled as on the receipt side (Q2). (b) Yes, on the receipt side: the compare shows the expense's outcome, which needs the expense status sent back to the receipt library. (c) No: a rejected expense is never paid. | **(a).** It keeps the change inside the expense library, and uses the hold already designed. |
 
 ---
