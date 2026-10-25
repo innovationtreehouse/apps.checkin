@@ -63,8 +63,8 @@ describe("catalog layout tabs", () => {
   });
 
   it("hides the sub-row on a tab without sub-pages", () => {
-    setSession({ id: 3, isBoardMember: true });
-    setPathname("/inventory/received-deltas");
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/merge-conflicts");
     renderLayout();
     expect(screen.queryByRole("tab", { name: /Categories/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /Locations/ })).not.toBeInTheDocument();
@@ -113,10 +113,18 @@ describe("org inventory subtabs", () => {
 
   it("has no top-level Receive queue tab and no Items subtab", () => {
     setSession({ id: 4, isInventoryManager: true });
-    setPathname("/inventory/received-deltas");
+    setPathname("/inventory/merge-conflicts");
     renderLayout();
     expect(screen.queryByRole("tab", { name: /Receive queue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /^Items$/ })).not.toBeInTheDocument();
+  });
+
+  it("has no Applied Deltas tab: its applies live in the Inventory log", () => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/inventory-log");
+    renderLayout();
+    expect(screen.queryByRole("tab", { name: /Applied Deltas/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Inventory log/ })).toHaveAttribute("aria-selected", "true");
   });
 });
 

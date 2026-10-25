@@ -27,7 +27,10 @@ const nextConfig: NextConfig = {
   },
   // The program-leader home's former path, kept working for bookmarks.
   async redirects() {
-    return [{ source: '/my-programs/:path*', destination: '/programs-i-lead/:path*', permanent: true }];
+    return [
+      { source: '/my-programs/:path*', destination: '/programs-i-lead/:path*', permanent: true },
+      { source: '/inventory/received-deltas', destination: '/inventory/inventory-log?view=applies', permanent: true },
+    ];
   },
 };
 
