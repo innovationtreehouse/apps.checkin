@@ -266,8 +266,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 // public one is already visible. Clamp so the nonsense state
                 // (not members-only, yet flagged publiclyVisible) can't be stored.
                 publiclyVisible: (orgMemberOnly || false) && (publiclyVisible || false),
-                minAge: minAge || null,
-                maxAge: maxAge || null,
+                minAge: minAge ?? null,
+                maxAge: maxAge ?? null,
                 orgMemberPriceCents: mPrice,
                 nonOrgMemberPriceCents: nmPrice,
                 maxParticipants: maxPart,

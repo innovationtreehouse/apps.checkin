@@ -73,6 +73,8 @@ export interface SignoffDirectory {
   livePersonFor(personId: number): Promise<number | null>;
   /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
+  /** Whether the person is a known adult; only an adult is reimbursed. */
+  isAdult(personId: number): Promise<boolean>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
@@ -85,6 +87,7 @@ export const inertSignoffDirectory: SignoffDirectory = {
   personExists: async () => false,
   livePersonFor: async () => null,
   isOrgMember: async () => false,
+  isAdult: async () => false,
 };
 
 // ── X3: catalog reads ─────────────────────────────────────────────────────────
@@ -277,7 +280,6 @@ export interface ReimbursementStatus {
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
   capitalLineItemThresholdCents: number;
-  capitalEquipmentUnitCents: number;
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;

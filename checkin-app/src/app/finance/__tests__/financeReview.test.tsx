@@ -15,6 +15,8 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearch,
   useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
 }));
+const mockShow = jest.fn();
+jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 2, isFinance: mockIsFinance, isBoardMember: !mockIsFinance } } }) }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
@@ -158,10 +160,16 @@ describe("the receipt tabs", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/workflow-mapping/receipts/counts");
   });
 
-  it("shows a failed count load as a red alert naming the error", () => {
-    mockReceiptLoads["/queue-counts"] = { data: null, error: "HTTP 500" };
+  it("shows a failed receipt count load as a chip that stays up, naming the route, never inline", () => {
+    mockReceiptLoads["/queue-counts"] = { data: null, error: "Internal Server Error" };
     wrap();
-    expect(screen.getByText("Couldn't load the receipt counts: HTTP 500")).toBeInTheDocument();
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Couldn't load the receipt tab counts",
+      message: "GET /api/receipts/queue-counts failed on the server (HTTP 500); the server log names the cause under that route.",
+      color: "red",
+      autoClose: false,
+    }));
+    expect(screen.queryByText(/Internal Server Error/)).not.toBeInTheDocument();
   });
 });
 
@@ -223,5 +231,39 @@ describe("the expense tabs", () => {
     await waitFor(() => expect(tabButton(/^To sign/)).toContainElement(screen.getByLabelText("2 to act on")));
     expect(tabButton(/^Account holds/)).toContainElement(screen.getByLabelText("1 in this queue"));
     expect(tabButton(/^Account holds/)).toHaveStyle({ opacity: "0.6" });
+  });
+});
+
+describe("load failures", () => {
+  it("shows a failed expense count load as a chip that stays up, naming the route, never inline", () => {
+    mockExpenseLoads["/finance-queue/counts"] = { data: null, error: "Internal Server Error" };
+    wrap();
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Couldn't load the expense tab counts",
+      message: "GET /api/expense/finance-queue/counts failed on the server (HTTP 500); the server log names the cause under that route.",
+      color: "red",
+      autoClose: false,
+    }));
+    expect(screen.queryByText(/Internal Server Error/)).not.toBeInTheDocument();
+  });
+
+  it("shows a tab that fails to load as a chip naming the tab and its route, and keeps the Board tab for FINANCE", () => {
+    mockSearch = new URLSearchParams("queue=board");
+    mockExpenseLoads["/finance-queue?tab=board"] = { data: null, error: "Internal Server Error" };
+    wrap();
+    expect(tabButton(/^Board/)).toHaveAttribute("aria-pressed", "true");
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Couldn't load the Board tab",
+      message: "GET /api/expense/finance-queue?tab=board failed on the server (HTTP 500); the server log names the cause under that route.",
+      autoClose: false,
+    }));
+    expect(screen.queryByText(/Internal Server Error/)).not.toBeInTheDocument();
+  });
+
+  it("passes a refusal's own words through", () => {
+    mockSearch = new URLSearchParams("queue=expenses");
+    mockExpenseLoads["/finance-queue?tab=expenses"] = { data: null, error: "Forbidden" };
+    wrap();
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't load the Expenses tab", message: "GET /api/expense/finance-queue?tab=expenses answered: Forbidden" }));
   });
 });

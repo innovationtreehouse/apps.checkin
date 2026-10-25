@@ -12,7 +12,7 @@ const FINANCE = "finance@example.com";
 
 interface Receipt { id: string; state: string }
 type Received = { id: number; receiptId: string; state: string; validationNotes?: string | null };
-type ExpenseRow = { id: string; vendorName: string | null };
+type ExpenseDetail = { Expense: { id: string; vendorName: string | null } };
 type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id: number; recognitionStatus: string }> };
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -66,9 +66,9 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     expect((await post(submitter, `/api/workflow-mapping/receipts/${row.id}/lines/${line.id}/non-inventory`)).status).toBe(200);
     const proceeded = (await api<Detail>(submitter, `/api/workflow-mapping/receipts/${row.id}`)).json.ReceivedReceipt;
     expect(proceeded.state).toBe("resolved");
-    const expense = await api<ExpenseRow>(finance, `/api/expense/expenses/${auto.json.id}`);
+    const expense = await api<ExpenseDetail>(finance, `/api/expense/expenses/${auto.json.id}`);
     expect(expense.status).toBe(200);
-    expect(expense.json).toMatchObject({ id: auto.json.id, vendorName: "Fixture Hardware" });
+    expect(expense.json.Expense).toMatchObject({ id: auto.json.id, vendorName: "Fixture Hardware" });
 
     // Received is final on the receipt side: no restart, no edit.
     const restart = await post(finance, `/api/receipts/${auto.json.id}/restart-flow`);

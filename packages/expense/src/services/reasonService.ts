@@ -14,6 +14,12 @@ import { reimburseeVendorId } from "./reimburseeVendorService";
 /** Open flag rows that are reviews: the kept kinds. */
 export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: null, kind: { in: [...REVIEW_KINDS] } };
 
+/**
+ * Bookkeeping any finance holder may do, a conflicted one included (docs/rules/expenses.md):
+ * capital designation, the depreciation cycle, and the account on a mapping hold.
+ */
+const BOOKKEEPING: ReadonlySet<string> = new Set(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD"]);
+
 /** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
 const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
 
@@ -82,7 +88,9 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const conflicted = (await conflictedParties(expense)).includes(me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
-    if (!principal.isFinance || conflicted) return false;
+    if (!principal.isFinance) return false;
+    if (BOOKKEEPING.has(r.code)) return true;
+    if (conflicted) return false;
     if (r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.
     if (r.code === "BOARD_APPROVAL") return !reimburseeUnknown(expense) && boardAuthorizationRefusal(lineFacts, me) === null;

@@ -25,11 +25,13 @@ export type RecognitionStatus =
   | "provisional"
   | "non_inventory";
 
-export type UsageBehavior =
-  | "Single Use"
-  | "Short Life Consumable"
-  | "Long Life Consumable"
-  | "Durable";
+export const USAGE_BEHAVIORS = [
+  "Single Use",
+  "Short Life Consumable",
+  "Long Life Consumable",
+  "Durable",
+] as const;
+export type UsageBehavior = (typeof USAGE_BEHAVIORS)[number];
 
 export { ResolvedInventoryDeltaSchema, ResolvedInventoryDeltaLineItemSchema } from "./resolved-inventory-delta";
 export type { ResolvedInventoryDelta, ResolvedInventoryDeltaLineItem } from "./resolved-inventory-delta";

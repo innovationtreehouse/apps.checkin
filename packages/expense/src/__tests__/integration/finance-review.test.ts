@@ -77,6 +77,16 @@ describeDb("expense reasons", () => {
     expect(await actionable(BOARD)).toEqual([["REIMBURSEE_TO_NAME", false]]);
   });
 
+  it("bookkeeping is actionable for any finance holder, a conflicted one included", async () => {
+    bind();
+    const id = await seedExpense({ state: "capital_review" });
+    const line = await seedLineItem(id);
+    await db.expenseHold.create({ data: { orgId: "org-1", expenseId: id, lineItemId: line, reason: "NO_MATCH", matchedRows: "[]" } });
+    const actionable = async (p: ReturnType<typeof principal>) => (await expenseReasons(p, id)).map((r) => [r.code, r.actionable]);
+    expect(await actionable(CONFLICTED_FINANCE)).toEqual([["CAPITAL_REVIEW", true], ["ACCOUNT_HOLD", true]]);
+    expect(await actionable(BOARD)).toEqual([["CAPITAL_REVIEW", false], ["ACCOUNT_HOLD", false]]);
+  });
+
   it("an exhausted post carries the last error in plain words", async () => {
     bind();
     const id = await seedExpense({ state: "qb_complete" });
