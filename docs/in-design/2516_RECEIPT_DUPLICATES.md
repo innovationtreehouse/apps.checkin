@@ -375,7 +375,7 @@ The submitter's part is small and uses a right they already have: when every
 other member is their own receipt, they see which one and can withdraw the
 new copy (their own discard). When any member belongs to someone else, they
 see only that finance will check it, and nothing about the other receipt
-(Q6).
+(Q6, decided).
 
 ### 6.2 The decisions
 
@@ -527,7 +527,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q3 | ~~Fold order and receipt numbers when comparing?~~ | **Decided by @thpr: (a).** Fold case, spaces and a leading `#`, as #2561 did for the retailer. Dates need nothing beyond #2566. | — |
 | Q4 | ~~An amount tolerance tier?~~ | **Decided by @thpr: (a).** Not now; revisit with #2558's data. | — |
 | Q5 | ~~Is a fuzzy vendor hit flagged like an exact one?~~ | **Decided by @thpr: (a).** Same hold, weaker label. | — |
-| Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |
+| Q6 | ~~May a submitter withdraw their own repeat upload when every match is theirs?~~ | **Decided by @thpr: (a).** Yes, with the match shown; another person's receipt is never shown. | — |
 | Q7 | ~~When is a note required to say "different purchases"?~~ | **Settled by Q2:** never. | — |
 | Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case. |
 | Q9 | A duplicate found **only at posting**: how does finance stop it? | (a) New `DUPLICATE_WITHDRAWN` event to the existing `rejected`, with a note naming the other expense. (b) Reuse `qb_skipped` ("not posted"). (c) Leave it posted and void in QuickBooks. | **(a).** (b) means "already booked in QuickBooks" for backfill, and reusing it would blur that; (c) books it first and undoes it later. |
