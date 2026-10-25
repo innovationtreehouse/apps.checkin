@@ -276,7 +276,6 @@ export const classifications = {
         programId: 'public',
         personId: 'public',
         isCore: 'internal',
-        isTreasurer: 'internal',
     },
     ProgramParticipant: {
         programId: 'public',
@@ -493,7 +492,6 @@ export const classifications = {
     BudgetOwner: {
         id: 'internal',
         name: 'internal',
-        programId: 'internal',
         isOrgLevel: 'internal',
         ownerId: 'public',
         archivedAt: 'internal',
@@ -613,7 +611,6 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
-        budgetOwners: { model: 'BudgetOwner', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -692,7 +689,6 @@ export const relations = {
     Org: {
     },
     BudgetOwner: {
-        program: { model: 'Program', isList: false },
         owner: { model: 'Person', isList: false },
         treasurers: { model: 'BudgetOwnerTreasurer', isList: true },
     },
