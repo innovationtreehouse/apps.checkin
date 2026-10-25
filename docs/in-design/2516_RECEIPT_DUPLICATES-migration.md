@@ -44,7 +44,7 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 3 | C cleared against A goes through beside cleared B | C's compare shows B; clearing C records C≠A and C≠B, which finance saw |
 | 4 | Two cleared field copies never compared | Each copy's group contains the other until a decision covers that pair |
 | 5 | A discarded to keep B; C flagged against discarded A, clears beside B | "Keep this one" on B discards A; C's group shows live B (and A greyed); C cannot finalize without a decision against B |
-| 6 | Copies after A was discarded flag against A, both clear | Per Q1(d): if A was a submitter's withdrawal before review, A alone raises nothing and B and C flag against each other; if finance discarded A, B and C are also flagged against A with the stronger mark |
+| 6 | Copies after A was discarded flag against A, both clear | Per Q1(a), A alone raises nothing; B and C flag against each other |
 | 7 | Copies of a rejected A flag against it, both clear | Flagged with the rejected marker; clearing needs a note (Q7); B and C are in one group |
 | 8 | Re-upload of B's file flagged against B, not A | C's group is {A, B} |
 | 9 | C's copy B discarded; C clears beside A | C's group still holds live A; C stays held until decided against A |
