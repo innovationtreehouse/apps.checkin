@@ -41,7 +41,7 @@ type Detail = {
   WorkflowReceiptView: Record<string, unknown> & { lineItems: Array<Record<string, unknown>> };
   ReceivedReceiptLineStatus: LineRow[];
 };
-type ExpenseRow = { id: string; vendorName: string | null };
+type ExpenseDetail = { Expense: { id: string; vendorName: string | null } };
 type AuditRow = { eventType: string; receivedReceiptId: number | null; actorUsername?: string | null };
 
 const post = (s: Session, path: string, body?: unknown) =>
@@ -54,7 +54,7 @@ async function stock(s: Session): Promise<number> {
 
 /** The expense booked from a receipt, read as FINANCE; the expense id is the receipt's receiptId. */
 async function bookedExpense(receiptId: string) {
-  return api<ExpenseRow>(await loginAs(FINANCE), `/api/expense/expenses/${receiptId}`);
+  return api<ExpenseDetail>(await loginAs(FINANCE), `/api/expense/expenses/${receiptId}`);
 }
 
 async function seeded(s: Session, vendor: string): Promise<ReceiptRow> {
@@ -127,7 +127,7 @@ describe("workflow mapping — manager journey", () => {
     expect(await stock(m)).toBe(before + 5);
     const expense = await bookedExpense("seed-wm-proceed");
     expect(expense.status).toBe(200);
-    expect(expense.json).toMatchObject({ id: "seed-wm-proceed", vendorName: "Seed Hardware" });
+    expect(expense.json.Expense).toMatchObject({ id: "seed-wm-proceed", vendorName: "Seed Hardware" });
 
     const detail = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
     expect(detail.json.ReceivedReceipt.inventoryAppliedAt).not.toBeNull();
@@ -163,6 +163,6 @@ describe("workflow mapping — manager journey", () => {
     const after = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
     expect(after.json.ReceivedReceipt.state).toBe("resolved");
     expect(await stock(m)).toBe(before + 2);
-    expect((await bookedExpense("seed-wm-mapping")).json).toMatchObject({ id: "seed-wm-mapping", vendorName: "Seed Supply" });
+    expect((await bookedExpense("seed-wm-mapping")).json.Expense).toMatchObject({ id: "seed-wm-mapping", vendorName: "Seed Supply" });
   });
 });

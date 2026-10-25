@@ -4,4 +4,4 @@ import { handler } from "@/security/handler";
 import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/expense";
 
-export const GET = handler("GET /api/expense/expense-holds", componentRoute(routes.finance.holds));
+export const GET = handler("GET /api/expense/finance-queue/counts", componentRoute(routes.finance.financeQueueCounts));

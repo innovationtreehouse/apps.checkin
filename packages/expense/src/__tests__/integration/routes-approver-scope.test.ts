@@ -9,7 +9,8 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses } from "../../routes";
-import { SIGNOFF_BADGE_EXPENSE_CAP, expenseOpsCounts, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_EXPENSE_CAP, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { financeQueueActionable, financeQueueCounts } from "../../services/financeQueueService";
 import type { ExpenseRouteHandler } from "../../contract";
 
 const OWN_BUCKET = 100;
@@ -147,20 +148,22 @@ describeDb("nav badge counts", () => {
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
   });
 
-  it("counts held expenses plus open flags for FINANCE, and nothing for an approver", async () => {
+  it("counts held expenses and open reviews as FINANCE's to act on, and nothing for an approver", async () => {
     as(APPROVER);
     await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "QB_DRIFT", audience: "FINANCE" } });
     await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
-    expect(await expenseOpsCounts(principal(3, { isFinance: true }))).toEqual({ holds: 1, openFlags: 1 });
-    expect(await expenseOpsCounts(principal(APPROVER))).toEqual({ holds: 0, openFlags: 0 });
+    const finance = await financeQueueCounts(principal(3, { isFinance: true }));
+    expect(finance.accountHolds).toMatchObject({ actionable: 1, total: 1, byReason: { ACCOUNT_HOLD: 1 } });
+    expect(finance.quickbooks).toMatchObject({ actionable: 1, total: 1, byReason: { QB_DRIFT: 1 } });
+    expect(await financeQueueActionable(principal(APPROVER))).toBe(0);
   });
 
-  it("gives a Board-only viewer no holds count, and still counts its BOARD flags", async () => {
+  it("shows a Board-only viewer the holds without counting them as theirs", async () => {
     as(APPROVER);
     await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
-    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
-    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "THRESHOLD_CROSSED", audience: "BOARD" } });
-    expect(await expenseOpsCounts(principal(5, { isBoard: true }))).toEqual({ holds: 0, openFlags: 1 });
-    expect(await expenseOpsCounts(principal(3, { isFinance: true, isBoard: true }))).toEqual({ holds: 1, openFlags: 2 });
+    const board = await financeQueueCounts(principal(5, { isBoard: true }));
+    expect(board.accountHolds).toMatchObject({ actionable: 0, total: 1 });
+    expect(await financeQueueActionable(principal(5, { isBoard: true }))).toBe(0);
   });
 });

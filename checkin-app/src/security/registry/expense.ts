@@ -52,7 +52,6 @@ defineRoute({ endpoint: 'GET /api/expense/counts', authorize: 'expense-approver'
 
 // FINANCE or BOARD: reads, settings, and flag checkoff (a flag carries a FINANCE
 // or BOARD audience; the library checks the caller holds it).
-defineRoute({ endpoint: 'GET /api/expense/expense-holds', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseHold', 'Expense', 'ExpenseLineItem'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/account-mapping', authorize: 'finance-or-board', envelope: null, returns: ['AccountMapping'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/account-mapping/catalog', authorize: 'finance-or-board', envelope: null, returns: ['Category', 'Subcategory'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/qb-accounts', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbAccount'], orderedView: FINANCE_OR_BOARD_VIEW });
@@ -71,7 +70,6 @@ defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-
 // The finance queue's expense tabs: a tab's rows, and every tab's counts.
 defineRoute({ endpoint: 'GET /api/expense/finance-queue', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueRow'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/finance-queue/counts', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/flags',authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Records what the Board authorized. The record clears the BOARD seat on a
 // non-Everyday card charge's org-level lines, and the hold on any purchase (card
