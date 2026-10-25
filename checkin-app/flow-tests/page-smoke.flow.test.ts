@@ -11,7 +11,7 @@ import { hasAnyRole } from "@/lib/nav/gates";
 import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
-import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath } from "../../packages/receipt/src/components/reviewQueue";
+import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath, reviewDetailHref } from "../../packages/receipt/src/components/reviewQueue";
 import { navPages as viewerPages, navSections } from "../test-support/navPages";
 import { api, loginAs, type Session } from "./helpers";
 
@@ -34,8 +34,8 @@ const KNOWN_FAILURES: KnownFailure[] = [];
 
 /** Pages a persona's nav must show, so a nav that renders nothing cannot pass the sweep by opening nothing. */
 const EXPECTED_PAGES: Record<string, string[]> = {
-  [FINANCE]: ["/receipts/review", "/receipts/mail", "/expense/expenses", "/expense/holds", "/expense/flags", "/budgets", "/donations"],
-  [BOARD]: ["/receipts/review", "/expense/expenses", "/budgets", "/donations", "/programs-i-lead/attendance"],
+  [FINANCE]: ["/finance/review", "/receipts/mail", "/expense/expenses", "/budgets", "/donations"],
+  [BOARD]: ["/finance/review", "/expense/expenses", "/budgets", "/donations", "/programs-i-lead/attendance"],
   [APPROVER]: ["/programs-i-lead/expense-approvals"],
   [TREASURER]: ["/programs-i-lead/expense-approvals"],
   [INVENTORY_MANAGER]: ["/receipts", "/receipts/upload", "/inventory/org-items", "/inventory/receiving", "/receipt-flow"],
@@ -43,7 +43,7 @@ const EXPECTED_PAGES: Record<string, string[]> = {
 };
 
 /** Pages the nav does not show on main yet; each is asserted present as `test.failing` until the PR that adds it lands. */
-const PENDING_PAGES: Record<string, string> = { "/finance/review": "#2543" };
+const PENDING_PAGES: Record<string, string> = {};
 
 interface Viewer { session: Session; user: NavUser; counts: TodoCounts | null; email: string }
 
@@ -96,11 +96,6 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
     "/api/receipts/mine?hideCompleted=1",
     ...(await receiptDetail(v, "/api/receipts/mine", (id) => `/receipts/${encodeURIComponent(id)}`)),
   ],
-  "/receipts/review": async (v, href) => [
-    "/api/receipts/queue-counts",
-    ...receiptQueues.flatMap((q) => [`${href}?queue=${q || "all"}`, `/api/receipts${queueListPath(q)}`]),
-    ...(await receiptDetail(v, "/api/receipts", (id) => `${href}/${encodeURIComponent(id)}?queue=all`)),
-  ],
   "/receipts/settings": () => ["/api/receipts/settings"],
   "/receipts/mail": () => ["/api/receipts/mail-items", "/api/receipts/ignored-files"],
   "/receipt-flow": () => ["/api/receipt-flow/status"],
@@ -114,12 +109,11 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
       `${href}?queue=${NOT_PUSHED}`,
       `/api/receipts${queueListPath(NOT_PUSHED)}`,
       ...tabs.flatMap((t) => [`${href}?queue=${t}`, `/api/expense/finance-queue?tab=${t}`]),
+      ...(await receiptDetail(v, "/api/receipts", (id) => reviewDetailHref(id, ""))),
     ];
   },
   "/expense/expenses": expenseList,
   "/programs-i-lead/expense-approvals": expenseList,
-  "/expense/holds": () => ["/api/expense/expense-holds"],
-  "/expense/flags": () => ["/api/expense/flags"],
   "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts"],
   "/expense/qb-accounts": () => ["/api/expense/qb-accounts"],
   "/expense/ownership-map": () => [paged("/api/expense/ownership-map")],
