@@ -118,7 +118,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
       setForm(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
       if (!isNew) await reloadForm(form.gtin13);
     } finally {
       setSaving(false);
@@ -141,7 +141,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
       setRemoveTarget(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }

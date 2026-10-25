@@ -17,12 +17,11 @@ const ROOTS = [join(REPO, 'checkin-app', 'src'), join(REPO, 'packages')];
 /** Files an open PR is already fixing, with the PR that does it. */
 const ALLOWLIST: Record<string, string> = {
     'packages/expense/src/components/api.ts': 'Fixed in #2543 (finance review queue).',
-    'packages/local-inventory/src/pages/orgItems.tsx': 'Rewritten by #2565 (inventory log) and #2557.',
 };
 
 function walk(dir: string, out: string[] = []): string[] {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
-        if (['node_modules', '.next', 'dist', '__tests__'].includes(e.name)) continue;
+        if (['node_modules', 'generated', '__tests__'].includes(e.name)) continue;
         const p = join(dir, e.name);
         if (e.isDirectory()) walk(p, out);
         else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(p);
