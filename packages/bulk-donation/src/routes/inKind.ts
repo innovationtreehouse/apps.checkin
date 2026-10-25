@@ -33,6 +33,16 @@ export const settleReceipt: DonationRouteHandler = async ({ req, params }) => {
   return { InKindSettleResult: await mapServiceErrors(() => inKindService.settle(orgId, id, kind, audit)) };
 };
 
+/** One gift for its page. Every view admitted to it sees the donor, so the read is always audited. */
+export function getGift(source: InKindSource): DonationRouteHandler {
+  return async ({ req, params }) => {
+    const id = parseId(params.id);
+    const reader = await donorReader(req, `GET /api/donations/in-kind/${source}/[id]`);
+    const orgId = await getOrgId();
+    return { InKindGiftDetailView: await mapServiceErrors(() => inKindAcceptService.getGift(orgId, source, id, reader)) };
+  };
+}
+
 /** The host decides from the caller's view whether every bucket is shown or only those the caller approves. */
 export function listByBucket(seeAll: boolean): DonationRouteHandler {
   return async () => ({
