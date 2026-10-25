@@ -161,7 +161,8 @@ Income and donation rules are in `revenue.md`.
 
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
-  without a conflict signs a Board seat on each line once the line is approved.
+  without a conflict signs a Board seat on each line once the line is approved
+  and the Treasurer has signed it.
   What counts is the person reimbursed, not whoever submitted the receipt, and a
   card charge is not a reimbursement.
   [Decision — *Policy: Financial Policy, Art. IX §IX.2*]

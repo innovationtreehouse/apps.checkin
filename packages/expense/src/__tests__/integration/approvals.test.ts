@@ -61,13 +61,16 @@ describeDb("the reimbursee is known before the approval", () => {
   it("nobody approves a reimbursement line while its reimbursee is unknown; once FINANCE names them, the approver does", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
-    const approvalId = await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    const li = await seedLineItem(id);
+    const approvalId = await seedApproval(id, li, { ownerId: 100 });
 
     await expect(approveLine(LEADER, id, approvalId)).rejects.toMatchObject({ status: 409 });
     await expect(approveLine(BOARD, id, approvalId, "leader away")).rejects.toMatchObject({ status: 409 });
     expect(await approval(approvalId)).toMatchObject({ status: "pending" });
 
     await setReimbursee(ORG, id, 1, FINANCE);
+    await expect(approveLine(LEADER, id, approvalId)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not confirmed/) });
+    await signLine(principal(1), li, "SUBMITTER");
     await approveLine(LEADER, id, approvalId);
     expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 2 });
   });

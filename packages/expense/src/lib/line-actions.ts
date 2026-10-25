@@ -142,7 +142,9 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   const out: string[] = [];
   if (approval?.bucketFinal && APPROVABLE.has(approval.status)) out.push("Finance made this bucket final");
   if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
-    const approver = facts.approvers.some((id) => id !== input.caller.id && approvesAsApprover(input, id));
+    // Whether a bucket approver could approve once the submitter has signed, which comes first.
+    const confirmed = filled.some((f) => f.seat === "SUBMITTER") ? input : { ...input, filled: [...filled, { seat: "SUBMITTER" as const, signerUserId: facts.submitterId }] };
+    const approver = facts.approvers.some((id) => approvesAsApprover(confirmed, id));
     out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
   }
   if (expense.reimburseeUnknown) out.push("Held until finance names the reimbursee");
