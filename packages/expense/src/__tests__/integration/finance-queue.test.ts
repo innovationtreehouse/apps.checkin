@@ -135,3 +135,11 @@ describeDb("finance queue — To sign and Board tabs", () => {
     expect(await financeQueueActionable(BOARD)).toBe(1);
   });
 });
+
+describeDb("finance queue — a failure names its expense", () => {
+  it("rejects with the step and the expense whose reasons could not be read, so the route's log points at it", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    bindPorts({ signoff: { ...directory({ finance: [3] }), householdOf: async () => Promise.reject(new Error("checkin is down")) } });
+    await expect(financeQueueCounts(FINANCE)).rejects.toThrow(`finance queue: reading the queue reasons of expense ${id} failed: checkin is down`);
+  });
+});
