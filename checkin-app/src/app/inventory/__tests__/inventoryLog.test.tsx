@@ -6,9 +6,11 @@ import InventoryLogPage, { applySource, parseDelta } from "@checkin/local-invent
 
 const loaded: string[] = [];
 let data: Record<string, unknown> = {};
+let canSeeReceiving = true;
 
 jest.mock("@checkin/local-inventory/components/api", () => ({
   ...jest.requireActual("@checkin/local-inventory/components/api"),
+  useCanSeeReceiving: () => canSeeReceiving,
   useLoad: (path: string | null) => {
     if (path) loaded.push(path);
     const base = path?.split("?")[0] ?? "";
@@ -39,7 +41,18 @@ const LOG = [
 beforeEach(() => {
   resetRtl();
   loaded.length = 0;
+  canSeeReceiving = true;
   data = { "/inventory-log": LOG, "/received-inventory-deltas": APPLIES };
+});
+
+describe("inventory log gate", () => {
+  it("shows a catalog viewer without a receiving role who it is for, and loads nothing", () => {
+    canSeeReceiving = false;
+    setSearchParams("view=applies");
+    renderWithProviders(<InventoryLogPage />);
+    expect(screen.getByText("The inventory log is open to inventory managers, Finance and the Board.")).toBeInTheDocument();
+    expect(loaded).toEqual([]);
+  });
 });
 
 describe("inventory log, by part", () => {

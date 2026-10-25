@@ -2,9 +2,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
-import { lastPage, PAGE_SIZE, useLoad } from "../components/api";
+import { lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 
 interface LogRow {
@@ -97,10 +97,21 @@ function useLogQuery() {
 
 /** /inventory/inventory-log — every stock change by part, and every receipt or donation apply with its outcome. */
 export default function InventoryLogPage() {
-  const { view, statusFilter, receiptId, go } = useLogQuery();
+  const canSee = useCanSeeReceiving();
   return (
     <>
       <Title order={3} mb="md">Inventory log</Title>
+      {canSee ? <LogViews /> : (
+        <Alert color="gray">The inventory log is open to inventory managers, Finance and the Board.</Alert>
+      )}
+    </>
+  );
+}
+
+function LogViews() {
+  const { view, statusFilter, receiptId, go } = useLogQuery();
+  return (
+    <>
       <SegmentedControl
         mb="md"
         value={view}
