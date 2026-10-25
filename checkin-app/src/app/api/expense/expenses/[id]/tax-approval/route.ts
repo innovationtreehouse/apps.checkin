@@ -4,4 +4,4 @@ import { handler } from "@/security/handler";
 import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/expense";
 
-export const GET = handler("GET /api/expense/flags", componentRoute(routes.finance.flags));
+export const POST = handler("POST /api/expense/expenses/[id]/tax-approval", componentRoute(routes.expenses.taxApproval));
