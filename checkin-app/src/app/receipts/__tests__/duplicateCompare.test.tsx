@@ -144,6 +144,12 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
   });
 
+  it("names a finalized original's state in plain words", () => {
+    mockLoads["/r0"] = { ...original, state: "receipt_finalized" };
+    wrap();
+    expect(screen.getByText("Receipt finalized")).toBeInTheDocument();
+  });
+
   it("shows BOARD the compare without actions", () => {
     mockRoles = { isFinance: false, isBoard: true };
     wrap();

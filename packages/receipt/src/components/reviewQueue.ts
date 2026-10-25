@@ -16,7 +16,7 @@ export const OTHER_QUEUES = [
   { value: "auto_upload", label: "Reading (OCR in progress)" },
   { value: "uploaded", label: "Uploaded" },
   { value: "submitter_review", label: "Submitter review" },
-  { value: "receipt_finalized", label: "Finalized" },
+  { value: "receipt_finalized", label: "Receipt finalized" },
   { value: NOT_PUSHED, label: "Not delivered to part mapping" },
   { value: "discarded", label: "Discarded" },
   { value: "rejected", label: "Rejected" },

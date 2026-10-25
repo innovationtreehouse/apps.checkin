@@ -27,7 +27,7 @@ function sectionRows(section: string, states: StateCount[] | null | undefined): 
 function flowRows(data: ReceiptFlowStatus): FlowRow[] {
   const receipt = data.receipt && [
     ...data.receipt.states,
-    { state: "not_delivered", label: "Done, not yet sent to part mapping", count: data.receipt.notDelivered },
+    { state: "not_delivered", label: "Receipt finalized, not yet sent to part mapping", count: data.receipt.notDelivered },
   ];
   return [
     ...sectionRows("Receipts", data.receipt === undefined ? undefined : receipt ?? null),
