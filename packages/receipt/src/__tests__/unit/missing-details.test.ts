@@ -15,6 +15,10 @@ describe("missingDetails", () => {
     expect(missingDetails({ ...complete, retailer: "  " })).toEqual(["retailer"]);
   });
 
+  it("counts a date that is not a real YYYY-MM-DD date as missing", () => {
+    for (const receiptDate of ["April", "10/01/2026", "2026-02-30"]) expect(missingDetails({ ...complete, receiptDate })).toEqual(["date"]);
+  });
+
   it("words the list and the note a held receipt carries", () => {
     expect(listWords(["total"])).toBe("total");
     expect(listWords(["retailer", "date"])).toBe("retailer and date");
@@ -42,6 +46,11 @@ describe("typed details", () => {
       expect(result.success).toBe(false);
       expect(result.error?.issues[0]).toMatchObject({ path: [field], message });
     }
+  });
+
+  it("refuses an upload whose date is not a real YYYY-MM-DD date", () => {
+    const result = ManualDetailsSchema.safeParse(typed({ receiptDate: "10/01/2026" }));
+    expect(result.error?.issues[0]).toMatchObject({ path: ["receiptDate"], message: "The date must be a real date written YYYY-MM-DD" });
   });
 
   it("refuses an upload with no total", () => {

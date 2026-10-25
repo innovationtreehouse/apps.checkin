@@ -5,11 +5,20 @@ export interface ReceiptDetails {
   receiptTotalCents: number | null;
 }
 
-/** The required details a receipt lacks, in words a person reads: "retailer", "date", "total". */
+/** Whether `value` is a real calendar date written YYYY-MM-DD, as the date pickers send it. */
+export function isIsoDate(value: string): boolean {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
+}
+
+/**
+ * The required details a receipt lacks, in words a person reads: "retailer", "date", "total". A
+ * date that is not a real YYYY-MM-DD date counts as missing, since no check can read it.
+ */
 export function missingDetails(r: ReceiptDetails): string[] {
   const missing: string[] = [];
   if (!r.retailer?.trim()) missing.push("retailer");
-  if (!r.receiptDate?.trim()) missing.push("date");
+  if (!isIsoDate(r.receiptDate?.trim() ?? "")) missing.push("date");
   if (r.receiptTotalCents === null) missing.push("total");
   return missing;
 }

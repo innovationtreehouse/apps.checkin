@@ -24,7 +24,8 @@ const IMPORT_TRANSACTION_MS = 120_000;
  * intake pipeline as an upload, after the commit, because finalizing pushes it downstream and that
  * cannot roll back; a row whose pipeline fails stays imported in flow_error. Its QB linkage waives
  * only the submitter step and the age gate. Records purchases only, never a reimbursement claim.
- * Idempotent per (org, importSourceId): a re-run skips rows already loaded.
+ * Idempotent per (org, importSourceId): a re-run skips rows already loaded, and runs the pipeline
+ * of any it finds still in "uploaded".
  */
 export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
@@ -34,10 +35,12 @@ export async function importReceipts(rawBatch: unknown) {
 
   const loaded = await db.receiptDetail.findMany({
     where: { orgId, importSourceId: { in: checked.rows.map(({ row }) => row.importSourceId) } },
-    select: { importSourceId: true },
+    select: { id: true, importSourceId: true, state: true },
   });
   const skip = new Set(loaded.map((d) => d.importSourceId));
   const fresh = checked.rows.filter(({ row }) => !skip.has(row.importSourceId));
+  // A row a failed run left in "uploaded" never ran its pipeline, so this run resumes it.
+  const resume = new Map(loaded.flatMap((d): [string, string][] => (d.state === "uploaded" && d.importSourceId ? [[d.importSourceId, d.id]] : [])));
 
   const ids = await insertReceiptsTogether(
     fresh.map(({ row: r, file, mimeType }) => ({
@@ -69,7 +72,7 @@ export async function importReceipts(rawBatch: unknown) {
     throw new ServiceError(500, `Import refused; nothing was imported. ${err instanceof Error ? err.message : String(err)}`);
   });
 
-  const imported = new Map(fresh.map(({ row }, i) => [row.importSourceId, ids[i]]));
+  const imported = new Map([...resume, ...fresh.map(({ row }, i): [string, string] => [row.importSourceId, ids[i]])]);
   const results: ImportRowResult[] = [];
   for (const { row } of checked.rows) {
     const id = imported.get(row.importSourceId);

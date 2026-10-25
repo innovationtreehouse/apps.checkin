@@ -24,6 +24,13 @@ describeDb("a receipt missing its retailer, date or total", () => {
     expect(row?.valueAfter).toBe("submitter_review (missing retailer, total)");
   });
 
+  it("goes to its submitter when OCR reads a date that is not a real date", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: okOcr({ receiptDate: "April" }) });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(r.state).toBe("submitter_review");
+    expect(r.validationNotes).toBe("This receipt is missing its date. Fill it in, then confirm.");
+  });
+
   it("cannot be confirmed until the submitter fills the details in, then moves on", async () => {
     configure({ receiptSink: ports.receiptSink, ocr: okOcr({ retailer: "", receiptTotal: null }) });
     const r = await receiptService.upload(textFile(), "text/plain", {});

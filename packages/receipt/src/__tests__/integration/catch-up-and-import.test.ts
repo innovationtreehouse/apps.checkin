@@ -190,6 +190,17 @@ describeDb("historical import", () => {
     expect(res.results.map((x) => [x.importSourceId, x.status])).toEqual([["s1", "skipped"], ["s2", "processed"]]);
   });
 
+  it("runs the pipeline on a re-run for a loaded row a failed run left in uploaded", async () => {
+    actAs(FINANCE);
+    const first = await importReceipts([importRow("p1")]);
+    const [{ id }] = first.results;
+    if (!id) throw new Error("the import returned no receipt id");
+    await db.receiptDetail.update({ where: { id }, data: { state: "uploaded" } });
+    await db.receipt.update({ where: { id }, data: { pushedAt: null } });
+    const again = await importReceipts([importRow("p1")]);
+    expect(again.results).toEqual([expect.objectContaining({ importSourceId: "p1", status: "processed", id, state: "receipt_finalized" })]);
+  });
+
   it("refuses a row with no date", async () => {
     actAs(FINANCE);
     const dateless: Record<string, unknown> = importRow("d1");
