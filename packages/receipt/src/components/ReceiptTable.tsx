@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { dollars, STATE_LABELS, type ReceiptListRow } from "./api";
+import { dollars, isDiscardedDuplicate, receiptStateLabel, type ReceiptListRow } from "./api";
 import { SUBMITTER_ACTION_STATES } from "../nav";
 
 /**
  * One row per receipt, linking to `detailHref` (its detail page). `paid` adds the reimbursement
  * column; `flagMine` marks the rows that wait on their uploader; `delivery` adds each
- * undelivered receipt's latest push failure and whether catch-up has given up on it.
+ * undelivered receipt's latest push failure and whether catch-up has given up on it. A receipt
+ * discarded as a duplicate says so, linking the receipt it duplicates when the view carries it.
  */
 export default function ReceiptTable({
   rows,
@@ -45,7 +46,10 @@ export default function ReceiptTable({
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
               <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
-                {STATE_LABELS[r.state] ?? r.state}
+                {receiptStateLabel(r)}
+                {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
+                  <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
+                )}
                 {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}

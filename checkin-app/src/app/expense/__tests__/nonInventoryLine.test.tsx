@@ -46,7 +46,9 @@ async function openAssignDialog(line: { gtin13: string | null; nonInventory: boo
       approvals: [],
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: null, status: "pending" }],
-    "/expenses/e1/signoffs": [],
+    "/expenses/e1/signoffs": [
+      { lineItemId: 1, filled: [], missing: [], blocked: [], actions: [{ act: "assign-bucket", primary: true, noteRequired: false }], awaiting: [], mayRecordBoardAuthorization: false },
+    ],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Assign bucket" }));
