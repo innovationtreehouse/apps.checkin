@@ -14,6 +14,7 @@ import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/ap
 import LoadError from "../components/LoadError";
 import NonInventoryBadge from "../components/NonInventoryBadge";
 import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
+import ApproveAllButton from "../components/ApproveAllButton";
 
 interface Line {
   id: number;
@@ -526,6 +527,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       )}
 
       {waitingOnYou > 0 && <Text size="sm" fw={600}>{waitingOnYou} of {e.lineItems.length} lines wait on you.</Text>}
+      <ApproveAllButton base={base} statuses={signoffs.data ?? []} approvals={approvalRows} onDone={reloadAll} />
       <Table>
         <Table.Thead>
           <Table.Tr>

@@ -76,10 +76,53 @@ export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
 const BUCKET_FINAL = "Finance made this line's bucket final; its approver approves it, or a Board member stands in";
 
 /**
- * The program approver's sign-off. A bucket approver approves; a Board member without a conflict
- * may approve any line in place of its approvers, giving the reason, which is kept on the approval
- * and its audit row. Whoever a seat on the line would refuse is refused.
+ * The program approver's sign-off on one line, inside a transaction holding the expense lock. A
+ * bucket approver approves; a Board member without a conflict may approve any line in place of its
+ * approvers, giving the reason, which is kept on the approval and its audit row. Whoever a seat on
+ * the line would refuse is refused. With `soleStandIn`, a Board stand-in is refused while a bucket
+ * approver could approve the line.
  */
+async function approveLocked(
+  tx: Prisma.TransactionClient,
+  actor: ReturnType<typeof actorOf>,
+  expense: Awaited<ReturnType<typeof lockedInOwnerApproval>>,
+  approval: ApprovalRead & { lineItemId: number },
+  text: string | null,
+  soleStandIn = false,
+): Promise<void> {
+  if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
+  const facts = (await signoffFactsByLine(tx, expense)).get(approval.lineItemId)!;
+  const filled = (await filledSeatsByLine(tx, expense.id)).get(approval.lineItemId) ?? [];
+  const refusal = approvalRefusal(facts, filled, actor.userId);
+  if (refusal) throw new ServiceError(403, refusal);
+  const standIn = approvesAsStandIn(facts, actor.userId);
+  if (standIn && soleStandIn && facts.approvers.some((id) => approvalRefusal(facts, filled, id) === null)) {
+    throw new ServiceError(403, "A bucket approver can approve this line; a Board member approves it on its own, giving the reason");
+  }
+  if (standIn && !facts.orgLevel && !text) {
+    throw new ServiceError(400, "A Board member approving in place of the bucket's approvers gives the reason");
+  }
+  const notes = standIn ? text : null;
+  await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
+  await writeAudit(tx, actor, {
+    expenseId: expense.id,
+    action: standIn ? "line_item_approved_board_stand_in" : "line_item_approved",
+    lineItemId: approval.lineItemId,
+    notes,
+  });
+}
+
+/** Locks the expense and returns it, refused unless it waits for owner approval with its reimbursee known. */
+async function lockedInOwnerApproval(tx: Prisma.TransactionClient, expenseId: string) {
+  await lockExpense(tx, expenseId);
+  const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
+  return expense;
+}
+
+/** Approves one line; see approveLocked for who may. */
 export async function approveLine(
   principal: ExpensePrincipal,
   expenseId: string,
@@ -89,31 +132,44 @@ export async function approveLine(
   const actor = actorOf(principal);
   const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
-  const text = reason?.trim() || null;
 
   // Facts are read under the expense row lock, so a seat or another approval cannot commit
   // between the eligibility check and the write.
   await db.$transaction(async (tx) => {
-    await lockExpense(tx, expenseId);
-    const expense = (await tx.expense.findUnique({ where: { id: expenseId } }))!;
-    if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
-    if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
-    const facts = (await signoffFactsByLine(tx, expense)).get(approval.lineItemId)!;
-    const filled = (await filledSeatsByLine(tx, expenseId)).get(approval.lineItemId) ?? [];
-    const refusal = approvalRefusal(facts, filled, actor.userId);
-    if (refusal) throw new ServiceError(403, refusal);
-    const standIn = approvesAsStandIn(facts, actor.userId);
-    if (standIn && !facts.orgLevel && !text) {
-      throw new ServiceError(400, "A Board member approving in place of the bucket's approvers gives the reason");
-    }
-    const notes = standIn ? text : null;
-    await transition(tx, approval, { status: "approved", decidedAt: new Date(), decidedByUserId: actor.userId, notes });
-    await writeAudit(tx, actor, {
-      expenseId,
-      action: standIn ? "line_item_approved_board_stand_in" : "line_item_approved",
-      lineItemId: approval.lineItemId,
-      notes,
+    const expense = await lockedInOwnerApproval(tx, expenseId);
+    await approveLocked(tx, actor, expense, approval, reason?.trim() || null);
+  });
+
+  await checkApprovalAutoTransition(expenseId, actor);
+}
+
+/**
+ * Approve All: approves every listed line under one expense lock, each through the same checks as
+ * a single approval, or none of them. A Board stand-in is approved only on a line no bucket
+ * approver can approve. A refusal names the line by its number.
+ */
+export async function approveLines(principal: ExpensePrincipal, expenseId: string, approvalIds: number[]): Promise<void> {
+  const actor = actorOf(principal);
+  const ids = [...new Set(approvalIds)];
+  if (ids.length === 0) throw new ServiceError(400, "Name at least one line to approve");
+
+  await db.$transaction(async (tx) => {
+    const expense = await lockedInOwnerApproval(tx, expenseId);
+    const approvals = await tx.lineItemOwnerApproval.findMany({
+      where: { expenseId, id: { in: ids } },
+      include: { lineItem: { select: { lineNumber: true } } },
+      orderBy: { lineItem: { lineNumber: "asc" } },
     });
+    if (approvals.length !== ids.length) throw new ServiceError(404, "Approval record not found");
+    for (const approval of approvals) {
+      try {
+        // No reason: a stand-in line that needs one is refused, as a single approval without it is.
+        await approveLocked(tx, actor, expense, approval, null, true);
+      } catch (err) {
+        if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${approval.lineItem.lineNumber}: ${err.message}`);
+        throw err;
+      }
+    }
   });
 
   await checkApprovalAutoTransition(expenseId, actor);
