@@ -18,7 +18,7 @@ CREATE TABLE "receipt_pair_decisions" (
     CONSTRAINT "receipt_pair_decisions_kind_check" CHECK ("kind" IN ('different', 'copy_of')),
     -- copy_of names which of the two is the copy; different names none.
     CONSTRAINT "receipt_pair_decisions_copy_check" CHECK (
-        ("kind" = 'copy_of' AND "copy_receipt_id" IN ("receipt_id", "other_receipt_id"))
+        ("kind" = 'copy_of' AND "copy_receipt_id" IS NOT NULL AND "copy_receipt_id" IN ("receipt_id", "other_receipt_id"))
         OR ("kind" = 'different' AND "copy_receipt_id" IS NULL)
     )
 );
