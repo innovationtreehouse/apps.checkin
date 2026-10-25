@@ -15,40 +15,37 @@ const ALL_ZERO = {
   expense: { states: zeros("pending", "qb_pending", "qb_complete") },
 };
 
-const section = (name: string) => screen.findByRole("region", { name });
+/** Each body row of the table as [section, state, count]. */
+const rows = async () => {
+  const table = await screen.findByRole("table", { name: "Records in each state" });
+  return within(table).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+};
 
 beforeEach(() => resetRtl());
 
 describe("receipt flow status page", () => {
-  it("shows every section with zeros for FINANCE, and when the counts were read", async () => {
+  it("lists every state in flow order for FINANCE, and when the counts were read", async () => {
     setSession({ id: 1, isFinance: true });
     mockFetchJson({ "/api/receipt-flow/status": ALL_ZERO });
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    const receipts = await section("Receipts");
-    for (const s of ALL_ZERO.receipt.states) expect(within(receipts).getByText(s.label)).toBeInTheDocument();
-    expect(within(receipts).getByText("Done, not yet sent to receiving")).toBeInTheDocument();
-    expect(within(receipts).getAllByText("0")).toHaveLength(4);
-
-    const receiving = await section("Receiving");
-    expect(within(receiving).getByText("Label applying")).toBeInTheDocument();
-    expect(within(receiving).getAllByText("0")).toHaveLength(4);
-
-    const expenses = await section("Expenses");
-    expect(within(expenses).getAllByText("0")).toHaveLength(3);
-
+    expect(await rows()).toEqual([
+      ...ALL_ZERO.receipt.states.map((s) => ["Receipts", s.label, "0"]),
+      ["Receipts", "Done, not yet sent to receiving", "0"],
+      ...ALL_ZERO.receiving.states.map((s) => ["Receiving", s.label, "0"]),
+      ...ALL_ZERO.expense.states.map((s) => ["Expenses", s.label, "0"]),
+    ]);
     expect(screen.getByText(/^As of /)).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("shows an inventory manager the receiving section alone", async () => {
+  it("shows an inventory manager the receiving rows alone", async () => {
     setSession({ id: 2, isInventoryManager: true });
     mockFetchJson({ "/api/receipt-flow/status": { asOf: ALL_ZERO.asOf, receiving: { states: [{ state: "applying", label: "Applying", count: 3 }] } } });
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    expect(within(await section("Receiving")).getByText("3")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Receipts" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Expenses" })).toBeNull();
+    expect(await rows()).toEqual([["Receiving", "Applying", "3"]]);
   });
 
   it("says a section is not set up when its library has no database", async () => {
@@ -56,7 +53,7 @@ describe("receipt flow status page", () => {
     mockFetchJson({ "/api/receipt-flow/status": { ...ALL_ZERO, expense: null } });
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    expect(within(await section("Expenses")).getByText("Not set up here.")).toBeInTheDocument();
+    expect((await rows()).at(-1)).toEqual(["Expenses", "Not set up here.", ""]);
   });
 
   it("shows why the counts failed to load", async () => {
