@@ -104,7 +104,7 @@ export default function ManualInKindPage() {
         : { message: "Gift recorded, but loading it into inventory failed. Use Retry load in the list.", color: "yellow" });
       rows.reload();
     } catch (e) {
-      notifications.show({ message: errorMessage(e), color: "red" });
+      notifications.show({ message: errorMessage(e), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }

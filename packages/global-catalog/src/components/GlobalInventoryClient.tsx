@@ -69,7 +69,7 @@ function ReferencesTab() {
       await api(`/item-references/${id}/archive`, { method: "POST" });
       await load(debouncedSearch, sortBy, sortDir, showArchived);
       notifications.show({ message: "Reference archived", color: "orange" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleUnarchive(id: number) {
@@ -77,7 +77,7 @@ function ReferencesTab() {
       await api(`/item-references/${id}/unarchive`, { method: "POST" });
       await load(debouncedSearch, sortBy, sortDir, showArchived);
       notifications.show({ message: "Reference unarchived", color: "green" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
   }
 
   const thStyle = { cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const };
@@ -139,7 +139,7 @@ function ConflictsTab({ conflicts, error, onResolved }: { conflicts: ReferenceCo
       await api(`/reference-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ resolution }) });
       onResolved();
       notifications.show({ message: "Conflict resolved", color: "green" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setResolving(false); }
   }
 
@@ -315,7 +315,7 @@ export default function GlobalInventoryClient() {
       close();
       await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
+      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setSubmitting(false); }
   }
 
@@ -328,7 +328,7 @@ export default function GlobalInventoryClient() {
       await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
       notifications.show({ message: "Item archived", color: "orange" });
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
+      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setArchiving(false); }
   }
 
@@ -338,7 +338,7 @@ export default function GlobalInventoryClient() {
       await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
       notifications.show({ message: "Item unarchived", color: "green" });
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
+      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     }
   }
 

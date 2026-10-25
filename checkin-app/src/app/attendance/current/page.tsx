@@ -321,7 +321,7 @@ function KioskDisplayInner() {
       } else {
         const d = await res.json().catch(() => ({}));
         if (d.error === "User is already checked in") {
-          notifications.show({ color: "red", message: d.error, autoClose: 4000 });
+          notifications.show({ color: "red", message: d.error, autoClose: false });
           refreshAttendance();
         } else {
           notifications.show({ color: "red", message: d.error || "Action failed.", autoClose: false });

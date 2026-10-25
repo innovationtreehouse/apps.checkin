@@ -45,7 +45,7 @@ export default function LocationsPage() {
       setDialog(null);
       locations.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }

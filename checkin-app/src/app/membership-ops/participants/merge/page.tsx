@@ -235,7 +235,7 @@ export default function MergeParticipants() {
       if (res.ok) {
         setSuccess(true);
       } else if (typeof data.error === "string" && data.error.includes("lead of a household with other members")) {
-        notifications.show({ color: "red", message: data.error, autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error, autoClose: false });
         // No page-level reload here; clear the stale analyzed selection so the
         // user re-picks (and re-analyzes) against current household state.
         pick(null, null);

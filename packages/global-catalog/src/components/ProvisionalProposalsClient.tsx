@@ -96,7 +96,7 @@ export default function ProvisionalProposalsClient() {
       notifications.show({ message: "Proposal approved, new catalog item created", color: "green" });
       closeApprove();
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setApproving(false); }
   }
 
@@ -108,7 +108,7 @@ export default function ProvisionalProposalsClient() {
       notifications.show({ message: "Proposal rejected", color: "orange" });
       closeReject(); setRejectReason(""); setRejectTarget(null);
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setRejecting(false); }
   }
 
@@ -120,7 +120,7 @@ export default function ProvisionalProposalsClient() {
       notifications.show({ message: "Provisional item mapped to existing catalog entry", color: "blue" });
       closeMap(); setMapGtin(""); setMapTarget(null);
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setMapping(false); }
   }
 

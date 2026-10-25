@@ -72,9 +72,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init });
       const data = await readJson(res);
       if (res.ok) return data;
-      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: 6000 });
+      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: false });
     } catch {
-      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: 6000 });
+      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: false });
     }
     return null;
   };
@@ -155,7 +155,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       else {
         if (res.status === 409) {
           // Race: benign double-submit / stale view — already enrolled.
-          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: 4000 });
+          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: false });
           setNewPartId(""); setPartLabel("");
           fetchProgram();
         } else {

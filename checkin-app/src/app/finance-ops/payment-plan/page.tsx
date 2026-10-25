@@ -101,7 +101,7 @@ export default function PendingParticipantsPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
@@ -140,7 +140,7 @@ export default function PendingParticipantsPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to refuse.", autoClose: false });

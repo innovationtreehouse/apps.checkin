@@ -89,7 +89,7 @@ export default function MembershipPaymentPlansPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
@@ -130,7 +130,7 @@ export default function MembershipPaymentPlansPage() {
       } else {
         const data = await res.json();
         if (res.status === 409) {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to deny.", autoClose: false });
