@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../src/*"],
+      "@checkin/*/nav": ["../../packages/*/src/nav.ts"]
+    }
+  },
+  "include": ["**/*.ts", "../test-support/**/*.ts", "../flow-tests/helpers.ts", "../src/**/*.ts", "../../packages/*/src/**/*.ts"]
+}

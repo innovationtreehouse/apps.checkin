@@ -15,6 +15,7 @@ node_modules
 # testing
 coverage/
 test-results/
+playwright-report/
 .jest-cache
 
 # next.js
