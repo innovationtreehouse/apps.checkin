@@ -364,6 +364,26 @@ describe('the confirmation that signs a reimbursement', () => {
     });
 });
 
+describe('the discard route', () => {
+    const DISCARD = 'POST /api/receipts/[id]/discard';
+
+    it('holds the submitter view alone, so no role acts on it org-wide', () => {
+        expect(getRoute(DISCARD)?.orderedView).toEqual(getRoute('POST /api/receipts/[id]/submitter-discard')?.orderedView);
+        expect(getRoute(DISCARD)?.orderedView.map(([role]) => role)).toEqual(['authenticated']);
+    });
+
+    it.each([
+        ['FINANCE', { isFinance: true }],
+        ['the Board', { isBoardMember: true }],
+    ] as [string, Flags][])("returns %s nothing of another person's receipt", async (_who, flags) => {
+        signIn(5, { ...flags, ageBand: 'adult', isActiveOrgMember: true });
+        const other = { id: 'r-1', uploadedByUserId: 8, receiptTotalCents: 6989, donorFirstName: 'Pat' };
+        const res = await handler(DISCARD, async () => ({ ReceiptView: other }))(request(DISCARD), params);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({});
+    });
+});
+
 describe('the submitter view', () => {
     const own = getRoute('GET /api/receipts/mine')?.orderedView[0][1] as readonly Token[];
     const ctx = { selfId: 7 } as CallerContext;

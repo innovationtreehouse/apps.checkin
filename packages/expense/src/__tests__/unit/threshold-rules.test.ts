@@ -1,6 +1,7 @@
 /** Which threshold changes are the Board's: the direction each field loosens in, and its policy value. */
 import { describe, it, expect } from "vitest";
 import { DEFAULT_EXPENSE_SETTINGS, THRESHOLD_RULES, boardOnlyChanges } from "../../services/settingsService";
+import { financeCeilingCents } from "../../lib/threshold-rules";
 
 const current = { ...DEFAULT_EXPENSE_SETTINGS, capitalTotalThresholdCents: 500_000 };
 
@@ -35,5 +36,26 @@ describe("boardOnlyChanges", () => {
       "everydayItemLimitCents",
     ]);
     expect(boardOnlyChanges(current, { everydayTotalLimitCents: 50_000, everydayItemLimitCents: 25_000 })).toEqual([]);
+  });
+});
+
+describe("financeCeilingCents", () => {
+  it("is the policy value, or the saved value when that is already higher", () => {
+    expect(financeCeilingCents("boardReviewTotalCents", 100_000)).toBe(200_000);
+    expect(financeCeilingCents("boardReviewTotalCents", 300_000)).toBe(300_000);
+  });
+
+  it("is the saved value for a capital threshold, which has no policy value", () => {
+    expect(financeCeilingCents("capitalTotalThresholdCents", 500_000)).toBe(500_000);
+    expect(financeCeilingCents("capitalLineItemThresholdCents", 0)).toBe(0);
+  });
+
+  it("is null for an Everyday limit, which is the Board's either way", () => {
+    expect(financeCeilingCents("everydayTotalLimitCents", 50_000)).toBeNull();
+  });
+
+  it.each(Object.keys(THRESHOLD_RULES) as (keyof typeof THRESHOLD_RULES)[])("%s: setting it to the ceiling is FINANCE's", (field) => {
+    const ceiling = financeCeilingCents(field, current[field]);
+    if (ceiling !== null) expect(boardOnlyChanges(current, { [field]: ceiling })).toEqual([]);
   });
 });

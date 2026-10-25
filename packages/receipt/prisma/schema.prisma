@@ -79,6 +79,9 @@ model Receipt {
   lineItems     ReceiptLineItem[]
   auditLogs     ReceiptAuditLog[]
 
+  pairDecisions      ReceiptPairDecision[] @relation("PairDecisionReceipt")
+  pairDecisionsOther ReceiptPairDecision[] @relation("PairDecisionOtherReceipt")
+
   // NOT unique by design: a re-uploaded duplicate file must insert so the
   // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
   @@index([orgId, fileHash], name: "receipts_org_id_file_hash_idx")
@@ -233,6 +236,42 @@ model ReceiptAuditLog {
   @@index([receiptId])
   @@index([userId, action, changedAt])
   @@map("receipt_audit_log")
+}
+
+// Finance's latest duplicate decision on one pair of receipts (#2516 design §6.3). The pair is
+// unordered and stored once: receiptId < otherReceiptId, a CHECK in the migration.
+model ReceiptPairDecision {
+  /// @sensitivity:internal
+  id              Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId           String   @map("org_id")
+  /// Either receipt may be another submitter's: pii keeps it off the submitter's own view.
+  /// @sensitivity:pii
+  receiptId       String   @map("receipt_id")
+  /// Either receipt may be another submitter's: pii keeps it off the submitter's own view.
+  /// @sensitivity:pii
+  otherReceiptId  String   @map("other_receipt_id")
+  // different | copy_of
+  /// @sensitivity:internal
+  kind            String
+  /// For copy_of, which of the two receipts is the copy; null for different.
+  /// @sensitivity:pii
+  copyReceiptId   String?  @map("copy_receipt_id")
+  // The deciding Person.id.
+  /// @sensitivity:internal
+  decidedByUserId Int      @map("decided_by_user_id")
+  /// @sensitivity:internal
+  decidedAt       DateTime @default(now()) @map("decided_at")
+  /// @sensitivity:personal
+  note            String?
+
+  // Restrict: a decision is a human record, so deleting a receipt never drops it.
+  receipt      Receipt @relation("PairDecisionReceipt", fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  otherReceipt Receipt @relation("PairDecisionOtherReceipt", fields: [otherReceiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([receiptId, otherReceiptId], name: "receipt_pair_decisions_pair_unique")
+  @@index([otherReceiptId])
+  @@map("receipt_pair_decisions")
 }
 
 // Gmail intake ledger (phase G). One row per file a message yields: an attachment,
