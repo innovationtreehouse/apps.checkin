@@ -535,7 +535,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
 | Q12 | ~~A "hide for now" button besides Not this one?~~ | **Decided by @thpr: no**, "too much complexity". Not this one with Undo is the only dismiss. | — |
 | Q13 | ~~A weak similar-date tier?~~ | **Decided by @thpr:** yes, ±7 days, weak label, not in the first pass. Filed as #2591. | — |
-| Q14 | Should a match on an expense **rejected at sign-off** get the "rejected" label? Its receipt reads "Finalized" on the receipt side, and the posting check skips rejected expenses, so the careful second look @thpr asked for doesn't happen for it today. | (a) Yes: the posting check includes rejected expenses, flagged as rejected with the sign-off note, labelled as on the receipt side (Q2). (b) Yes, on the receipt side: the compare shows the expense's outcome, which needs the expense status sent back to the receipt library. (c) No: a rejected expense is never paid. | **(a).** It keeps the change inside the expense library, and uses the hold already designed. |
+| Q14 | ~~Should a match on an expense rejected at sign-off get the "rejected" label?~~ | **Dropped.** @thpr: a budget owner can't reject an expense outright; it is a real expense of the corporation, and finance has to place it somewhere. The code still lets finance end one as `rejected` by rejecting a budget owner's exception, which is a question for the expense design, not this one. | — |
 
 ---
 
