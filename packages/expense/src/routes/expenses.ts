@@ -10,7 +10,7 @@ import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
 import { callerId } from "../lib/caller";
-import { SEATS, type FilledSeat } from "../lib/signoff";
+import { CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
   approveLine,
   assignOwner,
@@ -83,10 +83,15 @@ function parseView(raw: string | null, fallback?: QueueView): QueueView {
   return view as QueueView;
 }
 
-async function listWhere(principal: ExpensePrincipal, view: QueueView): Promise<Prisma.ExpenseWhereInput> {
+async function listWhere(principal: ExpensePrincipal, view: QueueView, activeOnly = false): Promise<Prisma.ExpenseWhereInput> {
   const scope = await viewerScope(principal);
-  return { AND: [scopedExpenses(await getOrgId(), scope), viewWhere(view, scope)] };
+  const where = [scopedExpenses(await getOrgId(), scope), viewWhere(view, scope)];
+  if (activeOnly) where.push({ state: { notIn: [...CLOSED_STATES] } });
+  return { AND: where };
 }
+
+/** `active=1` drops closed expenses from the list and its count. */
+const activeOnly = (sp: URLSearchParams) => sp.get("active") === "1";
 
 /** The expense, or 404 when it is not in this org or not in the caller's scope. */
 async function visibleExpense(principal: ExpensePrincipal, id: string) {
@@ -98,12 +103,13 @@ async function visibleExpense(principal: ExpensePrincipal, id: string) {
 
 export const list: ExpenseRouteHandler = async ({ req }) => {
   const sp = query(req);
-  const where = await listWhere(await getPrincipal(), parseView(sp.get("view"), "all"));
+  const where = await listWhere(await getPrincipal(), parseView(sp.get("view"), "all"), activeOnly(sp));
   return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) }) };
 };
 
 export const count: ExpenseRouteHandler = async ({ req }) => {
-  const where = await listWhere(await getPrincipal(), parseView(query(req).get("view"), "all"));
+  const sp = query(req);
+  const where = await listWhere(await getPrincipal(), parseView(sp.get("view"), "all"), activeOnly(sp));
   return { ExpenseListCount: { total: await db.expense.count({ where }) } };
 };
 

@@ -63,11 +63,18 @@ export const UploadInputSchema = z
   .object({
     details: ManualDetailsSchema.optional(),
     needsReimbursement: z.boolean().default(false),
+    // The person reimbursed; unset means the uploader.
+    reimburseePersonId: z.number().int().positive().optional(),
     isInKind: z.boolean().default(false),
     donor: DonorInputSchema.optional(),
   })
   .strict()
-  .superRefine(inKindRules);
+  .superRefine(inKindRules)
+  .superRefine((input, ctx) => {
+    if (input.reimburseePersonId !== undefined && !input.needsReimbursement) {
+      ctx.addIssue({ code: "custom", path: ["reimburseePersonId"], message: "A reimbursee needs needsReimbursement" });
+    }
+  });
 export type UploadInput = z.input<typeof UploadInputSchema>;
 
 export const InKindInputSchema = z

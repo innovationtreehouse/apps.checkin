@@ -12,7 +12,7 @@
  * holds are kept out of its matching. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
- * large-value warning through the expense library's capital-equipment amount.
+ * large-value warning through the expense library's capital review line threshold.
  * Boot stays DB-free.
  */
 import { configureBulkDonation } from "@checkin/bulk-donation";
@@ -69,7 +69,7 @@ const inKind: InKindDirectory = {
   bucketsApprovedBy: signoff.bucketsApprovedBy,
   async largeValueCents() {
     const { getExpenseSettings } = await import("@checkin/expense");
-    return (await getExpenseSettings((await getOrg()).id)).capitalEquipmentUnitCents;
+    return (await getExpenseSettings((await getOrg()).id)).capitalLineItemThresholdCents;
   },
 };
 

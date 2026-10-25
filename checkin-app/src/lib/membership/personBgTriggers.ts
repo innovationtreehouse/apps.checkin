@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { nextBoundary } from "@/lib/membership/renewal";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { bgObligatedWhere, LIVE_PERSON } from "@/lib/person/filters";
 import { systemActor } from "@/lib/auditActor";
@@ -73,8 +74,8 @@ export async function openPersonBg(personId: number, asOf: Date, threshold: Date
  */
 export async function runPersonBgAnnualSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const months = settings?.bgRecheckMonths ?? 0;
-    if (months <= 0) return { opened: 0, reason: "bgRecheckMonths not configured" };
+    const months = settings?.bgRecheckMonths;
+    if (!isRecheckPolicySet(months)) return { opened: 0, reason: "bgRecheckMonths not configured" };
     if (!settings?.orgMembershipYearBoundary) return { opened: 0, reason: "no membership-year boundary configured" };
 
     const boundary = nextBoundary(settings.orgMembershipYearBoundary, now);
@@ -102,8 +103,8 @@ export async function runPersonBgAnnualSweep(now: Date) {
  */
 export async function openPersonBgForNewMember(householdId: number, asOf: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const months = settings?.bgRecheckMonths ?? 0;
-    if (months <= 0) return;
+    const months = settings?.bgRecheckMonths;
+    if (!isRecheckPolicySet(months)) return;
     const threshold = bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
         where: { householdId, ...bgObligatedWhere(asOf), ...LIVE_PERSON },

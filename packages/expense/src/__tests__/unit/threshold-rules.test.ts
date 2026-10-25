@@ -15,10 +15,7 @@ describe("boardOnlyChanges", () => {
   });
 
   it("loosening a policy threshold past its policy value is the Board's", () => {
-    expect(boardOnlyChanges(current, { boardReviewTotalCents: 200_001, capitalEquipmentUnitCents: 60_000 })).toEqual([
-      "boardReviewTotalCents",
-      "capitalEquipmentUnitCents",
-    ]);
+    expect(boardOnlyChanges(current, { boardReviewTotalCents: 200_001 })).toEqual(["boardReviewTotalCents"]);
   });
 
   it("switching a review threshold off is the Board's; switching it on is FINANCE's", () => {

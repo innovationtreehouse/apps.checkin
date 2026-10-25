@@ -18,7 +18,8 @@ const BOARD = "boardmember@example.com";
 const APPROVER = "inventory.manager@example.com";
 const PLAIN = "parent.family@example.com";
 const SUBMITTER = "tool.certifier@example.com";
-const OTHER_ADULT = "certified.adult@example.com";
+const REIMBURSEE = "member.pricing@example.com"; // an adult by date of birth
+const MINOR = "child.family@example.com";
 const PROGRAM = "Woodworking 101";
 
 const PROGRAM_EXPENSE = "seed-expense-program";
@@ -160,12 +161,13 @@ describe("expense — field stripping", () => {
   it("serves an approver internal fields only, FINANCE the submitter too", async () => {
     const approver = await loginAs(APPROVER);
     const finance = await loginAs(FINANCE);
-    const asApprover = await api<ExpenseRow>(approver, E);
-    const asFinance = await api<ExpenseRow>(finance, E);
+    const asApprover = await api<{ Expense: ExpenseRow; ExpenseQueueReason: unknown[] }>(approver, E);
+    const asFinance = await api<{ Expense: ExpenseRow }>(finance, E);
     expect(asApprover.status).toBe(200);
-    expect(asApprover.json.vendorName).toBe("TEST-Lumber Co");
-    expect(asApprover.json.submitterId).toBeUndefined();
-    expect(asFinance.json.submitterId).toBe(10);
+    expect(asApprover.json.Expense.vendorName).toBe("TEST-Lumber Co");
+    expect(asApprover.json.Expense.submitterId).toBeUndefined();
+    expect(asApprover.json.ExpenseQueueReason).toEqual([]);
+    expect(asFinance.json.Expense.submitterId).toBe(10);
   });
 
   it("confines an approver's list to their bucket's expenses", async () => {
@@ -249,8 +251,8 @@ describe("expense — FINANCE journey", () => {
     type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
     const reasonsOf = async (id: string) =>
       ((await api<QueueRow[]>(f, "/api/expense/finance-queue?tab=expenses")).json.find((r) => r.expenseId === id)?.reasons ?? []).map((x) => x.code);
-    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).toContain("reimbursee_to_name");
-    expect(await reasonsOf(HELD_EXPENSE)).toContain("tax_not_reviewed");
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).toContain("REIMBURSEE_TO_NAME");
+    expect(await reasonsOf(HELD_EXPENSE)).toContain("TAX_NOT_REVIEWED");
     expect((await api<{ expenses: { total: number } }>(f, "/api/expense/finance-queue/counts")).json.expenses.total).toBeGreaterThan(0);
 
     // Holds: set an account on the held line, then resubmit.
@@ -261,17 +263,17 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
-    // Reimbursee: FINANCE names the uploader, the only person it may name, which clears the queue reason.
-    const reimbursee = (await loginAs(SUBMITTER)).personaId;
-    const other = (await loginAs(OTHER_ADULT)).personaId;
+    // Reimbursee: FINANCE names an adult other than the uploader, never itself or a minor, which clears the queue reason.
+    const reimbursee = (await loginAs(REIMBURSEE)).personaId;
+    const minor = (await loginAs(MINOR)).personaId;
     const R = `/api/expense/expenses/${REIMBURSEMENT_EXPENSE}/reimbursee`;
     expect((await send(f, "PUT", R, { personId: f.personaId })).status).toBe(403);
-    expect((await send(f, "PUT", R, { personId: other })).status).toBe(403);
+    expect((await send(f, "PUT", R, { personId: minor })).status).toBe(400);
     const set = await send(f, "PUT", R, { personId: reimbursee });
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });
     expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
-    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).not.toContain("reimbursee_to_name");
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).not.toContain("REIMBURSEE_TO_NAME");
 
     // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
