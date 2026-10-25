@@ -272,6 +272,27 @@ column shows the file, vendor, date, numbers, totals, lines, state, uploader
 (finance view only) and the tier labels that tie it to the group. On a phone
 the columns stack, as #2549's do.
 
+With several matches the columns run off the side of the screen, and the two
+finance actually needs to compare may be far apart. So each match's column
+has a **Not this one** button, as in a shop's product compare:
+
+- It records *different purchases* for the viewed receipt and that one match
+  (§6.3), then the panel recomputes the group and redraws without that
+  column. The rest close up, so the remaining suspects sit side by side.
+- Dismissed matches collect in a strip above the columns: "Dismissed: Home
+  Depot, 3 Oct · Undo". Undo deletes that pair decision, and the column
+  returns. Undo is offered while the viewed receipt is still held; once it
+  has moved on, the decision stands like any other.
+- Dismissing a rejected match asks for the note Q7 requires, so the careful
+  second look can't be skipped a column at a time.
+- The same people may dismiss as may decide the group (§6.1). A submitter
+  never sees another person's receipt, so never sees this button.
+- A dismissed match can still be in the group through another member: if B
+  is dismissed against A but C matches both, the group still holds all
+  three, and B shows in C's view, not in A's.
+- When the last match is dismissed, the receipt has no undecided match and
+  leaves the hold, exactly as **Different purchases** does (§6.2).
+
 ### 5.4 The queue
 
 The Duplicates tab in Finance review (#2481's Receipts group) shows one row
@@ -299,11 +320,13 @@ see only that finance will check it, and nothing about the other receipt
 
 ### 6.2 The decisions
 
-One act decides the whole group:
+One act decides the whole group, or finance can work it a match at a time
+with **Not this one** (§5.3):
 
 | Action | What it does | Required |
 | --- | --- | --- |
-| **Different purchases** | Records, for every pair in the group, that they are different purchases. Every held member re-runs the pipeline and carries on to arithmetic, submitter and finance checks. | A note, only when the group has a rejected member (Q7) |
+| **Not this one** (per match) | Records that the viewed receipt and that one match are different purchases. The group is recomputed and the panel redraws. When no undecided match is left, the receipt re-runs the pipeline. | A note, when that match is rejected (Q7) |
+| **Different purchases** | Dismisses every remaining match at once: records, for every pair in the group, that they are different purchases. Every held member re-runs the pipeline and carries on to arithmetic, submitter and finance checks. | A note, only when the group has a rejected member (Q7) |
 | **Keep this one** | Discards every other *open* member and records each as a copy of the kept one. The kept receipt then has no undecided live match, so it leaves the hold and re-runs the pipeline. Finalized and rejected members are left as they are. | Nothing; picking the keeper is the decision |
 | **Discard** | Discards this receipt only, as today. The rest of the group is recomputed. | Nothing |
 
@@ -428,6 +451,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q9 | A duplicate found **only at posting**: how does finance stop it? | (a) New `DUPLICATE_WITHDRAWN` event to the existing `rejected`, with a note naming the other expense. (b) Reuse `qb_skipped` ("not posted"). (c) Leave it posted and void in QuickBooks. | **(a).** (b) means "already booked in QuickBooks" for backfill, and reusing it would blur that; (c) books it first and undoes it later. |
 | Q10 | **Existing cleared receipts** at cutover: what do they become? | (a) A *different* decision against their recorded suspect only, then re-checked like any other. (b) Re-check everything with no carry-over. (c) Keep the blanket exemption for old rows. | **(a).** Keeps what finance actually decided and nothing more. |
 | Q11 | **Already-finalized groups** at cutover? | (a) A one-time list for finance, no state change. (b) Let the posting re-check find the unposted ones; ignore the posted ones. | **(a)**, plus (b) for free. Posted pairs can only be fixed in QuickBooks, and finance should know they exist. |
+| Q12 | Besides **Not this one**, a **hide for now** that records nothing and only tidies the view? | (a) No; Not this one with Undo covers it. (b) Yes, as a second button. | **(a).** Undo makes a recorded dismissal as cheap as a hidden one, and two near-identical buttons, one that saves a decision and one that doesn't, are easy to confuse. |
 
 ---
 

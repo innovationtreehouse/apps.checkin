@@ -25,8 +25,8 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) and for re-check after discard (§6.4) | #2515 merged |
 | 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped). Fill it from today's cleared receipts per Q10 | Q10 |
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
-| 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7 |
-| 5 | app | N-way compare panel (extends #2549), one queue row per group, the badge on open members, the submitter's message | Q6 |
+| 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7, Q12 |
+| 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
 | 6 | app | Date and number normalisation, and the editor's date input | Q3 |
 | 7 | app | Posting re-check: the receipt push carries decided-different receipt ids (contract change in `receipt-types`), the derived QuickBooks-tab reason, the outbox skip, and the stop action | Q8, Q9 |
 | 8 | ops + docs | One-time list of finalized groups for finance (Q11); extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
