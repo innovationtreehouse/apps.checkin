@@ -72,6 +72,8 @@ function signIn(id: unknown, flags: Flags = {}) {
 }
 
 const RECEIPT = /^[A-Z]+ \/api\/receipts(\/|$)/;
+/** The reimbursee's confirmation: any signed-in person is admitted, and the library decides. */
+const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -89,8 +91,8 @@ describe('receipt routes are registered', () => {
         expect(fileRoutes.sort()).toEqual(['GET /api/receipts/[id]/file', 'GET /api/receipts/mail-items/[id]/file']);
     });
 
-    it('never admits public, kiosk or plain authenticated callers', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes]) {
+    it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s confirmation', () => {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !CONFIRMATION_ROUTES.includes(e))) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
@@ -308,6 +310,57 @@ describe('the reimbursee options', () => {
         );
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual([{ id: 42, name: 'Sam Lee' }]);
+    });
+});
+
+describe('the confirmation that signs a reimbursement', () => {
+    const views = (e: string) => new Map(getRoute(e)!.orderedView);
+    const line = { id: 1, reimburseePersonId: 9, lineNumber: 1, description: 'Arduino', quantity: 1, unitPriceCents: 6989, totalPriceCents: 6989, isDelayed: false };
+    const row = {
+        id: 'r-1', reimburseePersonId: 9, state: 'submitter_review', retailer: 'Acme', receiptDate: '2026-10-01', currency: 'USD',
+        shippingCents: 0, taxCents: 0, discountCents: 0, receiptTotalCents: 6989, onBehalf: false, changedFields: [],
+        uploadedByUserId: 7, reimbursementFor: 'Sam Lee', validationNotes: 'note', lineItems: [line],
+    };
+
+    it('admits any signed-in person, and shows the Board everyone\'s and anyone else their own', () => {
+        for (const e of CONFIRMATION_ROUTES) {
+            expect(getRoute(e)?.authorize).toBe('authenticated');
+            expect(getRoute(e)?.orderedView).toEqual([['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]]);
+        }
+    });
+
+    it('returns the person reimbursed the receipt and lines, and no uploader, name or note', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        const out = stripValue('ReceiptConfirmationView', row, own, { selfId: 9 } as CallerContext) as Record<string, unknown>;
+        const { uploadedByUserId: _u, reimbursementFor: _r, validationNotes: _v, ...expected } = row;
+        expect(out).toEqual(expected);
+    });
+
+    it('returns nothing to anyone else, the uploader included', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [{}] });
+    });
+
+    it('returns a Board member the receipt they confirm on the reimbursee\'s behalf', () => {
+        const board = views(CONFIRMATION_ROUTES[1]).get('isBoardMember')!;
+        const out = stripValue('ReceiptConfirmationView', { ...row, onBehalf: true }, board, { selfId: 5 } as CallerContext) as Record<string, unknown>;
+        expect(out.onBehalf).toBe(true);
+        expect(out.lineItems).toEqual([line]);
+        expect(out).not.toHaveProperty('reimbursementFor');
+    });
+
+    it('admits a reimbursee whose membership lapsed, who is no receipt submitter', async () => {
+        const lapsed = { type: 'session', user: user(9, { ageBand: 'adult', isActiveOrgMember: false }) } as AuthResult;
+        for (const e of CONFIRMATION_ROUTES) {
+            const spec = getRoute(e)!;
+            expect((await resolveAccess('receipt-submitter', { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(false);
+            expect((await resolveAccess(spec.authorize, { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(true);
+        }
+    });
+
+    it('drops a line missing its reimbursee stamp (fails closed)', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationLineView', { id: 1, description: 'Arduino' }, own, { selfId: 9 } as CallerContext)).toEqual({});
     });
 });
 
