@@ -246,6 +246,8 @@ afterAll(async () => {
   const board = await loginAs(BOARD);
   await send(board, "DELETE", `/api/budget-owners/${bucketId}/treasurers/${(await loginAs(TREASURER)).personaId}`);
   await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
+  // Archive is the only removal: library rows reference buckets by id.
+  expect((await send(await loginAs(FINANCE), "POST", `/api/budget-owners/${bucketId}/archive`)).status).toBe(200);
   for (const library of LIBRARY_KEYS.filter((l) => !releasedBefore.includes(l))) await release(board, library, false);
 });
 

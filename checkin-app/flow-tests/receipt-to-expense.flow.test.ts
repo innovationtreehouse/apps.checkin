@@ -55,6 +55,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
+  // Archive is the only removal: the booked expense line still references the bucket by id.
+  expect((await post(finance, `/api/budget-owners/${bucketId}/archive`)).status).toBe(200);
   if (original) await post(submitter, `/api/receipts/${original.id}/submitter-discard`);
 });
 
