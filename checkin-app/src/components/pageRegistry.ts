@@ -20,6 +20,7 @@ import { MEMBERSHIP_OPS, isMembershipOpsAdmin } from '@/lib/nav/sections/members
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
 import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
+import { DONATIONS as DONATIONS_SECTION } from '@/lib/nav/sections/donations';
 import { FINANCE, FINANCE_REVIEW_PATH } from '@/lib/nav/sections/finance';
 import { SYSTEM_STATUS } from '@/lib/nav/sections/systemStatus';
 import { SETTINGS } from '@/lib/nav/sections/settings';
@@ -37,7 +38,7 @@ const INVENTORY_UNLOCATED = linkGate(INVENTORY, '/inventory/unlocated');
 const INVENTORY_LOG = linkGate(INVENTORY, '/inventory/inventory-log');
 const PART_MAPPING = linkGate(INVENTORY, '/inventory/receiving');
 const INCOME = linkGate(REVENUE_OPS, '/income');
-const DONATIONS = linkGate(REVENUE_OPS, '/donations');
+const DONATIONS = linkGate(DONATIONS_SECTION, '/donations/uploads');
 // The hub redirects to the first finance tool, so it is listed to their audience.
 const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
 const REVENUE = (href: string): NavGate => linkGate(REVENUE_OPS, href);
@@ -123,8 +124,6 @@ export const PAGES: PageEntry[] = [
   // Part mapping (#1289) — receipt mapping. Mirrors the routes' read gate:
   // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
   { href: '/inventory/receiving', label: 'Part Mapping', section: 'Inventory', keywords: 'receiving receipt mapping proceed apply failed', visible: PART_MAPPING },
-  // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
-  { href: '/inventory/in-kind', label: 'In-kind Gifts', section: 'Inventory', keywords: 'donation donor gift no receipt', visible: linkGate(INVENTORY, '/inventory/in-kind') },
   { href: '/inventory/receiving/audit-log', label: 'Part Mapping Audit Log', section: 'Inventory', keywords: 'receiving receipt mapping history', visible: PART_MAPPING },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
@@ -198,7 +197,6 @@ export const PAGES: PageEntry[] = [
   { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Finance', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
   { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Finance', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
   { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Finance', keywords: 'itfa capital register asset', visible: EXPENSES },
-  { href: '/expense/settings', label: 'Expense Settings', section: 'Finance', keywords: 'threshold capital board review note in lieu', visible: EXPENSES },
 
   // Donations — FINANCE or BOARD
   { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
@@ -212,6 +210,8 @@ export const PAGES: PageEntry[] = [
   { href: '/donations/comment-rules', label: 'Comment Rules', section: 'Donations', keywords: 'donor comment owner rule', visible: DONATIONS },
   { href: '/donations/account-map', label: 'Account Map', section: 'Donations', keywords: 'ledger gl account donation match fees', visible: DONATIONS },
   { href: '/donations/qb-exclusions', label: 'QuickBooks Exclusions', section: 'Donations', keywords: 'quickbooks match exclude', visible: DONATIONS },
+  // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
+  { href: '/donations/in-kind-gifts', label: 'In-kind Gifts', section: 'Donations', keywords: 'donation donor gift no receipt', visible: linkGate(DONATIONS_SECTION, '/donations/in-kind-gifts') },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: SYSTEM },
@@ -228,6 +228,7 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: SETTING('/settings/email') },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: SETTING('/settings/outreach') },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: SETTING('/settings/shopify-webhook') },
+  { href: '/settings/finance', label: 'Finance Settings', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },
 ];
 
 // Routes that exist as page.tsx but are intentionally absent from the directory.

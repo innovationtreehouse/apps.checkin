@@ -30,6 +30,8 @@ const nextConfig: NextConfig = {
     return [
       { source: '/my-programs/:path*', destination: '/programs-i-lead/:path*', permanent: true },
       { source: '/inventory/received-deltas', destination: '/inventory/inventory-log?view=applies', permanent: true },
+      { source: '/expense/settings', destination: '/settings/finance', permanent: true },
+      { source: '/inventory/in-kind', destination: '/donations/in-kind-gifts', permanent: true },
     ];
   },
 };

@@ -47,7 +47,7 @@ describe("Revenue Ops Income and Shopify tabs", () => {
       "/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock", "/income/payouts", "/income/reconciliation",
     ]);
     expect(hrefs(tabs.find((t) => t.name === "Income")?.subLinks ?? [])).toEqual(["/income/items", "/income/exclusions"]);
-    expect(hrefs(tabs)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items", "/donations"]);
+    expect(hrefs(tabs)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items"]);
   });
 
   it("gives FINANCE only the income screens under Shopify, and lands it on Payouts", () => {
@@ -100,21 +100,12 @@ describe("income count provider", () => {
   });
 });
 
-describe("Revenue Ops Donations tab", () => {
-  const c = counts([...LIBRARY_KEYS], { "bulk-donation": { unassignedQueue: 2, disbursementHolds: 1 } });
-
-  it("shows FINANCE the Donations tab once bulk-donation is released, with unassigned + holds as its pill", () => {
-    const tab = visibleLinks(REVENUE_OPS, finance, c).find((t) => t.name === "Donations");
-    expect(tab?.href).toBe("/donations");
-    expect(tab?.badge?.(c)?.count).toBe(3);
+describe("Donations counts", () => {
+  it("leave Revenue Ops for the Donations section", () => {
+    expect(names(visibleLinks(REVENUE_OPS, finance, released))).not.toContain("Donations");
   });
 
-  it("hides it from a non-finance user", () => {
-    expect(visibleLinks(REVENUE_OPS, { isKeyholder: true }, c)).toEqual([]);
-  });
-
-  it("shows Board the tab, but runs the count provider only for FINANCE, the one role that manages donations", () => {
-    expect(names(visibleLinks(REVENUE_OPS, board, c))).toContain("Donations");
+  it("run the count provider only for FINANCE, the one role that manages donations", () => {
     const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "bulk-donation");
     expect([finance, board, sysadmin, lead, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false, false]);
   });
@@ -127,8 +118,8 @@ describe("Revenue Ops counts in the nav payload", () => {
     expect(Object.keys((await collectLibraryCounts(finance, [...LIBRARY_KEYS], providers)) ?? {}).sort()).toEqual(["bulk-donation", "income"]);
   });
 
-  it("carries none for Board, which still sees the Income, Shopify and Donations tabs", async () => {
+  it("carries none for Board, which still sees the Income and Shopify tabs", async () => {
     expect(await collectLibraryCounts(board, [...LIBRARY_KEYS], providers)).toBeUndefined();
-    expect(names(visibleLinks(REVENUE_OPS, board, released))).toEqual(expect.arrayContaining(["Income", "Shopify", "Donations"]));
+    expect(names(visibleLinks(REVENUE_OPS, board, released))).toEqual(expect.arrayContaining(["Income", "Shopify"]));
   });
 });

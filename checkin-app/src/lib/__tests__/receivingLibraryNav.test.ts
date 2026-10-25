@@ -86,22 +86,3 @@ describe("Inventory Receive queue subtab", () => {
     expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
   });
 });
-
-describe("Inventory In-kind gifts tab", () => {
-  const operations: SessionUser = { id: 5, isOperations: true };
-
-  it("shows to FINANCE, Board, operations and an inventory manager once bulk-donation is released", () => {
-    for (const u of [finance, board, operations, manager]) {
-      expect(tabs(u, released)).toContain("/inventory/in-kind");
-    }
-  });
-
-  it("hides from a plain member", () => {
-    expect(tabs(member, released)).not.toContain("/inventory/in-kind");
-  });
-
-  it("hides from operations until bulk-donation is released", () => {
-    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "bulk-donation"));
-    expect(tabs(operations, unreleased)).not.toContain("/inventory/in-kind");
-  });
-});
