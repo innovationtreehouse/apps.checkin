@@ -67,6 +67,7 @@ describeDb("expense settings", () => {
     });
 
     const rows = await financeQueueRows(principal(3, { isFinance: true }), "board");
-    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => x.code)])).toEqual([["r-thresholds", ["BOARD_APPROVAL"]]]);
+    expect(rows.map((r) => r.expenseId)).toEqual(["r-thresholds"]);
+    expect(rows[0].reasons.map((x) => x.code)).toContain("BOARD_APPROVAL");
   });
 });

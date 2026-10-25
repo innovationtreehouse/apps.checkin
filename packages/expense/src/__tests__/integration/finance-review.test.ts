@@ -87,6 +87,17 @@ describeDb("expense reasons", () => {
     expect(await actionable(BOARD)).toEqual([["CAPITAL_REVIEW", false], ["ACCOUNT_HOLD", false]]);
   });
 
+  it("bookkeeping stays actionable for a conflicted finance holder, as the rules allow", async () => {
+    bind();
+    const id = await seedExpense({ state: "capital_review", taxCents: 500 });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    expect((await expenseReasons(CONFLICTED_FINANCE, id)).map((r) => [r.code, r.actionable])).toEqual([
+      ["CAPITAL_REVIEW", true],
+      ["TAX_NOT_REVIEWED", false],
+      ["QB_POST_FAILED", true],
+    ]);
+  });
+
   it("an exhausted post carries the last error in plain words", async () => {
     bind();
     const id = await seedExpense({ state: "qb_complete" });
