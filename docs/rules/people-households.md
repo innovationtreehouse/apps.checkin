@@ -236,6 +236,15 @@ Things the app takes as true because they are handled outside it.
 - Keyholders hold the board's email and phone as the front desk's emergency
   reference. It is a grant made on purpose, not an over-share to be narrowed.  [Decision]
 
+- A badge or the kiosk shows a person by the name they go by: the nickname set for
+  them, else their given name. Their surname appears only when someone shown with
+  them goes by the same name, and then only shortened: the badge takes as many
+  letters as telling the two apart needs, the kiosk at most two. A shortened
+  surname keeps its particles whole ("van der B.", "Ní B."). A name written in
+  Chinese, Japanese or Korean script shows whole, and so does a surname in a script
+  with no initials — except on the kiosk, which leaves such a surname off rather
+  than show all of it.  [Decision]
+
 ### Emergency contacts
 
 - An emergency contact is someone outside the household; one matching a member

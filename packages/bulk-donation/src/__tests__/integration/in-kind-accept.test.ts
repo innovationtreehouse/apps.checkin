@@ -263,6 +263,20 @@ describeDb("warnings", () => {
     await manualGift();
     expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
   });
+
+  it("warns at exactly the large-value amount and not one cent under it", async () => {
+    largeValueCents = 2501;
+    await receiptGift(2500);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: false });
+    largeValueCents = 2500;
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
+  });
+
+  it("warns on every gift when the large-value amount is 0, as an off capital review line threshold reads", async () => {
+    largeValueCents = 0;
+    await receiptGift(1);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
+  });
 });
 
 describeDb("listQueue lookups", () => {

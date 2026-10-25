@@ -96,6 +96,12 @@ export const signoff: SignoffDirectory = {
     const { isActiveOrgMember } = await import("@/lib/orgMembership");
     return isActiveOrgMember(personId);
   },
+
+  async isAdult(personId) {
+    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
+    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { dateOfBirth: true, isDeclaredAdult: true } });
+    return person !== null && isKnownAdult(person);
+  },
 };
 
 function qbTxn(t: QboPurchase | QboBill): QbTxn {

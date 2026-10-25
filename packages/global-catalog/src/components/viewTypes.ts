@@ -10,13 +10,7 @@
  * factories in ../routes/* and the includes in ../repositories/*.
  */
 
-export const USAGE_BEHAVIORS = [
-  "Single Use",
-  "Short Life Consumable",
-  "Long Life Consumable",
-  "Durable",
-] as const;
-export type UsageBehavior = (typeof USAGE_BEHAVIORS)[number];
+export { USAGE_BEHAVIORS, type UsageBehavior } from "@checkin/receipt-types";
 
 export interface CategoryRow {
   id: number;

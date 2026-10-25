@@ -110,7 +110,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
         board,
         conflicted,
         ownerHousehold: bucket === null ? [] : (ownerHouseholds.get(bucket) ?? []),
-        reimburseeSetter: setterRow?.userId ?? null,
+        reimburseeSetter: setterRow?.userId ?? (expense.reimburseePersonId === null ? null : expense.submitterId),
         seatedHouseholds: seated,
         boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),
         approved,

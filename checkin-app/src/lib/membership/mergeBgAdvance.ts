@@ -29,7 +29,7 @@ export async function householdBgFresh(householdId: number | null): Promise<bool
     if (!householdId) return false;
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    return householdBgIsFresh(householdId, boundary, settings?.bgRecheckMonths ?? 0);
+    return householdBgIsFresh(householdId, boundary, settings?.bgRecheckMonths);
 }
 
 /**
