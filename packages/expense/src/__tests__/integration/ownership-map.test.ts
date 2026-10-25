@@ -23,6 +23,16 @@ describeDb("GET ownership-map", () => {
     });
   });
 
+  it("carries only each item's GTIN and name, whatever else the catalog returns", async () => {
+    const fullRow = { gtin13: NAMED, name: "Hex bolt M6", categoryId: 1, subcategoryId: 10, createdByUserId: 9, createdByUsername: "jordan" };
+    bindPorts({ auth: { getPrincipal: async () => principal(3, { isFinance: true }) }, catalog: { ...catalogResolving({}), getItemNames: async () => [fullRow] } });
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+
+    const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {} });
+
+    expect(res.Item).toEqual([{ gtin13: NAMED, name: "Hex bolt M6" }]);
+  });
+
   it("asks the catalog nothing when no part is mapped", async () => {
     const getItemNames = vi.fn(async () => []);
     bindPorts({ auth: { getPrincipal: async () => principal(3, { isFinance: true }) }, catalog: { ...catalogResolving({}), getItemNames } });
