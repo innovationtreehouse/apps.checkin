@@ -6,13 +6,14 @@ import ReceiptDetailPage from "@checkin/receipt/pages/detail";
 const mockReload = jest.fn();
 const mockPush = jest.fn();
 let mockPathname = "/receipts/r1";
+let mockSearch = new URLSearchParams();
 const mockSend = jest.fn<Promise<boolean>, unknown[]>();
 const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "r1" }),
   usePathname: () => mockPathname,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearch,
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
@@ -58,12 +59,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockReceipt = receipt;
   mockPathname = "/receipts/r1";
+  mockSearch = new URLSearchParams();
   mockLandsIn = "financial_review";
   mockSend.mockResolvedValue(true);
   mockApi.mockImplementation(async (path) => (String(path).endsWith("/resubmit") ? { ...receipt, state: mockLandsIn } : {}));
 });
 
-const wrap = () => render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
+const wrap = () => render(<MantineProvider><ReceiptDetailPage queueBase="/finance/review" /></MantineProvider>);
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const shown = () => (notifications.show as jest.Mock).mock.calls.map((c) => c[0]);
 const resubmitted = () => mockApi.mock.calls.some((c) => c[0] === "/r1/resubmit");
@@ -101,7 +103,7 @@ describe("correcting a receipt whose totals don't add up", () => {
   });
 
   it("does not claim success or leave the page when the flow puts it back in Totals off", async () => {
-    mockPathname = "/receipts/review/r1";
+    mockSearch = new URLSearchParams("queue=validation_failed");
     mockLandsIn = "validation_failed";
     wrap();
     type("+ Shipping", "5.50");
@@ -112,12 +114,12 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it("returns to the review queue once the receipt leaves Totals off", async () => {
-    mockPathname = "/receipts/review/r1";
+  it("returns to the finance queue once the receipt leaves Totals off", async () => {
+    mockSearch = new URLSearchParams("queue=validation_failed");
     wrap();
     type("+ Shipping", "5.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/receipts/review?queue=validation_failed"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=validation_failed"));
   });
 
   it("resubmits a saved receipt that already adds up, with nothing to save", async () => {

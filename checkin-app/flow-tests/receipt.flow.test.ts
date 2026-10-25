@@ -89,7 +89,7 @@ describe("receipts — route auth", () => {
 
   it("server-renders the receipt pages (proves the library tsx transpiles)", async () => {
     const finance = await loginAs(FINANCE);
-    for (const path of ["/receipts", "/receipts/upload", "/receipts/review", "/receipts/settings"]) {
+    for (const path of ["/receipts", "/receipts/upload", "/finance/review", "/receipts/settings"]) {
       expect([path, (await api(finance, path)).status]).toEqual([path, 200]);
     }
   });

@@ -2,11 +2,11 @@ import { expenseLibraryCounts } from "../navCounts";
 
 const mockBuckets = jest.fn<Promise<number[]>, [number]>();
 const mockActionCounts = jest.fn();
-const mockOpsCounts = jest.fn();
+const mockQueueCount = jest.fn();
 
 jest.mock("@checkin/expense", () => ({
   getExpenseRuntime: () => ({ signoff: { bucketsApprovedBy: (id: number) => mockBuckets(id) } }),
-  expenseOpsCounts: () => mockOpsCounts(),
+  financeQueueActionable: () => mockQueueCount(),
   signoffsAwaitingCount: async () => 4,
   expenseActionCounts: (p: unknown) => mockActionCounts(p),
 }));
@@ -23,14 +23,13 @@ const ACTIONS = {
 beforeEach(() => {
   mockBuckets.mockReset().mockResolvedValue([]);
   mockActionCounts.mockReset().mockResolvedValue(ACTIONS);
-  mockOpsCounts.mockReset().mockResolvedValue({ holds: 2, openFlags: 1 });
+  mockQueueCount.mockReset().mockResolvedValue(5);
 });
 
 describe("expenseLibraryCounts", () => {
-  it("reports each view's action count and their sum to FINANCE", async () => {
+  it("reports the finance queue count and each view's action count to FINANCE", async () => {
     expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({
-      holds: 2,
-      openFlags: 1,
+      financeQueue: 5,
       awaitingMySignoff: 0,
       approver: 0,
       "actionable:assign_ownership": 1,
@@ -39,7 +38,6 @@ describe("expenseLibraryCounts", () => {
       "actionable:capital_review": 3,
       "actionable:set_depreciation_cycle": 0,
       "actionable:qb_pending": 1,
-      actionable: 7,
     });
     expect(mockActionCounts).toHaveBeenCalledWith({ id: 1, name: null, isFinance: true, isBoard: false });
   });
@@ -49,7 +47,7 @@ describe("expenseLibraryCounts", () => {
     expect(mockActionCounts).toHaveBeenCalledWith({ id: 2, name: null, isFinance: false, isBoard: true });
   });
 
-  it("counts a bucket approver who holds no role", async () => {
+  it("counts a bucket approver who holds no role, without a finance queue count", async () => {
     mockBuckets.mockResolvedValue([100]);
     expect(await expenseLibraryCounts({ id: 3 })).toMatchObject({ approver: 1, awaitingMySignoff: 4, "actionable:owner_approval": 2 });
   });
@@ -63,21 +61,23 @@ describe("expenseLibraryCounts", () => {
     beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
     afterEach(() => jest.restoreAllMocks());
 
-    it("keeps the holds, flags and sign-off pills when the action counts fail", async () => {
+    it("keeps the finance queue and sign-off pills when the action counts fail", async () => {
       mockBuckets.mockResolvedValue([100]);
       mockActionCounts.mockRejectedValue(new Error("db down"));
-      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({ holds: 2, openFlags: 1, awaitingMySignoff: 4, approver: 1 });
+      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({ financeQueue: 5, awaitingMySignoff: 4, approver: 1 });
     });
 
-    it("keeps the action pills when the holds and flags counts fail", async () => {
-      mockOpsCounts.mockRejectedValue(new Error("db down"));
-      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toMatchObject({ "actionable:capital_review": 3, actionable: 7 });
+    it("keeps the action pills when the finance queue count fails", async () => {
+      mockQueueCount.mockRejectedValue(new Error("db down"));
+      const out = await expenseLibraryCounts({ id: 1, isFinance: true });
+      expect(out).toMatchObject({ "actionable:capital_review": 3 });
+      expect(out).not.toHaveProperty("financeQueue");
     });
 
-    it("leaves out a view the service could not count, and sums the rest", async () => {
+    it("leaves out a view the service could not count", async () => {
       mockActionCounts.mockResolvedValue({ assign_ownership: 1, capital_review: 3 });
       const out = await expenseLibraryCounts({ id: 1, isFinance: true });
-      expect(out).toMatchObject({ "actionable:assign_ownership": 1, "actionable:capital_review": 3, actionable: 4 });
+      expect(out).toMatchObject({ "actionable:assign_ownership": 1, "actionable:capital_review": 3 });
       expect(out).not.toHaveProperty("actionable:qb_pending");
     });
   });

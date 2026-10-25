@@ -2,19 +2,17 @@
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrgId } from "../runtime";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import { NEEDS_VOIDING, REVIEW_KINDS, reviewKindOf } from "../lib/flags";
+import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
 import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
+import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
 
-/** Open flag rows that are reviews: the kept kinds, and a QB_POST_FAILED whose entry needs voiding. */
-export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = {
-  checkedOffAt: null,
-  OR: [{ kind: { in: [...REVIEW_KINDS] } }, { kind: "QB_POST_FAILED", detail: { contains: NEEDS_VOIDING } }],
-};
+/** Open flag rows that are reviews: the kept kinds. */
+export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: null, kind: { in: [...REVIEW_KINDS] } };
 
 /**
  * Bookkeeping on a purchase already signed off, which any finance holder does, conflicted or not
@@ -26,8 +24,24 @@ const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE",
 /** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
 const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
 
-/** Every open reason on the expense; [] when it is not in this org. */
-export async function expenseReasons(principal: ExpensePrincipal, expenseId: string): Promise<QueueReason[]> {
+/**
+ * The bucket that stops an outboxed, postable expense for a missing QuickBooks Class, or undefined
+ * when none does; its name is null for a line with no bucket.
+ */
+async function missingClass(expense: { id: string; backfill: boolean; qbTxnId: string | null; qbMatchState: string }, ownerIds: (number | null)[]) {
+  if (expense.backfill || expense.qbTxnId || !POSTABLE_QB_STATES.includes(expense.qbMatchState)) return undefined;
+  if (!(await db.expenseEvent.findFirst({ where: { expenseId: expense.id }, select: { id: true } }))) return undefined;
+  if (ownerIds.includes(null)) return { bucketName: null };
+  const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
+  const unclassed = ownerIds.find((id) => id !== null && !buckets.get(id)?.quickBooksClassId);
+  return unclassed == null ? undefined : { bucketName: buckets.get(unclassed)?.name ?? null };
+}
+
+/**
+ * Every open reason on the expense; [] when it is not in this org. `readOnly` is for the queue's
+ * reads, which must not freeze the Everyday check.
+ */
+export async function expenseReasons(principal: ExpensePrincipal, expenseId: string, { readOnly = false } = {}): Promise<QueueReason[]> {
   const expense = await db.expense.findFirst({
     where: { id: expenseId, orgId: await getOrgId() },
     include: {
@@ -42,7 +56,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const open = !CLOSED_STATES.has(expense.state);
 
   const [boardNeeded, facts, filled] = open
-    ? await Promise.all([boardApprovalNeeded(db, expense), signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)])
+    ? await Promise.all([boardApprovalNeeded(db, expense), signoffFactsByLine(db, expense, { readOnly }), filledSeatsByLine(db, expense.id)])
     : [false, new Map(), new Map()];
   const signerHeld = [...facts].some(([lineId, f]) => blockedSeats(f, filled.get(lineId) ?? []).length > 0);
   const lastFailure =
@@ -64,6 +78,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     signerHeld,
     lastPostError: lastFailure?.notes?.replace(ATTEMPT_PREFIX, "") ?? null,
     reimburseeVendorLinked: vendorLinked,
+    missingClass: await missingClass(expense, expense.approvals.map((a) => a.ownerId)),
     openReviews: expense.flags.flatMap((flag) => {
       const kind = reviewKindOf(flag);
       return kind ? [{ kind, detail: flag.detail }] : [];
