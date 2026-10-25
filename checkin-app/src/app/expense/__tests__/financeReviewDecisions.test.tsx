@@ -172,10 +172,13 @@ describe("back to the queue", () => {
   const retry = () => {
     load(expense({ qbMatchState: "NEEDS_FINANCE" }), [reason("QB_POST_FAILED", { tab: "qb", count: 5 })]);
   };
+  /** The refreshed expense and its lines' acts, as the page refetches them after a decision. */
+  const refetch = (detail: unknown, lines: unknown[] = []) =>
+    mockApi.mockImplementation(async (path) => (path.endsWith("/signoffs") ? lines : detail));
 
   it("returns to the queue tab when the decision leaves the viewer nothing to act on", async () => {
     retry();
-    mockApi.mockResolvedValue({ Expense: expense(), ExpenseQueueReason: [reason("SIGNER_HELD", { tab: "board", actionable: false })] });
+    refetch({ Expense: expense(), ExpenseQueueReason: [reason("SIGNER_HELD", { tab: "board", actionable: false })] });
     wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=qb" />);
     fireEvent.click(screen.getByRole("button", { name: "Retry QuickBooks post" }));
     await waitFor(() => expect(mockGoTo).toHaveBeenCalledWith("/finance/review?queue=qb"));
@@ -183,7 +186,7 @@ describe("back to the queue", () => {
 
   it("stays on the page while another reason is left for the viewer", async () => {
     retry();
-    mockApi.mockResolvedValue({ Expense: expense(), ExpenseQueueReason: [reason("REIMBURSEE_TO_NAME")] });
+    refetch({ Expense: expense(), ExpenseQueueReason: [reason("REIMBURSEE_TO_NAME")] });
     wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=qb" />);
     fireEvent.click(screen.getByRole("button", { name: "Retry QuickBooks post" }));
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/expenses/e1"));
@@ -196,10 +199,20 @@ describe("back to the queue", () => {
       expense({ lineItems: [line], holds: [{ id: 3, lineItemId: 1, reason: "NO_PART_NUMBER", matchedRows: "[]", status: "PENDING" }] }),
       [reason("ACCOUNT_HOLD", { tab: "holds", count: 1 })],
     );
-    mockApi.mockResolvedValue({ Expense: expense(), ExpenseQueueReason: [] });
+    refetch({ Expense: expense(), ExpenseQueueReason: [] });
     wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=holds" />);
     fireEvent.click(screen.getByRole("button", { name: "Resubmit" }));
     await waitFor(() => expect(mockGoTo).toHaveBeenCalledWith("/finance/review?queue=holds"));
+  });
+
+  it("stays on the page while a line still has a main act for the viewer", async () => {
+    retry();
+    const line = { lineItemId: 1, filled: [], missing: ["TREASURER"], blocked: [], awaiting: [], mayRecordBoardAuthorization: false };
+    refetch({ Expense: expense(), ExpenseQueueReason: [] }, [{ ...line, actions: [{ act: "sign", seat: "TREASURER", primary: true, noteRequired: false }] }]);
+    wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=qb" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry QuickBooks post" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/expenses/e1/signoffs"));
+    expect(mockGoTo).not.toHaveBeenCalled();
   });
 
   it("always reloads in place when opened from anywhere else", async () => {
