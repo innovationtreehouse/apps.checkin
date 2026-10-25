@@ -108,7 +108,7 @@ two are not:
 |---|---|
 | Budget bucket → Class | Shared: stored once on the budget buckets and handed to every lane through the owner port |
 | Bank account | One setting per lane (income's, donation's); nothing makes them agree |
-| Account a line books to | Expense: finance's category rules. Income: four fixed roles (sales, card remainder, fees, adjustments), not yet configured. Donation: looked up by name in QuickBooks at post time, so a rename there breaks it silently |
+| Account a line books to | Expense: finance's category rules. Income: four fixed roles (sales, card remainder, fees, adjustments), not yet configured. Donation: looked up by name in QuickBooks at post time, so renaming an account there fails every post until finance fixes the name |
 
 The books map holds bucket → Class (moved in as it is) and named role →
 QuickBooks account id: each bank account, Shopify's four accounts, and
@@ -168,6 +168,14 @@ orphan sweep), so they merge rather than collide. Two differences carry over as
 per-source settings on income's side: donation's per-run cents cap, and its
 "uploaded after switch-on but dated in closed books" note.
 
+A third difference does not carry over: drift. Donation keeps a drifted deposit
+held in a separate column, so no other disbursement can take it before finance
+looks. Income clears the link on drift, which frees the deposit. Under one
+owner, income's rule applies to both sources. Every income row still competes
+under the one unique link, and the drifted row goes to finance either way. The
+move writes a drifted deposit into the row's note ("was linked to Deposit X,
+which changed after it was matched") instead of adding a column for it.
+
 ### Expense owns every Purchase and Bill
 
 Nothing changes until in-kind's posting lane (#2182) needs it. Then expense
@@ -209,8 +217,10 @@ Live data: donation's holdings move, nothing is dropped until a release after.
    route itself stays registered until step 3. The move script then waits
    until no donation post is in flight, meaning every post claim is older than
    the 10-minute stale time, and copies each disbursement's QuickBooks state into an
-   income row: deposit link, booked total and date, match state, drifted
-   deposit, create-attempt time, note, and donation's exclusions into income's.
+   income row: deposit link, booked total and date, match state,
+   create-attempt time and note, with a drifted deposit written into the note
+   (see "Where donation's rules differ"), and donation's exclusions into
+   income's.
    The script stops on a deposit already held by a payout: that is a live double
    hold for finance to settle first. Donation then calls the ports instead of
    posting. Its QuickBooks columns stay, read-only, for one release.
