@@ -13,7 +13,7 @@ import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { systemActor } from "@/lib/auditActor";
-import type { MirrorOrder } from "@/lib/shopifyRead/client";
+import type { IncomeMirrorLineRow, MirrorOrder } from "@/lib/shopifyRead/client";
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -34,6 +34,8 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     // set this explicitly.
     orderLineVariantIds: jest.fn(async () => [] as string[]),
     orderLines: jest.fn(async () => [] as { variantId: string; quantity: number; currentQuantity: number }[]),
+    // Default [] = no mirrored line evidence, so the under-seated check judges nothing.
+    incomeOrderLines: jest.fn(async () => [] as IncomeMirrorLineRow[]),
 }));
 import * as mirror from "@/lib/shopifyRead/client";
 jest.mock("@/lib/shopify/stock", () => ({
@@ -51,6 +53,7 @@ const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
 const disputedOrderGids = mirror.disputedOrderGids as jest.Mock;
 const orderLineVariantIds = mirror.orderLineVariantIds as jest.Mock;
 const orderLines = mirror.orderLines as jest.Mock;
+const incomeOrderLines = mirror.incomeOrderLines as jest.Mock;
 const adjustInventory = adjustProgramInventory as jest.Mock;
 
 function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOrder {
@@ -158,6 +161,7 @@ afterEach(async () => {
     disputedOrderGids.mockResolvedValue(new Set());
     orderLineVariantIds.mockResolvedValue([]);
     orderLines.mockResolvedValue([]);
+    incomeOrderLines.mockResolvedValue([]);
     adjustInventory.mockClear();
     // Reset cursor so each test scans its own fixtures from scratch.
     await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: null } });
@@ -696,6 +700,64 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
         expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
+    it("raises AMOUNT_MISMATCH and changes nobody when an activated order is edited down to fewer seats than people on it", async () => {
+        const oid = `${TAG}-603`;
+        const email = `ent-editdown-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        const o = order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) });
+        orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
+        ordersChangedSince.mockResolvedValue([o]);
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+
+        // Staff lower the line to 1 seat in Shopify with no refund: still PAID, nothing refunded.
+        const edited = { ...o, updatedAt: new Date() };
+        const line: IncomeMirrorLineRow = { orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 2, currentQuantity: 1, priceCents: 5000, discountCents: 0 };
+        orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 1 }]);
+        incomeOrderLines.mockResolvedValue([line]);
+        ordersChangedSince.mockResolvedValue([edited]);
+        ordersByLegacyIds.mockResolvedValue([edited]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } });
+        expect(raised.map((e) => [e.kind, e.programId, e.personId])).toEqual([["AMOUNT_MISMATCH", programId, Math.min(personId, sibId)]]);
+
+        await runReconcile();
+        expect(await kinds(oid)).toEqual(["AMOUNT_MISMATCH"]);
+    });
+
+    it("raises nothing for an activated order whose current seats still cover everyone on it", async () => {
+        const oid = `${TAG}-612`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-covered-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue([{ orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 2, currentQuantity: 1, priceCents: 5000, discountCents: 0 }]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
+    it("does not count a withdrawn person on the order as a seat holder", async () => {
+        const oid = `${TAG}-613`;
+        const email = `ent-seat-withdrawn-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.programParticipant.update({ where: { programId_personId: { programId, personId } }, data: { status: "WITHDRAWN", endedAt: new Date() } });
+        const sib = await prisma.person.create({ data: { email: `sib-${email}`, name: `Sib ${email}`, householdId } });
+        await prisma.programParticipant.create({ data: { programId, personId: sib.id, status: "ACTIVE", shopifyOrderId: oid } });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue([{ orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 2, currentQuantity: 1, priceCents: 5000, discountCents: 0 }]);
+
+        await runReconcile();
+        expect(await statusOf(programId, sib.id)).toBe("ACTIVE");
         expect(await kinds(oid)).toEqual([]);
     });
 
