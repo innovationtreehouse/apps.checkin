@@ -32,7 +32,7 @@ describe("receipt flow status page", () => {
 
     expect(await rows()).toEqual([
       ...ALL_ZERO.receipt.states.map((s) => ["Receipts", s.label, "0"]),
-      ["Receipts", "Done, not yet sent to part mapping", "0"],
+      ["Receipts", "Receipt finalized, not yet sent to part mapping", "0"],
       ...ALL_ZERO.receiving.states.map((s) => ["Part mapping", s.label, "0"]),
       ...ALL_ZERO.expense.states.map((s) => ["Expenses", s.label, "0"]),
     ]);

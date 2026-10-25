@@ -10,7 +10,7 @@ export const STATE_LABELS: Record<string, string> = {
   flow_error: "Error",
   discarded: "Discarded",
   rejected: "Rejected",
-  receipt_finalized: "Done",
+  receipt_finalized: "Receipt finalized",
 };
 
 /** A receipt discarded while its duplicate flag stood open: a flag, once cleared, never returns. */

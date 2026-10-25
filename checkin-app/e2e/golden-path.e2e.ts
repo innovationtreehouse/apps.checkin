@@ -69,7 +69,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     receiptId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() ?? "");
     await eventually(page, page.getByText("Needs your review", { exact: true }));
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
-    await eventually(page, page.getByText("Done", { exact: true }));
+    await eventually(page, page.getByText("Receipt finalized", { exact: true }));
     await noProblems(watch, "receipt upload and review");
   });
 
