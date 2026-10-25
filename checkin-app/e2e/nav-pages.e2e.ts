@@ -60,6 +60,8 @@ test.describe("nav pages in the browser", () => {
           await page.waitForLoadState("networkidle");
           const problems = await watch.problems();
           if (res && res.status() >= 400) problems.unshift(`page answered ${res.status()}`);
+          // A role gate sends a viewer it refuses to the home page.
+          if (href !== "/" && new URL(page.url()).pathname === "/") problems.unshift("sent to the home page");
           failures.push(...problems.map((p) => `${href}: ${p}`));
         });
       }
