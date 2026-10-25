@@ -21,7 +21,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { recordBoardAuthorization, setReimbursee, signLine, signoffStatus, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
 import { approveTax } from "../services/taxApprovalService";
@@ -198,8 +198,8 @@ export const assign = approvalAction(
 export const resolve = approvalAction(ownerSchema, (p, e, a, b) => resolveUnknown(p, e, a, b.ownerId));
 
 /** Sign-off status as seat names only: who signed is pii and lives on ExpenseLineSignoff. */
-function seatsOnly(status: Awaited<ReturnType<typeof signoffStatus>>) {
-  return status.map((s) => ({ ...s, filled: s.filled.map((f: FilledSeat) => f.seat) }));
+function seatsOnly<T extends { filled: FilledSeat[] }>(status: T[]) {
+  return status.map((s) => ({ ...s, filled: s.filled.map((f) => f.seat) }));
 }
 
 export const signoffs: ExpenseRouteHandler = async ({ params }) => {
@@ -208,7 +208,7 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
   const visible = new Set(
     (await db.expenseLineItem.findMany({ where: { expenseId: params.id, ...scopedLines(scope) }, select: { id: true } })).map((l) => l.id),
   );
-  const status = await mapServiceErrors(() => signoffStatus(params.id));
+  const status = await mapServiceErrors(() => signoffStatusFor(principal, params.id));
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 

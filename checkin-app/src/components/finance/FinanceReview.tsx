@@ -34,7 +34,7 @@ const ALL = "all";
 const badgeOf = (actionable: number, total: number): QueueBadge | null =>
   actionable > 0 ? { count: actionable, intent: "action" } : total > 0 ? { count: total, intent: "info" } : null;
 
-/** Receiving's apply-failed count, for the Not delivered tab's pointer to Receiving › Apply failed. */
+/** Part mapping's apply-failed count, for the Not delivered tab's pointer to Part mapping › Apply failed. */
 function useApplyFailed(enabled: boolean): number {
   const [n, setN] = useState(0);
   useEffect(() => {
@@ -166,7 +166,7 @@ export default function FinanceReview() {
       {queue === NOT_PUSHED && applyFailed > 0 && (
         <Alert color="orange" mb="md">
           <Anchor component={Link} href="/inventory/receiving?queue=failed">
-            {applyFailed} {applyFailed === 1 ? "receipt" : "receipts"} failed to apply in receiving
+            {applyFailed} {applyFailed === 1 ? "receipt" : "receipts"} failed to apply in part mapping
           </Anchor>
         </Alert>
       )}

@@ -92,7 +92,7 @@ describe("AppFrame library nav slots", () => {
     expect(hrefOf("Finance")).toBe("/finance/review");
   });
 
-  it("FINANCE with only workflow-mapping released: Inventory lands on Receiving", () => {
+  it("FINANCE with only workflow-mapping released: Inventory lands on Part mapping", () => {
     mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["workflow-mapping"] }));
     setSession({ id: 2, isFinance: true });
     renderFrame();

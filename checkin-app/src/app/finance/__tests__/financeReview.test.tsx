@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import FinanceReview from "@/components/finance/FinanceReview";
 
@@ -98,7 +98,7 @@ describe("the receipt tabs", () => {
 
   it.each([
     ["submitter_review", "?state=submitter_review", "Submitter review"],
-    ["not_pushed", "?state=receipt_finalized&pushed=0", "Not delivered to receiving"],
+    ["not_pushed", "?state=receipt_finalized&pushed=0", "Not delivered to part mapping"],
     ["discarded", "?state=discarded", "Discarded"],
   ])("?queue=%s lists %s and names it in the More picker", (queue, path, label) => {
     mockSearch = new URLSearchParams(`queue=${queue}`);
@@ -131,6 +131,23 @@ describe("the receipt tabs", () => {
     expect(screen.getByRole("link", { name: /2026/ })).toHaveAttribute("href", "/receipts/r1?queue=duplicate_flagged");
   });
 
+  it("names a duplicate discard on the Discarded tab and links the receipt it duplicates, carrying the queue", () => {
+    mockSearch = new URLSearchParams("queue=discarded");
+    const base = { uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, receiptDate: null, receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false };
+    mockReceiptLoads["?state=discarded"] = {
+      data: [
+        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateSuspectReceiptId: "r0" },
+        { ...base, id: "r2", retailer: "Bolt" },
+      ],
+      error: null,
+    };
+    wrap();
+    const [acme, bolt] = ["Acme", "Bolt"].map((name) => screen.getByText(name).closest("tr") as HTMLElement);
+    expect(acme).toHaveTextContent("Discarded as a duplicate of another receipt");
+    expect(within(acme).getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=discarded");
+    expect(bolt).not.toHaveTextContent("as a duplicate");
+  });
+
   it("counts FINANCE's own queues in green and the rest in gray, and only gray for the Board", () => {
     const receipts = { byState: { financial_review: 3, validation_failed: 2 }, notPushed: 0, pushGivenUp: 0 };
     counts(receipts, EMPTY_EXPENSES);
@@ -152,11 +169,11 @@ describe("the receipt tabs", () => {
     expect(mockReloadCounts).toHaveBeenCalled();
   });
 
-  it("points Not delivered at Receiving › Apply failed when receipts failed to apply", async () => {
+  it("points Not delivered at Part mapping › Apply failed when receipts failed to apply", async () => {
     mockSearch = new URLSearchParams("queue=not_pushed");
     fetchSpy.mockResolvedValue({ ok: true, json: async () => ({ apply_failed: 3 }) } as Response);
     wrap();
-    expect(await screen.findByRole("link", { name: "3 receipts failed to apply in receiving" })).toHaveAttribute("href", "/inventory/receiving?queue=failed");
+    expect(await screen.findByRole("link", { name: "3 receipts failed to apply in part mapping" })).toHaveAttribute("href", "/inventory/receiving?queue=failed");
     expect(fetchSpy).toHaveBeenCalledWith("/api/workflow-mapping/receipts/counts");
   });
 
@@ -214,7 +231,7 @@ describe("the expense tabs", () => {
     expect(links[0]).toHaveAttribute("href", `/expense/expenses/e2?queue=expenses&from=${encodeURIComponent("/finance/review?queue=expenses&reason=CAPITAL_REVIEW")}`);
   });
 
-  it("links a failed intake row to Receiving", () => {
+  it("links a failed intake row to Part mapping", () => {
     mockSearch = new URLSearchParams("queue=expenses");
     counts(EMPTY_RECEIPTS, { ...EMPTY_EXPENSES, expenses: tab(1) });
     mockExpenseLoads["/finance-queue?tab=expenses"] = {

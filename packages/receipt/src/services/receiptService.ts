@@ -93,7 +93,7 @@ async function load(id: string, access: Access, actor: ReceiptPrincipal): Promis
  */
 async function loadForChange(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
   const row = await load(id, access, actor);
-  if (row.pushedAt) throw new ServiceError(409, "This receipt was already sent to receiving and can no longer be changed");
+  if (row.pushedAt) throw new ServiceError(409, "This receipt was already sent to part mapping and can no longer be changed");
   return row;
 }
 

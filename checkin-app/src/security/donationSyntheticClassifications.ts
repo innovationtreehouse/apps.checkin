@@ -38,6 +38,20 @@
  * withdrawal or a replay conflict): which gift, which kind, and when, all
  * `internal`. Settling a withdrawal clears the donor, so the reply carries none.
  *
+ * InKindGiftDetailView — one in-kind gift on its own page, from either source:
+ * its receipt or donation date, value and lines, the donor (`pii`), who
+ * recorded it, its join, anomaly and decision timestamps, the bucket, its queue
+ * state and what it waits on, each booking side's state, and, for a gift
+ * without a receipt, its inventory source key and when its goods loaded. All
+ * but the three donor fields are `internal`.
+ *
+ * InKindGiftDetailLineView — one line of that gift: item and its description,
+ * quantity, the value finance set and the value ops suggested, all `internal`.
+ *
+ * InKindGiftEventView — one row of that gift's history: the event, who acted
+ * and when, and its payload, all `internal`. In-kind event payloads carry
+ * counts, totals, outcomes and bucket ids, never a donor field.
+ *
  * ManualInKindRecordResult — the reply to recording a no-receipt in-kind
  * donation: its id and whether its goods loaded into inventory, both `internal`.
  *
@@ -126,6 +140,53 @@ export const classifications = {
     kind: "internal",
     settledAt: "internal",
   },
+  InKindGiftDetailView: {
+    id: "internal",
+    source: "internal",
+    receiptId: "internal",
+    receiptTotalCents: "internal",
+    receiptDate: "internal",
+    donationDate: "internal",
+    moneyReceivedAt: "internal",
+    recordedAt: "internal",
+    recordedByUsername: "internal",
+    donorFirstName: "pii",
+    donorLastName: "pii",
+    donorCompanyName: "pii",
+    donorRecordedAt: "internal",
+    donorReplacedAt: "internal",
+    withdrawnAfterMoneyAt: "internal",
+    withdrawalSettledAt: "internal",
+    replayConflictAt: "internal",
+    outcome: "internal",
+    decidedAt: "internal",
+    budgetOwnerId: "internal",
+    budgetOwnerName: "internal",
+    bucketHeld: "internal",
+    bucketAssignedAt: "internal",
+    totalValueCents: "internal",
+    state: "internal",
+    waitingOn: "internal",
+    revenueBooking: "internal",
+    expenseBooking: "internal",
+    inventorySourceKey: "internal",
+    inventoryLoadedAt: "internal",
+  },
+  InKindGiftDetailLineView: {
+    id: "internal",
+    gtin13: "internal",
+    description: "internal",
+    quantity: "internal",
+    valueCents: "internal",
+    suggestedValueCents: "internal",
+  },
+  InKindGiftEventView: {
+    id: "internal",
+    eventType: "internal",
+    actorUsername: "internal",
+    occurredAt: "internal",
+    payload: "internal",
+  },
   ManualInKindRecordResult: {
     id: "internal",
     inventoryLoaded: "internal",
@@ -138,5 +199,9 @@ export const relations = {
   },
   InKindBucketGiftView: {
     lines: { model: "InKindBucketGiftLineView", isList: true },
+  },
+  InKindGiftDetailView: {
+    lines: { model: "InKindGiftDetailLineView", isList: true },
+    events: { model: "InKindGiftEventView", isList: true },
   },
 } as const;

@@ -216,6 +216,10 @@ describe("required notes", () => {
   it("marks the exception note required", async () => {
     load(expense({ state: "owner_approval" }), [], {
       "/expenses/e1/line-item-approvals": [{ id: 5, lineItemId: 1, ownerId: 7, status: "pending" }],
+      "/expenses/e1/signoffs": [{
+        lineItemId: 1, filled: [], missing: [], blocked: [], awaiting: [],
+        actions: [{ act: "raise-exception", primary: true, noteRequired: true }],
+      }],
     });
     wrap(<ExpenseDetailPage id="e1" />);
     fireEvent.click(screen.getByRole("button", { name: "Raise exception" }));

@@ -17,7 +17,7 @@ export const OTHER_QUEUES = [
   { value: "uploaded", label: "Uploaded" },
   { value: "submitter_review", label: "Submitter review" },
   { value: "receipt_finalized", label: "Finalized" },
-  { value: NOT_PUSHED, label: "Not delivered to receiving" },
+  { value: NOT_PUSHED, label: "Not delivered to part mapping" },
   { value: "discarded", label: "Discarded" },
   { value: "rejected", label: "Rejected" },
 ];

@@ -16,7 +16,7 @@ const unstamped = { inventoryAppliedAt: null, expenseAppliedAt: null, donationAp
 function load(receipt: Record<string, unknown>) {
   mockLoads = {
     "/receipts/7": {
-      ReceivedReceipt: { id: 7, validationNotes: null, ...unstamped, ...receipt },
+      ReceivedReceipt: { id: 7, validationNotes: null, createdAt: "2026-10-02T15:30:00Z", ...unstamped, ...receipt },
       WorkflowReceiptView: {
         vendorName: "Acme", currency: "USD", receiptTotalCents: 1000, receiptDate: "2026-10-01",
         lineItems: [{ receiptLineItemId: 1, lineNumber: 1, description: "Widget", partNumber: null, manufacturer: null, quantity: 2 }],
