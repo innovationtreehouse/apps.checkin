@@ -4,6 +4,7 @@ import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
+import { retailerKey } from "./retailer";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import type { ReceiptMachineContext } from "../workflows/receipt.guards";
 
@@ -89,23 +90,29 @@ export const BODY_COPY_DISCARDED = "body_copy_discarded";
  * The receipt this one duplicates, or null. A body discarded as a copy of its message's other
  * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
  * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
- * person has cleared the flag, the receipt is never re-flagged.
+ * person has cleared the flag, the receipt is never re-flagged. The field matches compare
+ * retailers ignoring case and extra whitespace.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
   if (row.duplicateFlagClearedAt) return null;
   if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
-  const { orgId, retailer, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
+  const { orgId, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
   const notSelf = { id: { not: id }, receipt: { auditLogs: { none: { action: BODY_COPY_DISCARDED } } } };
+  const retailer = retailerKey(row.retailer);
+  const sameRetailer = async (where: Prisma.ReceiptDetailWhereInput) => {
+    const candidates = await db.receiptDetail.findMany({ where: { orgId, ...where, ...notSelf }, select: { id: true, retailer: true } });
+    return candidates.find((c) => retailerKey(c.retailer) === retailer)?.id ?? null;
+  };
 
-  const composite = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptDate, receiptTotalCents, ...notSelf } });
-  if (composite) return composite.id;
+  const composite = await sameRetailer({ receiptDate, receiptTotalCents });
+  if (composite) return composite;
   if (orderNumber) {
-    const byOrder = await db.receiptDetail.findFirst({ where: { orgId, retailer, orderNumber, ...notSelf } });
-    if (byOrder) return byOrder.id;
+    const byOrder = await sameRetailer({ orderNumber });
+    if (byOrder) return byOrder;
   }
   if (receiptNumber) {
-    const byNumber = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptNumber, ...notSelf } });
-    if (byNumber) return byNumber.id;
+    const byNumber = await sameRetailer({ receiptNumber });
+    if (byNumber) return byNumber;
   }
   return null;
 }
