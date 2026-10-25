@@ -36,16 +36,19 @@ const KNOWN_FAILURES: KnownFailure[] = [
 ];
 
 /** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
-interface SeedPrompt { page: string; personas: string[]; text: RegExp }
+interface SeedPrompt { page: string; personas: string[]; text: string }
+/** The fail-closed prompt until the Board sets the re-check interval (#2544). */
+const BG_INTERVAL_UNSET =
+  "⛔ Background-check interval is not set. Until the board enters the policy value (in months), every background check counts as expired: every renewal is sent back for a fresh background review, and no one counts as a supervising adult in the two-deep check. Enter the real Treehouse re-check interval above.";
 const SEED_PROMPTS: SeedPrompt[] = [
-  { page: "/settings", personas: [BOARD], text: /Background-check interval is not set/ },
-  { page: "/settings/membership", personas: [BOARD], text: /Background-check interval is not set/ },
-  { page: "/my-household", personas: [MEMBER], text: /No emergency contact on file/ },
+  { page: "/settings", personas: [BOARD], text: BG_INTERVAL_UNSET },
+  { page: "/settings/membership", personas: [BOARD], text: BG_INTERVAL_UNSET },
+  { page: "/my-household", personas: [MEMBER], text: "No emergency contact on file. Add at least one." },
 ];
 
 const isKnown = (email: string, page: string) => KNOWN_FAILURES.some((k) => k.page === page && k.personas.includes(email));
 const isSeedPrompt = (email: string, page: string, problem: string) =>
-  problem.startsWith("error alert: ") && SEED_PROMPTS.some((p) => p.page === page && p.personas.includes(email) && p.text.test(problem));
+  SEED_PROMPTS.some((p) => p.page === page && p.personas.includes(email) && problem === `error alert: ${p.text}`);
 
 /** A page's share of its persona's test time: a cold compile, the load, and the settle. */
 const PAGE_BUDGET_MS = 75_000;
