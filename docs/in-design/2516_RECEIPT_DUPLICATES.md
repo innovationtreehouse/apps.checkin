@@ -60,7 +60,22 @@ finance. About eight small PRs, test first (see the migration file).
 
 ## Waiting on @thpr
 
-Nothing is open. Every question is decided or dropped; see the log in §10.
+One question is open. Everything else is decided or dropped; see the log in §10.
+
+**Q14. When a new copy matches a receipt whose expense finance rejected, should the compare say so?**
+Finance can reject an expense (by rejecting a budget owner's exception), which
+ends it as rejected. Its receipt still reads "Finalized", because the receipt
+side never hears what happened to the expense. So if the same purchase is
+uploaded again, the compare shows the first copy as "Finalized", and the red
+"Rejected" label from Q2 never appears.
+- (a) Show it: the first copy reads "Finalized · expense rejected by finance:
+  <reason>". The receipt side would need to hear the expense's outcome. The
+  port it already uses for reimbursement status carries only the paid date
+  today, so it would gain one field.
+- (b) Leave it: finance still sees the match and decides; the label is just
+  less informative in this one case.
+- **Recommended: (a).** It's the "check more carefully the second time" case
+  @thpr named, and costs one field on an existing port.
 
 ---
 
@@ -497,7 +512,6 @@ IDs are fixed; the open ones are in "Waiting on @thpr" near the top.
 | Q11 | Already-finalized groups at cutover | **Dropped:** production holds no receipts. |
 | Q12 | A "hide for now" button besides Not this one? | **No:** "too much complexity". Not this one with Undo is the only dismiss. |
 | Q13 | A weak similar-date tier? | **Yes,** ±7 days, weak label, not in the first pass: #2591. |
-| Q14 | A "rejected" label for a match on an expense rejected at sign-off? | **Dropped:** a budget owner can't reject an expense outright; it is a real expense of the corporation, and finance places it somewhere. (The code still lets finance end one as `rejected` by rejecting a budget owner's exception; that belongs to the expense design.) |
 
 ---
 
