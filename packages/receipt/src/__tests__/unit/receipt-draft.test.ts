@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculatedCents,
   canAddLine,
+  draftDifference,
   draftHeader,
   draftLines,
   draftProblem,
@@ -58,6 +59,21 @@ describe("calculatedCents", () => {
   it("is null while an amount is unreadable", () => {
     const draft: Draft = { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "x" } } };
     expect(calculatedCents(draftLines(receipt, draft), draftHeader(receipt, draft))).toBeNull();
+  });
+});
+
+describe("draftDifference", () => {
+  it("is 0 when the lines, shipping and tax add up to the total", () => {
+    expect(draftDifference(receipt, EMPTY_DRAFT)).toBe(0);
+  });
+
+  it("is the calculated sum minus the draft's total", () => {
+    expect(draftDifference(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "27.00" } })).toBe(-50);
+    expect(draftDifference(receipt, { ...EMPTY_DRAFT, lines: { 2: { unitPrice: "10.25" } } })).toBe(25);
+  });
+
+  it("is null while an amount is unreadable", () => {
+    expect(draftDifference(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "x" } })).toBeNull();
   });
 });
 
