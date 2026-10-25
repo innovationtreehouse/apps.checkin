@@ -221,6 +221,13 @@ Live data: donation's holdings move, nothing is dropped until a release after.
 The script runs between donation's switch-off and its first call to the port,
 so no disbursement is posted by both.
 
+The hand-off was model-checked. Without any one of these four rules, the checker
+found a run that booked one disbursement twice, booked one that never completed,
+lost one, or left a stray deposit unreported: the call after the completion
+commit with its re-send job, the wait for in-flight posts, recognising
+donation's key, and switching off donation's poster and resolve actions in
+PR 2. With all four, every run passed.
+
 ## PR split
 
 0. **Books map.** The map beside the budget buckets in checkin's schema, its
