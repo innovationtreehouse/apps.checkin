@@ -5,7 +5,7 @@ import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recor
 
 // Three receipts for one purchase, A uploaded first, then B, then C. Each test drives finance's
 // decisions through the service and asserts the group behaviour of 2516_RECEIPT_DUPLICATES.md.
-// Every test is `it.fails` until the group query and decisions land.
+// A test is `it.fails` until the decisions it drives land.
 
 type DuplicateMember = { id: string; state: string; label: string };
 /** The viewed receipt and every member not dismissed against it, in upload order. */
@@ -72,7 +72,7 @@ async function chainedThroughB() {
 }
 
 describeDb("three copies of one purchase", () => {
-  it.fails("matched by file hash, both later copies are held in one group of all three, in upload order", async () => {
+  it("matched by file hash, both later copies are held in one group of all three, in upload order", async () => {
     const { a, b, c } = await sameFileThrice();
     expect(a.state).toBe("receipt_finalized");
     expect(await statesOf(b.id, c.id)).toEqual(["duplicate_flagged", "duplicate_flagged"]);
@@ -80,7 +80,7 @@ describeDb("three copies of one purchase", () => {
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
   });
 
-  it.fails("matched by retailer, date and total, the third copy's group holds both earlier copies, always in upload order", async () => {
+  it("matched by retailer, date and total, the third copy's group holds both earlier copies, always in upload order", async () => {
     const a = await upload(textFile());
     const b = await upload(textFile());
     const c = await upload(textFile());
@@ -138,7 +138,7 @@ describeDb("three copies of one purchase", () => {
     expect(await stateOf(c.id)).toBe("duplicate_flagged");
   });
 
-  it.fails("an original withdrawn by its submitter raises no flag, so only the second copy is held, against the first", async () => {
+  it("an original withdrawn by its submitter raises no flag, so only the second copy is held, against the first", async () => {
     const file = textFile();
     const a = await uploadForReview(file);
     await receiptService.submitterDiscard(a.id);
@@ -152,7 +152,7 @@ describeDb("three copies of one purchase", () => {
     expect(await memberOf(c.id, a.id)).toMatchObject({ state: "discarded", label: expect.stringMatching(/^Withdrawn by its submitter/) });
   });
 
-  it.fails("copies of a rejected receipt are held in one group with it, labelled rejected with its reason", async () => {
+  it("copies of a rejected receipt are held in one group with it, labelled rejected with its reason", async () => {
     const file = textFile();
     const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(a.state).toBe("financial_review");
@@ -168,13 +168,13 @@ describeDb("three copies of one purchase", () => {
     expect((await memberOf(b.id, a.id))?.label).toMatch(/^Rejected .*personal purchase/);
   });
 
-  it.fails("a re-upload of a copy's file is grouped with that copy and the original", async () => {
+  it("a re-upload of a copy's file is grouped with that copy and the original", async () => {
     const { a, b, c } = await chainedThroughB();
     expect(a.state).toBe("receipt_finalized");
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
   });
 
-  it.fails("when the copy C re-uploads is rejected as a copy of A, C stays held against live A", async () => {
+  it("when the copy C re-uploads is rejected as a copy of A, C stays held against live A", async () => {
     const { a, b, c } = await chainedThroughB();
     actAs(FINANCE);
     await receiptService.rejectFinancial(b.id, `Copy of ${a.id}`);
@@ -195,7 +195,7 @@ describeDb("three copies of one purchase", () => {
 });
 
 describeDb("every member is held before it can finalize", () => {
-  it.fails("an earlier open copy stays in review with a group, then meets the guard when its submitter confirms", async () => {
+  it("an earlier open copy stays in review with a group, then meets the guard when its submitter confirms", async () => {
     const file = textFile();
     const a = await uploadForReview(file);
     const b = await upload(file);
@@ -218,7 +218,7 @@ describeDb("re-check after a discard", () => {
     expect(await stateOf(b.id)).toBe("receipt_finalized");
   });
 
-  it.fails("a copy still matching another member stays held, and its group shows what is left", async () => {
+  it("a copy still matching another member stays held, and its group shows what is left", async () => {
     const file = textFile();
     const a = await uploadForReview(file);
     const b = await upload(file);

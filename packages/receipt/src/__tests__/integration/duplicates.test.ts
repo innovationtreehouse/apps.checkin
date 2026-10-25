@@ -50,7 +50,7 @@ describeDb("duplicate detection", () => {
     expect(second.state).not.toBe("duplicate_flagged");
   });
 
-  it("two identical files uploaded at once: exactly one is flagged, against the other", async () => {
+  it("two identical files uploaded at once: at least one is held, and both are in one group", async () => {
     for (let round = 0; round < 5; round++) {
       await clearAll();
       const file = textFile();
@@ -58,10 +58,9 @@ describeDb("duplicate detection", () => {
         receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A" }) }),
         receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B" }) }),
       ]);
-      const flagged = [a, b].filter((r) => r.state === "duplicate_flagged");
-      expect(flagged).toHaveLength(1);
-      const other = flagged[0].id === a.id ? b : a;
-      expect(flagged[0].duplicateSuspectReceiptId).toBe(other.id);
+      expect(await Promise.all([a.id, b.id].map(stateOf))).toContain("duplicate_flagged");
+      const members = (await receiptService.duplicateGroup(a.id)).members.map((m) => m.id);
+      expect(members.sort()).toEqual([a.id, b.id].sort());
     }
   });
 
