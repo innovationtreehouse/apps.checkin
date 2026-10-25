@@ -48,6 +48,15 @@ const ROW_FIELDS = { id: true, vendorName: true, receiptDate: true, submittedAt:
  */
 const ROW_DETAIL_CODES = new Set(["QB_DRIFT", "QB_NO_CLASS"]);
 
+/** Runs `fn`, naming the step and the record in the error it throws, so the route's log says which failed. */
+async function withContext<T>(step: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw new Error(`finance queue: ${step} failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** The intake payload's display facts; a payload that no longer parses shows none. */
@@ -129,7 +138,7 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
   const conflicted = conflictCheck(me);
   const items: Item[] = [];
 
-  const ids = await candidateIds(orgId);
+  const ids = await withContext("finding the expenses that may wait on finance", () => candidateIds(orgId));
   const rows = new Map((await db.expense.findMany({ where: { id: { in: ids } }, select: ROW_FIELDS })).map((e) => [e.id, e]));
   const holdsSince = new Map(
     (await db.expenseHold.groupBy({ by: ["expenseId"], where: { expenseId: { in: ids }, status: "PENDING" }, _min: { createdAt: true } })).map((h) => [h.expenseId, h._min.createdAt]),
@@ -142,7 +151,7 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
   );
   for (const id of ids) {
     const expense = rows.get(id)!;
-    for (const r of await expenseReasons(principal, id, { readOnly: true })) {
+    for (const r of await withContext(`reading the queue reasons of expense ${id}`, () => expenseReasons(principal, id, { readOnly: true }))) {
       const since = r.code === "ACCOUNT_HOLD" ? holdsSince.get(id) : reviewsSince.get(`${id}:${r.code}`);
       items.push({ tab: TAB_OF_QUEUE[r.tab], expense, reason: queueReason(r, expense.currency), waitingSince: since ?? expense.submittedAt, actionable: r.actionable, units: 1 });
     }
@@ -165,7 +174,9 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
   const pending = await db.expense.findMany({ where: { orgId, state: "qb_pending", backfill: false }, orderBy: { submittedAt: "desc" }, take: SIGNOFF_BADGE_EXPENSE_CAP });
   for (const e of pending) {
     if (reimburseeUnknown(e) || (await conflicted(e))) continue;
-    const [facts, filled] = await Promise.all([signoffFactsByLine(db, e, { readOnly: true }), filledSeatsByLine(db, e.id)]);
+    const [facts, filled] = await withContext(`reading the open seats of expense ${e.id}`, () =>
+      Promise.all([signoffFactsByLine(db, e, { readOnly: true }), filledSeatsByLine(db, e.id)]),
+    );
     let treasurer = 0;
     let board = 0;
     for (const [lineId, f] of facts) {
