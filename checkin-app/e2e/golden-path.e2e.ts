@@ -125,7 +125,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const page = await approver.context.newPage();
     const watch = watchPage(page);
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
-    await lineAct(page, LINE, "Approve as bucket approver");
+    await lineAct(page, LINE, "Approve as Program approver");
     await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
