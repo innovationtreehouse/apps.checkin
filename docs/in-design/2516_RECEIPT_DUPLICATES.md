@@ -180,6 +180,7 @@ compare panel shows beside each member:
 | Same vendor and receipt number | "Same receipt number" | Strong |
 | Same vendor, date and total | "Same vendor, date and total" | Medium: two equal purchases on one day are possible |
 | Fuzzy vendor, same date and total (#2558, later) | "Similar vendor, same date and total" | Weak; see Q5 |
+| Same vendor and total, similar date (proposed) | "Same vendor and total, 2 days apart" | Weak; see Q13 |
 
 All tiers are evaluated, not just the first that hits, so a receipt can match
 member A by file and member B by fields. Every hit joins the group.
@@ -199,9 +200,17 @@ member A by file and member B by fields. Every hit joins the group.
 
 ### 3.3 Windows
 
-No date window and no lookback limit. The org's volume is small enough to
-compare against every receipt it has ever had, and a narrower window only
-adds a way to miss. A "within N days" tier is Q4.
+No lookback limit. The org's volume is small enough to compare against every
+receipt it has ever had, and a narrower lookback only adds a way to miss.
+
+The exact tiers have no date window: the dates must be equal. The industry
+work points to a weak "similar date" tier. Expensify matches hotel stays on
+check-in, check-out or transaction date, and invoices on any date up to the
+due date; Stampli's relaxed tier is the same vendor and amount within a date
+window (§11). The same purchase can carry two dates here too: an online order
+confirmation and its shipping receipt, the date a card was charged and the
+date on the slip, or an OCR misread. Whether to add that tier, and how wide,
+is Q13. Amount tolerance is Q4.
 
 ---
 
@@ -443,7 +452,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. | **(a).** A discarded receipt is never paid; a copy of a live receipt matches that receipt directly. (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
 | Q2 | How much **stronger** is a match on a rejected receipt? | (a) Red label, listed first, rejection note shown, and a note required to clear. (b) Label only. (c) Route it to whoever rejected the first. | **(a).** It's the "check more carefully" @thpr asked for at the cost of one sentence. (c) adds a seat on a team where it's the same people. |
 | Q3 | **Normalise dates and numbers?** | (a) Compare parsed dates; fold case, spaces and a leading `#` in order and receipt numbers; make the editor's date a date input. (b) Dates only. (c) Neither. | **(a).** The same purchase typed two ways is the most common miss after vendor drift, and this is the same treatment #2561 gave the retailer. |
-| Q4 | A **window or tolerance** tier ("same vendor and total within N days", or totals within N cents)? | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** Each widening adds false flags for a small team; ship the exact tiers with groups first and see what's still missed. |
+| Q4 | An **amount tolerance** tier (same vendor and date, totals within N cents)? The date window is Q13. | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** No source in §11 documents an amount tolerance, and two totals a few cents apart are usually two purchases; ship the exact tiers with groups first and see what's still missed. |
 | Q5 | When #2558's **fuzzy vendor** match lands, is a fuzzy hit flagged like an exact one? | (a) Same hold, weaker label. (b) A badge on the receipt but no hold. | **(a).** One kind of hold keeps the queue simple; the label tells finance how hard to look. |
 | Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |
 | Q7 | When is a **note required** to say "different purchases"? | (a) Only when the group has a rejected member. (b) Always. (c) Never. | **(a).** Ties the extra effort to the case @thpr singled out. |
@@ -452,6 +461,7 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | Q10 | **Existing cleared receipts** at cutover: what do they become? | (a) A *different* decision against their recorded suspect only, then re-checked like any other. (b) Re-check everything with no carry-over. (c) Keep the blanket exemption for old rows. | **(a).** Keeps what finance actually decided and nothing more. |
 | Q11 | **Already-finalized groups** at cutover? | (a) A one-time list for finance, no state change. (b) Let the posting re-check find the unposted ones; ignore the posted ones. | **(a)**, plus (b) for free. Posted pairs can only be fixed in QuickBooks, and finance should know they exist. |
 | Q12 | Besides **Not this one**, a **hide for now** that records nothing and only tidies the view? | (a) No; Not this one with Undo covers it. (b) Yes, as a second button. | **(a).** Undo makes a recorded dismissal as cheap as a hidden one, and two near-identical buttons, one that saves a decision and one that doesn't, are easy to confuse. |
+| Q13 | A weak **similar date** tier: same vendor and same total, receipt dates within N days of each other? | (a) Yes, N = 3, the same hold as the other tiers with a weak label naming the gap ("2 days apart"), built after the exact tiers ship. (b) Yes, with a wider N such as 7. (c) A badge on the receipt but no hold. (d) No. | **(a).** It catches the order-versus-shipping and charge-versus-slip pairs the exact tiers miss. Three days stays clear of a weekly purchase of the same thing, which (b) would flag every week. Each false flag costs one **Not this one**, remembered per pair. The value of N is @thpr's call. |
 
 ---
 
