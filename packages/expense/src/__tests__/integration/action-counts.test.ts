@@ -176,9 +176,13 @@ describeDb("expense action counts", () => {
       expect(await counts(FINANCE)).toEqual(NONE);
     });
 
-    it("leaves a Board seat on an org-level card charge to the finance queue's Board count", async () => {
+    it("leaves a Board seat on an org-level card charge to the finance queue's Board count, once the Treasurer has signed", async () => {
       bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
-      await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
+      const { id, li } = await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
+      // The Board signs after the Treasurer, so the seat is not the Board's to give yet.
+      expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE ?? 0).toBe(0);
+
+      await sign(id, li, { TREASURER: 3 });
       expect(await counts(BOARD)).toEqual(NONE);
       expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE).toBeGreaterThan(0);
     });
