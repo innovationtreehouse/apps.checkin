@@ -1,8 +1,7 @@
 import { db } from "../db";
-import { checkReceiptFile } from "../lib/file-type";
+import { checkImportBatch } from "../lib/importBatch";
 import { insertReceipt } from "../lib/insert";
 import { runFullFlow } from "../lib/receipt-flow";
-import { ImportBatchSchema } from "../lib/schemas";
 import { getOrg, requireActor } from "../runtime";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -17,38 +16,35 @@ export interface ImportRowResult {
 /**
  * Bulk import of historical receipts already matched to QuickBooks (FINANCE). Each row runs
  * the same intake pipeline as an upload; its QB linkage waives only the submitter step and the
- * age gate. Records purchases only, never a reimbursement claim. Idempotent per
+ * age gate. Records purchases only, never a reimbursement claim. A batch with any malformed row
+ * or missing required data is refused whole, nothing imported. Idempotent per
  * (org, importSourceId): a re-run skips rows already loaded.
  */
 export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
-  const parsed = ImportBatchSchema.safeParse(rawBatch);
-  if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+  const checked = checkImportBatch(rawBatch);
+  if (!checked.ok) throw new ServiceError(400, `Import refused; nothing was imported. ${checked.problems.join("; ")}`);
   const orgId = (await getOrg()).id;
 
   const results: ImportRowResult[] = [];
-  for (const r of parsed.data) {
+  for (const { row: r, file, mimeType } of checked.rows) {
     try {
       const existing = await db.receiptDetail.findFirst({ where: { orgId, importSourceId: r.importSourceId }, select: { id: true } });
       if (existing) {
         results.push({ importSourceId: r.importSourceId, status: "skipped" });
         continue;
       }
-      const file = Buffer.from(r.fileBase64, "base64");
-      const check = checkReceiptFile(file, r.mimeType);
-      if (!check.ok) throw new ServiceError(400, check.error);
-
       const id = await insertReceipt({
         orgId,
         actor,
         file,
-        mimeType: check.mimeType,
+        mimeType,
         core: { needsReimbursement: false, reimbursementFor: null, intakeSource: "import" },
         detail: {
           retailer: r.retailer,
           receiptNumber: r.receiptNumber ?? null,
           orderNumber: r.orderNumber ?? null,
-          receiptDate: r.receiptDate ?? null,
+          receiptDate: r.receiptDate,
           currency: r.currency,
           shippingCents: r.shippingCents,
           taxCents: r.taxCents,

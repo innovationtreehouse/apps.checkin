@@ -146,8 +146,29 @@ describeDb("historical import", () => {
   it("caps a batch at 50 and checks each file's bytes", async () => {
     actAs(FINANCE);
     await expect(importReceipts(Array.from({ length: 51 }, (_, i) => importRow(`b${i}`)))).rejects.toMatchObject({ status: 400 });
-    const res = await importReceipts([importRow("bad", { mimeType: "application/pdf" })]);
-    expect(res).toMatchObject({ errors: 1, processed: 0 });
+    await expect(importReceipts([importRow("bad", { mimeType: "application/pdf" })])).rejects.toMatchObject({ status: 400 });
+    expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("refuses the whole batch when one row is bad, importing nothing and naming the row", async () => {
+    actAs(FINANCE);
+    const batch = [importRow("g1"), importRow("g2", { retailer: "" }), importRow("g3")];
+    await expect(importReceipts(batch)).rejects.toMatchObject({
+      status: 400,
+      message: "Import refused; nothing was imported. row 2 (g2): retailer: The retailer is required",
+    });
+    expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("refuses a row with no date", async () => {
+    actAs(FINANCE);
+    const dateless: Record<string, unknown> = importRow("d1");
+    delete dateless.receiptDate;
+    await expect(importReceipts([importRow("d0"), dateless])).rejects.toMatchObject({
+      status: 400,
+      message: "Import refused; nothing was imported. row 2 (d1): receiptDate: The date is required",
+    });
+    expect(await db.receipt.count()).toBe(0);
   });
 
   it("rejects a batch that claims reimbursement", async () => {

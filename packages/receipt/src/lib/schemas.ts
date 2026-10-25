@@ -15,7 +15,7 @@ const cents = z.number().int().nonnegative();
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
-const requiredText = (name: string, max: number) => z.string().trim().min(1, { message: `${name} is required` }).max(max);
+const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
 /** A calendar date as the date picker sends it. */
 const isoDate = requiredText("The date", 50).refine(
   (v) => {
@@ -154,15 +154,15 @@ export const ImportReceiptSchema = z
     importSourceId: z.string().min(1).max(200),
     qbTxnId: z.string().min(1).max(100),
     qbEntity: z.string().max(50).nullable().optional(),
-    retailer: z.string().min(1).max(500),
+    retailer: requiredText("The retailer", 500),
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
-    receiptDate: z.string().max(50).nullable().optional(),
+    receiptDate: isoDate,
     currency: z.string().max(10).default("USD"),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,
-    receiptTotalCents: cents,
+    receiptTotalCents: z.number({ error: "The total is required" }).int().nonnegative(),
     mimeType: z.string().max(100),
     fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),
