@@ -53,7 +53,7 @@ model Receipt {
   // Display only; the reimbursee's identity is reimburseePersonId.
   /// @sensitivity:pii
   reimbursementFor   String?  @map("reimbursement_for")
-  // The checkin Person.id owed the reimbursement: always the uploader; null for backfill.
+  // The checkin Person.id owed the reimbursement, named by the uploader; null for backfill.
   /// @sensitivity:internal
   reimburseePersonId Int?     @map("reimbursee_person_id")
   // upload | email | import

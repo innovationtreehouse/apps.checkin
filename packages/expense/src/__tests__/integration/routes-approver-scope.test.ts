@@ -154,4 +154,13 @@ describeDb("nav badge counts", () => {
     expect(await expenseOpsCounts(principal(3, { isFinance: true }))).toEqual({ holds: 1, openFlags: 1 });
     expect(await expenseOpsCounts(principal(APPROVER))).toEqual({ holds: 0, openFlags: 0 });
   });
+
+  it("gives a Board-only viewer no holds count, and still counts its BOARD flags", async () => {
+    as(APPROVER);
+    await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "THRESHOLD_CROSSED", audience: "BOARD" } });
+    expect(await expenseOpsCounts(principal(5, { isBoard: true }))).toEqual({ holds: 0, openFlags: 1 });
+    expect(await expenseOpsCounts(principal(3, { isFinance: true, isBoard: true }))).toEqual({ holds: 1, openFlags: 2 });
+  });
 });

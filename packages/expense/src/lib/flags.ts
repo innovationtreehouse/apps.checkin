@@ -2,7 +2,7 @@
 import type { ExpenseSettings } from "../contract";
 import { reimburseeUnknown } from "./signoff";
 
-export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "CAPITAL_EQUIPMENT", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP", "QB_DRIFT", "QB_NO_CLASS", "QB_POST_HELD"] as const;
+export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP", "QB_DRIFT", "QB_NO_CLASS", "QB_POST_HELD"] as const;
 export type FlagKind = (typeof FLAG_KINDS)[number];
 export type FlagAudience = "FINANCE" | "BOARD";
 
@@ -10,7 +10,6 @@ export type FlagAudience = "FINANCE" | "BOARD";
 export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
   TAX_ATTACHED: "FINANCE",
   THRESHOLD_CROSSED: "BOARD",
-  CAPITAL_EQUIPMENT: "FINANCE",
   COI: "BOARD",
   REIMBURSEE_UNKNOWN: "FINANCE",
   QB_POST_FAILED: "FINANCE",
@@ -65,13 +64,12 @@ export function detectIntakeFlags(
     backfill?: boolean;
     reimburseePersonId?: number | null;
   },
-  settings: Pick<ExpenseSettings, "boardReviewTotalCents" | "capitalEquipmentUnitCents">,
+  settings: Pick<ExpenseSettings, "boardReviewTotalCents">,
 ): FlagKind[] {
   const flags: FlagKind[] = [];
   if (taxNeedsFinance(expense.taxCents, expense.receiptReview ?? null)) flags.push("TAX_ATTACHED");
   // The Board-review total is the receipt's total, never a single line's.
   if (expense.receiptTotalCents >= settings.boardReviewTotalCents) flags.push("THRESHOLD_CROSSED");
-  if (expense.lineItems.some((li) => li.unitPriceCents >= settings.capitalEquipmentUnitCents)) flags.push("CAPITAL_EQUIPMENT");
   if (reimburseeUnknown({ needsReimbursement: expense.needsReimbursement ?? false, backfill: expense.backfill ?? false, reimburseePersonId: expense.reimburseePersonId ?? null })) {
     flags.push("REIMBURSEE_UNKNOWN");
   }

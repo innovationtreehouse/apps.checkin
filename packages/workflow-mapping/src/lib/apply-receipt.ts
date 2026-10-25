@@ -148,7 +148,10 @@ export async function sweepStuckApplying(): Promise<{
   return counts;
 }
 
-/** Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved. */
+/**
+ * Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved.
+ * Every such attempt ran after the push began, so a give-up marks inventory unconfirmed and the lines stay locked.
+ */
 async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, error: string): Promise<boolean> {
   await db.receivedReceipt.updateMany({
     where: { id: row.id, state: "applying" },
@@ -157,7 +160,7 @@ async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, err
   const validationNotes = `Stopped retrying after ${MAX_SWEEP_APPLY_ATTEMPTS} attempts. Last error: ${error}`;
   const { count } = await db.receivedReceipt.updateMany({
     where: { id: row.id, state: "applying", applySweepAttempts: { gte: MAX_SWEEP_APPLY_ATTEMPTS }, ...unclaimedSince(Date.now()) },
-    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0 },
+    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0, inventoryUnconfirmedAt: new Date() },
   });
   if (count !== 1) return false;
   await insertAuditEvent(db, {
@@ -297,7 +300,7 @@ async function settleUnstamped(
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
 ): Promise<ApplyResult> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error } });
+  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error, inventoryUnconfirmedAt: new Date() } });
   await insertAuditEvent(db, {
     orgId,
     ...actor,

@@ -18,7 +18,8 @@ const BOARD = "boardmember@example.com";
 const APPROVER = "inventory.manager@example.com";
 const PLAIN = "parent.family@example.com";
 const SUBMITTER = "tool.certifier@example.com";
-const OTHER_ADULT = "certified.adult@example.com";
+const REIMBURSEE = "member.pricing@example.com"; // an adult by date of birth
+const MINOR = "child.family@example.com";
 const PROGRAM = "Woodworking 101";
 
 const PROGRAM_EXPENSE = "seed-expense-program";
@@ -160,12 +161,13 @@ describe("expense — field stripping", () => {
   it("serves an approver internal fields only, FINANCE the submitter too", async () => {
     const approver = await loginAs(APPROVER);
     const finance = await loginAs(FINANCE);
-    const asApprover = await api<ExpenseRow>(approver, E);
-    const asFinance = await api<ExpenseRow>(finance, E);
+    const asApprover = await api<{ Expense: ExpenseRow; ExpenseQueueReason: unknown[] }>(approver, E);
+    const asFinance = await api<{ Expense: ExpenseRow }>(finance, E);
     expect(asApprover.status).toBe(200);
-    expect(asApprover.json.vendorName).toBe("TEST-Lumber Co");
-    expect(asApprover.json.submitterId).toBeUndefined();
-    expect(asFinance.json.submitterId).toBe(10);
+    expect(asApprover.json.Expense.vendorName).toBe("TEST-Lumber Co");
+    expect(asApprover.json.Expense.submitterId).toBeUndefined();
+    expect(asApprover.json.ExpenseQueueReason).toEqual([]);
+    expect(asFinance.json.Expense.submitterId).toBe(10);
   });
 
   it("confines an approver's list to their bucket's expenses", async () => {
@@ -260,12 +262,12 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "POST", `/api/expense/flags/${unknown.id}/check-off`, {})).status).toBe(409);
     expect((await send(f, "POST", `/api/expense/flags/${tax.id}/check-off`, { notes: "seen" })).status).toBe(200);
 
-    // Reimbursee: FINANCE names the uploader, the only person it may name, which clears the hold's flag.
-    const reimbursee = (await loginAs(SUBMITTER)).personaId;
-    const other = (await loginAs(OTHER_ADULT)).personaId;
+    // Reimbursee: FINANCE names an adult other than the uploader, never itself or a minor, which clears the hold's flag.
+    const reimbursee = (await loginAs(REIMBURSEE)).personaId;
+    const minor = (await loginAs(MINOR)).personaId;
     const R = `/api/expense/expenses/${REIMBURSEMENT_EXPENSE}/reimbursee`;
     expect((await send(f, "PUT", R, { personId: f.personaId })).status).toBe(403);
-    expect((await send(f, "PUT", R, { personId: other })).status).toBe(403);
+    expect((await send(f, "PUT", R, { personId: minor })).status).toBe(400);
     const set = await send(f, "PUT", R, { personId: reimbursee });
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });

@@ -179,6 +179,32 @@ describe('POST /api/programs — startAt/endAt date preservation', () => {
         expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 
+    describe('age bounds', () => {
+        const createdData = () => (mockProgramCreate.mock.calls[0][0] as { data: { minAge: number | null; maxAge: number | null } }).data;
+        const create = (body: Record<string, unknown>) => POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Age Program', leadMentorId: 7, maxParticipants: 50, startAt: '2026-09-01', endAt: '2026-09-02', ...body }),
+        }) as unknown as import('next/server').NextRequest);
+
+        beforeEach(() => mockProgramCreate.mockResolvedValue({ id: 46, name: 'Age Program' }));
+
+        it('stores a typed maxAge of 0 as 0', async () => {
+            expect((await create({ maxAge: 0 })).status).toBe(200);
+            expect(createdData().maxAge).toBe(0);
+        });
+
+        it('stores a typed minAge of 0 as 0', async () => {
+            expect((await create({ minAge: 0 })).status).toBe(200);
+            expect(createdData().minAge).toBe(0);
+        });
+
+        it('stores an omitted bound as null', async () => {
+            expect((await create({})).status).toBe(200);
+            expect(createdData()).toMatchObject({ minAge: null, maxAge: null });
+        });
+    });
+
     describe('membership year', () => {
         const create = (body: Record<string, unknown>) => POST(new Request('http://localhost/api/programs', {
             method: 'POST',

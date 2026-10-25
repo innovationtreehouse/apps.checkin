@@ -195,6 +195,16 @@ describe('createShopifySingleVariantProgram', () => {
         });
     });
 
+    it.each([[0, 'shopify', 'deny'], [null, null, 'continue']])('a cap of %s creates the variant with inventory_management %s and policy %s', async (cap, management, policy) => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 700, variants: [{ id: 800 }] } }) });
+
+        await createShopifySingleVariantProgram('Capped Program', 3500, cap);
+
+        const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+        expect(body.product.variants[0]).toMatchObject({ inventory_management: management, inventory_policy: policy });
+    });
+
     it('returns null and emails admins when product creation fails', async () => {
         mockTokenResponse(fetchMock);
         fetchMock.mockResolvedValueOnce({ ok: false, status: 422, statusText: 'Unprocessable Entity', text: async () => '{"errors":"bad variant"}' });

@@ -9,6 +9,8 @@ import {
   STUCK_APPLY_SWEEP_CAP,
   sweepStuckApplying,
 } from "../../lib/apply-receipt";
+import { APPLIED_LINES_LOCKED } from "../../lib/line-lock";
+import { lineItemService } from "../../services/lineItemService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
@@ -134,6 +136,7 @@ describeDb("sweepStuckApplying attempt cap", () => {
 
     const settled = await row(r.id);
     expect(settled).toMatchObject({ state: "apply_failed", applySweepAttempts: 0 });
+    expect(settled.inventoryUnconfirmedAt).not.toBeNull();
     expect(settled.validationNotes).toMatch(/Stopped retrying after 3 attempts\. Last error: .*audit write refused/);
     const gaveUp = await db.workflowAuditLog.findMany({
       where: { receivedReceiptId: r.id, eventType: "receipt_apply_failed", toState: "apply_failed" },
@@ -158,6 +161,46 @@ describeDb("sweepStuckApplying attempt cap", () => {
     expect(settled).toMatchObject({ state: "apply_failed", inventoryAppliedAt: null, applySweepAttempts: 0 });
     expect(settled.validationNotes).toMatch(/Last error: .*inventory stamp lost/);
     expect(await sweepStuckApplying()).toMatchObject({ applying: 0, gaveUp: 0 });
+  });
+
+  it("keeps the lines locked after giving up on a lost inventory stamp, and Retry re-sends only inventory", async () => {
+    // A callee that dedupes per receipt, like local-inventory's per-source guard.
+    const changes = new Set<string>();
+    configure({
+      ...sinks,
+      inventorySink: {
+        applyDelta: async (d) => {
+          sinks.calls.inventory.push(d);
+          changes.add(d.receiptId);
+        },
+      },
+    });
+    const r = await stuckReceipt();
+    const ls = await db.receivedReceiptLineStatus.findFirstOrThrow({ where: { receivedReceiptId: r.id } });
+    await failInventoryStamp(r.id);
+    try {
+      for (let i = 0; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) await sweepStuckApplying();
+    } finally {
+      await restoreWrites("received_receipts");
+    }
+    expect(await row(r.id)).toMatchObject({ state: "apply_failed", inventoryAppliedAt: null });
+    expect((await row(r.id)).expenseAppliedAt).not.toBeNull();
+
+    const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } });
+    const locked = { status: 409, message: APPLIED_LINES_LOCKED };
+    await expect(lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" })).rejects.toMatchObject(locked);
+    await expect(lineItemService.markNonInventory(r.id, ls.id)).rejects.toMatchObject(locked);
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toEqual(before);
+
+    const pushedBefore = { inventory: sinks.calls.inventory.length, expense: sinks.calls.expense.length };
+    expect(await receiptService.retryApply(r.id)).toEqual({ state: "applying" });
+    expect(await receiptService.apply(r.id)).toEqual({ state: "resolved" });
+
+    expect(sinks.calls.expense).toHaveLength(pushedBefore.expense);
+    expect(sinks.calls.inventory).toHaveLength(pushedBefore.inventory + 1);
+    expect(sinks.calls.inventory.at(-1)).toEqual(sinks.calls.inventory[0]);
+    expect(changes.size).toBe(1);
+    expect((await row(r.id)).inventoryAppliedAt).not.toBeNull();
   });
 
   it("does not count a sweep that finds a live claim", async () => {

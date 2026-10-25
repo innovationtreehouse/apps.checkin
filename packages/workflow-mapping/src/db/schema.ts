@@ -18,10 +18,11 @@ export type ReceivedReceiptState = (typeof receivedReceiptStateEnum)[number];
 /** States whose lines a manager may still edit (and the S5 remap may touch). */
 export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review", "apply_failed"];
 
-/** A receipt's lines are editable in an editable state while no leg has applied. */
+/** A receipt's lines are editable in an editable state while no leg has applied or may have applied. */
 export const EDITABLE_RECEIPT_WHERE = {
   state: { in: EDITABLE_RECEIPT_STATES },
   inventoryAppliedAt: null,
+  inventoryUnconfirmedAt: null,
   expenseAppliedAt: null,
   donationAppliedAt: null,
 };

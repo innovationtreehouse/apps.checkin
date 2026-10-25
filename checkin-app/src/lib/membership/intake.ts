@@ -492,7 +492,7 @@ export async function submitIntake(userId: number) {
     // need to consent to or wait on a new check, just sign + pay.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    const bgFresh = await householdBgIsFresh(household.id, boundary, settings?.bgRecheckMonths ?? 0);
+    const bgFresh = await householdBgIsFresh(household.id, boundary, settings?.bgRecheckMonths);
 
     await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({

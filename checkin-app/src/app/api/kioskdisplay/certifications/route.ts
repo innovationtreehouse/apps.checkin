@@ -6,7 +6,7 @@ import { getKioskCertifications } from "@/lib/getKioskCertifications";
 import { buildingLink } from "@/lib/kioskSeen";
 
 // Serves the participant roster for the tool-certification grid: id, the kiosk label
-// (getKioskDisplayNames — never a last name or address), and tool certs. Same data class
+// (getKioskDisplayNames — never a whole last name, never an address), and tool certs. Same data class
 // as /api/attendance, so the same gate: a valid kiosk signature, or a privileged session (isSysadmin/isBoardMember/isKeyholder). A plain member session gets
 // 403 — withAuth handles the kiosk path, role check, denied-household, and local dev.
 export const GET = withAuth(

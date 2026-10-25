@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
 import { bgObligatedWhere, ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
@@ -71,7 +72,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const since = sinceParam ? new Date(sinceParam) : null;
     const bgClearedSince = since && !Number.isNaN(since.getTime()) ? since : null;
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const bgRecheckMonths = settings?.bgRecheckMonths ?? 0;
+    const bgRecheckMonths = settings?.bgRecheckMonths;
     const boundary = settings?.orgMembershipYearBoundary
         ? nextBoundary(settings.orgMembershipYearBoundary, now)
         : null;
@@ -88,7 +89,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    membership-year boundary. Reuse householdBgIsFresh per household (stale =
     //    returns false); with either half of the policy unset it always returns false,
     //    so skip the whole bucket rather than tag every household.
-    if (bgRecheckMonths > 0 && boundary) {
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
         const active = await prisma.orgMembership.findMany({
             where: { status: "ACTIVE" },
             select: { householdId: true },
@@ -131,7 +132,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     };
     const peopleNeedingBgCheck: PersonRow[] = [];
     const peopleMissingDob: PersonRow[] = [];
-    if (bgRecheckMonths > 0 && boundary) {
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
         const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
         // Same population the PERSON_BG triggers open for, so every obligation they
         // create has a row here with a submit action behind it.
