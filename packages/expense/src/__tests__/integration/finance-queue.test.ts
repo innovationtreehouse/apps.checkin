@@ -143,3 +143,12 @@ describeDb("finance queue — a failure names its expense", () => {
     await expect(financeQueueCounts(FINANCE)).rejects.toThrow(`finance queue: reading the queue reasons of expense ${id} failed: checkin is down`);
   });
 });
+
+describeDb("finance queue — a signer held in owner approval", () => {
+  it("lists an owner-approval expense whose seat no one without a conflict can fill in the Board tab, as the expense page does", async () => {
+    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 3, 5]] }) });
+    const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 100_000 });
+    await seedApproval(id, await seedLineItem(id), { ownerId: 7, status: "approved" });
+    expect(await codes(principal(6, { isBoard: true }), "board", id)).toContain("SIGNER_HELD");
+  });
+});

@@ -52,7 +52,6 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   }
   if (flag.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
   // A review is a finance to-do; the note says what finance did.
-  // A review is a finance to-do; the note says what finance did.
   if (!notes?.trim()) throw new ServiceError(400, "Say what finance did");
   const expense = (await db.expense.findFirst({ where: { id: flag.expenseId } }))!;
   // A control flag is checked off by someone independent of the expense, never by its submitter,
