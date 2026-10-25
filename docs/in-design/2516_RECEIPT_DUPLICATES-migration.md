@@ -1,7 +1,7 @@
 # Cutover: duplicate receipts as groups
 
-The one-time part of `2516_RECEIPT_DUPLICATES.md`: the build order, the tests
-that change, and what happens to receipts already in the database. Everything
+The one-time part of `2516_RECEIPT_DUPLICATES.md`: the build order and the
+tests that change. Everything
 here stops being true once the last PR merges. Its last step is "extract the
 rules, delete both files".
 
@@ -11,8 +11,10 @@ rules, delete both files".
 - #2515 pins today's behaviour in ten DB-tier tests
   (`packages/receipt/src/__tests__/integration/three-copies.test.ts`). It is
   another session's draft. It merges as it is; PR 1 below flips its tests.
-- #2566 (open) makes every new receipt date YYYY-MM-DD, including the
-  editor's date picker. It does not touch dates already stored.
+- #2566 (open) makes every receipt date YYYY-MM-DD, including the editor's
+  date picker.
+- Production holds no receipts yet, so there is no existing data to carry
+  over: no cleared flags, no finalized pairs, no old date formats.
 - #2561 (retailer case and spaces) is merged. #2558 (fuzzy retailer) is open
   and not part of this plan.
 
@@ -25,13 +27,13 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | PR | Kind | What | Needs |
 | --- | --- | --- | --- |
 | 1 | test | Flip #2515's ten tests to the decided behaviour (table below), marked `it.fails`; add tests for the earlier copy meeting the guard (§5.2) for re-check after discard (§6.4), and for the races in §5.5: a copy arriving after the panel was drawn stays held after **Different purchases** on the old ids; a group-wide action on a stale set of ids writes nothing and answers 409; two holders deciding one group at once, one wins | #2515 merged |
-| 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped). Fill it from today's cleared receipts per Q10 | Q10 |
+| 2 | mig | Add the pair-decision table (expand only: a new table, nothing dropped) | none |
 | 3 | app | Group query: every tier, symmetric, transitive, ordered by upload time; discarded rule per Q1; rejected marker. The pipeline guard uses it. `duplicateFlagClearedAt` stops exempting | Q1 |
 | 4 | security boundary, then app | Registry entry for the group decisions if they need a new route verb (land first, per `AGENTS.md`), then **Not this one** per match (with undo), **Different purchases**, **Keep this one**, re-check after a decision, the note rule | Q2, Q7, Q12 |
 | 5 | app | N-way compare panel (extends #2549) with the per-column dismiss, dismissed strip and redraw, one queue row per group, the badge on open members, the submitter's message | Q6 |
-| 6 | mig + app | Old-date cleanup and number folding per Q3; the similar-date tier if Q13 says yes | #2566 merged; Q3, Q13 |
+| 6 | app | Number folding per Q3; the similar-date tier if Q13 says yes | #2566 merged; Q3, Q13 |
 | 7 | app | Posting re-check: the receipt push carries decided-different receipt ids (contract change in `receipt-types`), the derived QuickBooks-tab reason, the outbox skip, and the stop action | Q8, Q9 |
-| 8 | ops + docs | One-time list of finalized groups for finance (Q11); extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
+| 8 | mig + docs | Drop `duplicateFlagClearedAt` and `duplicateSuspectReceiptId` once no deployed code reads them; extract design §9's accepted rules into `docs/rules/expenses.md`; delete both files | all |
 
 ## #2515's tests, flipped
 
@@ -49,15 +51,10 @@ is small. PRs 3, 4 and 7 depend on @thpr's answers to the questions named.
 | 10 | C's copy B cleared; C stays flagged against finalized B | Unchanged in outcome; group is {A, B} |
 
 The 1265 race test ("two identical uploads at once, exactly one ends
-`duplicate_flagged`") keeps passing: the insert lock stays.
-
-## Data already in the database
-
-- **Cleared receipts** (`duplicateFlagClearedAt` set): per Q10.
-- **Finalized groups**: per Q11, a one-time list for finance. Posted pairs can
-  only be fixed in QuickBooks; unposted ones are caught by PR 7's hold.
-- **`duplicateSuspectReceiptId`**: kept, unread by the check after PR 3. A
-  later contract migration may drop it with `duplicateFlagClearedAt`.
+`duplicate_flagged`") may stop holding: with symmetric matching, the first
+upload is also held if its pipeline runs after the second is inserted. PR 3
+rewrites it as "at least one is held, and both are in one group", which is the
+guarantee that matters (one decision covers both).
 
 ## Last step
 

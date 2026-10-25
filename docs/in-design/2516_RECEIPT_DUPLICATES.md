@@ -1,7 +1,7 @@
 # Duplicate receipts: one group, one decision, checked again before posting
 
 Design for #2516. Research and design only; no app code changes here. The
-one-time cutover and the PR plan are in `2516_RECEIPT_DUPLICATES-migration.md`.
+PR plan is in `2516_RECEIPT_DUPLICATES-migration.md`.
 
 ## Problem
 
@@ -190,12 +190,12 @@ member A by file and member B by fields. Every hit joins the group.
 - **Retailer:** case-folded, trimmed, inner spaces collapsed. Decided and
   shipped in #2561. Fuzzy matching is #2558 and is not part of this design's
   first PRs.
-- **Date:** stored as text, compared exactly. New dates are being made
-  uniform by #2566 (open): the editor becomes a date picker, and an edit or
-  import must send a real YYYY-MM-DD date. The upload form and OCR already
-  write that format. #2566 deliberately leaves dates already stored as they
-  are, so an old `10/01/2026` still won't match a new `2026-10-01`. What's
-  left for duplicates is those old rows. Q3.
+- **Date:** stored as text, compared exactly. #2566 (open) makes every date
+  YYYY-MM-DD: the editor becomes a date picker, and an edit or import must
+  send a real date in that format. The upload form and OCR already write it.
+  Production holds no receipts yet, so there are no older formats to clean
+  up, and once #2566 merges an exact comparison is enough. Nothing more is
+  needed here.
 - **Order and receipt numbers:** compared exactly today. Proposed: fold case,
   drop spaces and a leading `#`, the same treatment #2561 gave the retailer.
   Q3.
@@ -403,8 +403,9 @@ has no decision with A or B, so it is held and shown beside both: habit 3 is
 closed, and the same pair is never asked about twice, which is the
 small-team requirement.
 
-`duplicateFlagClearedAt` stops being an exemption. It can stay as a
-timestamp for the log until a later cleanup drops it.
+`duplicateFlagClearedAt` stops being an exemption. Production holds no
+receipts yet, so no existing clearance needs carrying over; the column and
+`duplicateSuspectReceiptId` are dropped once no code reads them.
 
 ### 6.4 Re-checks after a decision
 
@@ -418,9 +419,8 @@ what's left. This is the re-check #2516 asks for, and it replaces the
 
 ## 7. The re-check at QuickBooks posting
 
-The receipt-side check covers receipts. Three cases slip past it:
+The receipt-side check covers receipts. Two cases slip past it:
 
-- a pair where both were finalized before this design shipped;
 - a finalized member that predates its copy (§5.2), when the copy is cleared
   as different by mistake, or a receipt is edited after finalizing;
 - whatever the next change to the receipt side breaks.
@@ -498,15 +498,15 @@ Numbered as fixed IDs; a settled one is struck, not renumbered.
 | --- | --- | --- | --- |
 | Q1 | Does a **discarded** receipt raise a flag? | (a) No on its own; shown in the group when one exists. (b) Yes, like any other. (c) Ignored entirely. | **(a).** A discarded receipt is never paid; a copy of a live receipt matches that receipt directly. (b) floods the queue with resends of mistakes; (c) hides context finance wants. |
 | Q2 | How much **stronger** is a match on a rejected receipt? | (a) Red label, listed first, rejection note shown, and a note required to clear. (b) Label only. (c) Route it to whoever rejected the first. | **(a).** It's the "check more carefully" @thpr asked for at the cost of one sentence. (c) adds a seat on a team where it's the same people. |
-| Q3 | **Normalise old dates and the numbers?** #2566 makes every new date YYYY-MM-DD; this is about dates already stored in another format, and about order and receipt numbers. | (a) Rewrite the old dates to YYYY-MM-DD once, where they parse unambiguously; list the rest for finance. Fold case, spaces and a leading `#` in order and receipt numbers when comparing. (b) Compare old dates by parsing them on every check, leaving the rows as they are. (c) Numbers only; leave old dates. | **(a).** Once the stored dates are uniform, the check stays a plain equality and no other reader has to parse two formats. Folding numbers is the treatment #2561 gave the retailer. |
+| Q3 | **Fold order and receipt numbers** when comparing? (Dates need nothing: #2566 makes them uniform and there are no older rows.) | (a) Fold case, spaces and a leading `#`. (b) Compare exactly, as today. | **(a).** The same number typed `#A-123` and `a-123` is one order. It is the treatment #2561 gave the retailer. |
 | Q4 | An **amount tolerance** tier (same vendor and date, totals within N cents)? The date window is Q13. | (a) Not now; revisit with #2558's data. (b) Add as a weak "possible duplicate" tier. | **(a).** No source in §11 documents an amount tolerance, and two totals a few cents apart are usually two purchases; ship the exact tiers with groups first and see what's still missed. |
 | Q5 | When #2558's **fuzzy vendor** match lands, is a fuzzy hit flagged like an exact one? | (a) Same hold, weaker label. (b) A badge on the receipt but no hold. | **(a).** One kind of hold keeps the queue simple; the label tells finance how hard to look. |
 | Q6 | May a **submitter withdraw** their own repeat upload when every match is theirs? | (a) Yes, with the match shown; others' receipts never shown. (b) Finance only. | **(a).** It's an existing right (submitters discard their own receipts) and takes the most common case off finance's desk. |
 | Q7 | When is a **note required** to say "different purchases"? | (a) Only when the group has a rejected member. (b) Always. (c) Never. | **(a).** Ties the extra effort to the case @thpr singled out. |
-| Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case and the old pairs. |
+| Q8 | **Posting re-check**: build it? | (a) Yes, as a derived QuickBooks-tab reason (§7). (b) No; trust the receipt check. | **(a).** It costs one reason and catches the finalized-before-copy case. |
 | Q9 | A duplicate found **only at posting**: how does finance stop it? | (a) New `DUPLICATE_WITHDRAWN` event to the existing `rejected`, with a note naming the other expense. (b) Reuse `qb_skipped` ("not posted"). (c) Leave it posted and void in QuickBooks. | **(a).** (b) means "already booked in QuickBooks" for backfill, and reusing it would blur that; (c) books it first and undoes it later. |
-| Q10 | **Existing cleared receipts** at cutover: what do they become? | (a) A *different* decision against their recorded suspect only, then re-checked like any other. (b) Re-check everything with no carry-over. (c) Keep the blanket exemption for old rows. | **(a).** Keeps what finance actually decided and nothing more. |
-| Q11 | **Already-finalized groups** at cutover? | (a) A one-time list for finance, no state change. (b) Let the posting re-check find the unposted ones; ignore the posted ones. | **(a)**, plus (b) for free. Posted pairs can only be fixed in QuickBooks, and finance should know they exist. |
+| Q10 | ~~Existing cleared receipts at cutover~~ | Dropped: production holds no receipts. | — |
+| Q11 | ~~Already-finalized groups at cutover~~ | Dropped: production holds no receipts. | — |
 | Q12 | Besides **Not this one**, a **hide for now** that records nothing and only tidies the view? | (a) No; Not this one with Undo covers it. (b) Yes, as a second button. | **(a).** Undo makes a recorded dismissal as cheap as a hidden one, and two near-identical buttons, one that saves a decision and one that doesn't, are easy to confuse. |
 | Q13 | A weak **similar date** tier: same vendor and same total, receipt dates within N days of each other? | (a) Yes, N = 3, the same hold as the other tiers with a weak label naming the gap ("2 days apart"), built after the exact tiers ship. (b) Yes, with a wider N such as 7. (c) A badge on the receipt but no hold. (d) No. | **(a).** It catches the order-versus-shipping and charge-versus-slip pairs the exact tiers miss. Three days stays clear of a weekly purchase of the same thing, which (b) would flag every week. Each false flag costs one **Not this one**, remembered per pair. The value of N is @thpr's call. |
 
