@@ -73,7 +73,7 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     // Received is final on the receipt side: no restart, no edit.
     const restart = await post(finance, `/api/receipts/${auto.json.id}/restart-flow`);
     expect(restart.status).toBe(409);
-    expect(JSON.stringify(restart.json)).toMatch(/already sent to receiving/);
+    expect(JSON.stringify(restart.json)).toMatch(/already sent to part mapping/);
     const edit = await api(submitter, `/api/receipts/${auto.json.id}`, { method: "PATCH", body: JSON.stringify({ retailer: "Changed" }) });
     expect(edit.status).toBe(409);
 
