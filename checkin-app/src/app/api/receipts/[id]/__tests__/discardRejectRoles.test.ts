@@ -53,10 +53,11 @@ describe("POST /api/receipts/[id]/discard", () => {
     expect(service.discard).toHaveBeenCalledWith("r-1", "submitter");
   });
 
-  it("answers FINANCE the library's refusal on someone else's receipt", async () => {
+  it("runs FINANCE's discard as a submitter, so another person's receipt is not found", async () => {
     signIn({ ...MEMBER, isFinance: true });
-    service.discard.mockRejectedValue(new ServiceError(403, "Only the person who uploaded a receipt can discard it"));
-    expect((await discard(post("/r-1/discard"), params)).status).toBe(403);
+    service.discard.mockRejectedValue(new ServiceError(404, "Receipt not found"));
+    expect((await discard(post("/r-1/discard"), params)).status).toBe(404);
+    expect(service.discard).toHaveBeenCalledWith("r-1", "submitter");
   });
 
   it("runs the Board's discard as a submitter, so another person's receipt is not found", async () => {
