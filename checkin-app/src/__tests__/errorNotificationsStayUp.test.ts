@@ -16,7 +16,6 @@ const ROOTS = [join(REPO, 'checkin-app', 'src'), join(REPO, 'packages')];
 
 /** Files an open PR is already fixing, with the PR that does it. */
 const ALLOWLIST: Record<string, string> = {
-    'packages/bulk-donation/src/components/api.ts': 'Fixed in #2555 (Benevity parse errors stay up).',
     'packages/expense/src/components/api.ts': 'Fixed in #2543 (finance review queue).',
     'packages/local-inventory/src/pages/orgItems.tsx': 'Rewritten by #2565 (inventory log) and #2557.',
 };
