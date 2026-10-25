@@ -11,6 +11,7 @@ import { setReimbursee, signLine } from "../../services/signoffService";
 import { assignOwner, financeAssign, raiseException, resolveUnknown } from "../../services/approvalService";
 import { checkOffFlag, raiseFlag } from "../../services/flagService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
+import { signoffFactsByLine } from "../../lib/signoff-facts";
 import { updateExpenseSettings } from "../../services/settingsService";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -110,6 +111,18 @@ describeDb("seats follow the payee", () => {
     await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(4, { isFinance: true }), li, "TREASURER");
     expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(1);
+  });
+
+  it("a reimbursee that came with the receipt was named by its uploader, who never signs as Treasurer", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [1, 3], board: [5] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 7 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+
+    const expense = await db.expense.findUniqueOrThrow({ where: { id } });
+    expect((await signoffFactsByLine(db, expense)).get(li)!.reimburseeSetter).toBe(1);
+    await expect(signLine(principal(1, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
+    await signLine(FINANCE, li, "TREASURER");
   });
 
   it("the only FINANCE holder named the reimbursee: a Board member takes the Treasurer seat", async () => {

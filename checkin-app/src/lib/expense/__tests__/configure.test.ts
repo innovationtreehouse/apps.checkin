@@ -116,6 +116,20 @@ describe("the live person an id resolves to", () => {
   });
 });
 
+describe("whether a reimbursee is an adult", () => {
+  it.each([
+    ["an adult by date of birth", { dateOfBirth: new Date("1980-01-01"), isDeclaredAdult: false }, true],
+    ["a declared adult with no date of birth", { dateOfBirth: null, isDeclaredAdult: true }, true],
+    ["a minor", { dateOfBirth: new Date(), isDeclaredAdult: false }, false],
+    ["someone of unknown age", { dateOfBirth: null, isDeclaredAdult: false }, false],
+    ["nobody live", null, false],
+  ])("answers for %s", async (_label, row, adult) => {
+    personFindFirst.mockResolvedValue(row);
+    await expect((await signoff()).isAdult(7)).resolves.toBe(adult);
+    expect(personFindFirst.mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null } });
+  });
+});
+
 describe("expense QuickBooks reader", () => {
   async function reader(): Promise<QbReader> {
     await jest.isolateModulesAsync(async () => {
