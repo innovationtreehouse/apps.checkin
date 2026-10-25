@@ -1,0 +1,117 @@
+name: Browser e2e tests
+
+# Drives real user journeys in a browser (Playwright, checkin-app/e2e/*.e2e.ts) against the
+# dockerized DEVELOPMENT server the flow tests use (deploy/docker-compose.flow.yml).
+# See AGENTS.md → Test classes.
+
+on:
+  pull_request:
+    branches: [main, 'rel/**']
+  merge_group:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: us-east-2
+  # Same least-privilege ECR Public pull role as flow-tests.yml.
+  PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+
+jobs:
+  # A PR whose every changed file is under docs/ or client/, or is a *.md file, cannot change
+  # a page: the e2e job reports success without starting the server.
+  changes:
+    name: Detect e2e changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      e2e: ${{ steps.detect.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
+          if printf '%s\n' "$changed" | grep -qvE '(^docs/|^client/|\.md$)'; then
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs- or client-only change — skipping e2e tests."
+            echo "e2e=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  e2e:
+    name: Browser e2e tests (docker dev server)
+    needs: changes
+    # A skipped job passes; run anyway and fail below, so a broken detector is visible.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Change detection must succeed
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::Detect e2e changes did not succeed (${{ needs.changes.result }})."
+          exit 1
+
+      - name: No page-affecting changes
+        if: needs.changes.outputs.e2e != 'true'
+        run: echo "Docs- or client-only change — nothing for the e2e tests to verify."
+
+      - if: needs.changes.outputs.e2e == 'true'
+        uses: actions/checkout@v5
+
+      - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.e2e == 'true'
+        uses: ./.github/actions/ecr-public-login
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start dockerized dev server + DB
+        if: needs.changes.outputs.e2e == 'true'
+        run: docker compose -f deploy/docker-compose.flow.yml up -d --wait --wait-timeout 600
+
+      # The browser runs inside the app container, next to the server and the repo's node_modules.
+      - name: Install Chromium (inside the app container)
+        if: needs.changes.outputs.e2e == 'true'
+        run: docker compose -f deploy/docker-compose.flow.yml exec -T app sh -lc "cd checkin-app && npx playwright install --with-deps chromium"
+
+      - name: Run e2e tests (inside the app container)
+        if: needs.changes.outputs.e2e == 'true'
+        run: docker compose -f deploy/docker-compose.flow.yml exec -T -e CI=true app sh -lc "cd checkin-app && npm run test:e2e"
+
+      # The repo is bind-mounted, so the container's report and traces land in the workspace.
+      - name: Upload report and traces
+        if: failure() && needs.changes.outputs.e2e == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            checkin-app/playwright-report/
+            checkin-app/test-results/
+          retention-days: 7
+
+      - name: App logs on failure
+        if: failure() && needs.changes.outputs.e2e == 'true'
+        run: docker compose -f deploy/docker-compose.flow.yml logs --no-color --tail 300 app
+
+      - name: Tear down
+        if: always() && needs.changes.outputs.e2e == 'true'
+        run: docker compose -f deploy/docker-compose.flow.yml down -v

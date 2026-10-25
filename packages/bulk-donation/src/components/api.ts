@@ -92,7 +92,7 @@ export function when(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : "—";
 }
 
-/** Run a write, toast the outcome, then reload. Returns whether it succeeded. */
+/** Run a write, toast the outcome, then reload; a failure's chip stays up until dismissed. Returns whether it succeeded. */
 export async function act(call: () => Promise<unknown>, ok: string | ((result: unknown) => string), reload: () => void): Promise<boolean> {
   try {
     const result = await call();
@@ -100,7 +100,12 @@ export async function act(call: () => Promise<unknown>, ok: string | ((result: u
     reload();
     return true;
   } catch (e) {
-    notifications.show({ message: errorMessage(e), color: "red", autoClose: false });
+    notifications.show({
+      message: errorMessage(e),
+      color: "red",
+      autoClose: false,
+      styles: { description: { whiteSpace: "pre-line", maxHeight: "50vh", overflowY: "auto" } },
+    });
     return false;
   }
 }

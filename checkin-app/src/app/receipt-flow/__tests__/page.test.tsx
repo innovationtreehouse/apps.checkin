@@ -32,20 +32,20 @@ describe("receipt flow status page", () => {
 
     expect(await rows()).toEqual([
       ...ALL_ZERO.receipt.states.map((s) => ["Receipts", s.label, "0"]),
-      ["Receipts", "Done, not yet sent to receiving", "0"],
-      ...ALL_ZERO.receiving.states.map((s) => ["Receiving", s.label, "0"]),
+      ["Receipts", "Done, not yet sent to part mapping", "0"],
+      ...ALL_ZERO.receiving.states.map((s) => ["Part mapping", s.label, "0"]),
       ...ALL_ZERO.expense.states.map((s) => ["Expenses", s.label, "0"]),
     ]);
     expect(screen.getByText(/^As of /)).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("shows an inventory manager the receiving rows alone", async () => {
+  it("shows an inventory manager the Part mapping rows alone", async () => {
     setSession({ id: 2, isInventoryManager: true });
     mockFetchJson({ "/api/receipt-flow/status": { asOf: ALL_ZERO.asOf, receiving: { states: [{ state: "applying", label: "Applying", count: 3 }] } } });
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    expect(await rows()).toEqual([["Receiving", "Applying", "3"]]);
+    expect(await rows()).toEqual([["Part mapping", "Applying", "3"]]);
   });
 
   it("says a section is not set up when its library has no database", async () => {

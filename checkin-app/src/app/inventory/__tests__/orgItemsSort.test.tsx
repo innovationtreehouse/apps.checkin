@@ -7,7 +7,6 @@ const loaded: string[] = [];
 jest.mock("@checkin/local-inventory/components/api", () => ({
   ...jest.requireActual("@checkin/local-inventory/components/api"),
   useCanManage: () => false,
-  useCanSeeReceiving: () => false,
   useCatalogNames: () => new Map(),
   useLoad: (path: string | null) => {
     if (path) loaded.push(path);

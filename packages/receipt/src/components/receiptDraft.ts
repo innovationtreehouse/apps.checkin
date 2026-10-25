@@ -131,6 +131,14 @@ export function calculatedCents(lines: DraftLine[], header: Header): number | nu
   return (parts as number[]).reduce((a, b) => a + b, 0) - discount;
 }
 
+/** How far the draft's calculated sum is from its receipt total, in cents; 0 passes the server's math check. */
+export function draftDifference(r: ServerReceipt, draft: Draft): number | null {
+  const header = draftHeader(r, draft);
+  const calculated = calculatedCents(draftLines(r, draft), header);
+  const total = parseCents(header.receiptTotal);
+  return calculated === null || total === null ? null : calculated - total;
+}
+
 /**
  * Whether one more line fits under the server's cap. Lines are added before removals are saved,
  * so the saved lines count in full until then.

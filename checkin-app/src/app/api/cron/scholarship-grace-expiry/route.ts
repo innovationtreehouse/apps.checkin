@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
 import prisma from "@/lib/prisma";
-import { withdrawAndReleaseHold } from "@/lib/program/capacity";
+import { deleteAndReleaseHold } from "@/lib/program/capacity";
 import { STATES } from "@/lib/programs/enrollmentState";
 import { systemActor } from "@/lib/auditActor";
 
@@ -16,7 +16,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * never pay and never withdraw. Once BoardSettings.scholarshipDenialGraceDays
  * has elapsed since the denial, the participant is auto-withdrawn and the
  * seat released (+1) — reusing the exact withdrawal path self/admin removal
- * uses (withdrawAndReleaseHold), so this is "auto-withdrawal + seat restore",
+ * uses (deleteAndReleaseHold), so this is "auto-withdrawal + seat restore",
  * not a bespoke release. They can re-enroll afterward if seats remain.
  *
  * NULL scholarshipDenialGraceDays = the feature is OFF; the sweep no-ops
@@ -45,7 +45,7 @@ export const GET = withCron(async () => {
     let failed = 0;
     for (const record of expired) {
         try {
-            const { released: didRelease } = await withdrawAndReleaseHold(record.programId, record.personId, record.program);
+            const { released: didRelease } = await deleteAndReleaseHold(record.programId, record.personId, record.program);
             if (didRelease) released++;
 
             await prisma.auditLog.create({

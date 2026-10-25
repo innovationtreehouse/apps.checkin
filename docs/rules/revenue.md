@@ -118,6 +118,13 @@ Things the app takes as true because they are handled outside it.
 - A refund removes only the people it refunds. A sibling on the same order
   stays enrolled.  [Decision]
 
+- A refund, chargeback or cancellation on a withdrawn person's order is raised
+  against their withdrawn enrollment, which stays. A refund that puts back a seat
+  the order identifies as theirs removes nobody and the seat stays on sale, unless
+  the withdrawal had already put that seat back, in which case the extra one is
+  taken off sale. A returned seat the order cannot tie to anyone is taken off sale
+  like any other, even when one of the order's people has withdrawn.  [Decision]
+
 - The store decides what a discount comes to; the app decides who may use one and
   until when. An order carrying the right item is correct whatever it totals.  [Decision — deliberate limit]
 
