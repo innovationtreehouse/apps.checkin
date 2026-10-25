@@ -86,6 +86,17 @@ export const classifications = {
         valueAfter: 'personal',
         lineItemId: 'internal',
     },
+    ReceiptPairDecision: {
+        id: 'internal',
+        orgId: 'internal',
+        receiptId: 'pii',
+        otherReceiptId: 'pii',
+        kind: 'internal',
+        copyReceiptId: 'pii',
+        decidedByUserId: 'internal',
+        decidedAt: 'internal',
+        note: 'personal',
+    },
     ReceiptMailItem: {
         id: 'internal',
         orgId: 'internal',
@@ -117,6 +128,8 @@ export const relations = {
         financeReview: { model: 'ReceiptFinanceReview', isList: false },
         lineItems: { model: 'ReceiptLineItem', isList: true },
         auditLogs: { model: 'ReceiptAuditLog', isList: true },
+        pairDecisions: { model: 'ReceiptPairDecision', isList: true },
+        pairDecisionsOther: { model: 'ReceiptPairDecision', isList: true },
     },
     ReceiptDetail: {
         receipt: { model: 'Receipt', isList: false },
@@ -131,6 +144,10 @@ export const relations = {
     ReceiptAuditLog: {
         receipt: { model: 'Receipt', isList: false },
         lineItem: { model: 'ReceiptLineItem', isList: false },
+    },
+    ReceiptPairDecision: {
+        receipt: { model: 'Receipt', isList: false },
+        otherReceipt: { model: 'Receipt', isList: false },
     },
     ReceiptMailItem: {
     },
