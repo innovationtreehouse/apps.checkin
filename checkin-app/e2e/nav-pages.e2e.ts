@@ -50,17 +50,19 @@ const isKnown = (email: string, page: string) => KNOWN_FAILURES.some((k) => k.pa
 const isSeedPrompt = (email: string, page: string, problem: string) =>
   SEED_PROMPTS.some((p) => p.page === page && p.personas.includes(email) && problem === `error alert: ${p.text}`);
 
-/** A page's share of its persona's test time: a cold compile, the load, and the settle. */
-const PAGE_BUDGET_MS = 75_000;
-/** How long a page may keep requesting before the check reads it anyway. */
-const SETTLE_MS = 15_000;
+/** How long a page may keep requesting after it loads; one still requesting then is itself a problem. */
+const SETTLE_MS = 30_000;
+/** A page's share of its persona's test time: the navigation limit, the settle, and a margin. */
+const PAGE_BUDGET_MS = 90_000 + SETTLE_MS + 10_000;
 
 /** Opens a page and lets it settle; a page that never finishes loading is itself a problem. */
 async function openPage(page: Page, href: string): Promise<string[]> {
   try {
     const res = await page.goto(href);
-    await page.waitForLoadState("networkidle", { timeout: SETTLE_MS }).catch(() => undefined);
-    return res && res.status() >= 400 ? [`page answered ${res.status()}`] : [];
+    const problems = res && res.status() >= 400 ? [`page answered ${res.status()}`] : [];
+    const settled = await page.waitForLoadState("networkidle", { timeout: SETTLE_MS }).then(() => true, () => false);
+    if (!settled) problems.push(`still loading after ${SETTLE_MS / 1000} s, so a late error could be missed`);
+    return problems;
   } catch (err) {
     return [`did not load: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`];
   }

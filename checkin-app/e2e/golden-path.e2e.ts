@@ -59,10 +59,12 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await page.goto("/receipts/upload");
     await page.locator('input[type="file"]').setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from(`golden path ${stamp}`) });
     await page.getByRole("button", { name: "Upload", exact: true }).click();
-    await page.waitForURL(/\/receipts\/[^/]+$/);
+    // The upload page's own path also ends in one segment, so wait for the receipt's.
+    await page.waitForURL((url) => /^\/receipts\/[^/]+$/.test(url.pathname) && url.pathname !== "/receipts/upload");
     receiptId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() ?? "");
     // The local OCR mock reads every upload as the same purchase, so an earlier upload may flag this one.
-    const read = await api<{ state: string }>(finance.session, `/api/receipts/${receiptId}`);
+    const read = await api<{ state: string }>(finance.session, `/api/receipts/${encodeURIComponent(receiptId)}`);
+    expect([receiptId, read.status]).toEqual([receiptId, 200]);
     if (read.json.state === "duplicate_flagged") {
       expect((await send(finance.session, "POST", `/api/receipts/${receiptId}/clear-duplicate`)).status).toBe(200);
     }

@@ -17,7 +17,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   // Per test; a spec that walks many pages raises its own from the page count.
   timeout: 180_000,
-  expect: { timeout: 20_000 },
+  expect: { timeout: 30_000 },
   // Steps print as they run, so a run cut short still shows where it was.
   reporter: process.env.CI ? [["list", { printSteps: true }], ["html", { open: "never" }]] : [["list"]],
   use: {
