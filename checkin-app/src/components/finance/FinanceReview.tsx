@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Alert, Anchor, Button, Group, Select, Stack, Text, Title } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import {
   NOT_PUSHED,
   OTHER_QUEUES,
@@ -16,7 +17,7 @@ import {
   useQueueCounts,
   type QueueBadge,
 } from "@checkin/receipt/pages/financeQueue";
-import { FINANCE_QUEUE_TABS, FinanceQueueList, financeQueueTab, useFinanceQueueCounts } from "@checkin/expense/pages/financeQueue";
+import { FINANCE_QUEUE_TABS, FinanceQueueList, financeQueueTab, loadFailure, useFinanceQueueCounts } from "@checkin/expense/pages/financeQueue";
 import { FINANCE_REVIEW_PATH } from "@/lib/nav/sections/finance";
 
 /** A tab as the host lays it out: its `?queue=` value, label, group, and this viewer's counts. */
@@ -75,6 +76,11 @@ export default function FinanceReview() {
   const { data: session } = useSession();
   const isFinance = (session?.user as { isFinance?: boolean } | undefined)?.isFinance === true;
   const receipts = useQueueCounts();
+  useEffect(() => {
+    if (receipts.error) {
+      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error), color: "red", autoClose: false });
+    }
+  }, [receipts.error]);
   const expenses = useFinanceQueueCounts();
 
   const receiptTab = (q: { value: string; label: string }): Tab => {
@@ -112,8 +118,6 @@ export default function FinanceReview() {
   return (
     <>
       <Title order={3} mb="md">Finance review</Title>
-      {receipts.error && <Alert color="red" mb="md">Couldn&apos;t load the receipt counts: {receipts.error}</Alert>}
-      {expenses.error && <Alert color="red" mb="md">Couldn&apos;t load the expense counts: {expenses.error}</Alert>}
       <Stack gap="xs" mb="md">
         <Group gap="xs" align="center">
           <Text fw={600} w={80}>Receipts</Text>
