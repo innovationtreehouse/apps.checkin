@@ -10,7 +10,8 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { PAGES } from "@/components/pageRegistry";
 import { LIBRARY_KEYS, type LibraryKey } from "@/lib/libraryRelease";
-import { sectionShown, tabHrefs, visibleLinks } from "@/lib/nav/gates";
+import { hasAnyRole, sectionShown, tabHrefs, visibleLinks } from "@/lib/nav/gates";
+import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath } from "../../packages/receipt/src/components/reviewQueue";
@@ -58,7 +59,7 @@ interface Viewer { session: Session; user: NavUser; counts: TodoCounts | null; e
 /** The allowed values of a list route's selector, read from the 400 the route answers for an unknown one. */
 async function allowedValues(s: Session, path: string, param: string): Promise<string[]> {
   const res = await api(s, `${path}?${param}=-`);
-  const match = new RegExp(`${param} must be one of: ([a-z_, ]+)`).exec(JSON.stringify(res.json));
+  const match = new RegExp(`${param} must be one of: ([A-Za-z0-9_, -]+)`).exec(JSON.stringify(res.json));
   if (res.status !== 400 || !match) throw new Error(`${path} did not list its ${param} values (status ${res.status})`);
   return match[1].split(",").map((v) => v.trim()).filter(Boolean);
 }
@@ -139,12 +140,12 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
     if (v.user.isBoardMember) urls.push("/api/budget-owners/approver-options");
     return urls;
   },
-  "/inventory/org-items": () => [
+  "/inventory/org-items": (v) => [
     "/api/inventory/org-items?sortBy=gtin13&sortDir=asc&page=1&limit=50",
     "/api/inventory/org-items/count",
     "/api/inventory/locations",
-    paged("/api/inventory/inventory-log"),
-    "/api/inventory/inventory-log/count",
+    // The Inventory Log tab shows only to the receiving roles.
+    ...(hasAnyRole(v.user, RECEIVING_ROLES) ? [paged("/api/inventory/inventory-log"), "/api/inventory/inventory-log/count"] : []),
   ],
   "/inventory/locations": () => ["/api/inventory/locations"],
   "/inventory/receive-queue": () => ["/api/inventory/receive-queue?includeFulfilled=false", "/api/inventory/receive-queue?includeFulfilled=true"],
@@ -182,7 +183,11 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
 };
 
 const isSection = (v: unknown): v is NavSection =>
-  typeof v === "object" && v !== null && "links" in v && Array.isArray(v.links) && "visible" in v && typeof v.visible === "function";
+  typeof v === "object" && v !== null
+  && "id" in v && typeof v.id === "string"
+  && "href" in v && typeof v.href === "string"
+  && "links" in v && Array.isArray(v.links)
+  && "visible" in v && typeof v.visible === "function";
 
 /** Every section descriptor in src/lib/nav/sections, so a new section is covered without a list to update. */
 async function navSections(): Promise<NavSection[]> {

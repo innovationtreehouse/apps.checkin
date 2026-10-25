@@ -12,6 +12,7 @@ module.exports = createJestConfig({
     testEnvironment: 'node',
     setupFilesAfterEnv: [],
     testMatch: ['<rootDir>/flow-tests/**/*.flow.test.[jt]s'],
+    testSequencer: '<rootDir>/flow-tests/sequencer.mjs',
     // A library's nav module exports only an `import` condition, which jest's require cannot resolve.
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',

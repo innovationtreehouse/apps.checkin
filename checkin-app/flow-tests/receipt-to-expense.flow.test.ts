@@ -43,7 +43,7 @@ let finance: Session;
 let board: Session;
 let approver: Session;
 let bucketId: number;
-let original: Receipt;
+let original: Receipt | undefined;
 
 beforeAll(async () => {
   [submitter, finance, board, approver] = await Promise.all([loginAs(SUBMITTER), loginAs(FINANCE), loginAs(BOARD), loginAs(APPROVER)]);
@@ -66,7 +66,7 @@ describe("receipt to expense journey", () => {
     original = first.json.state === "duplicate_flagged"
       ? (await post<Receipt>(finance, `/api/receipts/${first.json.id}/clear-duplicate`)).json
       : first.json;
-    expect(original.state).toBe("submitter_review");
+    expect(original?.state).toBe("submitter_review");
 
     const copy = await upload(submitter, `journey copy ${stamp}`);
     expect(copy.status).toBe(200);
