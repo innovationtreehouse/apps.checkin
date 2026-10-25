@@ -30,8 +30,8 @@ purchase is one decision recorded in one place, the Record Board authorization
 panel on the expense, and the `THRESHOLD_CROSSED` flag that duplicated it goes.
 
 Three schema changes, all small: the expense side stores the receipt's tax
-review and its own tax approval (§9), and the `capital_equipment_unit_cents`
-setting column is dropped (3.7). The work ships as two boundary PRs and five
+review (#2479, merged) and its own tax approval (§9), and the
+`capital_equipment_unit_cents` setting column is dropped (3.7). The work ships as two boundary PRs and five
 feature PRs, in the order under "Rollout".
 
 ## What finance works from today
@@ -183,7 +183,7 @@ The Receipts tabs are #2466's, unchanged. The Expenses and Board groups hold:
 | To sign | Lines waiting for a Treasurer signature the viewer can give, with Approve All. The signing act is #2503's; this design places the tab and counts it | FINANCE (the Treasurer seat) |
 | Account holds | One row per held expense: "2 lines have no account rule" | FINANCE |
 | QuickBooks | Posting failed after retries; duplicate to void; changed in QuickBooks; closed but not posted; bucket has no Class; waiting for a match (`AMBIGUOUS`, below) | FINANCE |
-| Board | Board approval not recorded; held, no conflict-free signer; Board signature to give (a purchase of $2,000 or more, a reimbursement to a non-member, a conflicted Treasurer's seat; the act is #2503's) | Board for signatures, and FINANCE for recording the authorization |
+| Board | Board approval not recorded; held, no conflict-free signer; Board signature to give (a Board seat the viewer may sign, in the rules' cases: a line of a non-Everyday card charge without written Board authorization, a reimbursement to a non-member, a seat no finance holder or bucket approver without a conflict can fill; the act is #2503's). A purchase of $2,000 or more needs the Board's approval recorded, the first reason, not a signature | Board for signatures, and FINANCE for recording the authorization |
 
 Recording the Board's approval is finance's job (decided): FINANCE records what
 the Board decided. "Board approval not recorded" counts green only for a
@@ -330,7 +330,13 @@ failures as red chips that stay open (2.15).
 A receipt whose expense leg failed is finance's concern, because the purchase
 never reaches the books. 3.27 found that finance can no longer see these. The
 Expenses tab lists each failed `ReceivedExpensePayload` as "Receipt didn't
-become an expense: {failure reason}", linking to the receipt in receiving. The
+become an expense", with the payload's vendor, date and amount. The row has no
+expense, so its link is Receiving › Apply failed (`/inventory/receiving?queue=failed`),
+not one receipt: the expense library holds only the receipt id, and the
+receiving page is keyed by workflow-mapping's own id. The failure reason is
+`personal` and `FinanceQueueRow.reasons` is `internal`, so the row leaves it
+out; Receiving's Apply failed list shows it (#2475). Showing it in the row
+would need a boundary PR that re-tiers the field. This is how #2543 builds it. The
 Expense events and Provisional items screens are not restored (decided). They
 were integration screens for separate prototype apps exchanging messages; in
 one app, a receipt that failed to become an expense is an Expenses-tab row, and
@@ -369,7 +375,8 @@ one app, a receipt that failed to become an expense is an Expenses-tab row, and
 | `GET /api/expense/flags` | Removed, in a later release than the page, so open tabs running old code keep working through the deploy |
 | `POST /api/expense/flags/[id]/check-off` | Kept; called from the expense page's Reviews panel. The service refuses the retired kinds and a blank note |
 | `GET /api/expense/expense-holds` | Removed with the holds page. Set account and Resubmit stay and are called from the expense page |
-| `GET /api/expense/finance-queue?tab=…`, `GET /api/expense/finance-queue/counts` | New; `finance-or-board`. Rows are a synthetic `FinanceQueueRow` (vendor, date, amount, currency, reason codes, waiting since, expense id for the link) |
+| `GET /api/expense/finance-queue?tab=…`, `GET /api/expense/finance-queue/counts` | New; `finance-or-board`. Rows are a synthetic `FinanceQueueRow` (expense id, vendor, date, amount, currency, reasons, waiting since). Each reason carries its code, its words and its link, so a failed-intake row, which has no expense id, links through its reason (§6). Registered in #2524 |
+| `POST /api/expense/expenses/[id]/tax-approval` | New; `finance`. Approve tax on the expense (§4). Registered in #2524 |
 | `GET /api/expense/expenses/[id]` | Gains `reasons` (the open queue reasons) and the three review kinds in place of `flags` |
 | Expense nav counts (`expenseOpsCounts`, served through `/api/nav/todo-counts`) | `holds` and `openFlags` go when the nav pill moves to the new counts, in step 5 |
 | `GET /api/expense/counts` (`ExpenseCounts`) | Its `expense_holds` field goes once nothing reads it. Removing one field is not a whole-entry removal, so it needs its own boundary PR (step 7) |
@@ -404,22 +411,19 @@ kind exists before it runs. It ships in step 5's release. Old code still
 serving during that deploy's drain window can raise a row under an old kind, so
 the same SQL, written to be idempotent, runs again in step 7's release.
 
-**Tax review.** The derived tax reason needs three things expense doesn't store
-today:
+**Tax review.** The derived tax reason reads three stored things:
 
 - the tax amount the receipt's finance approval covered, and
-- whether the receipt's settings held its tax for review (`taxReviewRequired`).
-  #2479 reads both from the intake payload; they need columns on
-  `expense_receipt_reviews` so the reason can be computed after intake. That
-  is #2479's change to make, and the reviewer has asked for it there.
+- whether the receipt's settings held its tax for review. #2479 (merged)
+  stores both on `expense_receipt_reviews`, as `approvedTaxCents` and
+  `taxReviewRequired`.
 - Finance's tax approval on the expense itself. A new table,
   `expense_tax_approvals` (expense, tax amount approved, approver, optional
   note, time), keeps it beside the expense, following #2464's reason for
   sibling tables: routes that return `Expense` rows don't start carrying the
   note.
 
-Both are expand-only: added columns that are nullable, and a new table that old
-code never reads.
+The new table is expand-only: old code never reads it.
 
 **Capital setting.** `capital_equipment_unit_cents` is dropped from the expense
 settings in two releases (step 8).
@@ -438,15 +442,17 @@ Each PR is based on `main`. None is stacked on another's branch.
    expense, with #2479 storing the approved tax amount and
    `taxReviewRequired`), #2465.
 2. **Registry PR A** (boundary only): `finance-queue` and `finance-queue/counts`
-   entries, `FinanceQueueRow`, and the new `reasons` field.
-3. **Expense detail PR** (3.1, 3.4, 3.9, 3.10, 3.12, 3.16): the derived-reason
+   entries, `FinanceQueueRow`, the `tax-approval` route, and the new `reasons`
+   field. Merged as #2524.
+3. **Expense detail PR** (3.1, 3.4, 3.9, 3.10, 3.12, 3.16), #2538: the derived-reason
    service, the reasons alert and field marks, the Reviews panel, required notes,
    return to the queue, and Retry and Set reimbursee clearing their reasons.
    The `expense_tax_approvals` table and Approve tax ship here, and so does the
    QuickBooks panel's match picker and vendor pointer for `AMBIGUOUS` posts
    (§4). Until step 5
    gives finance the queue tabs, `/expense/flags` stays finance's list, so this
-   step keeps raising every kind. Its fixes close the matching row in the same
+   step keeps raising every kind still raised (`CAPITAL_EQUIPMENT` is already
+   gone, step 8). Its fixes close the matching row in the same
    act: a successful retry closes `QB_POST_FAILED`, and recording the Board's
    authorization closes `THRESHOLD_CROSSED`, as Set reimbursee already closes
    `REIMBURSEE_UNKNOWN`. `MISSING_RECEIPT` and `NON_EVERYDAY`
@@ -457,13 +463,13 @@ Each PR is based on `main`. None is stacked on another's branch.
    remove, and no row of either exists, because nothing ever raised one.
 4. **Account holds PR** (3.20, 3.21, 3.22): the panel on the expense page, the
    processor honouring a manual account on every hold reason, and the Resubmit
-   gate.
-5. **Queue PR** (1.7, 3.3, 3.5, 3.6, 3.27, 2.9 link): the finance-queue routes,
+   gate. Merged as #2526.
+5. **Queue PR** (1.7, 3.3, 3.5, 3.6, 3.27, 2.9 link), #2543: the finance-queue routes,
    the host page at `/finance/review` with the receipt and expense tabs, failed
    intake, the Apply failed link, counts and the nav pill. The old review,
    Flags and Holds pages are deleted and their links repointed. In the same
-   PR, intake stops raising `TAX_ATTACHED`, `THRESHOLD_CROSSED`,
-   `CAPITAL_EQUIPMENT` and `REIMBURSEE_UNKNOWN`; the drain stops raising
+   PR, intake stops raising `TAX_ATTACHED`, `THRESHOLD_CROSSED` and
+   `REIMBURSEE_UNKNOWN`; the drain stops raising
    `QB_NO_CLASS` and exhausted `QB_POST_FAILED`; the sign-off
    paths stop raising `COI`, leaving the stand-in in the audit log only; the
    duplicate path raises `QB_DUPLICATE_TO_VOID`; and the
@@ -482,7 +488,7 @@ Each PR is based on `main`. None is stacked on another's branch.
    queue counts, so no seat is counted twice. The signing act itself ships
    with #2503.
 6. **Receiving Retry PR** (2.9): Retry on each Apply failed row. It's independent
-   of the rest and can go any time.
+   of the rest. Merged as #2525.
 7. **Registry PR B** (decommission), one release after step 5 is live: remove
    `GET /api/expense/flags` and `GET /api/expense/expense-holds` with their
    route files. A separate boundary PR in the same release drops
@@ -492,18 +498,19 @@ Each PR is based on `main`. None is stacked on another's branch.
 8. **Capital setting removal** (3.7), in two releases. Expand-and-contract, as
    #2441 did for the "not Everyday" marks
    (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`):
-   - Release 1, with step 3: stop reading and writing `capitalEquipmentUnitCents`.
-     Remove it from `ExpenseSettings`, `THRESHOLD_RULES`, the settings schema
-     and the Settings page, and mark the field `@ignore` in
-     `packages/expense/prisma/schema.prisma`. Bulk donation's `largeValueCents`
-     (`checkin-app/src/lib/bulkDonation/configure.ts`) reads the same setting, so
-     it moves to `capitalLineItemThresholdCents`. That threshold compares with
-     `>` where the old one used `>=`, and finance may switch it off, so the
-     bulk-donation behaviour at exactly the threshold, and when it's off, has to
-     be checked in that PR. The classification in
-     `security/generated/expense-classifications.ts` is regenerated, so the
+   - Release 1, merged as #2528, on its own and ahead of steps 3 and 5: intake
+     stops raising `CAPITAL_EQUIPMENT`, which leaves `FLAG_KINDS`,
+     `FLAG_AUDIENCE` and `detectIntakeFlags`, and nothing reads or writes
+     `capitalEquipmentUnitCents`. It leaves `ExpenseSettings`, `THRESHOLD_RULES`,
+     the settings schema and the Settings page, and the field is `@ignore` in
+     `packages/expense/prisma/schema.prisma`. Open `CAPITAL_EQUIPMENT` rows stay
+     on `/expense/flags` until step 5's migration closes them. Bulk donation's
+     `largeValueCents` (`checkin-app/src/lib/bulkDonation/configure.ts`) reads
+     `capitalLineItemThresholdCents` instead and keeps its own `>=`; a threshold
+     of 0 warns on every gift (@thpr: zero is zero, not off). The classification
+     in `security/generated/expense-classifications.ts` is regenerated, so the
      settings route returns one field fewer.
-   - Release 2, once release 1 is live in prod: a migration dropping
+   - Release 2, #2535, once release 1 is live in prod: a migration dropping
      `capital_equipment_unit_cents` from `org_settings` (`ExpenseOrgSettings`), wrapped in
      `BEGIN;`/`COMMIT;`. The column has a default, so release 1's inserts don't
      need it during the drain window.
