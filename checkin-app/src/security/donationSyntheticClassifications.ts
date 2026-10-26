@@ -16,9 +16,9 @@
  * and recorder, when the donor was replaced, the four accept warnings and the
  * caller's conflict state, plus the gift's queue state and what it waits on, its
  * outcome and decision time, a replay conflict, a bucket hold, each booking
- * side's state and when finance settled a withdrawal, all as `internal` facts.
- * It carries no donor field, so a donor name on the row is stripped from every
- * view.
+ * side's state, when finance settled a withdrawal, and its QuickBooks match state
+ * with the note explaining it, all as `internal` facts. It carries no donor
+ * field, so a donor name on the row is stripped from every view.
  *
  * InKindQueueLineView — one line of a queued gift: the item and its description,
  * its quantity, the value finance set and the value ops suggested, all `internal`.
@@ -102,6 +102,8 @@ export const classifications = {
     expenseBooking: "internal",
     withdrawalSettledAt: "internal",
     donationDate: "internal",
+    qbState: "internal",
+    qbNote: "internal",
   },
   InKindQueueLineView: {
     id: "internal",
