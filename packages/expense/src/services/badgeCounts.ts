@@ -1,5 +1,5 @@
-// Counts for the host's nav pills: "Expense approvals" (lines awaiting the caller's approval, the
-// program approver's sign-off) and each expense list view's items the caller can act on. The
+// Counts for the host's nav pills: "Expense approvals" (lines waiting on the caller's approval,
+// the program approver's sign-off) and each expense list view's items the caller can act on. The
 // finance queue counts itself (financeQueueService). Each reads only the caller's own scope.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
@@ -8,41 +8,60 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { approvalRefusal, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
+import { boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
+import { boardApprovalNeeded, conflictedParties, signoffFactsByLine } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES } from "./approvalService";
+import { callerLines } from "./signoffService";
 
 /** The most open expenses one badge poll examines, so a poll costs a fixed amount of work. */
 export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
 
+export interface ExpenseAwaitingApproval {
+  expenseId: string;
+  /** The lines whose main act for the caller is approval. */
+  lineItemIds: number[];
+}
+
 /**
- * Lines in the caller's buckets waiting for an approval the caller may give, across at most
- * SIGNOFF_BADGE_EXPENSE_CAP candidate expenses (newest first); past the cap it is a lower bound.
- * The query keeps expenses in owner approval with such a line, not submitted by the caller; the
- * approval's refusals are checked per line.
+ * The expenses waiting on the caller's approval, each with the lines whose main act for the
+ * caller (from lineActions) is approval: the SIGNOFF_BADGE_EXPENSE_CAP newest such expenses; past
+ * the cap it is a lower bound. Candidates are expenses in owner approval, not the caller's own
+ * receipt and not a reimbursement with no reimbursee (the approve service refuses both), with a
+ * line waiting for approval in the caller's buckets, or in any bucket for a Board member. They are
+ * read newest first, a batch at a time, until the cap is reached, so candidates with nothing for
+ * the caller never crowd out older work. The approver pill, its "Waiting on you" view and the
+ * owner-approval view count all read this.
  */
-export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promise<number> {
+export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
   const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
-  if (buckets.length === 0) return 0;
-  const waiting = { ownerId: { in: buckets }, status: { in: [...APPROVABLE_STATUSES] } };
-  const expenses = await db.expense.findMany({
-    where: { orgId: await getOrgId(), backfill: false, state: "owner_approval", submitterId: { not: me }, approvals: { some: waiting } },
-    orderBy: { submittedAt: "desc" },
-    take: SIGNOFF_BADGE_EXPENSE_CAP,
-  });
-  let count = 0;
-  for (const expense of expenses) {
-    const [facts, filled, approvals] = await Promise.all([
-      signoffFactsByLine(db, expense, { readOnly: true }),
-      filledSeatsByLine(db, expense.id),
-      db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id, ...waiting }, select: { lineItemId: true } }),
-    ]);
-    for (const { lineItemId } of approvals) {
-      if (approvalRefusal(facts.get(lineItemId)!, filled.get(lineItemId) ?? [], me) === null) count++;
+  if (buckets.length === 0 && !principal.isBoard) return [];
+  const where: Prisma.ExpenseWhereInput = {
+    orgId: await getOrgId(),
+    backfill: false,
+    state: "owner_approval",
+    submitterId: { not: me },
+    NOT: { needsReimbursement: true, reimburseePersonId: null },
+    approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
+  };
+  const out: ExpenseAwaitingApproval[] = [];
+  for (let skip = 0; out.length < SIGNOFF_BADGE_EXPENSE_CAP; skip += SIGNOFF_BADGE_EXPENSE_CAP) {
+    const batch = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], skip, take: SIGNOFF_BADGE_EXPENSE_CAP });
+    for (const expense of batch) {
+      if (out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
+      const lineItemIds = (await callerLines(principal, expense, true))
+        .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
+        .map((line) => line.lineItemId);
+      if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
     }
+    if (batch.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
   }
-  return count;
+  return out;
+}
+
+/** The approver pill: lines waiting on the caller's approval (expensesAwaitingMyApproval). */
+export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promise<number> {
+  return (await expensesAwaitingMyApproval(principal)).reduce((n, e) => n + e.lineItemIds.length, 0);
 }
 
 type Parties = { submitterId: number; reimburseePersonId: number | null };
@@ -64,11 +83,11 @@ async function countFree(rows: Parties[], conflicted: (e: Parties) => Promise<bo
 
 /**
  * Per expense list view, the expenses the caller can act on. Assigning buckets, settling
- * exceptions, capital review and depreciation are FINANCE steps; owner approval counts expenses
- * with a line in the caller's own buckets waiting for approval, pending or moved there by finance. Steps the server refuses a conflicted caller
- * leave those expenses out; capital review and depreciation are bookkeeping any FINANCE holder
- * may do, so they keep them. A view whose count fails is logged and left out, so the others
- * still show.
+ * exceptions, capital review and depreciation are FINANCE steps; owner approval counts the
+ * expenses waiting on the caller's approval (expensesAwaitingMyApproval). Steps the server
+ * refuses a conflicted caller leave those expenses out; capital review and depreciation are
+ * bookkeeping any FINANCE holder may do, so they keep them. A view whose count fails is logged
+ * and left out, so the others still show.
  */
 export async function expenseActionCounts(principal: ExpensePrincipal): Promise<Partial<Record<ExpenseActionView, number>>> {
   const me = callerId(principal);
@@ -79,11 +98,7 @@ export async function expenseActionCounts(principal: ExpensePrincipal): Promise<
     countFree(await db.expense.findMany({ where: { orgId, ...where }, select: PARTIES }), conflicted);
   const tasks: Record<ExpenseActionView, () => Promise<number>> = {
     assign_ownership: async () => (finance ? free({ state: "assign_ownership", approvals: { some: { ownerId: null } } }) : 0),
-    owner_approval: async () => {
-      const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
-      if (buckets.length === 0) return 0;
-      return free({ state: "owner_approval", approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ownerId: { in: buckets } } } });
-    },
+    owner_approval: async () => (await expensesAwaitingMyApproval(principal)).length,
     // An exception is not terminal, so it holds its expense in owner_approval, where FINANCE settles it.
     owner_exception: async () => (finance ? free({ approvals: { some: { status: "exception_raised" } } }) : 0),
     capital_review: async () => (finance ? db.expense.count({ where: { orgId, state: "capital_review" } }) : 0),

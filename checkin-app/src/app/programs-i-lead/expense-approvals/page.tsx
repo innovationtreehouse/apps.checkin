@@ -2,5 +2,5 @@
 import { ExpenseActionList } from "@/components/expense/ExpenseActionList";
 
 export default function Page() {
-  return <ExpenseActionList detailBase="/programs-i-lead/expense-approvals" defaultView="owner_approval" />;
+  return <ExpenseActionList detailBase="/programs-i-lead/expense-approvals" defaultView="awaiting_me" />;
 }

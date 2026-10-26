@@ -14,6 +14,7 @@ import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath, reviewDetailHref } from "../../packages/receipt/src/components/reviewQueue";
 import { navPages as viewerPages, navSections } from "../test-support/navPages";
 import { api, loginAs, type Session } from "./helpers";
+import { expenseViewsFor } from "@checkin/expense/nav";
 
 // The first persona pays the dev server's compile of every page and route it opens.
 jest.setTimeout(600_000);
@@ -63,7 +64,13 @@ async function firstId<T extends { id: string | number }>(s: Session, path: stri
 const receiptQueues = [...QUEUES, ...OTHER_QUEUES].map((q) => q.value);
 
 const expenseList = async (v: Viewer, href: string): Promise<string[]> => {
-  const views = await allowedValues(v.session, "/api/expense/expenses", "view");
+  // The list shows, and the routes admit, only the views the viewer can act in.
+  const shown = expenseViewsFor({
+    approver: (v.counts?.libraries?.expense?.approver ?? 0) > 0,
+    isFinance: v.user.isFinance === true,
+    isBoard: v.user.isBoardMember === true,
+  });
+  const views = (await allowedValues(v.session, "/api/expense/expenses", "view")).filter((view) => (shown as string[]).includes(view));
   const urls = ["/api/expense/counts"];
   for (const view of views) {
     const filter = `view=${view}${view === "all" ? "&active=1" : ""}`;
