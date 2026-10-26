@@ -87,6 +87,7 @@ const card: SignoffFacts = {
   boardSeat: true,
   approved: true,
   approver: 2,
+  expenseSigners: [],
 };
 const treasurer = [{ seat: "TREASURER" as const, signerUserId: 3 }];
 
@@ -113,6 +114,16 @@ describe("who records the Board authorization", () => {
     expect(boardAuthorizationRefusal([allConflicted], 5)).toBeNull();
     expect(boardAuthorizationRefusal([{ ...allConflicted, conflicted: [1, 3, 4, 5, 8] }], 5)).toMatch(/conflicted/);
     expect(boardAuthorizationRefusal([allConflicted], 2)).toMatch(/Board member/);
+  });
+});
+
+describe("recording the Board authorization comes after every other step", () => {
+  it("whoever signs another step on the expense, or shares a household with them, does not record it", () => {
+    const signed = { ...card, expenseSigners: [{ step: "APPROVAL" as const, userId: 2 }, { step: "TREASURER" as const, userId: 3 }], seatedHouseholds: [4] };
+    expect(boardAuthorizationRefusal([signed], 3)).toMatch(/earlier step/);
+    expect(boardAuthorizationRefusal([signed], 4)).toMatch(/earlier step/);
+    expect(boardAuthorizationRefusal([signed], 5)).toBeNull();
+    expect(boardAuthorizationRefusal([signed], 2)).toMatch(/earlier step/);
   });
 });
 

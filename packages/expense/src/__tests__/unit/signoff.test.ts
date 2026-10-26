@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   approvalRefusal,
   approvesAsStandIn,
+  availableSigners,
   blockedSeats,
   missingSeats,
   signoffRefusal,
@@ -29,6 +30,7 @@ const pending: SignoffFacts = {
   boardSeat: false,
   approved: false,
   approver: null,
+  expenseSigners: [],
 };
 /** The line approved by its bucket owner. */
 const base: SignoffFacts = { ...pending, approved: true, approver: 2 };
@@ -274,5 +276,51 @@ describe("the reimbursee's setter", () => {
 
   it("may still approve the line", () => {
     expect(approvalRefusal({ ...pending, approvers: [3], reimburseeSetter: 3 }, CONFIRMED, 3)).toBeNull();
+  });
+});
+
+describe("one person signs one step of an expense", () => {
+  // 4 approved another line of the expense; 7 shares a household with them; 9 signs the Treasurer seat on another line.
+  const approvedElsewhere: SignoffFacts = {
+    ...base,
+    finance: [3, 4, 7],
+    board: [4, 5, 6, 7, 9],
+    expenseSigners: [{ step: "APPROVAL", userId: 2 }, { step: "APPROVAL", userId: 4 }],
+    seatedHouseholds: [7],
+  };
+
+  it("the Treasurer seat refuses whoever approved any line of the expense, and their household", () => {
+    expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 4)).toMatch(/another step/);
+    expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 7)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 3)).toBeNull();
+    expect(availableSigners(approvedElsewhere, [], "TREASURER")).toEqual([3]);
+  });
+
+  it("the Board seat refuses every earlier signer on the expense, and their households", () => {
+    const facts: SignoffFacts = { ...approvedElsewhere, boardSeat: true, kind: "card_charge", expenseSigners: [...approvedElsewhere.expenseSigners, { step: "TREASURER", userId: 9 }] };
+    const filled = seats(["TREASURER", 3]);
+    expect(signoffRefusal(facts, filled, "BOARD", 4)).toMatch(/another step/);
+    expect(signoffRefusal(facts, filled, "BOARD", 9)).toMatch(/another step/);
+    expect(signoffRefusal(facts, filled, "BOARD", 7)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(facts, filled, "BOARD", 5)).toBeNull();
+  });
+
+  it("a reimbursement's Board seat follows the same rule", () => {
+    const facts: SignoffFacts = { ...approvedElsewhere, reimburseeIsMember: false };
+    expect(signoffRefusal(facts, seats(["SUBMITTER", 1], ["TREASURER", 3]), "BOARD", 4)).toMatch(/another step/);
+    expect(signoffRefusal(facts, seats(["SUBMITTER", 1], ["TREASURER", 3]), "BOARD", 5)).toBeNull();
+  });
+
+  it("a line's approval refuses whoever signs a Treasurer or Board seat on the expense", () => {
+    const facts: SignoffFacts = { ...pending, approvers: [2, 3, 5], expenseSigners: [{ step: "TREASURER", userId: 3 }, { step: "BOARD", userId: 5 }] };
+    expect(approvalRefusal(facts, CONFIRMED, 3)).toMatch(/later step/);
+    expect(approvalRefusal(facts, CONFIRMED, 5)).toMatch(/later step/);
+    expect(approvalRefusal(facts, CONFIRMED, 2)).toBeNull();
+  });
+
+  it("the same person may approve several lines, or sign the same seat on several", () => {
+    const facts: SignoffFacts = { ...pending, expenseSigners: [{ step: "APPROVAL", userId: 2 }] };
+    expect(approvalRefusal(facts, CONFIRMED, 2)).toBeNull();
+    expect(signoffRefusal({ ...base, expenseSigners: [{ step: "TREASURER", userId: 3 }] }, [], "TREASURER", 3)).toBeNull();
   });
 });

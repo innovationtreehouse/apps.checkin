@@ -125,8 +125,17 @@ Income and donation rules are in `revenue.md`.
 
 - A line's program approver signs it by approving it: the approval records who
   approved and when, and no separate signature is taken. Whoever may not hold a
-  seat on the expense may not approve the line, and whoever approved a line
-  does not sign its Treasurer seat.
+  seat on the expense may not approve the line.
+  [Decision — owner]
+
+- An expense's sign-offs run in steps: first the line's approval, then the
+  Treasurer, then the Board. Finance moving a line out of an exception is a
+  signature at the Treasurer step, and recording the Board's authorization is
+  one at the Board step. Each step refuses everyone who signed an
+  earlier step anywhere on the expense, and a step is also refused to whoever
+  already signed a later one. Nobody signs while someone in their household
+  holds a seat on the expense. One person may sign the same step on several
+  lines. This holds for card charges and reimbursements alike.
   [Decision — owner]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
@@ -168,8 +177,8 @@ Income and donation rules are in `revenue.md`.
 
 - A Treasurer with a conflict does not sign. For the Treasurer seat, a conflict
   is being — or sharing a household with — the submitter, the person reimbursed,
-  or the line's bucket owner, or having approved the line as its program
-  approver. Another finance holder without a conflict signs instead; if there is
+  or the line's bucket owner, or having signed an earlier step on the expense,
+  as above. Another finance holder without a conflict signs instead; if there is
   none, a Board member without a conflict takes the seat. This differs from the
   policy on purpose: the policy has the conflicted Treasurer sign and adds one
   or two Board members, where the app replaces the conflicted signer, because

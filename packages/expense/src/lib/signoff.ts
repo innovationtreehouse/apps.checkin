@@ -35,6 +35,21 @@ export interface SignoffFacts {
   approved: boolean;
   /** Who approved the line; null while it is not approved, or for a line approved at intake. */
   approver: number | null;
+  /** Everyone who signs a step anywhere on the expense: the approvers of its approved lines and its Treasurer and Board signers. */
+  expenseSigners: StepSigner[];
+}
+
+/** The steps after the submitter's, in order: the line's approval (the bucket level), the Treasurer, the Board. */
+export type Step = "APPROVAL" | Exclude<Seat, "SUBMITTER">;
+
+export interface StepSigner {
+  step: Step;
+  userId: number;
+}
+
+/** Whoever signs a step other than `step` on the expense: one person signs at most one step of it. */
+function otherStepSigners(facts: SignoffFacts, step: Step): Set<number> {
+  return new Set(facts.expenseSigners.filter((s) => s.step !== step).map((s) => s.userId));
 }
 
 export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
@@ -110,12 +125,16 @@ function treasurerConflicted(facts: SignoffFacts): Set<number> {
 /**
  * Why `userId` may not record the Board authorization, or null. Recording is not an approval: a
  * FINANCE holder without a conflict records what the Board decided; with none, a Board member
- * without one.
+ * without one. It is the Board's step, so whoever signs an earlier step on the expense, or shares
+ * a household with anyone seated on it, does not record it. The recorder then counts as the
+ * Board step's signer.
  */
 export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: number): string | null {
   if (factsByLine.length === 0) return "the expense has no lines";
   const blocked = new Set(factsByLine.flatMap((f) => f.conflicted));
   if (blocked.has(userId)) return "someone conflicted on the charge cannot record the Board authorization";
+  for (const id of [...otherStepSigners(factsByLine[0], "BOARD"), ...factsByLine[0].seatedHouseholds]) blocked.add(id);
+  if (blocked.has(userId)) return "someone who signs an earlier step on this expense, or shares a household with anyone seated on it, cannot record the Board authorization";
   const { finance, board } = factsByLine[0];
   if (finance.some((id) => !blocked.has(id))) return finance.includes(userId) ? null : "signer does not hold FINANCE";
   return board.includes(userId) ? null : "signer is not a Board member";
@@ -142,11 +161,12 @@ function onLine(facts: SignoffFacts, filled: FilledSeat[], except?: Seat): numbe
 
 /**
  * Eligible people who can still sign the seat: not conflicted, not the line's approver or in
- * another seat on it, and not in the household of someone seated on the expense. The Treasurer
- * seat also excludes the reimbursee's setter and the bucket owner's household.
+ * another seat on it, not signing another step anywhere on the expense, and not in the household
+ * of someone seated on the expense. The Treasurer seat also excludes the reimbursee's setter and
+ * the bucket owner's household.
  */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
-  const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...onLine(facts, filled, seat)]);
+  const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...onLine(facts, filled, seat), ...otherStepSigners(facts, seat)]);
   if (seat === "TREASURER") for (const id of treasurerConflicted(facts)) blocked.add(id);
   return eligible(facts, seat).filter((id) => !blocked.has(id));
 }
@@ -218,6 +238,7 @@ export function signoffRefusal(
   if (outOfOrder) return outOfOrder;
   if (signerUserId === facts.approver) return "whoever approved the line does not sign another seat on it";
   if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
+  if (otherStepSigners(facts, seat).has(signerUserId)) return "signer already signs another step on this expense";
   if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
   if (seat === "TREASURER" && facts.ownerHousehold.includes(signerUserId)) return "the bucket owner or their household cannot fill the Treasurer seat";
   if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already holds a seat on this expense";
@@ -241,7 +262,7 @@ export function approvesAsStandIn(facts: SignoffFacts, userId: number): boolean 
 /**
  * Why `userId` may not approve the line, or null. The approval is the program approver's
  * sign-off, so it takes a seat's refusals: the reimbursee is known, and the approver is not
- * conflicted, signs no other seat on the line, and has no household member seated on the expense.
+ * conflicted, signs no Treasurer or Board seat on the expense, and has no household member seated on it.
  * A reimbursement line is approved only once its submitter has signed. A bucket approver approves; any
  * Board member without a conflict may approve instead, within the Board substitution limit.
  */
@@ -252,6 +273,7 @@ export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userI
   }
   if (facts.conflicted.includes(userId)) return "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for";
   if (filled.some((f) => f.signerUserId === userId)) return "You already sign another seat on this line";
+  if (otherStepSigners(facts, "APPROVAL").has(userId)) return "You already sign a later step on this expense";
   if (facts.seatedHouseholds.includes(userId)) return "Someone in your household already holds a seat on this expense";
   if (!approvesAsStandIn(facts, userId)) return null;
   if (!facts.board.includes(userId)) return "This line item is not in a bucket you approve";
