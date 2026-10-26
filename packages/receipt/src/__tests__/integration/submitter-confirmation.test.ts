@@ -293,6 +293,17 @@ describeDb("confirming again once the expense exists", () => {
     expect(confirmed).toEqual([{ receiptId: id, reimburseePersonId: NO_ACCOUNT.id, signerId: BOARD.id, reason: "still no account" }]);
   });
 
+  it("a reimbursee finance named on the expense confirms, though the receipt never knew them", async () => {
+    const id = await sentFor(BOB.id);
+    await db.receipt.update({ where: { id }, data: { reimburseePersonId: null } });
+    awaiting = [{ receiptId: id, reimburseePersonId: BOB.id, changedFields: ["reimbursee"] }];
+    actAs(BOB);
+    expect(await receiptService.countToConfirm(BOB.id)).toBe(1);
+    expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, reimburseePersonId: BOB.id, changedFields: ["reimbursee"] })]);
+    await receiptService.confirmAsReimbursee(id);
+    expect(confirmed).toEqual([{ receiptId: id, reimburseePersonId: BOB.id, signerId: BOB.id }]);
+  });
+
   it("is refused when nothing waits for it", async () => {
     const id = await sentFor(BOB.id);
     awaiting = [];

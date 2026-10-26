@@ -6,8 +6,9 @@ import { db } from "../db";
 import type { SubmitterConfirmations } from "../contract";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { clearFrom, conflictedParties, lockExpense, unsignedLines } from "../lib/signoff-facts";
-import { CLOSED_STATES } from "../lib/signoff";
+import { clearFrom, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
+import { CLOSED_STATES, submitterSeatRefusal } from "../lib/signoff";
+import { ServiceError } from "@checkin/component-kit";
 import type { Actor } from "../lib/workflow-engine";
 import { getOrgId } from "../runtime";
 
@@ -87,10 +88,14 @@ export const submitterConfirmations: SubmitterConfirmations = {
       await lockExpense(tx, receiptId);
       const expense = await tx.expense.findFirst({ where: { id: receiptId, orgId: await getOrgId(), reimburseePersonId, ...TAKES_SUBMITTER_SEAT } });
       if (!expense) return null;
-      // A Board member on the reimbursee's behalf is no party to the expense.
-      if (signer.userId !== reimburseePersonId && (await conflictedParties(expense)).includes(signer.userId)) return null;
-      const lines = await tx.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } });
-      const signed = await recordSubmitterSeats(tx, expense.id, lines.map((l) => l.id), signer, { reimburseePersonId, confirmedAt: new Date().toISOString(), reason });
+      // Each line still waiting takes the seat's own refusals, read under the expense lock.
+      const [facts, filled] = await Promise.all([signoffFactsByLine(tx, expense), filledSeatsByLine(tx, expense.id)]);
+      const waiting = [...facts.keys()].filter((id) => !(filled.get(id) ?? []).some((f) => f.seat === "SUBMITTER"));
+      for (const id of waiting) {
+        const refusal = submitterSeatRefusal(facts.get(id)!, filled.get(id) ?? [], signer.userId);
+        if (refusal) throw new ServiceError(403, refusal);
+      }
+      const signed = await recordSubmitterSeats(tx, expense.id, waiting, signer, { reimburseePersonId, confirmedAt: new Date().toISOString(), reason });
       return signed > 0 ? expense : null;
     });
     if (!result) return false;

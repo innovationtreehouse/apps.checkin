@@ -409,14 +409,16 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
   if (!actor.isBoardMember) return { rows: [], changed: new Map() };
   const orgId = (await getOrg()).id;
   const awaited = await ports().submitterConfirmations.awaiting();
+  const reimburseeOnExpense = new Map(awaited.map((a) => [a.receiptId, a.reimburseePersonId]));
+  const inReview = await receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { not: null }, details: { state: "submitter_review" } });
+  const sent = await receiptRepo.list({ orgId, id: { in: awaited.map((a) => a.receiptId) } });
+  // Once the expense exists, its reimbursee is the one confirming: finance may have named them there.
   const candidates = [
-    ...(await receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { not: null }, details: { state: "submitter_review" } })),
-    ...(await receiptRepo.list({ orgId, id: { in: awaited.map((a) => a.receiptId) } })),
+    ...inReview.map((r) => ({ ...r, reimburseePersonId: r.reimburseePersonId! })),
+    ...sent.map((r) => ({ ...r, reimburseePersonId: reimburseeOnExpense.get(r.id)! })),
   ];
   const rows: Array<ReceiptRow & { reimburseePersonId: number }> = [];
-  for (const r of candidates) {
-    if (r.reimburseePersonId != null && (await confirmerRole(r, actor)) === "on_behalf") rows.push({ ...r, reimburseePersonId: r.reimburseePersonId });
-  }
+  for (const r of candidates) if ((await confirmerRole(r, actor)) === "on_behalf") rows.push(r);
   return { rows, changed: new Map(awaited.map((a) => [a.receiptId, a.changedFields])) };
 }
 
@@ -745,7 +747,7 @@ export const receiptService = {
     const sent = await receiptRepo.list({ orgId, id: { in: [...mine.sent.keys()] } });
     const views = [
       ...mine.inReview.filter(reimburseeConfirms).map((r) => confirmationView(r, false, [])),
-      ...sent.filter((r): r is ReceiptRow & { reimburseePersonId: number } => r.reimburseePersonId != null).map((r) => confirmationView(r, false, mine.sent.get(r.id) ?? [])),
+      ...sent.map((r) => confirmationView({ ...r, reimburseePersonId: actor.id }, false, mine.sent.get(r.id) ?? [])),
     ];
     const onBehalf = await onBehalfConfirmations(actor);
     views.push(...onBehalf.rows.map((r) => confirmationView(r, true, onBehalf.changed.get(r.id) ?? [])));
@@ -760,10 +762,14 @@ export const receiptService = {
   async confirmAsReimbursee(id: string, rawReason?: string | null) {
     const actor = await requireActor();
     const row = await receiptRepo.find(id, (await getOrg()).id);
-    if (!row || !row.needsReimbursement || row.reimburseePersonId == null) throw new ServiceError(404, "Receipt not found");
-    const role = await confirmerRole(row, actor);
+    if (!row || !row.needsReimbursement) throw new ServiceError(404, "Receipt not found");
+    // Once the expense exists, its reimbursee is the one confirming: finance may have named them there.
+    const reimbursee = row.pushedAt
+      ? (await ports().submitterConfirmations.awaiting()).find((a) => a.receiptId === id)?.reimburseePersonId
+      : row.reimburseePersonId;
+    if (reimbursee == null) throw new ServiceError(409, "This receipt is not waiting for a confirmation");
+    const role = await confirmerRole({ uploadedByUserId: row.uploadedByUserId, reimburseePersonId: reimbursee }, actor);
     if (!role) throw new ServiceError(403, "Only the person reimbursed, or a Board member on behalf of someone with no account, confirms this receipt");
-    const reimbursee = row.reimburseePersonId;
     const reason = role === "on_behalf" ? rawReason?.trim() || null : null;
     if (role === "on_behalf" && !reason) throw new ServiceError(400, "A Board member confirming on the reimbursee's behalf gives the reason");
     const onBehalf = reason ? `on behalf of ${reimbursee}: ${reason}` : null;

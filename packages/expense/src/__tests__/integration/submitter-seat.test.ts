@@ -131,11 +131,30 @@ describeDb("confirming again through the receipt", () => {
     const { id, lines } = await openReimbursement();
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 6]] }) });
     expect(await submitterConfirmations.confirm(id, 2, { id: 5, name: "person-5" }, "no account")).toBe(false);
-    expect(await submitterConfirmations.confirm(id, 1, { id: 6, name: "person-6" }, "no account")).toBe(false);
+    await expect(submitterConfirmations.confirm(id, 1, { id: 6, name: "person-6" }, "no account")).rejects.toMatchObject({ status: 403 });
     expect(await submitterConfirmations.confirm(id, 1, { id: 5, name: "person-5" }, "no account")).toBe(true);
     expect((await submitterSeats(id)).map((s) => [s.lineItemId, s.signerUserId])).toEqual(lines.map((li) => [li, 5]));
     const audit = await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "signoff", valueAfter: "SUBMITTER" } });
     expect(audit?.notes).toMatch(/on behalf of 1 at .*: no account$/);
+  });
+
+  it("someone off the Board never confirms on the reimbursee's behalf, a bucket approver included", async () => {
+    const { id } = await openReimbursement();
+    await expect(submitterConfirmations.confirm(id, 1, { id: 2, name: "person-2" }, "no account")).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringMatching(/only the person reimbursed, or a Board member on their behalf/),
+    });
+    expect(await submitterSeats(id)).toEqual([]);
+  });
+
+  it("a Board member who recorded the Board authorization takes no other step: they don't confirm on the reimbursee's behalf", async () => {
+    const { id } = await openReimbursement();
+    await db.expense.update({ where: { id }, data: { boardAuthorization: "Board minutes, item 4", boardAuthorizedByUserId: 5 } });
+    await expect(submitterConfirmations.confirm(id, 1, { id: 5, name: "person-5" }, "no account")).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringMatching(/another step/),
+    });
+    expect(await submitterSeats(id)).toEqual([]);
   });
 
   it("only an open reimbursement, for its reimbursee", async () => {
