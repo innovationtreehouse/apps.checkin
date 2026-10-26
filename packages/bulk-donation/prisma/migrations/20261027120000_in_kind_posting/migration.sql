@@ -1,3 +1,5 @@
+BEGIN;
+
 -- In-kind posting (#2182 step 4). Additive: no app code writes in_kind_bookings before this release.
 
 ALTER TABLE "donation_org_settings" ADD COLUMN "in_kind_qb_posting_on_at" TIMESTAMP(3);
@@ -25,3 +27,5 @@ CREATE TABLE "in_kind_postings" (
 
 CREATE UNIQUE INDEX "in_kind_postings_org_id_source_gift_id_key" ON "in_kind_postings"("org_id", "source", "gift_id");
 CREATE INDEX "in_kind_postings_org_id_qb_create_attempted_at_idx" ON "in_kind_postings"("org_id", "qb_create_attempted_at");
+
+COMMIT;
