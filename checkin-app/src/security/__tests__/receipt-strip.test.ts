@@ -12,6 +12,8 @@
  *   3. ReceiptView (the flattened Receipt + ReceiptDetail row) tiers every field
  *      exactly as the generated models do.
  *   4. An ignore-list entry reaches FINANCE whole and never carries file bytes.
+ *   5. A duplicate group reaches FINANCE whole; an internal-only view keeps
+ *      only each member's state.
  */
 import '@/security/registry';
 import { stripValue } from '@/security/stripper';
@@ -163,5 +165,25 @@ describe('ReceiptIgnoredFileView', () => {
     it('FINANCE gets every field; file bytes and unknown fields are dropped', () => {
         const entry = { id: 1, orgId: 'treehouse', fileHash: 'ab12', reason: 'newsletter logo', addedByUserId: 7, createdAt: '2026-10-17' };
         expect(stripValue('ReceiptIgnoredFileView', { ...entry, fileBlob: BYTES, senderAddress: 'x' }, FINANCE_VIEW, ctx())).toEqual(entry);
+    });
+});
+
+describe('ReceiptDuplicateGroup', () => {
+    const group = () => ({
+        members: [
+            { id: 'r-1', state: 'rejected', label: 'Rejected on 2 Oct: personal purchase' },
+            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate' },
+        ],
+        dismissed: ['r-3'],
+    });
+
+    it('FINANCE gets every member, label and dismissed id', () => {
+        expect(stripValue('ReceiptDuplicateGroup', group(), FINANCE_VIEW, ctx())).toEqual(group());
+    });
+
+    it('an internal-only view strips the receipt ids and the rejection reason', () => {
+        expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
+            members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
+        });
     });
 });
