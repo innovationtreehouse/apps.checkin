@@ -93,7 +93,7 @@ function tokenSource(checkinEnv: string | undefined, realmId: string): AccessTok
 }
 
 /** Builds the client, or answers null with the reason logged. Never throws. */
-export async function buildQuickBooks(): Promise<QuickBooksClient | null> {
+export function buildQuickBooks(): QuickBooksClient | null {
   const realmId = process.env.QBO_REALM_ID;
   if (!realmId) return null;
   try {
@@ -116,6 +116,6 @@ let built: { at: number; client: Promise<QuickBooksClient | null> } | null = nul
 
 /** The shared QuickBooks client, or null while QuickBooks is off. Rebuilt every CLIENT_TTL_MS. */
 export function getQuickBooks(): Promise<QuickBooksClient | null> {
-  if (!built || Date.now() - built.at >= CLIENT_TTL_MS) built = { at: Date.now(), client: buildQuickBooks() };
+  if (!built || Date.now() - built.at >= CLIENT_TTL_MS) built = { at: Date.now(), client: Promise.resolve(buildQuickBooks()) };
   return built.client;
 }
