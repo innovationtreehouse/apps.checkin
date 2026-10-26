@@ -11,6 +11,8 @@ import { FINANCE_OR_BOARD, SYSADMIN_OR_BOARD, anyRole, firstVisibleHref } from "
 
 export const SETTINGS_ROLES: readonly RoleFlag[] = [...SYSADMIN_OR_BOARD, "isOperations"];
 export const FINANCE_SETTINGS_ROLES = FINANCE_OR_BOARD;
+/** The bare /settings path admits everyone the section shows, so its page can redirect each to their own tab. */
+export const SETTINGS_INDEX_ROLES: readonly RoleFlag[] = [...new Set([...SETTINGS_ROLES, ...FINANCE_SETTINGS_ROLES])];
 
 const admin = anyRole(SYSADMIN_OR_BOARD);
 const FINANCE_SETTINGS_HREF = EXPENSE_TABS.settings.href;
@@ -27,11 +29,12 @@ export const SETTINGS: NavSection = {
     { name: "Shopify Webhook", href: "/settings/shopify-webhook", visible: admin },
     { ...EXPENSE_TABS.settings, library: "expense", visible: anyRole(FINANCE_SETTINGS_ROLES) },
   ],
-  visible: anyRole([...SETTINGS_ROLES, ...FINANCE_SETTINGS_ROLES]),
+  visible: anyRole(SETTINGS_INDEX_ROLES),
   hrefFor: (u, c) => firstVisibleHref(SETTINGS, u, c),
 };
 
 /** The roles the Settings layout admits on `pathname`. */
 export function settingsRolesFor(pathname: string): readonly RoleFlag[] {
+  if (pathname === "/settings") return SETTINGS_INDEX_ROLES;
   return pathname === FINANCE_SETTINGS_HREF || pathname.startsWith(`${FINANCE_SETTINGS_HREF}/`) ? FINANCE_SETTINGS_ROLES : SETTINGS_ROLES;
 }

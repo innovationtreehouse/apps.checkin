@@ -253,7 +253,7 @@ export interface ExpensePosting {
   client: QuickBooksClient;
   paymentAccountId: string;
   paymentType: "Cash" | "CreditCard";
-  /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
+  /** The client talks to the production QuickBooks API. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
   prod: boolean;
 }
 
@@ -273,6 +273,16 @@ export type SetReimbursee = (orgId: string, expenseId: string, personId: number,
  */
 export interface ReimbursementStatus {
   forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
+}
+
+/**
+ * Receipt callee: the reimbursement submitter's signature, recorded on the expense from the person
+ * reimbursed's confirmation of the receipt (a Board member's on their behalf when they have no
+ * account), and given again after a finance change clears it.
+ */
+export interface SubmitterConfirmations {
+  awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */

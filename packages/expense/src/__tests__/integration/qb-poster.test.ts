@@ -90,7 +90,7 @@ const posting = (prod = false) => ({
 });
 
 function bindQbo(prod?: boolean) {
-  bindPorts({ quickbooks: { posting: posting(prod) } });
+  bindPorts({ quickbooks: { posting: async () => posting(prod) } });
 }
 
 /** Posting switched on at `at`; null leaves it off. Expenses seeded later count as submitted after it. */
@@ -199,7 +199,7 @@ describeDb("QB-2 posting — create", () => {
     await handMatched("2026-08-01");
     bindPorts({
       catalog: catalogResolving({}),
-      quickbooks: { posting: posting() },
+      quickbooks: { posting: async () => posting() },
     });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
@@ -224,7 +224,7 @@ describeDb("QB-2 posting — outbound gateway", () => {
       calls.push({ surface, models: Object.keys(bag) });
       return send({ ...bag, Expense: { ...(bag.Expense as Expense), vendorName: undefined } });
     };
-    bindPorts({ quickbooks: { posting: posting() }, outbound: withoutVendorName });
+    bindPorts({ quickbooks: { posting: async () => posting() }, outbound: withoutVendorName });
 
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
 
@@ -237,7 +237,7 @@ describeDb("QB-2 posting — outbound gateway", () => {
   it("a gateway that refuses sends nothing and records the failure", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
-    bindPorts({ quickbooks: { posting: posting() }, outbound: inertOutbound });
+    bindPorts({ quickbooks: { posting: async () => posting() }, outbound: inertOutbound });
 
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
     expect(qbo.posts).toHaveLength(0);
@@ -486,7 +486,7 @@ describeDb("QB-2 posting — one claim per QuickBooks entry", () => {
 describeDb("QB-2 posting — bounded retry", () => {
   /** Outboxed through the real processor on one manual line, so a finance retry can rebuild it. */
   async function outboxedManual(account: string) {
-    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() } });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
     const line = await seedLineItem(id, { manualQbAccount: account, totalPriceCents: 500 });
@@ -643,7 +643,7 @@ describeDb("QB-2 posting — daily ceiling", () => {
 
   it("the post right after sign-off respects the ceiling and leaves the expense for a later run", async () => {
     await createdAt(MAX_CREATES_PER_DAY, new Date());
-    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() } });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
     await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: 500 });
@@ -837,7 +837,7 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
   /** TEST_BUCKETS with bucket 100's Class taken away. */
   async function bucket100Unclassed() {
     const buckets = (await TEST_BUCKETS.list()).map((b) => (b.id === 100 ? { ...b, quickBooksClassId: null } : b));
-    bindPorts({ budgetOwners: { list: async () => buckets }, quickbooks: { posting: posting() } });
+    bindPorts({ budgetOwners: { list: async () => buckets }, quickbooks: { posting: async () => posting() } });
   }
 
   it("every Purchase and Bill line posts with its bucket's Class", async () => {

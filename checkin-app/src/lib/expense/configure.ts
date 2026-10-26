@@ -4,16 +4,19 @@
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
- * The posting writer stays unbound (inert); it is a later crossing. Whatever the library sends
- * out goes through checkin's outbound gateway, which strips it to the surface's declared tiers.
+ * The posting writer resolves per run: the guarded client and the books map's EXPENSE_PAYMENT
+ * account, which finance also reads matches against. With either missing, or an account that is
+ * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". Whatever the library sends out goes through checkin's outbound gateway, which
+ * strips it to the surface's declared tiers.
  */
 import { configureExpense, reimburseeVendorId } from "@checkin/expense";
-import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
 
 async function db() {
@@ -114,22 +117,17 @@ function qbTxn(t: QboPurchase | QboBill): QbTxn {
   };
 }
 
-/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
-async function quickBooks() {
-  return (await import("@/lib/quickbooks/client")).getQuickBooks();
-}
-
 const qbReader: QbReader = {
   async purchasesBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.purchasesBetween(from, to)).map(qbTxn) : [];
   },
   async billsBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.billsBetween(from, to)).map(qbTxn) : [];
   },
   async billPaymentsBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return [];
     return (await qb.billPaymentsBetween(from, to)).map((p) => ({
       id: p.Id,
@@ -138,11 +136,11 @@ const qbReader: QbReader = {
     }));
   },
   async purchasesByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.purchasesByIds(ids)).map(qbTxn) : [];
   },
   async billsByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return [];
     return (await qb.billsByIds(ids)).map((b) => ({
       id: b.Id,
@@ -152,7 +150,7 @@ const qbReader: QbReader = {
     }));
   },
   async billPaymentsByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.billPaymentsByIds(ids)).map((p) => ({ id: p.Id, txnDate: p.TxnDate })) : [];
   },
 };
@@ -160,7 +158,7 @@ const qbReader: QbReader = {
 /** Finance's Vendor search, verify and create, through the guarded client (off = null). */
 const qbVendors: QbVendors = {
   async open() {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return null;
     const option = (v: QboVendor) => ({ id: v.Id, displayName: v.DisplayName });
     return {
@@ -185,6 +183,47 @@ const people: PeopleDirectory = {
   },
 };
 
+/** The card or bank account a non-reimbursement expense is paid from, as finance set it on the books map. */
+async function paymentAccountId(): Promise<string | null> {
+  return (await (await import("@/lib/finance/booksMap")).booksMap.accounts()).EXPENSE_PAYMENT ?? null;
+}
+
+function paymentTypeOf(accountType: string | undefined): ExpensePosting["paymentType"] | null {
+  if (accountType === "Credit Card") return "CreditCard";
+  if (accountType === "Bank") return "Cash";
+  return null;
+}
+
+// ponytail: one email per refused account per process; a restart emails again.
+let refusedAlerted: string | null = null;
+
+async function alertRefusedAccount(accountId: string, accountType: string | undefined): Promise<void> {
+  if (refusedAlerted === accountId) return;
+  refusedAlerted = accountId;
+  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { config } = await import("@/lib/config");
+  await notifyFinanceAlert(
+    "Expenses: QuickBooks posting is off until the payment account is fixed",
+    `<p>The books map's "Organisation card" account (QuickBooks id ${accountId}) is ${accountType ? `a ${accountType} account` : "not in QuickBooks"}. Expenses post only from a Bank or Credit Card account, so none are posting. <a href="${config.baseUrl()}/books-map">Open the books map</a></p>`,
+    "Expense payment-account alert failed:",
+  );
+}
+
+/** Production is the client's own API environment, which the guard admits only on CHECKIN_ENV=prod. */
+async function posting(): Promise<ExpensePosting | null> {
+  const accountId = await paymentAccountId();
+  if (!accountId) return null;
+  const client = await getQuickBooks();
+  if (!client) return null;
+  const accountType = (await client.accounts()).find((a) => a.Id === accountId)?.AccountType;
+  const paymentType = paymentTypeOf(accountType);
+  if (!paymentType) {
+    await alertRefusedAccount(accountId, accountType);
+    return null;
+  }
+  return { client, paymentAccountId: accountId, paymentType, prod: client.env === "production" };
+}
+
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,
@@ -194,7 +233,7 @@ export function configureRuntime(): void {
     catalog: catalogReader,
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
     people,
-    quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },
     outbound: outboundCall,
   });
 }

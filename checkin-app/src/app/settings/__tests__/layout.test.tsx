@@ -93,3 +93,36 @@ describe("SettingsLayout on Finance", () => {
     expect(push).toHaveBeenCalledWith("/");
   });
 });
+
+describe("SettingsLayout on the bare /settings path", () => {
+  beforeEach(() => {
+    mockPathname = "/settings";
+  });
+
+  it.each([
+    ["FINANCE", { id: 4, isFinance: true }],
+    ["a sysadmin", { id: 1, isSysadmin: true }],
+    ["a board member", { id: 2, isBoardMember: true }],
+    ["operations", { id: 5, isOperations: true }],
+  ])("admits %s so the index page can redirect them", (_who, user) => {
+    renderLayout({ data: { user }, status: "authenticated" });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("redirects a user with no settings role", () => {
+    renderLayout({ data: { user: { id: 3 } }, status: "authenticated" });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it.each(["/settings/membership", "/settings/localization", "/settings/email", "/settings/outreach", "/settings/shopify-webhook"])(
+    "still keeps FINANCE off %s",
+    (path) => {
+      mockPathname = path;
+      renderLayout({ data: { user: { id: 4, isFinance: true } }, status: "authenticated" });
+      expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+      expect(push).toHaveBeenCalledWith("/");
+    },
+  );
+});

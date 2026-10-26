@@ -170,7 +170,7 @@ than the stamp:
 | Expense | `ExpenseOrgSettings` (new column) | `Expense.submittedAt` |
 | Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`, the time the app first saw the payout |
 | Donation, Benevity | new `DonationOrgSettings` row (the package has no settings model) | `DisbursementEvent.createdAt` |
-| Donation, in-kind (#2182) | same row, its own column, added when in-kind posting is built | the in-kind record's creation time |
+| Donation, in-kind (#2182) | same row, its own column | when the gift's money side arrived (receipt) or ops recorded it (no receipt) |
 
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.

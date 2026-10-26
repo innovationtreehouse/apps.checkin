@@ -30,7 +30,7 @@ describe("runtime", () => {
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
     expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
-    expect(rt.quickbooks.posting).toBeNull();
+    await expect(rt.quickbooks.posting()).resolves.toBeNull();
   });
 
   it("the inert outbound gateway sends nothing", async () => {

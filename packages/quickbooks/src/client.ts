@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { centsToDollars } from "@checkin/money";
-import { CREATE } from "./internal";
+import { CREATE, CREATE_JOURNAL } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import type {
   AccessTokenSource,
@@ -11,6 +11,7 @@ import type {
   QboCustomer,
   QboDeposit,
   QboEnv,
+  QboJournalEntry,
   QboPreferences,
   QboPurchase,
   QboRealm,
@@ -96,8 +97,9 @@ export function qboDate(value: string): string {
 }
 
 /**
- * The only entities the app may create. A reimbursement is a Bill the app never pays;
- * BillPayment, Payment, JournalEntry and every other entity are refused.
+ * The only entities the generic writer may create. A reimbursement is a Bill the app never pays;
+ * BillPayment, Payment, JournalEntry and every other entity are refused. An in-kind gift's
+ * JournalEntry has its own narrow path, findOrCreateInKindJournal.
  */
 export const WRITABLE_ENTITIES = ["Purchase", "Bill", "Deposit", "Vendor"] as const;
 export type WritableEntity = (typeof WRITABLE_ENTITIES)[number];
@@ -133,6 +135,21 @@ export interface DepositFields {
   txnDate: string;
   depositToAccountId: string;
   lines: WriteLine[];
+  memo?: string;
+}
+
+/** One JournalEntry line: a debit or credit of positive integer cents to an account. */
+export interface JournalLine {
+  postingType: "Debit" | "Credit";
+  amountCents: number;
+  accountId: string;
+  classId?: string;
+  description?: string;
+}
+
+export interface JournalEntryFields {
+  txnDate: string;
+  lines: JournalLine[];
   memo?: string;
 }
 
@@ -255,11 +272,33 @@ function writeBody(req: WriteRequest, key: string, env: QboEnv): Record<string, 
   }
 }
 
+/** A balanced JournalEntry body: debits equal credits, every amount a positive whole number of cents. */
+function journalBody(f: JournalEntryFields, key: string, env: QboEnv): Record<string, unknown> {
+  parseDate(f.txnDate);
+  const total = (side: JournalLine["postingType"]) => f.lines.filter((l) => l.postingType === side).reduce((sum, l) => sum + l.amountCents, 0);
+  for (const l of f.lines) {
+    if (l.postingType !== "Debit" && l.postingType !== "Credit") throw new Error(`QBO journal PostingType must be Debit or Credit, got "${String(l.postingType)}"`);
+    if (!Number.isSafeInteger(l.amountCents) || l.amountCents <= 0) throw new Error("QBO journal line amounts must be positive whole cents");
+  }
+  if (total("Debit") === 0 || total("Debit") !== total("Credit")) throw new Error("QBO journal entry is not balanced");
+  return {
+    TxnDate: f.txnDate,
+    Line: f.lines.map((l) => ({
+      Amount: centsToDollars(l.amountCents),
+      DetailType: "JournalEntryLineDetail",
+      JournalEntryLineDetail: { PostingType: l.postingType, AccountRef: ref(l.accountId), ...(l.classId !== undefined && { ClassRef: ref(l.classId) }) },
+      ...(l.description !== undefined && { Description: l.description }),
+    })),
+    PrivateNote: privateNote(f.memo, key, env),
+  };
+}
+
 /** The entities the created-since read covers: the ones the app creates transactions in. */
 interface CreatedEntity {
   Deposit: QboDeposit;
   Purchase: QboPurchase;
   Bill: QboBill;
+  JournalEntry: QboJournalEntry;
 }
 
 export class QuickBooksClient {
@@ -327,6 +366,10 @@ export class QuickBooksClient {
     return this.between("Deposit", from, to);
   }
 
+  journalEntriesBetween(from: string, to: string): Promise<QboJournalEntry[]> {
+    return this.between("JournalEntry", from, to);
+  }
+
   /**
    * Every `entity` QuickBooks created at or after `since`, one page of at most PAGE_SIZE.
    * `full` means the page is full and more entries may exist. Creation time is kept when
@@ -369,6 +412,14 @@ export class QuickBooksClient {
   /** Purchases by id: a backfilled receipt's hand-booked transaction. */
   purchasesByIds(ids: readonly string[]): Promise<QboPurchase[]> {
     return this.byIds("Purchase", ids);
+  }
+
+  depositsByIds(ids: readonly string[]): Promise<QboDeposit[]> {
+    return this.byIds("Deposit", ids);
+  }
+
+  journalEntriesByIds(ids: readonly string[]): Promise<QboJournalEntry[]> {
+    return this.byIds("JournalEntry", ids);
   }
 
   /** Reference lists (active entries) for the FINANCE bootstrap; not transaction history. */
@@ -450,13 +501,24 @@ export class QuickBooksClient {
     }
     assertAppKey(key);
     assertRealmAllowed(this.realm);
-    const body = writeBody(request, key, this.realm.env);
-    assertPayloadMarked(this.realm.env, request.entity, body);
-    const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${request.entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
-    const res = await this.send(`create ${request.entity}`, url, { method: "POST", body: JSON.stringify(body) });
-    const created = (res as Record<string, { Id?: string } | undefined>)[request.entity];
-    if (!created?.Id) throw new Error(`QBO create ${request.entity} returned no Id (intuit_tid=${this.lastTid})`);
+    return this.post(request.entity, writeBody(request, key, this.realm.env), key);
+  }
+
+  /** The one create request: the body is marked for the realm's environment and checked just before it is sent. */
+  private async post(entity: WritableEntity | "JournalEntry", body: Record<string, unknown>, key: string): Promise<{ Id: string }> {
+    assertPayloadMarked(this.realm.env, entity, body);
+    const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
+    const res = await this.send(`create ${entity}`, url, { method: "POST", body: JSON.stringify(body) });
+    const created = (res as Record<string, { Id?: string } | undefined>)[entity];
+    if (!created?.Id) throw new Error(`QBO create ${entity} returned no Id (intuit_tid=${this.lastTid})`);
     return { Id: created.Id };
+  }
+
+  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking every account is an in-kind role's. */
+  async [CREATE_JOURNAL](fields: JournalEntryFields, key: string): Promise<{ Id: string }> {
+    assertAppKey(key);
+    assertRealmAllowed(this.realm);
+    return this.post("JournalEntry", journalBody(fields, key, this.realm.env), key);
   }
 }
 

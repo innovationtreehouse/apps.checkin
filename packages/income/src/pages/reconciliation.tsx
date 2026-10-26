@@ -7,6 +7,7 @@ import LoadError from "../components/LoadError";
 
 interface ReconRow {
   id: number;
+  source: string;
   payoutGid: string;
   payoutDate: string;
   payoutNetCents: number;
@@ -15,6 +16,8 @@ interface ReconRow {
   reason: string | null;
   qbNote: string | null;
 }
+
+const SOURCE_LABEL: Record<string, string> = { shopify: "Shopify payout", benevity: "Benevity disbursement" };
 
 interface Deposit {
   id: string;
@@ -175,10 +178,10 @@ export default function ReconciliationPage() {
           <Table striped withTableBorder>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Payout date</Table.Th>
+                <Table.Th>Date</Table.Th>
                 <Table.Th>Net</Table.Th>
                 <Table.Th>Why</Table.Th>
-                <Table.Th>Payout</Table.Th>
+                <Table.Th>Source</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -194,7 +197,10 @@ export default function ReconciliationPage() {
                       {row.reason && <Text size="sm">{row.reason}</Text>}
                       {row.qbNote && <Text size="sm" c="orange">{row.qbNote}</Text>}
                     </Table.Td>
-                    <Table.Td><Code>{row.payoutGid}</Code></Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{SOURCE_LABEL[row.source] ?? row.source}</Text>
+                      <Code>{row.payoutGid}</Code>
+                    </Table.Td>
                     <Table.Td>
                       {isFinance && (
                         <Anchor size="sm" onClick={() => setOpen(open === row.id ? null : row.id)}>

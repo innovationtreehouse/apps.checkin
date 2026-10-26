@@ -59,10 +59,11 @@ describe("Settings > Finance", () => {
     expect(SETTINGS.hrefFor?.(board, released)).toBe("/settings/membership");
   });
 
-  it("admits FINANCE or Board on Finance, and the old Settings roles everywhere else", () => {
+  it("admits FINANCE or Board on Finance, everyone the section shows on bare /settings, and the old Settings roles everywhere else", () => {
     expect(settingsRolesFor("/settings/finance")).toEqual(["isFinance", "isBoardMember"]);
     expect(settingsRolesFor("/settings/membership")).toEqual(["isSysadmin", "isBoardMember", "isOperations"]);
-    expect(settingsRolesFor("/settings")).toEqual(["isSysadmin", "isBoardMember", "isOperations"]);
+    expect(settingsRolesFor("/settings/outreach")).toEqual(["isSysadmin", "isBoardMember", "isOperations"]);
+    expect(settingsRolesFor("/settings")).toEqual(["isSysadmin", "isBoardMember", "isOperations", "isFinance"]);
   });
 
   it("leaves the Finance section", () => {

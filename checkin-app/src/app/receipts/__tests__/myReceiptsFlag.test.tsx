@@ -6,7 +6,14 @@ const row = (id: string, retailer: string, state: string) => ({
   id, uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer, receiptDate: "2026-10-01",
   receiptTotalCents: 1000, state, needsReimbursement: false, isInKind: false,
 });
-const rows = [row("a", "Acme", "validation_failed"), row("b", "Bolt Co", "financial_review"), row("c", "Cogs", "submitter_review")];
+const rows = [
+  row("a", "Acme", "validation_failed"),
+  row("b", "Bolt Co", "financial_review"),
+  row("c", "Cogs", "submitter_review"),
+  row("d", "Drills", "receipt_finalized"),
+  { ...row("e", "Epoxy", "submitter_review"), needsReimbursement: true, reimburseePersonId: 2 },
+];
+
 
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
@@ -31,5 +38,12 @@ describe("My receipts", () => {
     expect(within(rowOf("Acme")).getByText("Needs you")).toBeInTheDocument();
     expect(within(rowOf("Cogs")).getByText("Needs you")).toBeInTheDocument();
     expect(within(rowOf("Bolt Co")).queryByText("Needs you")).not.toBeInTheDocument();
+    expect(within(rowOf("Drills")).queryByText("Needs you")).not.toBeInTheDocument();
   });
+
+  it("does not flag a reimbursement for someone else, which the person reimbursed confirms", () => {
+    render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
+    expect(within(rowOf("Epoxy")).queryByText("Needs you")).not.toBeInTheDocument();
+  });
+
 });

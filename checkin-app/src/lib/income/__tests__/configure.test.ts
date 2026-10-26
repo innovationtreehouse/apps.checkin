@@ -84,13 +84,29 @@ describe("income posting binding", () => {
     expect(buildQuickBooks).not.toHaveBeenCalled();
   });
 
-  it("is unbound while any deposit account is unset", async () => {
+  it("binds without the environment's accounts while any is unset, so the books map supplies them", async () => {
     delete process.env.QBO_INCOME_FEES_ACCOUNT_ID;
-    expect((await config()).posting).toBeUndefined();
+    expect((await config()).posting).toEqual({ client, accounts: undefined, mirrorNewestWins: false });
   });
 
   it("is unbound when the guard refuses the company", async () => {
     buildQuickBooks.mockReturnValue(null);
     expect((await config()).posting).toBeUndefined();
+  });
+});
+
+describe("income bank accounts", () => {
+  it("binds the environment's Shopify and Benevity bank accounts as the books map's fallback", async () => {
+    process.env.QBO_INCOME_BANK_ACCOUNT_ID = "35";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "36";
+    expect(await config()).toMatchObject({ bankAccountId: "35", benevityBankAccountId: "36" });
+  });
+
+  it("leaves an unset bank account unbound", async () => {
+    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    const bound = await config();
+    expect(bound.bankAccountId).toBeUndefined();
+    expect(bound.benevityBankAccountId).toBeUndefined();
   });
 });

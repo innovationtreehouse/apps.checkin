@@ -6,6 +6,7 @@ import type {
   DonationQbPosting,
   InKindCapital,
   InKindDirectory,
+  InKindQbPosting,
   InventoryApply,
   OrgIdentity,
   OwnerDirectory,
@@ -30,7 +31,7 @@ const INERT_IN_KIND: InKindDirectory = {
 };
 
 /** Unbound, no line goes to capital review and none waits on it. */
-const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [] };
+const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => [] };
 
 export { NotWiredError };
 
@@ -74,6 +75,11 @@ export function getInventoryApply(): InventoryApply {
 /** The QuickBooks posting binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
 export function getQbPosting(): DonationQbPosting | undefined {
   return requireRuntime().qb;
+}
+
+/** The in-kind drain's QuickBooks binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
+export function getInKindQbPosting(): InKindQbPosting | undefined {
+  return requireRuntime().inKindQb;
 }
 
 /** Deposits another lane holds; empty while that port is unbound. */

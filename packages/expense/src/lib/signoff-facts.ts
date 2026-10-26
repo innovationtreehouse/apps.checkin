@@ -33,14 +33,14 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 }
 
 /**
- * Everyone seated on the expense outside the submitter seat, with the step they sign: the
- * approvers of its lines included. Whoever moved a line out of an exception signs at the Treasurer
+ * Everyone seated on the expense, with the step they sign: the approvers of its lines included,
+ * and the submitter seat's signer, the person reimbursed or a Board member on their behalf. Whoever moved a line out of an exception signs at the Treasurer
  * step, read from the audit row that a later approval leaves in place; whoever recorded the Board
  * authorization signs at the Board step.
  */
 export async function expenseSigners(db: Db, expenseId: string): Promise<StepSigner[]> {
   const [rows, approvals, assigners, recorder] = await Promise.all([
-    db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { seat: true, signerUserId: true } }),
+    db.expenseLineSignoff.findMany({ where: { expenseId }, select: { seat: true, signerUserId: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
     db.expenseAuditLog.findMany({ where: { expenseId, action: "finance_assigned_exception" }, select: { userId: true } }),
     db.expense.findUnique({ where: { id: expenseId }, select: { boardAuthorizedByUserId: true } }),
@@ -49,7 +49,7 @@ export async function expenseSigners(db: Db, expenseId: string): Promise<StepSig
   return [
     ...(recordedBy === null ? [] : [{ step: "BOARD" as const, userId: recordedBy }]),
     ...assigners.map((a): StepSigner => ({ step: "TREASURER", userId: a.userId })),
-    ...rows.map((r): StepSigner => ({ step: r.seat === "BOARD" ? "BOARD" : "TREASURER", userId: r.signerUserId })),
+    ...rows.map((r): StepSigner => ({ step: r.seat as Seat, userId: r.signerUserId })),
     ...approvals.flatMap((a): StepSigner[] => (a.decidedByUserId === null ? [] : [{ step: "APPROVAL", userId: a.decidedByUserId }])),
   ];
 }
@@ -120,6 +120,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
       const facts: SignoffFacts = {
         kind,
         submitterId: expense.submitterId,
+        reimburseeId: expense.reimburseePersonId,
         approvers: b?.approvers ?? [],
         orgLevel: b?.orgLevel ?? false,
         reimburseeIsMember: isMember,
