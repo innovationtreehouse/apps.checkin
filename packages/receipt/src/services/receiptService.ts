@@ -14,7 +14,7 @@ import {
   type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
-import { duplicateGroup as computeGroup, describeReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
+import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
@@ -429,7 +429,7 @@ async function decideGroup(
   id: string,
   shownIds: string[],
   attempted: string,
-  decide: (tx: Prisma.TransactionClient, viewed: ReceiptRow, live: DuplicateMember[], actor: ReceiptPrincipal) => Promise<void>,
+  decide: (tx: Prisma.TransactionClient, viewed: ReceiptRow, members: DuplicateMember[], actor: ReceiptPrincipal) => Promise<void>,
 ) {
   const shown = parse(z.array(z.string().min(1)).min(1), shownIds);
   const actor = await requireActor();
@@ -443,7 +443,7 @@ async function decideGroup(
     if (!group || !viewed || ENDED.has(viewed.state)) throw new ServiceError(409, DECIDED_SINCE);
     const live = livePairIds(group.members);
     if (live.length !== new Set(shown).size || !live.every((m) => shown.includes(m))) throw await staleGroup(tx, shown, live);
-    await decide(tx, row, group.members.filter((m) => m.state !== "discarded"), actor);
+    await decide(tx, row, group.members, actor);
     return live;
   });
   await recheck(row.orgId, decided, actor);
@@ -733,8 +733,8 @@ export const receiptService = {
    * is recorded as different purchases, and every held member re-runs the pipeline.
    */
   async differentPurchases(id: string, shownIds: string[]) {
-    return decideGroup(id, shownIds, "different purchases", async (tx, viewed, live, actor) => {
-      const ids = live.map((m) => m.id);
+    return decideGroup(id, shownIds, "different purchases", async (tx, viewed, members, actor) => {
+      const ids = livePairIds(members);
       const already = await tx.receiptPairDecision.findMany({
         where: { kind: "different", receiptId: { in: ids }, otherReceiptId: { in: ids } },
         select: { receiptId: true, otherReceiptId: true },
@@ -754,9 +754,11 @@ export const receiptService = {
    * records each as a copy of it. Finalized and rejected members are left as they are.
    */
   async keepThisOne(id: string, shownIds: string[]) {
-    return decideGroup(id, shownIds, "keep this one", async (tx, kept, live, actor) => {
-      const note = `Copy of ${(await describeReceipts(tx, [kept.id])).get(kept.id) ?? "another receipt"}`;
-      const open = live.filter((m) => m.id !== kept.id && !ENDED.has(m.state)).map((m) => m.id);
+    return decideGroup(id, shownIds, "keep this one", async (tx, kept, members, actor) => {
+      const ids = members.map((m) => m.id);
+      const uploads = [...(await keptReceipts(tx, ids)).values()].map((r) => r.uploadedAt);
+      const note = `Copy of ${describeKept({ retailer: kept.retailer, uploadedAt: kept.uploadedAt }, uploads)}`;
+      const open = members.filter((m) => m.id !== kept.id && !ENDED.has(m.state)).map((m) => m.id);
       for (const copy of await receiptRepo.list({ orgId: kept.orgId, id: { in: open } })) {
         await decidePair(tx, kept.orgId, kept.id, copy.id, "copy_of", actor, copy.id);
         await rejectAsFinance(copy, note, actor, tx);

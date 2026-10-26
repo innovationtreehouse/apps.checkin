@@ -3,7 +3,8 @@ import type { Prisma } from "../generated/prisma/client";
 import { BODY_COPY_DISCARDED } from "./receipt-flow";
 import { STATE_LABELS } from "./stateLabels";
 
-export type DuplicateMember = { id: string; state: string; label: string };
+/** `copyOfId` names the receipt kept in place of a member rejected as a copy. */
+export type DuplicateMember = { id: string; state: string; label: string; copyOfId: string | null };
 /** The viewed receipt and every member not dismissed against it, in upload order, and the ones dismissed. */
 export type DuplicateGroup = { members: DuplicateMember[]; dismissed: string[] };
 
@@ -79,6 +80,24 @@ export function describeReceipt(r: Described): string {
   return [r.retailer?.trim() || "Receipt", date, total].filter(Boolean).join(", ");
 }
 
+const time = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+
+/**
+ * The receipt kept in place of a copy, told apart from its copies, which share its vendor, date
+ * and total: "Home Depot, uploaded 3 Oct", with the time when another of `alongside` was
+ * uploaded the same day.
+ */
+export function describeKept(kept: { retailer: string | null; uploadedAt: Date }, alongside: Date[]): string {
+  const sameDay = alongside.some((at) => at.getTime() !== kept.uploadedAt.getTime() && day(at) === day(kept.uploadedAt));
+  return `${kept.retailer?.trim() || "Receipt"}, uploaded ${day(kept.uploadedAt)}${sameDay ? `, ${time(kept.uploadedAt)}` : ""}`;
+}
+
+/** The kept receipt's upload time and vendor, by id. */
+export async function keptReceipts(client: Client, ids: string[]): Promise<Map<string, { retailer: string | null; uploadedAt: Date }>> {
+  const rows = await client.receipt.findMany({ where: { id: { in: ids } }, select: { id: true, uploadedAt: true, details: { select: { retailer: true } } } });
+  return new Map(rows.map((r) => [r.id, { retailer: r.details?.retailer ?? null, uploadedAt: r.uploadedAt }]));
+}
+
 /** Each receipt's description by id, for labels and messages. */
 export async function describeReceipts(client: Client, ids: string[]): Promise<Map<string, string>> {
   const rows = await client.receiptDetail.findMany({ where: { id: { in: ids } }, select: { id: true, retailer: true, receiptDate: true, receiptTotalCents: true } });
@@ -89,7 +108,7 @@ export async function describeReceipts(client: Client, ids: string[]): Promise<M
  * How each member is shown: its state, with the date and reason of a rejection or withdrawal. A
  * member rejected as a copy names the receipt kept in its place.
  */
-async function labels(client: Client, nodes: Node[]): Promise<Map<string, string>> {
+async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<DuplicateMember, "id" | "state">>> {
   const ended = nodes.filter((n) => n.state === "rejected" || n.state === "discarded").map((n) => n.id);
   const logs = await client.receiptAuditLog.findMany({
     where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded", BODY_COPY_DISCARDED] } },
@@ -98,24 +117,24 @@ async function labels(client: Client, nodes: Node[]): Promise<Map<string, string
   const last = new Map(logs.map((l) => [`${l.receiptId}:${l.action}`, l]));
   const copies = await client.receiptPairDecision.findMany({ where: { kind: "copy_of", copyReceiptId: { in: ended } } });
   const keptOf = new Map(copies.map((p) => [p.copyReceiptId, p.receiptId === p.copyReceiptId ? p.otherReceiptId : p.receiptId]));
-  const kept = await describeReceipts(client, [...keptOf.values()]);
-  return new Map(
-    nodes.map((n) => {
-      if (n.state === "rejected") {
-        const keptId = keptOf.get(n.id);
-        if (keptId) return [n.id, `Rejected as a copy of ${kept.get(keptId) ?? "another receipt"}`];
-        const log = last.get(`${n.id}:reject_financial`);
-        return [n.id, log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected"];
-      }
-      if (n.state === "discarded") {
-        if (last.has(`${n.id}:${BODY_COPY_DISCARDED}`)) return [n.id, "Discarded at mail intake as a copy of its attachment"];
-        const log = last.get(`${n.id}:discarded`);
-        return [n.id, log ? `Withdrawn by its submitter on ${day(log.changedAt)}` : "Withdrawn by its submitter"];
-      }
-      if (n.state === "receipt_finalized") return [n.id, n.pushedAt ? "Finalized · Sent to expenses" : "Finalized"];
-      return [n.id, STATE_LABELS[n.state] ?? n.state];
-    }),
-  );
+  const kept = await keptReceipts(client, [...keptOf.values()]);
+  const uploads = nodes.map((n) => n.uploadedAt);
+  const text = (n: Node): string => {
+    if (n.state === "rejected") {
+      const keptRow = kept.get(keptOf.get(n.id) ?? "");
+      if (keptRow) return `Rejected as a copy of ${describeKept(keptRow, uploads)}`;
+      const log = last.get(`${n.id}:reject_financial`);
+      return log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected";
+    }
+    if (n.state === "discarded") {
+      if (last.has(`${n.id}:${BODY_COPY_DISCARDED}`)) return "Discarded at mail intake as a copy of its attachment";
+      const log = last.get(`${n.id}:discarded`);
+      return log ? `Withdrawn by its submitter on ${day(log.changedAt)}` : "Withdrawn by its submitter";
+    }
+    if (n.state === "receipt_finalized") return n.pushedAt ? "Finalized · Sent to expenses" : "Finalized";
+    return STATE_LABELS[n.state] ?? n.state;
+  };
+  return new Map(nodes.map((n) => [n.id, { label: text(n), copyOfId: (n.state === "rejected" && keptOf.get(n.id)) || null }]));
 }
 
 /**
@@ -158,7 +177,7 @@ export async function duplicateGroup(orgId: string, id: string, client: Client =
     : await client.receipt.findMany({ where: { id: { in: [...dismissedIds] } }, select: { id: true, uploadedAt: true }, orderBy: [{ uploadedAt: "asc" }, { id: "asc" }] });
   const label = await labels(client, shown);
   return {
-    members: shown.map((n) => ({ id: n.id, state: n.state, label: label.get(n.id) ?? n.state })),
+    members: shown.map((n) => ({ id: n.id, state: n.state, label: n.state, copyOfId: null, ...label.get(n.id) })),
     dismissed: dismissedRows.map((r) => r.id),
   };
 }
