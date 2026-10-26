@@ -7,10 +7,10 @@ import type { ConfigCheck } from "@/lib/configHealth";
 const tryBuildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ tryBuildQuickBooks }));
 const incomePostingMissing = jest.fn();
-jest.mock("@/lib/income/configure", () => ({ incomePostingMissing }));
-const donationPostingMissing = jest.fn();
+const benevityPostingMissing = jest.fn();
+jest.mock("@/lib/income/configure", () => ({ incomePostingMissing, benevityPostingMissing }));
 const inKindPostingMissing = jest.fn();
-jest.mock("@/lib/bulkDonation/configure", () => ({ donationPostingMissing, inKindPostingMissing }));
+jest.mock("@/lib/bulkDonation/configure", () => ({ inKindPostingMissing }));
 const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const getOrg = jest.fn();
@@ -44,7 +44,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     process.env.CHECKIN_ENV = "dev";
     incomePostingMissing.mockResolvedValue([]);
-    donationPostingMissing.mockReturnValue([]);
+    benevityPostingMissing.mockResolvedValue([]);
     inKindPostingMissing.mockResolvedValue([]);
     expensePostingMissing.mockResolvedValue([]);
     getOrg.mockResolvedValue({ id: "org-1" });
@@ -131,10 +131,10 @@ describe("posting lane rows", () => {
     });
 
     it("names each missing piece when unbound", async () => {
-        donationPostingMissing.mockReturnValue(["QuickBooks company (QBO_REALM_ID)", "bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]);
+        benevityPostingMissing.mockResolvedValue(["QuickBooks company (QBO_REALM_ID)", "no account picked for: Benevity disbursements: bank account"]);
         expect((await rows())["quickbooks-lane-donations"]).toMatchObject({
             ok: false,
-            detail: "Unbound; missing: QuickBooks company (QBO_REALM_ID), bank account (QBO_DONATION_BANK_ACCOUNT_ID).",
+            detail: "Unbound; missing: QuickBooks company (QBO_REALM_ID), no account picked for: Benevity disbursements: bank account.",
         });
     });
 

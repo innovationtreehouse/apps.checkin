@@ -1,4 +1,4 @@
-import { appKeyOf, findOrCreate, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -124,11 +124,15 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
   return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
 }
 
-/** The books-map roles a row's deposit needs that neither the map, the environment, nor a line's account name sets. */
-export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): string[] {
+/**
+ * The books-map roles a row's deposit needs that neither the map, the environment, nor a line's
+ * account name sets. A Benevity row with no deposit yet needs only its bank: every line donation
+ * hands over carries the account map's name.
+ */
+export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
   const expected = isBenevity(row) ? expectedOf(row) : null;
-  const roles = expected
-    ? [expected.bankRole, ...expected.lines.filter((l) => !l.accountName).map((l) => l.role)]
+  const roles = isBenevity(row)
+    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).filter((l) => !l.accountName).map((l) => l.role)]
     : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }

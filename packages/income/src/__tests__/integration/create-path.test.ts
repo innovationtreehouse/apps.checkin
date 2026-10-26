@@ -5,7 +5,7 @@ import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
 import { ATTEMPTED_MATCH_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
-import { CLOSED_NOTE, drainIncomeOutbox, runIncomeOrphanSweep } from "../../lib/outbox";
+import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
@@ -1487,6 +1487,13 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     for (const { body } of qbo.posts) {
       expect(body.Line.map((l) => l.DepositLineDetail.AccountRef.value)).toEqual(["60", "71", "72"]);
     }
+  });
+
+  it("a Benevity source with no deposit yet needs only its bank; a line without a name needs its role", () => {
+    expect(missingRoles({ source: "benevity", expected: null }, {})).toEqual(["BENEVITY_BANK"]);
+    expect(missingRoles({ source: "benevity", expected: null }, { BENEVITY_BANK })).toEqual([]);
+    const unnamed = disbursement("2026-06-28", { lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: null, amountCents: 14_700 }] });
+    expect(missingRoles({ source: "benevity", expected: unnamed }, { BENEVITY_BANK })).toEqual(["BENEVITY_DONATIONS"]);
   });
 
   it("a line whose role and account name both fail to resolve fails its post", async () => {
