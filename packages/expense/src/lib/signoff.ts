@@ -211,7 +211,9 @@ export function signoffRefusal(
   if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
 
   if (seat === "SUBMITTER") {
-    return signerUserId === facts.submitterId ? orderRefusal(facts, filled, seat) : "only the submitter fills the submitter seat";
+    if (signerUserId !== facts.submitterId) return "only the submitter fills the submitter seat";
+    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the submitter's household already holds a seat on this expense";
+    return orderRefusal(facts, filled, seat);
   }
   if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";
   const outOfOrder = orderRefusal(facts, filled, seat);
