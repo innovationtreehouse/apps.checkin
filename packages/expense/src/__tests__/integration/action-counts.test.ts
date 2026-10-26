@@ -177,7 +177,7 @@ describeDb("expense action counts", () => {
     });
 
     it("leaves a Board seat on an org-level card charge to the finance queue's Board count, once the Treasurer has signed", async () => {
-      bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
+      bindPorts({ signoff: directory({ orgLevel: [7], finance: [3, 4], board: [5], households: [[1, 8, 9]] }) });
       const { id, li } = await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
       // The Board signs after the Treasurer, so the seat is not the Board's to give yet.
       expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE ?? 0).toBe(0);
@@ -185,6 +185,13 @@ describeDb("expense action counts", () => {
       await sign(id, li, { TREASURER: 3 });
       expect(await counts(BOARD)).toEqual(NONE);
       expect((await financeQueueCounts(BOARD)).board.byReason.BOARD_SIGNATURE).toBeGreaterThan(0);
+    });
+
+    it("gives the Board the Board authorization once the only FINANCE holder has signed the Treasurer seat", async () => {
+      bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8, 9]] }) });
+      const { id, li } = await seedLine("qb_pending", { ownerId: 7, status: "approved" }, { receiptTotalCents: 100_000 });
+      await sign(id, li, { TREASURER: 3 });
+      expect((await counts(BOARD)).qb_pending).toBe(1);
     });
 
     it("gives a FINANCE holder who approves the bucket no count once another Treasurer has signed", async () => {
