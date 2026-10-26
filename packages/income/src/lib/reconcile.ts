@@ -54,6 +54,14 @@ export function strayEntryOf(note: string | null): string | null {
   return /^app entry (\S+) (?:may need voiding|is not linked)/.exec(note ?? "")?.[1] ?? null;
 }
 
+/** Every app entry a note's stray-entry warnings name. */
+function strayEntriesOf(note: string | null): string[] {
+  return [...(note ?? "").matchAll(/app entry (\S+) (?:may need voiding|is not linked)/g)].map((m) => m[1]);
+}
+
+/** How a finance action's audit names a stray app entry it answered, under `answeredEntries`. */
+export const answeredEntryRef = (entryId: string) => `Deposit:${entryId}`;
+
 /**
  * The app note a payout carries once it holds `depositId` and adds `next`: a warning about a
  * different stray app entry stays until finance answers it; every other note is replaced.
@@ -408,6 +416,9 @@ export function audit(
     userId: null,
   },
 ): Promise<void> {
+  // A finance action that drops a stray-entry warning records the entry, so the orphan sweep never raises it again.
+  const kept = strayEntriesOf(after.qbNote);
+  const answered = actor.userId === null ? [] : strayEntriesOf(before?.qbNote ?? null).filter((e) => !kept.includes(e));
   return recordAudit(tx, {
     orgId,
     actorUserId: actor.userId,
@@ -416,7 +427,7 @@ export function audit(
     entityType: "payout_reconciliation",
     entityId: after.id,
     before: before ?? undefined,
-    after,
+    after: answered.length ? { ...after, answeredEntries: answered.map(answeredEntryRef) } : after,
     reason: actor.reason,
     correlationId: actor.correlationId,
   });
