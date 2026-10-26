@@ -18,7 +18,7 @@ export interface DepositLineInput {
   payoutNetCents: number;
   txns: MirrorBalanceTxn[];
   orderLines: MirrorOrderLine[];
-  /** variantId → budget-owner bucket id. Unmapped variants and null buckets book at organization level. */
+  /** variantId → budget-owner bucket id; null books at organization level. The create path holds a payout with an unmapped variant as NEEDS_MAPPING first. */
   categories: ReadonlyMap<string, number | null>;
 }
 

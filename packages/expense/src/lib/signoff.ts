@@ -232,7 +232,7 @@ export function signoffRefusal(
 
   if (seat === "SUBMITTER") {
     if (signerUserId !== facts.submitterId) return "only the submitter fills the submitter seat";
-    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the submitter's household already holds a seat on this expense";
+    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the submitter's household already signs off on this expense";
     return orderRefusal(facts, filled, seat);
   }
   if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";
@@ -243,7 +243,7 @@ export function signoffRefusal(
   if (otherStepSigners(facts, seat).has(signerUserId)) return "signer already signs another step on this expense";
   if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
   if (seat === "TREASURER" && facts.ownerHousehold.includes(signerUserId)) return "the bucket owner or their household cannot fill the Treasurer seat";
-  if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already holds a seat on this expense";
+  if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already signs off on this expense";
   if (seat === "BOARD") return facts.board.includes(signerUserId) ? null : "signer is not a Board member";
 
   const available = availableSigners(facts, filled, seat);
@@ -276,7 +276,7 @@ export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userI
   if (facts.conflicted.includes(userId)) return "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for";
   if (filled.some((f) => f.signerUserId === userId)) return "You already sign another seat on this line";
   if (otherStepSigners(facts, "APPROVAL").has(userId)) return "You already sign a later step on this expense";
-  if (facts.seatedHouseholds.includes(userId)) return "Someone in your household already holds a seat on this expense";
+  if (facts.seatedHouseholds.includes(userId)) return "Someone in your household already signs off on this expense";
   if (!approvesAsStandIn(facts, userId)) return null;
   if (!facts.board.includes(userId)) return "This line item is not in a bucket you approve";
   if (boardSubstitutions(facts, filled) >= maxBoardSubstitutions(facts)) return "No Board substitution left for this line";

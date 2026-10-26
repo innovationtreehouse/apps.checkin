@@ -100,7 +100,8 @@ export default function BooksMapPage() {
       <Title order={2}>Books map</Title>
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
-        books to. Every lane reads these from here. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
+        books to. Income reads the Shopify and Benevity accounts and the Classes from here, and expenses read the
+        Organisation card. Bulk donations still use the bank account set in the app settings. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
       </Text>
 
       <Title order={4}>Accounts</Title>

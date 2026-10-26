@@ -52,8 +52,11 @@ export async function setBooksMapAccount(actorId: number, role: string, body: Re
         const before = await tx.booksMapRoleAccount.findUnique({ where: { role }, select: { quickBooksAccountId: true } });
         const oldId = before?.quickBooksAccountId ?? null;
         if (oldId === quickBooksAccountId) return { role, quickBooksAccountId };
-        if (quickBooksAccountId === null) await tx.booksMapRoleAccount.delete({ where: { role } });
-        else await tx.booksMapRoleAccount.upsert({ where: { role }, create: { role, quickBooksAccountId }, update: { quickBooksAccountId } });
+        if (quickBooksAccountId === null) {
+            // A concurrent clear may have removed the row first; the loser writes nothing.
+            const { count } = await tx.booksMapRoleAccount.deleteMany({ where: { role } });
+            if (count === 0) return { role, quickBooksAccountId };
+        } else await tx.booksMapRoleAccount.upsert({ where: { role }, create: { role, quickBooksAccountId }, update: { quickBooksAccountId } });
         await tx.auditLog.create({
             data: {
                 ...personActor(actorId),
@@ -92,7 +95,7 @@ export async function listQuickBooksAccounts() {
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The host's books-map port: what every lane reads. */
+/** The host's books-map port: what the income and expense lanes read. */
 export const booksMap: BooksMap = {
     async accounts() {
         const rows = await prisma.booksMapRoleAccount.findMany({ select: { role: true, quickBooksAccountId: true } });

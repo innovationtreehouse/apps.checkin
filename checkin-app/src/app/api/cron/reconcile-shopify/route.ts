@@ -48,7 +48,8 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  * which needs no mirror. Isolated the same way.
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
- * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ * threw during the catalog's post-commit call-out); local-inventory's step also merges stock for
+ * pending provisionals the catalog has since resolved. Each step is isolated; counts only.
  *
  * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying).
  * Isolated the same way; counts only.
