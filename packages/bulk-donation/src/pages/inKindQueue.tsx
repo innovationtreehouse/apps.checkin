@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, cents, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -30,6 +30,8 @@ interface QueueItem {
   waitingOn: WaitingOn[];
   revenueBooking: string | null;
   expenseBooking: string | null;
+  qbState: string | null;
+  qbNote: string | null;
   warnDonorSurnameMatch: boolean;
   warnDonorIsRecorder: boolean;
   warnLargeValue: boolean;
@@ -153,12 +155,63 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
   );
 }
 
+/** The QuickBooks states the drain hands to finance to book, skip or match. */
+const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "POST_FAILED"];
+
+/** Finance's QuickBooks actions on one gift: book it, skip it with a reason, or match entries booked by hand by id. */
+function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
+  const [reason, setReason] = useState("");
+  const [journalEntryId, setJournalEntryId] = useState("");
+  const [depositId, setDepositId] = useState("");
+  const [purchaseId, setPurchaseId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function send(body: Record<string, string>, label: string) {
+    setBusy(true);
+    await act(() => api(`/in-kind/${item.source}/${item.id}/qb-resolve`, { method: "POST", body: JSON.stringify(body) }), label, onDone);
+    setBusy(false);
+  }
+
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Stack>
+        {item.qbNote && <Alert color="yellow">{item.qbNote}</Alert>}
+        <Group align="end">
+          <Button onClick={() => send({ action: "book" }, "Booked in QuickBooks")} loading={busy}>Book</Button>
+          <Text size="xs" c="dimmed">The app creates the journal entry, unless it finds one already booked.</Text>
+        </Group>
+        <Group align="end">
+          <TextInput label="Reason" placeholder="Booked by hand, out of scope, …" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
+          <Button variant="light" color="gray" onClick={() => send({ action: "skip", reason }, "Skipped")} disabled={!reason.trim()} loading={busy}>Skip</Button>
+        </Group>
+        <Group align="end">
+          <TextInput label="Journal entry id" value={journalEntryId} onChange={(e) => setJournalEntryId(e.currentTarget.value)} w={160} />
+          <Button variant="light" onClick={() => send({ action: "match", journalEntryId: journalEntryId.trim() }, "Matched")} disabled={!journalEntryId.trim()} loading={busy}>Match</Button>
+        </Group>
+        <Group align="end">
+          <TextInput label="Deposit id" value={depositId} onChange={(e) => setDepositId(e.currentTarget.value)} w={160} />
+          <TextInput label="Purchase id" value={purchaseId} onChange={(e) => setPurchaseId(e.currentTarget.value)} w={160} />
+          <Button
+            variant="light"
+            onClick={() => send({ action: "match", depositId: depositId.trim(), purchaseId: purchaseId.trim() }, "Matched")}
+            disabled={!depositId.trim() || !purchaseId.trim()}
+            loading={busy}
+          >
+            Match pair
+          </Button>
+        </Group>
+      </Stack>
+    </Paper>
+  );
+}
+
 /** /donations/in-kind — every in-kind gift with something left to do, and finance's accept step. */
 export default function InKindQueuePage() {
   const queue = useLoad<QueueItem[]>("/in-kind/queue");
   const owners = useLoad<Bucket[]>("/api/budget-owners");
   const { isFinance, isBoard } = useRoles();
   const [open, setOpen] = useState<string | null>(null);
+  const [qbOpen, setQbOpen] = useState<string | null>(null);
   const buckets = (owners.data ?? []).filter((b) => !b.archivedAt && b.quickBooksClassId !== null);
 
   const mayDecide = (q: QueueItem) => !q.callerConflicted && (isFinance || (isBoard && q.allFinanceConflicted));
@@ -194,7 +247,9 @@ export default function InKindQueuePage() {
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
                   <Table.Td>{q.totalValueCents === null ? "—" : cents(q.totalValueCents)}</Table.Td>
                   <Table.Td>{q.budgetOwnerName ?? "—"}</Table.Td>
-                  <Table.Td>{q.revenueBooking || q.expenseBooking ? `Revenue ${q.revenueBooking ?? "—"}, expense ${q.expenseBooking ?? "—"}` : "—"}</Table.Td>
+                  <Table.Td>
+                    {q.revenueBooking || q.expenseBooking ? `Revenue ${q.revenueBooking ?? "—"}, expense ${q.expenseBooking ?? "—"}` : q.qbState ?? "—"}
+                  </Table.Td>
                   <Table.Td>
                     {decidable(q) && mayDecide(q) && (
                       <Button size="xs" variant="light" onClick={() => setOpen(open === key ? null : key)}>{q.outcome ? "Change bucket" : "Decide"}</Button>
@@ -205,12 +260,22 @@ export default function InKindQueuePage() {
                         {kind === "withdrawal" ? "Settle withdrawal" : "Keep first values"}
                       </Button>
                     )}
+                    {isFinance && q.qbState !== null && QB_HELD.includes(q.qbState) && (
+                      <Button size="xs" variant="light" onClick={() => setQbOpen(qbOpen === key ? null : key)}>QuickBooks</Button>
+                    )}
                   </Table.Td>
                 </Table.Tr>,
                 open === key && (
                   <Table.Tr key={`${key}:panel`}>
                     <Table.Td colSpan={7}>
                       <DecidePanel item={q} buckets={buckets} onDone={() => { setOpen(null); queue.reload(); }} />
+                    </Table.Td>
+                  </Table.Tr>
+                ),
+                qbOpen === key && (
+                  <Table.Tr key={`${key}:qb`}>
+                    <Table.Td colSpan={7}>
+                      <QbPanel item={q} onDone={() => { setQbOpen(null); queue.reload(); }} />
                     </Table.Td>
                   </Table.Tr>
                 ),

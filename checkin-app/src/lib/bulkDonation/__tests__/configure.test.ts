@@ -209,6 +209,16 @@ describe("bulk-donation wiring", () => {
     expect(notifyFinanceAlert.mock.calls[0][0]).toContain("stray QuickBooks journal entries");
   });
 
+  it("names the environment's lane bank accounts so the in-kind clearing account can be none of them", async () => {
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_INCOME_BANK_ACCOUNT_ID = "35";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "36";
+    expect((await config()).inKindQb!.laneBankAccountIds).toEqual(["35", "36"]);
+    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    expect((await config()).inKindQb!.laneBankAccountIds).toEqual([]);
+  });
+
   it("reads which donated lines became assets from the expense library's capital review", async () => {
     donatedAssetLineIds.mockResolvedValue([3]);
     const { capital } = await config();

@@ -332,8 +332,20 @@ the gift claims both entries in one transaction, and the unique index is the
 guard. Anything less goes to finance: one half without the other, two
 candidates, or two gifts that could each own the pair. A journal entry finance
 booked by hand is never matched on its amount; finance matches it to the gift by
-its id. The pair's accounts are the clearing account, which no other lane books
-to, so income and expense can never see these entries.
+its id, and only when it is for the gift's value with every line on an in-kind
+account. The pair's accounts are the clearing account, which no other lane books
+to, so income and expense can never see these entries; a Deposit the donation
+or income lane holds is never matched, and the clearing account can be neither
+lane's bank account, in the books map or the environment.
+
+**Finance's actions.** A gift the drain hands over (unbooked, needs finance, or
+failed) offers three actions, each audited with who did it. *Book* creates the
+entry now, before switch-on if need be, only when booking is all the gift waits
+on and never in closed books. *Skip* needs a reason; the gift leaves the queue
+and the drain for good. *Match* takes a journal entry id, or a Deposit and a
+Purchase id. Skip and match first look for the app's own entry when a create
+may have landed, and link it instead. A gift's bucket cannot change once a
+create has been attempted, since that entry carries the bucket's Class.
 
 **When the app may create** follows the closed-books model shared by every
 QuickBooks lane (`QB_CLOSED_BOOKS.md`): nothing is booked on or before
@@ -398,8 +410,8 @@ In this order, each its own PR off `main`:
    gift as a source.
 4. Donations: one journal entry per gift in the drain, matching finance's
    clearing-account pairs first, with capital lines booked to the fixed-asset
-   account. Finance's book, skip and match actions, with their routes, follow
-   once their registry entries land.
+   account. Finance books, skips (with a reason) or matches by id each gift the
+   drain hands over, through the two in-kind `qb-resolve` routes.
 
 ---
 

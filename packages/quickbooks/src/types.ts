@@ -84,6 +84,7 @@ export interface QboJournalEntry {
   TxnDate: string;
   TotalAmt: number;
   PrivateNote?: string;
+  Line?: { Amount?: number; JournalEntryLineDetail?: { PostingType?: "Debit" | "Credit"; AccountRef?: QboRef } }[];
 }
 
 export interface QboBillPayment {

@@ -83,6 +83,7 @@ function inKindQbPosting(): InKindQbPosting | undefined {
       accounts: async () => (await import("@/lib/finance/booksMap")).booksMap.accounts(),
       classes: async () => (await import("@/lib/finance/booksMap")).booksMap.classes(),
     },
+    laneBankAccountIds: [process.env.QBO_INCOME_BANK_ACCOUNT_ID, process.env.QBO_DONATION_BANK_ACCOUNT_ID].filter((id): id is string => !!id),
     async sweepIncomplete({ since }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert(
