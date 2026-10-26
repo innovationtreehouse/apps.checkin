@@ -54,7 +54,7 @@ export function unitCosts(costCents: number, units: number): number[] {
 export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): Promise<void> {
   const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
   const candidates = lines.filter((l) =>
-    classifyCapital(l.costCents, [{ unitPriceCents: Math.round(l.costCents / unitsOf(l.quantity)) }], settings),
+    classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),
   );
   if (candidates.length === 0) return;
   await db.donatedCapitalLine.createMany({ data: candidates.map((l) => ({ orgId, ...l })), skipDuplicates: true });

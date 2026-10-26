@@ -62,6 +62,14 @@ describeDb("donated capital", () => {
     expect(await giftsAwaitingCapitalReview(ORG)).toEqual([{ giftSource: "receipt", giftId: 41 }]);
   });
 
+  it("tests the line threshold against the costliest minted unit", async () => {
+    await db.expenseOrgSettings.create({
+      data: { orgId: ORG, capitalTotalThresholdCents: 1_000_000, capitalLineItemThresholdCents: 100_000 },
+    });
+    await submitDonatedLines(ORG, [line(1, 300_001, 3)]);
+    expect((await listDonatedCapital(FINANCE)).map((r) => r.giftLineId)).toEqual([1]);
+  });
+
   it("stores nothing for an org with no thresholds row", async () => {
     await submitDonatedLines(ORG, [line(1, 250_000)]);
     expect(await db.donatedCapitalLine.count()).toBe(0);
