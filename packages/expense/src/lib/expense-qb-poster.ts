@@ -270,7 +270,7 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * outside any transaction; the outcome is settled in a new one only if the claim is still ours.
  */
 export async function postExpenseToQb(orgId: string, expenseId: string, opts: PostOptions = {}): Promise<PostOutcome | "unbound"> {
-  const posting = getExpenseRuntime().quickbooks.posting;
+  const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const book = opts.book ?? false;
 
@@ -476,7 +476,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
  * entry answers an error naming where the expense now waits.
  */
 export async function bookExpenseToQb(orgId: string, expenseId: string, actor: Actor): Promise<void> {
-  const posting = getExpenseRuntime().quickbooks.posting;
+  const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
   const close = await readCloseDate(posting.client);
   if (!close.ok) throw new ServiceError(503, "The QuickBooks books closing date could not be read");
@@ -580,7 +580,7 @@ export async function sweepExpenseQbStrays(orgId: string, client: QuickBooksClie
  * MAX_CONSECUTIVE_FAILURES failures in a row. Returns counts only.
  */
 export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
-  const posting = getExpenseRuntime().quickbooks.posting;
+  const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const orgId = await getOrgId();
   await switchQbPostingOn(orgId, now);

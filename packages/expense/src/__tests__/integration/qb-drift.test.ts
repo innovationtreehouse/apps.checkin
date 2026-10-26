@@ -38,12 +38,12 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(qbo.handle));
   bindPorts({
     quickbooks: {
-      posting: {
+      posting: async () => ({
         client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
         paymentAccountId: "41",
         paymentType: "CreditCard",
         prod: false,
-      },
+      }),
     },
   });
 });
