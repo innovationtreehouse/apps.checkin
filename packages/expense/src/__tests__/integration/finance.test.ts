@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG, seedSubmitterSeat } from "../helpers/seed";
 import { setReimbursee, signLine, signoffStatus } from "../../services/signoffService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
@@ -36,7 +36,7 @@ describeDb("sign-off seats", () => {
   it("holds the expense out of the outbox until the last seat, then drains it", async () => {
     const { id, li } = await heldLine();
 
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
     expect(await events(id)).toBe(0);
     expect((await signoffStatus(id))[0].missing).toEqual(["TREASURER"]);
 
@@ -75,7 +75,7 @@ describeDb("sign-off seats", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
 
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
     await expect(signLine(principal(3), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 
@@ -92,7 +92,7 @@ describeDb("sign-off seats", () => {
     // A Board member's approval of an org-level line uses the card charge's one substitution.
     await seedApproval(id, li, { ownerId: 7, status: "approved", decidedByUserId: 5 });
 
-    await signLine(principal(1), li, "SUBMITTER");
+    await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 403 });
     await expect(signLine(principal(6), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
 
     expect(await events(id)).toBe(0);
@@ -118,6 +118,7 @@ describeDb("sign-off seats", () => {
     await approveLine(principal(5, { isBoard: true }), id, approvalId);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
 
+    await seedSubmitterSeat(li, 1);
     await expect(signLine(principal(5), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 
@@ -132,7 +133,7 @@ describeDb("sign-off seats", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 7 });
 
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
     await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
 
     await signLine(principal(5, { isBoard: true }), li, "TREASURER");
@@ -166,12 +167,12 @@ describeDb("sign-off seats", () => {
     const member = await line({ needsReimbursement: true, reimburseePersonId: 1 });
     const card = await line({ needsReimbursement: false });
     expect(await missing(member.id)).toEqual(["SUBMITTER", "TREASURER"]);
-    expect(await missing(card.id)).toEqual(["SUBMITTER", "TREASURER"]);
+    expect(await missing(card.id)).toEqual(["TREASURER"]);
 
     const nonMember = await line({ needsReimbursement: true, reimburseePersonId: 12 });
     expect(await missing(nonMember.id)).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
     await expect(signLine(BOARD, nonMember.li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not approved yet/) });
-    await signLine(principal(11), nonMember.li, "SUBMITTER");
+    await seedSubmitterSeat(nonMember.li, 12);
     await approveLine(principal(2), nonMember.id, nonMember.approvalId);
     await expect(signLine(BOARD, nonMember.li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/after the Treasurer/) });
     await signLine(FINANCE, nonMember.li, "TREASURER");
@@ -196,11 +197,10 @@ describeDb("sign-off seats", () => {
       return { id, li };
     }
 
-    it("the reimbursee cannot fill any seat", async () => {
+    it("the reimbursee signs no seat from the sign-off route, not even the submitter seat", async () => {
       const { li } = await reimburseeLine({ approvers: [9], finance: [9], board: [9] }, 9);
-      for (const seat of ["SUBMITTER", "TREASURER"] as const) {
-        await expect(signLine(principal(9), li, seat)).rejects.toMatchObject({ status: 403 });
-      }
+      await expect(signLine(principal(9), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
+      await expect(signLine(principal(9), li, "SUBMITTER")).rejects.toMatchObject({ status: 403, message: "Confirm the receipt to sign this seat" });
     });
 
     it("a member of the reimbursee's household cannot fill any seat", async () => {
@@ -210,11 +210,11 @@ describeDb("sign-off seats", () => {
       }
     });
 
-    it("a line without reimburseePersonId has no reimbursee conflict", async () => {
+    it("a card charge has no reimbursee conflict and takes no submitter seat", async () => {
       const { id, li } = await reimburseeLine({ approvers: [9], finance: [3] });
       await db.lineItemOwnerApproval.updateMany({ where: { lineItemId: li }, data: { decidedByUserId: 9 } });
       await signLine(principal(3), li, "TREASURER");
-      expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER"]);
+      expect((await signoffStatus(id))[0].missing).toEqual([]);
     });
 
     // A reimbursement whose reimbursee is unknown: the expense id and its line.
@@ -239,7 +239,7 @@ describeDb("sign-off seats", () => {
 
     it("nobody signs while the reimbursee is unknown; once FINANCE sets it the line is signable and drains", async () => {
       const { id, li } = await unknownReimbursee();
-      await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 409 });
+      await expect(signLine(principal(9, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ status: 409 });
 
       await setReimbursee(ORG, id, 1, FINANCE);
 
@@ -247,17 +247,21 @@ describeDb("sign-off seats", () => {
       const audit = await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "reimbursee_set" } });
       expect(audit).toMatchObject({ userId: 3, fieldChanged: "reimburseePersonId", valueBefore: null, valueAfter: "1" });
 
-      await signLine(principal(1), li, "SUBMITTER");
+      await seedSubmitterSeat(li, 1);
       await signLine(principal(9, { isFinance: true }), li, "TREASURER");
       expect(await events(id)).toBe(1);
     });
 
-    it("setting the reimbursee voids seats signed before it, so they are signed again for the payee", async () => {
+    it("setting the reimbursee voids the submitter's confirmation and every seat after it, audited, so they are signed again for the payee", async () => {
       const { id, li } = await unknownReimbursee();
       await signAll(id, li);
       await setReimbursee(ORG, id, 1, FINANCE);
       expect(await events(id)).toBe(0);
-      expect((await signoffStatus(id))[0].missing).toEqual(["TREASURER"]);
+      expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER", "TREASURER"]);
+      const voided = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff_voided" } });
+      expect(voided.map((a) => [a.userId, a.valueBefore]).sort()).toEqual([[3, "SUBMITTER"], [3, "TREASURER"]]);
+      expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "approval_cleared" } })).toBe(1);
+      expect(await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "submitter_confirmation_voided" } })).toMatchObject({ userId: 3, fieldChanged: "reimbursee" });
     });
 
     it("only FINANCE sets the reimbursee, never to themself or their own household", async () => {

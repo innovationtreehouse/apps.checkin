@@ -8,6 +8,7 @@ import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, T
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
+import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
@@ -114,6 +115,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       : (REVIEW_REASON_LABELS[reason] ?? reason);
   const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
   const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
+  const reimburseeConfirms = confirmedByReimbursee(r);
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
   const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
     if (await send(`/${id}${path}`, method, body, success, failed)) {
@@ -299,7 +301,13 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>Confirm</Button>
+                {reimburseeConfirms ? (
+                  <Text size="sm" c="dimmed">The person reimbursed confirms the lines and amounts.</Text>
+                ) : (
+                  <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>
+                    {r.needsReimbursement ? CONFIRM_AS_READ : "Confirm"}
+                  </Button>
+                )}
                 {isAdult && !r.isInKind && (
                   <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}

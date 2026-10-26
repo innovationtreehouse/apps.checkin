@@ -12,6 +12,7 @@ import { createProvisionalItemMapRepository } from "../repositories/provisionalI
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
+import { recordSubmitterSeats } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function receiveCompletedReceipt(
@@ -134,8 +135,9 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
       },
     });
 
+    const lineItemIds: number[] = [];
     for (const li of receipt.lineItems) {
-      await tx.expenseLineItem.create({
+      const { id } = await tx.expenseLineItem.create({
         data: {
           expenseId: receipt.receiptId,
           receiptLineItemId: li.receiptLineItemId,
@@ -152,6 +154,14 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           nonInventory: li.nonInventory ?? false,
         },
       });
+      lineItemIds.push(id);
+    }
+
+    // The person reimbursed's confirmation signs every line: theirs, or a Board member's on their behalf.
+    const confirmation = receipt.submitterConfirmation;
+    if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
+      const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt, reason: confirmation.onBehalfReason });
     }
   });
 }

@@ -71,6 +71,7 @@ describeDb("manual upload", () => {
     const reimbursees = {
       search: async () => [],
       byId: async (id: number) => people.get(id) ?? null,
+      hasAccount: async () => true,
     };
     beforeEach(() => configure({ receiptSink: ports.receiptSink, reimbursees }));
 
@@ -82,9 +83,11 @@ describeDb("manual upload", () => {
         valueAfter: String(BOB.id),
       });
 
-      await receiptService.submitterConfirm(r.id);
+      actAs(BOB);
+      await receiptService.confirmAsReimbursee(r.id);
       const payload = CompletedReceiptSchema.parse(ports.calls.pushes.at(-1));
       expect(payload).toMatchObject({ submitterId: ALICE.id, needsReimbursement: true, reimburseePersonId: BOB.id, reimbursementFor: "Bob Baker" });
+      expect(payload.submitterConfirmation).toMatchObject({ confirmedByPersonId: BOB.id });
     });
 
     it("refuses a reimbursee who is not a live person, and stores nothing", async () => {

@@ -56,7 +56,7 @@ function pool(facts: SignoffFacts): number[] {
   return [...new Set([facts.submitterId, ...facts.approvers, ...facts.finance, ...facts.board])];
 }
 
-/** Whether `id` may approve the line: the approve service's checks. */
+/** Whether `id` may approve the line: the approve service's checks, the order included. */
 function mayApprove(input: LineActionsInput, id: number): boolean {
   const { expense, approval } = input;
   return expense.state === "owner_approval" && !!approval && APPROVABLE.has(approval.status) && approvalRefusal(input.facts, input.filled, id) === null;
@@ -93,8 +93,9 @@ function callerActs(input: LineActionsInput): LineAction[] {
   }
 
   if (!expense.backfill && !CLOSED_STATES.has(expense.state) && !expense.reimburseeUnknown) {
+    // The submitter seat is signed by confirming the receipt, never from this page.
     for (const seat of SEATS) {
-      if (input.holds.includes(seat) && maySign(input, seat, caller.id)) add("sign", { seat });
+      if (seat !== "SUBMITTER" && input.holds.includes(seat) && maySign(input, seat, caller.id)) add("sign", { seat });
     }
   }
 
@@ -142,8 +143,10 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   const out: string[] = [];
   if (approval?.bucketFinal && APPROVABLE.has(approval.status)) out.push("Finance made this bucket final");
   if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
-    // Whether a bucket approver could approve once the submitter has signed, which comes first.
-    const confirmed = filled.some((f) => f.seat === "SUBMITTER") ? input : { ...input, filled: [...filled, { seat: "SUBMITTER" as const, signerUserId: facts.submitterId }] };
+    // Whether a bucket approver could approve once the person reimbursed has confirmed, which comes first.
+    const confirmed = filled.some((f) => f.seat === "SUBMITTER")
+      ? input
+      : { ...input, filled: [...filled, { seat: "SUBMITTER" as const, signerUserId: facts.reimburseeId ?? facts.submitterId }] };
     const approver = facts.approvers.some((id) => approvesAsApprover(confirmed, id));
     out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
   }

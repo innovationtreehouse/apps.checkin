@@ -12,6 +12,8 @@ export type LineKind = "reimbursement" | "card_charge";
 export interface SignoffFacts {
   kind: LineKind;
   submitterId: number;
+  /** The person reimbursed, who gives the submitter's signature; null on a card charge or while unknown. */
+  reimburseeId: number | null;
   /** The line's bucket approvers (owner + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
@@ -39,8 +41,8 @@ export interface SignoffFacts {
   expenseSigners: StepSigner[];
 }
 
-/** The steps after the submitter's, in order: the line's approval (the bucket level), the Treasurer, the Board. */
-export type Step = "APPROVAL" | Exclude<Seat, "SUBMITTER">;
+/** The steps in order: the submitter seat, the line's approval (the bucket level), the Treasurer, the Board. */
+export type Step = "APPROVAL" | Seat;
 
 export interface StepSigner {
   step: Step;
@@ -186,10 +188,10 @@ function maxBoardSubstitutions(facts: SignoffFacts): number {
   return facts.kind === "card_charge" ? 1 : 2;
 }
 
-/** The line's unfilled seats; the Board seat counts only on a line that takes it. */
+/** The line's unfilled seats. A card charge takes no submitter seat; the Board seat counts only on a line that takes it. */
 export function missingSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const done = new Set(filled.map((f) => f.seat));
-  return SEATS.filter((s) => !done.has(s) && (s !== "BOARD" || takesBoardSeat(facts)));
+  return SEATS.filter((s) => !done.has(s) && (s !== "SUBMITTER" || facts.kind === "reimbursement") && (s !== "BOARD" || takesBoardSeat(facts)));
 }
 
 /**
@@ -231,8 +233,9 @@ export function signoffRefusal(
   if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
 
   if (seat === "SUBMITTER") {
-    if (signerUserId !== facts.submitterId) return "only the submitter fills the submitter seat";
-    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the submitter's household already holds a seat on this expense";
+    if (facts.kind === "card_charge") return "a card charge takes no submitter seat";
+    if (signerUserId !== facts.reimburseeId) return "only the person reimbursed fills the submitter seat";
+    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the person reimbursed's household already holds a seat on this expense";
     return orderRefusal(facts, filled, seat);
   }
   if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";

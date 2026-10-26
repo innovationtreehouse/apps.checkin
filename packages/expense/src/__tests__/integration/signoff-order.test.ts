@@ -6,7 +6,7 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, seedSubmitterSeat, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { approveLine } from "../../services/approvalService";
 import { setDepreciationCycle, submitCapitalReview } from "../../services/capitalService";
@@ -23,7 +23,6 @@ describeDb("signatures in order", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     const approvalId = await seedApproval(id, li, { ownerId: 7 });
 
-    await signLine(principal(1), li, "SUBMITTER");
     await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not approved yet/) });
     await expect(signLine(BOARD, li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not approved yet/) });
 
@@ -33,18 +32,29 @@ describeDb("signatures in order", () => {
     await signLine(BOARD, li, "BOARD");
 
     const seats = await db.expenseLineSignoff.findMany({ where: { lineItemId: li }, orderBy: { id: "asc" } });
-    expect(seats.map((s) => s.seat)).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
+    expect(seats.map((s) => s.seat)).toEqual(["TREASURER", "BOARD"]);
   });
 
-  it("the submitter seat may still be signed after the approval and the Treasurer", async () => {
+  it("a card charge takes no submitter seat: the Treasurer's signature after the approval posts it", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3] }) });
     const id = await seedExpense({ state: "qb_pending" });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
 
+    await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 403 });
     await signLine(FINANCE, li, "TREASURER");
-    await signLine(principal(1), li, "SUBMITTER");
     expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(1);
+  });
+
+  it("a reimbursement's line is approved only after the person reimbursed confirms", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 9 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    const approvalId = await seedApproval(id, li, { ownerId: 100 });
+
+    await expect(approveLine(principal(2), id, approvalId)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not confirmed this reimbursement yet/) });
+    await seedSubmitterSeat(li, 9);
+    await approveLine(principal(2), id, approvalId);
   });
 });
 

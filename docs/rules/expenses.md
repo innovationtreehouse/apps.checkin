@@ -40,7 +40,8 @@ Income and donation rules are in `revenue.md`.
   their own receipts, without donor or reimbursee names, and approval stays with
   FINANCE, so the audience exposes no other person's data and moves no money on
   its own. The same audience may reach an expense sign-off for the submitter
-  seat, since that seat is filled from the receipt. Widening it to any signed-in
+  seat, since that seat is filled by their confirmation of a reimbursement's
+  receipt. Widening it to any signed-in
   adult, narrowing it to the catalog audience, or adding a background-check leg
   is a decision on the record.
   [Decision — owner]
@@ -118,10 +119,42 @@ Income and donation rules are in `revenue.md`.
 
 ### Spending sign-off
 
-- A reimbursement or card charge reaches the books only once each of its lines
-  is signed by the submitter, a program approver, and the Treasurer — three
-  different people from three different households.
+- A reimbursement reaches the books only once each of its lines is signed by
+  the submitter, by confirming the receipt; by a program approver, who is an
+  owner or treasurer of the line's bucket, or, for a line outside a
+  Board-approved program budget (an org-level bucket), a Board member without a
+  conflict who is not the Treasurer; and by the Treasurer. Every signer is a
+  different person from a different household.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3*]
+
+- A card charge reaches the books only once each of its lines is signed by a
+  program approver, chosen as for a reimbursement, and the Treasurer, two
+  different people from different households. The submitter does not sign a
+  card charge.
+  [Decision — owner]
+
+- The submitter signs a reimbursement by confirming its receipt as read, its
+  lines and amounts, before the receipt goes to finance, whatever the intake
+  path. Submitting the receipt is not the signature. Finance may correct a card
+  charge's receipt without the submitter.
+  [Decision — owner]
+
+- The person reimbursed gives the submitter's signature on a reimbursement, by
+  confirming its receipt, whoever uploaded it. When they have no account in the
+  app, a Board member without a conflict confirms on their behalf, giving the
+  reason, and the record names both and keeps the reason.
+  [Decision — owner]
+
+- Once the submitter has confirmed a reimbursement, a change finance makes to
+  what the submitter claimed or what they are paid voids the submitter's
+  signature: its line items, a line's quantity or unit price, tax, shipping,
+  discount, the total, the currency, the receipt date, or the person
+  reimbursed. The reimbursement does not reach the books until the person
+  reimbursed confirms it again. Finance's bookkeeping does not void it: a
+  line's bucket, the accounting-system account set on a hold, or the capital
+  or depreciation designation; nor does correcting the retailer. The void and
+  the new confirmation are both recorded.
+  [Decision — owner]
 
 - A line's program approver signs it by approving it: the approval records who
   approved and when, and no separate signature is taken. Whoever may not hold a
