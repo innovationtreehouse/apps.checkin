@@ -150,7 +150,8 @@ describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         // ReceiptRow omits these two columns (repositories/receipt.ts listShape).
         const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'donorSyncSeq');
-        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
+        // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
+        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason');
         const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         expect(view).toEqual({ ...receipt, ...detail });
     });

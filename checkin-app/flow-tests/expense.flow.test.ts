@@ -198,15 +198,15 @@ describe("expense — approver sign-off journey", () => {
     expect(approved.status).toBe(200);
     expect((approved.json as Approval).status).toBe("approved");
 
-    // There is no program-approver seat; not the submitter, so not the submitter seat; the approver never signs as Treasurer.
+    // There is no program-approver seat; a card charge takes no submitter seat; the approver never signs as Treasurer.
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" })).status).toBe(400);
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "SUBMITTER" })).status).toBe(403);
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(403);
 
-    // FINANCE fills the Treasurer seat; the submitter's seat is still open.
+    // FINANCE fills the Treasurer seat; a card charge takes no submitter seat, so nothing is missing.
     expect((await send(finance, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(200);
     const status = await api<SignoffStatus[]>(approver, `${E}/signoffs`);
-    expect(status.json[0]).toMatchObject({ filled: ["TREASURER"], missing: ["SUBMITTER"] });
+    expect(status.json[0]).toMatchObject({ filled: ["TREASURER"], missing: [] });
     expect((await api(approver, "/programs-i-lead/expense-approvals")).status).toBe(200);
   });
 });

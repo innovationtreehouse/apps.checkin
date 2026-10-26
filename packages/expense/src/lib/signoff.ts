@@ -12,6 +12,8 @@ export type LineKind = "reimbursement" | "card_charge";
 export interface SignoffFacts {
   kind: LineKind;
   submitterId: number;
+  /** The person reimbursed, who gives the submitter's signature; null on a card charge or while unknown. */
+  reimburseeId: number | null;
   /** The line's bucket approvers (owner + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
@@ -39,8 +41,8 @@ export interface SignoffFacts {
   expenseSigners: StepSigner[];
 }
 
-/** The steps after the submitter's, in order: the line's approval (the bucket level), the Treasurer, the Board. */
-export type Step = "APPROVAL" | Exclude<Seat, "SUBMITTER">;
+/** The steps in order: the submitter seat, the line's approval (the bucket level), the Treasurer, the Board. */
+export type Step = "APPROVAL" | Seat;
 
 export interface StepSigner {
   step: Step;
@@ -186,10 +188,10 @@ function maxBoardSubstitutions(facts: SignoffFacts): number {
   return facts.kind === "card_charge" ? 1 : 2;
 }
 
-/** The line's unfilled seats; the Board seat counts only on a line that takes it. */
+/** The line's unfilled seats. A card charge takes no submitter seat; the Board seat counts only on a line that takes it. */
 export function missingSeats(facts: SignoffFacts, filled: FilledSeat[]): Seat[] {
   const done = new Set(filled.map((f) => f.seat));
-  return SEATS.filter((s) => !done.has(s) && (s !== "BOARD" || takesBoardSeat(facts)));
+  return SEATS.filter((s) => !done.has(s) && (s !== "SUBMITTER" || facts.kind === "reimbursement") && (s !== "BOARD" || takesBoardSeat(facts)));
 }
 
 /**
@@ -220,6 +222,24 @@ function orderRefusal(facts: SignoffFacts, filled: FilledSeat[], seat: Seat): st
   return null;
 }
 
+/**
+ * Why `signerUserId` may not fill the submitter seat, or null. The person reimbursed signs it;
+ * otherwise a Board member without a conflict signs on their behalf, and takes no other step on
+ * the expense. Either way nobody in the signer's household holds another seat on it.
+ */
+export function submitterSeatRefusal(facts: SignoffFacts, filled: FilledSeat[], signerUserId: number): string | null {
+  if (filled.some((f) => f.seat === "SUBMITTER")) return "seat SUBMITTER is already filled";
+  if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
+  if (facts.kind === "card_charge") return "a card charge takes no submitter seat";
+  if (signerUserId !== facts.reimburseeId) {
+    if (!facts.board.includes(signerUserId)) return "only the person reimbursed, or a Board member on their behalf, fills the submitter seat";
+    if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
+    if (otherStepSigners(facts, "SUBMITTER").has(signerUserId)) return "signer already signs another step on this expense";
+  }
+  if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already holds a seat on this expense";
+  return orderRefusal(facts, filled, "SUBMITTER");
+}
+
 /** Why `signerUserId` may not fill `seat`, or null when the sign-off is allowed. */
 export function signoffRefusal(
   facts: SignoffFacts,
@@ -230,11 +250,7 @@ export function signoffRefusal(
   if (filled.some((f) => f.seat === seat)) return `seat ${seat} is already filled`;
   if (filled.some((f) => f.signerUserId === signerUserId)) return "signer already fills another seat on this line";
 
-  if (seat === "SUBMITTER") {
-    if (signerUserId !== facts.submitterId) return "only the submitter fills the submitter seat";
-    if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the submitter's household already holds a seat on this expense";
-    return orderRefusal(facts, filled, seat);
-  }
+  if (seat === "SUBMITTER") return submitterSeatRefusal(facts, filled, signerUserId);
   if (seat === "BOARD" && !takesBoardSeat(facts)) return "this line takes no Board seat";
   const outOfOrder = orderRefusal(facts, filled, seat);
   if (outOfOrder) return outOfOrder;

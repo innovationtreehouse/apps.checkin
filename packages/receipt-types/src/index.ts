@@ -40,6 +40,7 @@ export {
   CompletedReceiptSchema,
   CompletedReceiptLineItemSchema,
   CompletedReceiptFinanceReviewSchema,
+  CompletedReceiptSubmitterConfirmationSchema,
   FINANCIAL_REVIEW_REASONS,
   MAX_LINE_QUANTITY,
 } from "./completed-receipt";
@@ -47,6 +48,7 @@ export type {
   CompletedReceipt,
   CompletedReceiptLineItem,
   CompletedReceiptFinanceReview,
+  CompletedReceiptSubmitterConfirmation,
   FinancialReviewReason,
 } from "./completed-receipt";
 

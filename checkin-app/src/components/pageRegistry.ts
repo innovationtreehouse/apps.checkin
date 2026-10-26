@@ -138,6 +138,7 @@ export const PAGES: PageEntry[] = [
   // My Receipts — anyone who may upload; Finance — finance.
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
   { href: '/receipts/upload', label: 'Upload Receipt', section: 'My Receipts', keywords: 'receipt photo pdf purchase donation', visible: linkGate(MY_RECEIPTS, '/receipts/upload') },
+  { href: '/receipts/confirm', label: 'Receipts to Confirm', section: 'My Receipts', keywords: 'receipt reimbursement confirm sign', visible: linkGate(MY_RECEIPTS, '/receipts/confirm') },
   { href: FINANCE_REVIEW_PATH, label: 'Finance Review', section: 'Finance', keywords: 'receipt expense finance tax duplicate queue flags holds quickbooks board sign treasurer', visible: FINANCE_REVIEW },
   { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Finance', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(FINANCE, '/receipts/mail') },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Finance', keywords: 'tax exempt age limit', visible: linkGate(FINANCE, '/receipts/settings') },

@@ -14,6 +14,7 @@ import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/l
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
+import { voidSubmitterConfirmation } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
 type Actor = ReturnType<typeof actorOf>;
@@ -62,6 +63,8 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
     select: { expenseId: true },
   });
   if (!line) throw new ServiceError(404, "Line item not found");
+  // The person reimbursed signs the submitter seat only by confirming the receipt.
+  if (seat === "SUBMITTER") throw new ServiceError(403, "Confirm the receipt to sign this seat");
 
   // Facts are read under the expense row lock, so a reimbursee or bucket change cannot commit
   // between the eligibility check and the insert.
@@ -125,9 +128,9 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
 
 /**
- * Names a live adult as the one owed a reimbursement whose reimbursee is unknown, clears
- * REIMBURSEE_UNKNOWN, and voids every non-submitter sign-off on the expense, so each seat is
- * signed for that payee. A known reimbursee is never changed.
+ * Names a live adult as the one owed a reimbursement whose reimbursee is unknown. A confirmation
+ * already given is cleared with every step after it, so the named person confirms; otherwise any
+ * seat signed while the payee was unknown is signed again. A known reimbursee is never changed.
  */
 export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
   await assertOrg(orgId);
@@ -162,8 +165,12 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
       valueBefore: null,
       valueAfter: String(personId),
     });
-    // Any seat signed while the payee was unknown is signed again for the payee.
-    await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
+    // Naming the payee changes who is paid: a confirmation already given is given again, and so is every step after it.
+    if (await tx.expenseLineSignoff.count({ where: { expenseId, seat: "SUBMITTER" } })) {
+      await voidSubmitterConfirmation(tx, actor, expenseId, ["reimbursee"]);
+    } else {
+      await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
+    }
     return current.state;
   });
 

@@ -78,6 +78,7 @@ describeDb("the sign route's response", () => {
     await seedApproval(id, lineItemId, { ownerId: 100, status: "approved", decidedByUserId: 2 });
     const req = new Request(`http://test/api/expense/expenses/${id}/line-items/${lineItemId}/signoffs`, { method: "POST", body: JSON.stringify({ seat: "TREASURER" }) });
     const res = (await expenses.sign({ req, params: { id, lineItemId: String(lineItemId) } })) as { ExpenseLineSignoffStatus: { filled: string[]; actions: unknown[]; awaiting: string[] }[] };
-    expect(res.ExpenseLineSignoffStatus).toEqual([expect.objectContaining({ filled: ["TREASURER"], actions: [], awaiting: ["Awaiting Submitter"] })]);
+    // A card charge takes no submitter seat, so the Treasurer's signature leaves nothing to wait on.
+    expect(res.ExpenseLineSignoffStatus).toEqual([expect.objectContaining({ filled: ["TREASURER"], actions: [], awaiting: [] })]);
   });
 });
