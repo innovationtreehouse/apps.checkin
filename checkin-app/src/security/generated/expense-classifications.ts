@@ -10,6 +10,7 @@ export const classifications = {
         noteInLieuLimitCents: 'internal',
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
+        qbPostingOnAt: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -59,6 +60,7 @@ export const classifications = {
         qbPostAttempts: 'internal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
+        qbCreateAttemptedAt: 'internal',
         isTestData: 'internal',
         boardAuthorization: 'internal',
         boardAuthorizedByUserId: 'pii',

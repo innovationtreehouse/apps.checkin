@@ -1123,7 +1123,7 @@ and bulk donation, and driven **from our side**:
 
 - **The work list is our own unmatched lines.** Each carries a match state:
   `UNMATCHED` → `MATCHED(qbTxnId)` / `CREATED(qbTxnId)`, or a finance queue state
-  (`AMBIGUOUS`, `BEFORE_LINE`, `POST_FAILED`). The queue should fall to zero and
+  (`AMBIGUOUS`, `UNBOOKED`, `POST_FAILED`). The queue should fall to zero and
   stay there.
 - **Each search is narrow.** For one line, ask QuickBooks only for entries of the
   right type in a short date window around the line's date, through the windowed
@@ -1140,17 +1140,18 @@ and bulk donation, and driven **from our side**:
   kept.
 - **Outcomes.** One candidate → `MATCHED`: link it and post nothing. More than one
   → `AMBIGUOUS`: equal amounts are common, so finance picks or creates; the system
-  never guesses. None, and the line is after the takeover line → create. None,
-  and before it → `BEFORE_LINE` for finance; the system never creates into a
-  hand-closed period.
-- **The takeover line is derived, not configured.** Each run takes it as the
-  newest line tied to a QuickBooks entry the app did **not** create (hand-booked,
-  found by matching or chosen by finance). App-created entries never move it.
-  With no hand-booked match yet there is no line, and the system creates nothing
-  (fail closed).
+  never guesses. None, for an expense submitted after posting switched on and
+  dated after the books closing date → create. None otherwise → `UNBOOKED` for
+  finance, who books it or matches it; the system never creates into closed
+  books (`QB_CLOSED_BOOKS.md`).
+- **Closed books and switch-on.** The books closing date is read from
+  QuickBooks once per run and again before each create; an unreadable date
+  creates nothing. With none set, nothing dated before switch-on is created.
+  Switch-on is `ExpenseOrgSettings.qbPostingOnAt`, stamped by the first drain
+  run with QuickBooks connected and never moved.
 - **The find-or-create is shared and stateless.** It lives once in
-  `packages/quickbooks`; expense passes its line, its takeover line, and its
-  claimed + excluded ids.
+  `packages/quickbooks`; expense passes its line, the closing date, whether it
+  may create, and its claimed + excluded ids.
 
 **The write itself — one closed, create-only writer.** `@inventory/quickbooks` is
 read-only today. QB-2 adds exactly one write entry point, `create(entity, fields)`,
@@ -1408,8 +1409,8 @@ Posture mirrors #1286 §10 / #1287 §10.
   test: a second intake of the same `receiptId` through the service changes
   nothing.
 - **Matching tests** (packages-only, no QuickBooks): one candidate links, two go
-  to `AMBIGUOUS`, a claimed or excluded id is never a candidate, no takeover line
-  creates nothing, and no writer ever emits a BillPayment, Check or Payment.
+  to `AMBIGUOUS`, a claimed or excluded id is never a candidate, nothing in closed
+  books or submitted before switch-on is created, and no writer ever emits a BillPayment, Check or Payment.
 - **QB entity-path test (CI, packages-only).** It fails if `packages/quickbooks`
   can issue a request to any QBO entity path other than create on `purchase`,
   `bill`, `deposit` or `vendor`; if a field outside an entity's allowlist reaches
@@ -1510,8 +1511,8 @@ and invariants only, no mechanism:
   (§8c, §9 QB-2).
 - **Match before create:** a QuickBooks entry is claimed by at most one line;
   more than one candidate goes to finance, never a guess; an entry finance
-  excluded is never a candidate; nothing is created before the derived takeover
-  line (§9 QB-2).
+  excluded is never a candidate; nothing is created on or before the books
+  closing date, or for an expense submitted before switch-on (§9 QB-2).
 - **Past expenses with no receipt stay in QuickBooks only** — never imported
   (§9 QB-1).
 - **One QB account per expense line — no category splits** (§7/§9 QB-2).

@@ -22,6 +22,7 @@ export function reasonText(r: QueueReason, currency: string): string {
     case "QB_POST_FAILED": return `Posting failed ${plural(r.count ?? 0, "time", "times")}${r.detail ? `: ${r.detail}` : ""}`;
     case "QB_AWAITING_MATCH": return "Several QuickBooks entries match; pick one";
     case "QB_VENDOR_MISSING": return "The reimbursee has no QuickBooks vendor yet; link one";
+    case "QB_UNBOOKED": return "Not in QuickBooks, and the app does not book it on its own; book it or match it";
     case "QB_NO_CLASS": return r.detail ? `Budget bucket ${r.detail} has no QuickBooks class` : "A line has no budget bucket, so it has no QuickBooks class";
     case "QB_DUPLICATE_TO_VOID": return "Duplicate entry in QuickBooks needs voiding";
     case "QB_DRIFT": {
@@ -47,6 +48,7 @@ export const REASON_PLACE: Record<ReasonCode, string> = {
   QB_POST_FAILED: "QuickBooks panel",
   QB_AWAITING_MATCH: "QuickBooks panel",
   QB_VENDOR_MISSING: "Reimbursee panel",
+  QB_UNBOOKED: "QuickBooks panel",
   QB_NO_CLASS: "the bucket's QuickBooks class on the Budgets page",
   QB_DUPLICATE_TO_VOID: "Reviews panel",
   QB_DRIFT: "Reviews panel",

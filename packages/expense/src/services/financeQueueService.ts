@@ -6,7 +6,7 @@ import type { ExpensePrincipal } from "../contract";
 import type { Expense } from "../generated/prisma/client";
 import { getOrgId } from "../runtime";
 import { FLAG_KINDS, taxNeedsFinance } from "../lib/flags";
-import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
+import { POSTABLE_QB_STATES, UNBOOKED_STATES } from "../lib/expense-qb-poster";
 import type { QueueReason } from "../lib/reasons";
 import { reasonText } from "../lib/reasonWords";
 import { CLOSED_STATES } from "../lib/signoff";
@@ -96,7 +96,7 @@ async function candidateIds(orgId: string): Promise<string[]> {
       select: { id: true, taxCents: true, receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } } },
     }),
     db.expenseFlag.findMany({ where: { orgId, checkedOffAt: null, kind: { in: [...FLAG_KINDS] } }, select: { expenseId: true } }),
-    db.expense.findMany({ where: { orgId, qbMatchState: { in: ["NEEDS_FINANCE", "AMBIGUOUS"] } }, select: id }),
+    db.expense.findMany({ where: { orgId, qbMatchState: { in: ["NEEDS_FINANCE", "AMBIGUOUS", ...UNBOOKED_STATES] } }, select: id }),
     db.expense.findMany({ where: { ...open, backfill: false, receiptTotalCents: { gte: boardReviewTotalCents } }, select: id }),
     db.expense.findMany({ where: { orgId, backfill: false, qbTxnId: null, qbMatchState: { in: POSTABLE_QB_STATES }, id: { in: outboxed } }, select: id }),
   ]);

@@ -17,6 +17,7 @@ export type ReasonCode =
   | "ACCOUNT_HOLD"
   | "QB_POST_FAILED"
   | "QB_AWAITING_MATCH"
+  | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
   | ReviewKind
@@ -106,6 +107,7 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
 
   if (!e.backfill && e.state !== "rejected") {
     if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { count: e.qbPostAttempts, detail: f.lastPostError }));
+    if (e.qbMatchState === "UNBOOKED" || e.qbMatchState === "BEFORE_LINE") out.push(reason("QB_UNBOOKED", "qb"));
     if (e.qbMatchState === "AMBIGUOUS") {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }

@@ -40,6 +40,10 @@ model ExpenseOrgSettings {
   everydayTotalLimitCents      Int    @default(50000) @map("everyday_total_limit_cents")
   /// @sensitivity:internal
   everydayItemLimitCents       Int    @default(25000) @map("everyday_item_limit_cents")
+  // When QuickBooks posting switched on, set by the first connected drain run and never moved;
+  // null means off. Only an expense submitted after it books itself.
+  /// @sensitivity:internal
+  qbPostingOnAt                DateTime? @map("qb_posting_on_at")
 
   @@map("org_settings")
 }
@@ -139,7 +143,7 @@ model Expense {
   /// @sensitivity:internal
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
   // QuickBooks match state of the whole expense (one QB entry per expense):
-  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED, or not sent:
+  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | UNBOOKED (BEFORE_LINE reads as it) | POST_FAILED, or not sent:
   // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
   // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
   // once; qb_vendor_id is the Vendor a Bill was posted to.
@@ -160,6 +164,10 @@ model Expense {
   // A MATCHED entry as QuickBooks held it at match (JSON); the drift check compares against it.
   /// @sensitivity:internal
   qbMatchBaseline    String?   @map("qb_match_baseline")
+  // The first post claim that could create the entry; set once, never moved. A later post looks
+  // up the app's own entry created since then before anything creates, matches or skips it.
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")
@@ -288,7 +296,7 @@ model ExpenseLineItem {
   allocatedShippingCents Int?  @map("allocated_shipping_cents")
   /// @sensitivity:internal
   allocatedDiscountCents Int?  @map("allocated_discount_cents")
-  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED.
+  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED.
   // Read only: the expense holds its QuickBooks entry; qb_txn_id is unique, so a line held an entry at most once.
   /// @sensitivity:internal
   qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
