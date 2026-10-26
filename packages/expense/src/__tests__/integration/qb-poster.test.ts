@@ -1067,6 +1067,18 @@ describeDb("QB closed books — a create that may have landed", () => {
     expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: own } })).toBe(1);
   });
 
+  it("finance's match does not link the app's own entry while a sign-off is missing", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    qbo.mode = "accept-then-drop";
+    await postExpenseToQb(ORG, id);
+    await db.expense.update({ where: { id }, data: { qbMatchState: "UNBOOKED" } });
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+
+    await expect(matchExpenseToQb(principal(500, { isFinance: true }), id, "hand-1")).rejects.toMatchObject({ status: 409 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNBOOKED", qbTxnId: null });
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG } })).toBe(0);
+  });
+
   it("finance's match is refused while the app's own entry is held by another expense", async () => {
     const { id } = await outboxed("2026-09-10");
     qbo.mode = "accept-then-drop";

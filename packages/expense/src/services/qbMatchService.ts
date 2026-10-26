@@ -197,7 +197,12 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
   const qbTxnId = own.entry.Id;
   try {
     await db.$transaction(async (tx) => {
+      // Linking books the expense as much as a match does, so it takes the same sign-offs, read under the lock.
       await lockExpense(tx, expense.id);
+      const current = await tx.expense.findUniqueOrThrow({ where: { id: expense.id } });
+      if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
+        throw new ServiceError(409, "Expense is missing a required sign-off or the Board's approval");
+      }
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "CREATED", qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
