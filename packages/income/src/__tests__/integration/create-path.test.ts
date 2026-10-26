@@ -1353,6 +1353,8 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
 
   it("notes a deposit uploaded after switch-on but dated in closed books", async () => {
     await switchOn();
+    // Benevity's own switch-on, as the move carries it over from donation.
+    await db.incomeOrgSettings.update({ where: { orgId: ORG_A }, data: { benevityQbPostingOnAt: ON_AT } });
     await expect1("D1", disbursement("2026-05-20"));
     expect(await drain()).toMatchObject({ post: { queued: 1 } });
     expect(await rowFor("D1")).toMatchObject({
