@@ -131,10 +131,12 @@ routes, auth, and DB together.
   inside that container.
 
 **Gotchas (why it's built this way):**
-- Use the **dev** server, never the production image: persona-mint login is gated
-  on `NODE_ENV != production`, and the prod `Dockerfile` pins `NODE_ENV=production`.
-  So flow tests would have no way to authenticate against the prod image.
-- The server must run with `CHECKIN_ENV=local` (enables persona-mint) and a
+- Flow tests run against the **dev** server (`next dev` in
+  `deploy/docker-compose.flow.yml`). Persona-mint login is gated on `CHECKIN_ENV`
+  alone (`config.isDevInstance()`), never `NODE_ENV`, so the production image run
+  with `CHECKIN_ENV=local` allows it too.
+- The server must run with `CHECKIN_ENV=local` (enables persona-mint for any
+  caller; under `dev` only a verified org session may mint) and a
   **freshly seeded** DB (`prisma db seed`) — flow tests assume the seed's baseline
   personas/households (e.g. `parent.family2@example.com` is a non-member household
   lead; `boardmember@example.com` is sysadmin+board).
