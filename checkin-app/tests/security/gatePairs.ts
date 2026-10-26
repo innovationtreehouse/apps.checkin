@@ -173,7 +173,14 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
     { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
     { name: 'page /finance/review', client: page('/finance/review'), token: 'finance-or-board' },
-    { name: 'counts:receipt', client: counts('receipt'), token: 'receipt-submitter' },
+    {
+        name: 'counts:receipt',
+        client: counts('receipt'),
+        token: 'receipt-submitter',
+        // Also reports To confirm to any adult who may be named as reimbursee, whatever their membership
+        // or role; the confirmation routes admit any signed-in person and the library decides.
+        differsFor: ['adult', 'leadInactiveAdult', 'programVolunteerInactiveAdult', 'treasurer'],
+    },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
     { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: routeToken('PATCH /api/donations/transactions/[id]/owner') },

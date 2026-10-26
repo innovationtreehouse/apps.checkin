@@ -35,6 +35,10 @@ const ROLE_LABELS: Record<BooksMapRole, string> = {
   BENEVITY_MATCHES: "Benevity: employer matches",
   BENEVITY_FEES: "Benevity: fees",
   EXPENSE_PAYMENT: "Organisation card",
+  INKIND_INCOME: "Gifts of goods: in-kind income",
+  INKIND_EXPENSE: "Gifts of goods: in-kind expense",
+  FIXED_ASSETS: "Gifts of goods: fixed assets (donated equipment)",
+  INKIND_CLEARING: "Gifts of goods: clearing account (finance's past bookings)",
 };
 
 /** Reads JSON, or says why it could not; never throws. */
@@ -100,8 +104,9 @@ export default function BooksMapPage() {
       <Title order={2}>Books map</Title>
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
-        books to. Income reads the Shopify and Benevity accounts and the Classes from here, and expenses read the
-        Organisation card. Bulk donations still use the bank account set in the app settings. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
+        books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
+        accounts and the Classes, and expenses read the Organisation card. Donation deposits from bulk uploads still use
+        the bank account set in the app settings. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
       </Text>
 
       <Title order={4}>Accounts</Title>

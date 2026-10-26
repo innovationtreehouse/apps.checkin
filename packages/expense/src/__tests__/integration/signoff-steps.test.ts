@@ -4,7 +4,7 @@
  */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat } from "../helpers/seed";
 import { recordBoardAuthorization, signLine } from "../../services/signoffService";
 import { approveLine, financeAssign } from "../../services/approvalService";
 
@@ -44,7 +44,7 @@ describeDb("one step per signer across an expense's lines", () => {
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const [a, b] = [await seedLineItem(id), await seedLineItem(id)];
     const [approvalA, approvalB] = [await seedApproval(id, a, { ownerId: 100 }), await seedApproval(id, b, { ownerId: 101 })];
-    for (const li of [a, b]) await signLine(principal(1), li, "SUBMITTER");
+    for (const li of [a, b]) await seedSubmitterSeat(li, 1);
     await approveLine(principal(2), id, approvalA);
     await approveLine(principal(7, { isBoard: true }), id, approvalB);
     await signLine(principal(3, { isFinance: true }), a, "TREASURER");
@@ -90,7 +90,7 @@ describeDb("one step per signer across an expense's lines", () => {
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "exception_raised" });
     await financeAssign(principal(3, { isFinance: true }), id, approvalId, 101);
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
 
     await expect(approveLine(principal(3, { isFinance: true }), id, approvalId)).rejects.toMatchObject(refused(/later step/));
     await approveLine(principal(7), id, approvalId);

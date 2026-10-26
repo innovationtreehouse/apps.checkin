@@ -107,6 +107,7 @@ export interface ReceiptListRow {
   pushedAt?: string | null;
   reimbursement?: { paidOn: string | null } | null;
   complete?: boolean;
+  reimburseePersonId?: number | null;
   /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */
   pushGivenUp?: boolean;
   lastPushFailedAt?: string | null;
@@ -115,6 +116,23 @@ export interface ReceiptListRow {
   duplicateFlagClearedAt?: string | null;
   /** The receipt this one was flagged against; finance views only. */
   duplicateSuspectReceiptId?: string | null;
+}
+
+/** A reimbursement waiting for the caller's confirmation, as the person reimbursed or a Board member on their behalf. */
+export interface ReceiptConfirmation {
+  id: string;
+  state: string;
+  retailer: string | null;
+  receiptDate: string | null;
+  currency: string;
+  shippingCents: number;
+  taxCents: number;
+  discountCents: number;
+  receiptTotalCents: number | null;
+  onBehalf: boolean;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+  lineItems: Array<{ id: number; lineNumber: number; description: string; quantity: number; totalPriceCents: number; isDelayed: boolean }>;
 }
 
 export { isDiscardedDuplicate, receiptStateLabel, STATE_LABELS } from "../lib/stateLabels";

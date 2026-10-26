@@ -1,6 +1,6 @@
 import { CsvError, parse } from "csv-parse/sync";
 import { z } from "zod";
-import { dollarsToCents } from "@checkin/money";
+import { dollarsToCents, formatCents, sumCents } from "@checkin/money";
 
 /**
  * Benevity CSV row after parsing. Monetary fields are INTEGER CENTS.
@@ -195,6 +195,11 @@ function readRecords(buffer: Buffer): Located[] {
 /** The Donations Report's footer labels, which sit under the gift table with fewer cells than the header. */
 const FOOTER_LABELS = new Set(["totals", "total donations (gross)", "check fee", "net total payment"]);
 
+/** The gift amounts a Totals footer row can total, each in its header column's cell. */
+const TOTALLED = [
+  "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents", "checkFeeCents",
+] as const satisfies readonly (keyof BenevityRow)[];
+
 /** Where a field comes from in this file: a header column's index, else a preamble value. */
 type Binding = { label: string; index: number } | { label: string; value: string } | null;
 
@@ -230,6 +235,7 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
 
   const rows: BenevityRow[] = [];
   const issues: string[] = [];
+  const totals: Located[] = [];
 
   for (const { record, info } of records.slice(headerAt + 1)) {
     const mapped = {} as RawRow;
@@ -240,6 +246,7 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     const label = record[0].trim().toLowerCase();
     const footer = FOOTER_LABELS.has(label) ? label : null;
     if (footer !== null && mapped.transactionId.trim() === "") {
+      if (footer === "totals") totals.push({ record, info });
       // The disbursement-level check fee has no gift to land on.
       if (footer === "check fee") {
         const fee = moneyCents.safeParse(record[1] ?? "");
@@ -266,6 +273,32 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     rows.push(parsed.data);
   }
 
+  if (issues.length === 0) {
+    for (const footer of totals) issues.push(...checkTotals(footer, rows, bindings));
+  }
   if (issues.length > 0) throw new CsvValidationError(issues);
   return rows;
+}
+
+/** Compares each amount a Totals row gives with the sum of the parsed gifts; a column the row leaves empty is not checked. */
+function checkTotals({ record, info }: Located, rows: BenevityRow[], bindings: Map<keyof BenevityRow, Binding>): string[] {
+  const currency = rows[0]?.currency ?? "USD";
+  const issues: string[] = [];
+  for (const field of TOTALLED) {
+    const b = bindings.get(field) ?? null;
+    if (b === null || !("index" in b)) continue;
+    const cell = (record[b.index] ?? "").trim();
+    if (cell === "") continue;
+    const where = `line ${info.lines}, Totals, "${b.label}"`;
+    const reported = moneyCents.safeParse(cell);
+    if (!reported.success) {
+      issues.push(`${where}: not a number: "${cell}"`);
+      continue;
+    }
+    const summed = sumCents(...rows.map((r) => r[field]));
+    if (reported.data !== summed) {
+      issues.push(`${where}: report says ${formatCents(reported.data, currency)}, gifts add up to ${formatCents(summed, currency)}`);
+    }
+  }
+  return issues;
 }

@@ -38,7 +38,7 @@ function catalogFiles(lineItemId: number, under: "Hardware" | "Tools") {
 async function seedLine(): Promise<{ id: string; li: number }> {
   const id = await seedExpense({ state: "owner_approval" });
   const li = await seedLineItem(id, { partNumber: "PN-1" });
-  // Approved by its bucket owner, so the seats are next.
+  // A card charge approved by its bucket owner, so the Treasurer seat is next.
   await seedApproval(id, li, { ownerId: 100, status: "approved" });
   await seedAccountMapping({ category: "Hardware", qbAccount: "4000" });
   await seedAccountMapping({ category: "Tools", qbAccount: "5000" });
@@ -63,7 +63,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("a catalog edit after sign-off does not move the line's account", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(FINANCE, li, "TREASURER");
     expect(await snapshot(li)).toEqual({ signedGtin13: GTIN, signedCategory: "Hardware", signedSubcategory: "Cables" });
 
@@ -74,7 +73,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("before sign-off completes, the live catalog is used", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     expect((await snapshot(li)).signedCategory).toBeNull();
 
     catalogFiles(li, "Tools");
@@ -85,7 +83,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("a catalog failure at sign-off leaves the snapshot to the first successful posting lookup", async () => {
     const { id, li } = await seedLine();
     inv.lookupItems.mockRejectedValue(new Error("catalog down"));
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(FINANCE, li, "TREASURER");
     expect((await snapshot(li)).signedCategory).toBeNull();
 
@@ -97,7 +94,6 @@ describeDb("a signed line's account is fixed at sign-off", () => {
   it("clearing the line's approval clears its snapshot", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
-    await signLine(principal(1), li, "SUBMITTER");
     await signLine(FINANCE, li, "TREASURER");
 
     await db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "test"));

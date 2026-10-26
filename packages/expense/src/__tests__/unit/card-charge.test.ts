@@ -74,6 +74,7 @@ describe("which lines take the Board seat", () => {
 const card: SignoffFacts = {
   kind: "card_charge",
   submitterId: 1,
+  reimburseeId: null,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
@@ -143,8 +144,8 @@ describe("the Treasurer seat on a card charge", () => {
 
 describe("the Board seat on a card charge", () => {
   it("is missing on a line that takes it, and absent otherwise", () => {
-    expect(missingSeats(card, [])).toEqual(["SUBMITTER", "TREASURER", "BOARD"]);
-    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["SUBMITTER", "TREASURER"]);
+    expect(missingSeats(card, [])).toEqual(["TREASURER", "BOARD"]);
+    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["TREASURER"]);
   });
 
   it("a Board member without a conflict with the purchaser signs it, alongside the Treasurer", () => {

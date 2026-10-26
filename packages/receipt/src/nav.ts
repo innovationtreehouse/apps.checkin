@@ -20,6 +20,9 @@ export const RECEIPT_SUBMITTER_NAV: readonly ReceiptNavLink[] = [
   { name: "Upload", href: "/receipts/upload", icon: "📤" },
 ];
 
+/** Reimbursements waiting for the caller's confirmation: anyone named as reimbursee, or the Board for one with no account. */
+export const RECEIPT_CONFIRM_NAV: ReceiptNavLink = { name: "To confirm", href: "/receipts/confirm", icon: "✅" };
+
 export const RECEIPT_FINANCE_NAV: readonly ReceiptNavLink[] = [
   { name: "Receipt settings", href: "/receipts/settings", icon: "⚙️" },
 ];

@@ -69,6 +69,12 @@ export async function giftsAwaitingCapitalReview(orgId: string): Promise<{ giftS
   });
 }
 
+/** The gift's lines finance's review made assets. */
+export async function donatedAssetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]> {
+  const rows = await db.donatedCapitalLine.findMany({ where: { orgId, ...gift, isCapital: true }, select: { giftLineId: true } });
+  return rows.map((r) => r.giftLineId);
+}
+
 /** Finance and the board read the lines waiting on review; only finance reviews them. */
 export async function listDonatedCapital(principal: ExpensePrincipal) {
   callerId(principal);

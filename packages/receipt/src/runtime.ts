@@ -11,6 +11,7 @@ import type {
   ReceiptPrincipal,
   ReceiptSink,
   ReimbursementStatus,
+  SubmitterConfirmations,
 } from "./contract";
 import { NotWiredError, callerId, defineRuntime } from "@checkin/component-kit";
 import { DEFAULT_LIMITS, type ReceiptLimits } from "./lib/limits";
@@ -38,6 +39,14 @@ export const inertReimbursementStatus: ReimbursementStatus = {
   forReceipts: async (receipts) => new Map(receipts.map((r) => [r.receiptId, { paidOn: null }])),
 };
 
+/** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
+export const inertSubmitterConfirmations: SubmitterConfirmations = {
+  awaiting: async () => [],
+  confirm: async () => {
+    throw new NotWiredError("SubmitterConfirmations.confirm");
+  },
+};
+
 /** Knows no households: only the uploader and the reimbursee themselves are refused. */
 export const inertHouseholds: ReceiptHouseholds = {
   householdOf: async () => [],
@@ -52,6 +61,7 @@ export const inertPeople: ReceiptPeople = {
 export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
   byId: async () => null,
+  hasAccount: async () => true,
 };
 
 /** Logs the alert: nothing reaches finance until the host binds alerts. */
@@ -84,6 +94,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     receiptSink: r.receiptSink ?? inertReceiptSink,
     donorSink: r.donorSink ?? inertDonorSink,
     reimbursementStatus: r.reimbursementStatus ?? inertReimbursementStatus,
+    submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,

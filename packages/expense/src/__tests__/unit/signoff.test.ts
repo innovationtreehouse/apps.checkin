@@ -7,6 +7,7 @@ import {
   blockedSeats,
   missingSeats,
   signoffRefusal,
+  submitterSeatRefusal,
   takesBoardSeat,
   type FilledSeat,
   type SignoffFacts,
@@ -17,6 +18,7 @@ import {
 const pending: SignoffFacts = {
   kind: "reimbursement",
   submitterId: 1,
+  reimburseeId: 1,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
@@ -37,6 +39,27 @@ const base: SignoffFacts = { ...pending, approved: true, approver: 2 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 /** The submitter has confirmed the reimbursement: the approval may follow. */
 const CONFIRMED = seats(["SUBMITTER", 1]);
+
+describe("the submitter seat", () => {
+  it("a reimbursement takes it; a card charge does not, and refuses it", () => {
+    expect(missingSeats(base, [])).toContain("SUBMITTER");
+    const card = { ...base, kind: "card_charge" as const };
+    expect(missingSeats(card, [])).not.toContain("SUBMITTER");
+    expect(signoffRefusal(card, [], "SUBMITTER", 1)).toMatch(/card charge takes no submitter seat/);
+  });
+
+  it("the person reimbursed fills it, not the submitter, when they differ", () => {
+    const forSomeoneElse = { ...base, reimburseeId: 9, conflicted: [1, 8, 9] };
+    expect(signoffRefusal(forSomeoneElse, [], "SUBMITTER", 9)).toBeNull();
+    expect(signoffRefusal(forSomeoneElse, [], "SUBMITTER", 1)).toMatch(/only the person reimbursed/);
+  });
+
+  it("a reimbursement's line is approved only after the submitter seat is signed; a card charge's needs none", () => {
+    expect(approvalRefusal(pending, [], 2)).toMatch(/not confirmed this reimbursement yet/);
+    expect(approvalRefusal(pending, seats(["SUBMITTER", 1]), 2)).toBeNull();
+    expect(approvalRefusal({ ...pending, kind: "card_charge" }, [], 2)).toBeNull();
+  });
+});
 
 describe("the approval is the program approver's sign-off", () => {
   it("a line needs no program-approver seat: submitter and Treasurer only", () => {
@@ -194,12 +217,12 @@ describe("independence", () => {
   it("a signer in the reimbursee's household is refused for every seat but the submitter's own", () => {
     const facts = { ...base, finance: [8], board: [8] };
     expect(signoffRefusal(facts, [], "TREASURER", 8)).toMatch(/household/);
-    expect(signoffRefusal(base, [], "SUBMITTER", 8)).toMatch(/only the submitter/);
+    expect(signoffRefusal(base, [], "SUBMITTER", 8)).toMatch(/only the person reimbursed/);
     expect(signoffRefusal(base, [], "SUBMITTER", 1)).toBeNull();
   });
 
-  it("the submitter is refused while someone in their household holds a seat on the expense", () => {
-    expect(signoffRefusal({ ...base, seatedHouseholds: [1] }, seats(["TREASURER", 3]), "SUBMITTER", 1)).toMatch(/submitter's household already signs off/);
+  it("the person reimbursed is refused the submitter seat while someone in their household holds a seat on the expense", () => {
+    expect(signoffRefusal({ ...base, seatedHouseholds: [1] }, seats(["TREASURER", 3]), "SUBMITTER", 1)).toMatch(/signer's household already signs off/);
   });
 
   it("a seat is filled once", () => {
@@ -326,5 +349,31 @@ describe("one person signs one step of an expense", () => {
     const facts: SignoffFacts = { ...pending, expenseSigners: [{ step: "APPROVAL", userId: 2 }] };
     expect(approvalRefusal(facts, CONFIRMED, 2)).toBeNull();
     expect(signoffRefusal({ ...base, expenseSigners: [{ step: "TREASURER", userId: 3 }] }, [], "TREASURER", 3)).toBeNull();
+  });
+});
+
+describe("submitterSeatRefusal", () => {
+  it("the person reimbursed signs it", () => {
+    expect(submitterSeatRefusal(base, [], 1)).toBeNull();
+  });
+
+  it("a Board member without a conflict signs on their behalf; anyone else off the Board does not", () => {
+    expect(submitterSeatRefusal(base, [], 5)).toBeNull();
+    expect(submitterSeatRefusal(base, [], 2)).toMatch(/only the person reimbursed, or a Board member on their behalf/);
+    expect(submitterSeatRefusal({ ...base, conflicted: [1, 5, 8] }, [], 5)).toMatch(/submitter, the reimbursee, or in their household/);
+  });
+
+  it("a Board member on the reimbursee's behalf takes no other step on the expense", () => {
+    const facts = { ...base, expenseSigners: [{ step: "BOARD" as const, userId: 5 }] };
+    expect(submitterSeatRefusal(facts, [], 5)).toMatch(/another step/);
+  });
+
+  it("nobody in the signer's household may hold another seat on the expense", () => {
+    expect(submitterSeatRefusal({ ...base, seatedHouseholds: [5] }, [], 5)).toMatch(/signer's household already signs off/);
+  });
+
+  it("a card charge takes none, and a filled seat is filled once", () => {
+    expect(submitterSeatRefusal({ ...base, kind: "card_charge" }, [], 1)).toMatch(/card charge takes no submitter seat/);
+    expect(submitterSeatRefusal(base, seats(["SUBMITTER", 1]), 5)).toMatch(/already filled/);
   });
 });

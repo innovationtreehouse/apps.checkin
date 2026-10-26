@@ -1,7 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
@@ -82,6 +82,17 @@ export interface DonationQbPosting {
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
+/**
+ * What the in-kind drain books with: checkin's one guarded client (null while the guard keeps
+ * QuickBooks off) and the books map, which names every account an in-kind journal entry uses.
+ */
+export interface InKindQbPosting {
+  client(): Promise<QuickBooksClient | null>;
+  booksMap: BooksMap;
+  /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
+}
+
 /** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */
 export interface OtherLaneClaims {
   claimedDepositIds(orgId: string): Promise<string[]>;
@@ -122,6 +133,8 @@ export interface InKindCapital {
   submit(orgId: string, lines: CapitalReviewLine[]): Promise<void>;
   /** The gifts with a line still waiting on capital review. */
   awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
+  /** The gift's lines capital review made assets; they book to fixed assets. */
+  assetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]>;
 }
 
 export interface BulkDonationConfig {
@@ -132,6 +145,7 @@ export interface BulkDonationConfig {
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
   qb?: DonationQbPosting;
+  inKindQb?: InKindQbPosting;
   otherLaneClaims?: OtherLaneClaims;
   inKind?: InKindDirectory;
   capital?: InKindCapital;

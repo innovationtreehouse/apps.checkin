@@ -8,7 +8,8 @@ import { PageContainer } from "@/components/ui/PageContainer";
 import { settingsRolesFor } from "@/lib/nav/sections/settings";
 import { hasAnyRole } from "@/lib/nav/gates";
 
-// Settings is isSysadmin/board/operations, and Finance is FINANCE/board. The gate lives here
+// Settings is isSysadmin/board/operations, Finance is FINANCE/board, and the bare /settings
+// index admits both so it can redirect each to their own tab. The gate lives here
 // because the membership and finance settings pages self-gate nothing. Operations' only real
 // destination is settings/outreach — every other settings page carries its own stricter
 // useRequireRole(['isSysadmin','isBoardMember']) that bounces an operations session back out,

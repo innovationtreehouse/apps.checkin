@@ -4,10 +4,12 @@ import { lineActions, mayRecordBoardAuthorization, signatureTab, type LineAction
 import { lineHolds } from "../../lib/signoff-facts";
 import type { FilledSeat, SignoffFacts } from "../../lib/signoff";
 
-// 1 submitter · 2 bucket owner · 3 FINANCE · 5,6 Board · 8 submitter's spouse
+// 1 submitter, reimbursed · 2 bucket owner · 3 FINANCE · 5,6 Board · 8 submitter's spouse.
+// A reimbursement's lines start with the reimbursee's confirmation signed, unless a case says otherwise.
 const base: SignoffFacts = {
   kind: "reimbursement",
   submitterId: 1,
+  reimburseeId: 1,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
@@ -151,9 +153,9 @@ describe("acts per role", () => {
     expect(acts({ caller: 5, facts, ...APPROVED, filled: seats(["TREASURER", 3]) })).toEqual(["*sign:BOARD"]);
   });
 
-  it("only the submitter is offered the submitter seat", () => {
-    expect(acts({ caller: 1, filled: [] })).toEqual(["*sign:SUBMITTER"]);
-    for (const caller of [2, 3, 5]) expect(acts({ caller, filled: [] })).not.toContain("sign:SUBMITTER");
+  it("nobody is offered the submitter seat: the person reimbursed signs it by confirming the receipt", () => {
+    for (const caller of [1, 2, 3, 5]) expect(acts({ caller, filled: [] })).not.toContain("*sign:SUBMITTER");
+    for (const caller of [1, 2, 3, 5]) expect(acts({ caller, filled: [] })).not.toContain("sign:SUBMITTER");
   });
 
   it("FINANCE settles a raised exception: Assign bucket is the main act, Reject exception goes under More with a required note", () => {
@@ -191,8 +193,8 @@ describe("acts per conflict", () => {
     expect(acts({ caller: 2, facts: { conflicted: [1, 2, 8] } })).toEqual([]);
   });
 
-  it("FINANCE on their own expense gets only the submitter seat", () => {
-    expect(acts({ caller: 1, isFinance: true, filled: [], facts: { finance: [1, 3], approvers: [1, 2] } })).toEqual(["*sign:SUBMITTER"]);
+  it("FINANCE on their own expense gets no act", () => {
+    expect(acts({ caller: 1, isFinance: true, facts: { finance: [1, 3], approvers: [1, 2] }, filled: [] })).toEqual([]);
   });
 
   it("an approver whose household already holds a seat on the expense is offered no approval", () => {

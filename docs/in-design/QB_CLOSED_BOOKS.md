@@ -54,17 +54,17 @@ dismisses it (section 6).
 
 ## Where main stands
 
-No lane derives a takeover line any more. Expense, income and donation each
+No lane derives a takeover line any more. Expense, income, donation and in-kind each
 work out the books closing date and the lane's switch-on time, and pass
 `closedThrough` and `mayCreate` to the shared `findOrCreate`
 (`packages/quickbooks/src/write.ts`), which runs the match first and then
 applies the gate in section 1. `BEFORE_LINE` survives only as a stored state
 on older expense and donation records, held exactly like `UNBOOKED`.
 
-Posting is bound in the host for all three lanes: expense through the books
-map's Organisation card account, income through the books map with the
-environment settings as fallback, and donation while
-`QBO_DONATION_BANK_ACCOUNT_ID` is set.
+Posting is bound in the host for every lane: expense through the books map's
+Organisation card account, income through the books map with the environment
+settings as fallback, in-kind through the books map's four gift-of-goods
+accounts, and donation while `QBO_DONATION_BANK_ACCOUNT_ID` is set.
 
 ---
 
@@ -170,7 +170,7 @@ than the stamp:
 | Expense | `ExpenseOrgSettings` (new column) | `Expense.submittedAt` |
 | Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`, the time the app first saw the payout |
 | Donation, Benevity | new `DonationOrgSettings` row (the package has no settings model) | `DisbursementEvent.createdAt` |
-| Donation, in-kind (#2182) | same row, its own column, added when in-kind posting is built | the in-kind record's creation time |
+| Donation, in-kind (#2182) | same row, its own column | when the gift's money side arrived (receipt) or ops recorded it (no receipt) |
 
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.

@@ -95,7 +95,7 @@ export async function listQuickBooksAccounts() {
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The host's books-map port: what the income and expense lanes read. */
+/** The host's books-map port: what the income, gifts-of-goods and expense lanes read. */
 export const booksMap: BooksMap = {
     async accounts() {
         const rows = await prisma.booksMapRoleAccount.findMany({ select: { role: true, quickBooksAccountId: true } });

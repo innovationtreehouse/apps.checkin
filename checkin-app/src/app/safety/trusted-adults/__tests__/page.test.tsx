@@ -11,6 +11,14 @@ import AdminTrustedAdultsPage from "../page";
 
 beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
 
+// Override buttons stay disabled until the previous override's reload finishes.
+const enabledButton = (name: string) =>
+  waitFor(() => {
+    const button = screen.getByRole("button", { name });
+    expect(button).toBeEnabled();
+    return button;
+  });
+
 const trustedAdults = [
   {
     id: 1,
@@ -258,7 +266,7 @@ describe("safety/trusted-adults page", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Force deny" }));
+    fireEvent.click(await enabledButton("Force deny"));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",
@@ -266,7 +274,7 @@ describe("safety/trusted-adults page", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(await enabledButton("Revoke"));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",

@@ -10,7 +10,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
 import { z } from "zod";
-import { reimbursementStatus } from "@checkin/expense";
+import { reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
   createAnthropicOcr,
@@ -47,7 +47,7 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;
-  return toPrincipal(user.id, person.name, isKnownAdult(person));
+  return { ...toPrincipal(user.id, person.name, isKnownAdult(person)), isBoardMember: user.isBoardMember === true };
 }
 
 function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincipal {
@@ -119,6 +119,12 @@ async function reimburseeById(personId: number): Promise<(ReimburseeOption & { i
   return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
 }
 
+/** Whether a live person has an account to sign in with. */
+async function reimburseeHasAccount(personId: number): Promise<boolean> {
+  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return (await prisma.person.count({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+}
+
 /** Re-ask the refresher this long before the token it handed out expires. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
 
@@ -179,10 +185,11 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
-    reimbursees: { search: searchReimbursees, byId: reimburseeById },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount },
     alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,
+    submitterConfirmations,
     receiptSink: { ingestReceipt },
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
