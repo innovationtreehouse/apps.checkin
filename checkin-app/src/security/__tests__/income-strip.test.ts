@@ -81,6 +81,7 @@ describe('income tiering (§7)', () => {
             orgId: 'internal',
             maxCreatesPerRun: 'internal',
             maxCreateCentsPerRun: 'internal',
+            benevityMaxCreateCentsPerRun: 'internal',
             qbPostingOnAt: 'internal',
         });
     });
@@ -124,7 +125,7 @@ describe('income field-stripping', () => {
     });
 
     it('IncomeOrgSettings: the finance view keeps every cap', () => {
-        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 };
+        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000, benevityMaxCreateCentsPerRun: 2_500_000 };
         expect(stripValue(SETTINGS_MODEL, row, FINANCE_TOKENS, ctx())).toEqual(row);
     });
 

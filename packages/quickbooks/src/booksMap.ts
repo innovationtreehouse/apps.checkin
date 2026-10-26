@@ -15,6 +15,7 @@ export const BOOKS_MAP_ROLES = [
   "BENEVITY_DONATIONS",
   "BENEVITY_MATCHES",
   "BENEVITY_FEES",
+  "EXPENSE_PAYMENT",
 ] as const;
 
 export type BooksMapRole = (typeof BOOKS_MAP_ROLES)[number];

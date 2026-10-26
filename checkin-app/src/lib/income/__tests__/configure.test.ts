@@ -5,7 +5,11 @@ import type { IncomeConfig } from "@checkin/income";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureIncome = jest.fn<void, [IncomeConfig]>();
+const roleAccounts = jest.fn();
 jest.mock("@checkin/income", () => ({
+  BANK_ROLE: { shopify: "SHOPIFY_BANK", benevity: "BENEVITY_BANK" },
+  SHOPIFY_LINE_ROLES: { income: "SHOPIFY_SALES", charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
+  roleAccounts,
   configureIncome,
   mirrorPayoutStatus: (s: string) => s.toLowerCase(),
   mirrorSource: () => "api",
@@ -84,21 +88,42 @@ describe("income posting binding", () => {
     expect(buildQuickBooks).not.toHaveBeenCalled();
   });
 
-  it("is unbound while any deposit account is unset", async () => {
+  it("binds without the environment's accounts while any is unset, so the books map supplies them", async () => {
     delete process.env.QBO_INCOME_FEES_ACCOUNT_ID;
-    expect((await config()).posting).toBeUndefined();
+    expect((await config()).posting).toEqual({ client, accounts: undefined, mirrorNewestWins: false });
   });
 
   it("is unbound when the guard refuses the company", async () => {
     buildQuickBooks.mockReturnValue(null);
     expect((await config()).posting).toBeUndefined();
   });
-  it("names what posting still lacks, for the status page", async () => {
+
+  it("names what posting still lacks, counting the Shopify roles as the drain resolves them", async () => {
     const { incomePostingMissing } = await import("../configure");
-    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
-    expect(incomePostingMissing()).toEqual(["bank account (QBO_INCOME_BANK_ACCOUNT_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_FEES: "3" });
+    await expect(incomePostingMissing()).resolves.toEqual([
+      "Shopify mirror",
+      "the switch INCOME_MIRROR_NEWEST_WINS=true",
+      "no account picked for: Shopify: card remainder, Shopify: adjustments",
+    ]);
     delete process.env.QBO_REALM_ID;
-    delete process.env.QBO_INCOME_FEES_ACCOUNT_ID;
-    expect(incomePostingMissing().slice(0, 2)).toEqual(["QuickBooks company (QBO_REALM_ID)", "deposit-line accounts (all four QBO_INCOME_*_ACCOUNT_ID)"]);
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
+    await expect(incomePostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
+  });
+});
+
+describe("income bank accounts", () => {
+  it("binds the environment's Shopify and Benevity bank accounts as the books map's fallback", async () => {
+    process.env.QBO_INCOME_BANK_ACCOUNT_ID = "35";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "36";
+    expect(await config()).toMatchObject({ bankAccountId: "35", benevityBankAccountId: "36" });
+  });
+
+  it("leaves an unset bank account unbound", async () => {
+    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    const bound = await config();
+    expect(bound.bankAccountId).toBeUndefined();
+    expect(bound.benevityBankAccountId).toBeUndefined();
   });
 });

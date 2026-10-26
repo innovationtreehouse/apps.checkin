@@ -53,9 +53,10 @@ const writes = endpoints.filter(e => !e.startsWith('GET '));
 const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
+const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve') && e.includes('/in-kind/'));
 const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
 const financeWrites = writes.filter(e => !DECISIONS.includes(e));
-const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e));
+const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
 async function callJson(endpoint: string) {
@@ -78,13 +79,17 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 32 JSON routes (16 reads, 16 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(32);
+    it('registers 34 JSON routes (16 reads, 18 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(34);
         expect(reads).toHaveLength(16);
-        expect(writes).toHaveLength(16);
+        expect(writes).toHaveLength(18);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
+        ]);
+        expect(QB_RESOLVES).toEqual([
+            'POST /api/donations/in-kind/receipt/[id]/qb-resolve',
+            'POST /api/donations/in-kind/manual/[id]/qb-resolve',
         ]);
         expect(IN_KIND_MANUAL).toHaveLength(3);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
@@ -262,8 +267,8 @@ describe('UploadedFile.fileBlob is file-only', () => {
     });
 });
 
-describe('in-kind decision, settle and by-bucket routes never grant pii', () => {
-    it.each([...DECISIONS, SETTLE, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
+describe('in-kind decision, settle, qb-resolve and by-bucket routes never grant pii', () => {
+    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
         const tokens = (getRoute(endpoint)?.orderedView ?? []).flatMap(([, t]) => [...t]);
         expect(tokens.length).toBeGreaterThan(0);
         expect(tokens.some(t => t.endsWith(':pii'))).toBe(false);
@@ -362,6 +367,20 @@ describe('in-kind settle route', () => {
         );
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(settled);
+    });
+});
+
+describe('in-kind qb-resolve routes', () => {
+    it.each(QB_RESOLVES)('%s replies to finance with the queue item and no donor', async endpoint => {
+        signIn(7, { isFinance: true });
+        const item = { id: 1, source: 'receipt', state: 'ready', revenueBooking: 'matched', expenseBooking: 'unbooked', qbState: 'skipped', qbNote: 'booked by hand', lines: [] };
+        const impl = jest.fn(async () => ({ InKindQueueItemView: { ...item, donorLastName: 'Doe' } }));
+        const res = await handler(endpoint, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/x/1/qb-resolve', { method: 'POST' }),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(item);
     });
 });
 

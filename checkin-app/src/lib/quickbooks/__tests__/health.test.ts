@@ -42,9 +42,9 @@ const ENV = { ...process.env };
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.CHECKIN_ENV = "dev";
-    incomePostingMissing.mockReturnValue([]);
+    incomePostingMissing.mockResolvedValue([]);
     donationPostingMissing.mockReturnValue([]);
-    expensePostingMissing.mockReturnValue([]);
+    expensePostingMissing.mockResolvedValue([]);
     getOrg.mockResolvedValue({ id: "org-1" });
     accounts.mockResolvedValue(Object.fromEntries(BOOKS_MAP_ROLES.map((r) => [r, "1"])));
     postingOnAt.mockResolvedValue(null);
@@ -134,22 +134,27 @@ describe("posting lane rows", () => {
         });
     });
 
-    it("lists the lane's books-map roles with no account, without turning it red", async () => {
-        accounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_FEES: "3" });
+    it("lists the donation roles with no account, without turning the row red", async () => {
+        accounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2" });
         const r = await rows();
-        expect(r["quickbooks-lane-income"]).toMatchObject({
+        expect(r["quickbooks-lane-donations"]).toMatchObject({
             ok: true,
-            detail: "Bound. No account picked for: shopify charge remainder, shopify adjustments.",
+            detail: "Bound. No account picked for: Benevity: employer matches, Benevity: fees.",
         });
-        expect(r["quickbooks-lane-expenses"].detail).toBe("Bound.");
+        expect(r["quickbooks-lane-income"].detail).toBe("Bound.");
+    });
+
+    it("waits on a lane whose binding check reads QuickBooks", async () => {
+        expensePostingMissing.mockResolvedValue(["no account picked for: Organisation card"]);
+        expect((await rows())["quickbooks-lane-expenses"]).toMatchObject({ ok: false, detail: "Unbound; missing: no account picked for: Organisation card." });
     });
 
     it("still answers when the switch-on read fails", async () => {
-        expensePostingMissing.mockReturnValue(["the posting writer, which this app does not bind yet"]);
+        expensePostingMissing.mockRejectedValue(new Error("QBO 503"));
         expenseOnAt.mockRejectedValue(new Error("db down"));
         expect((await rows())["quickbooks-lane-expenses"]).toMatchObject({
             ok: false,
-            detail: "Unbound; missing: the posting writer, which this app does not bind yet. Switch-on date unreadable (db down).",
+            detail: "Unbound; missing: a readable binding (QBO 503). Switch-on date unreadable (db down).",
         });
     });
 });

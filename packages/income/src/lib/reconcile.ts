@@ -5,6 +5,7 @@ import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../con
 import { assertOrg, getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
+import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "./sources";
 
 export const RECON_STATUS = {
   WAITING: "WAITING",
@@ -72,13 +73,15 @@ export async function postingOnAt(orgId: string): Promise<Date | null> {
 }
 export const DEFAULT_DATE_GRACE_DAYS = 2;
 
-/** A paid mirror payout, normalised for matching. */
+/** A deposit income expects, normalised for matching: a paid mirror payout, or another lane's expected deposit. */
 export interface PayoutFact {
+  depositSource: string;
   payoutGid: string;
   payoutDate: string;
   netCents: number;
   sumMismatch: boolean;
-  source: MirrorSource;
+  /** Where the mirror row came from; null for another lane's expected deposit. */
+  source: MirrorSource | null;
 }
 
 export type ReconcileResult =
@@ -90,8 +93,9 @@ export function addDays(day: string, n: number): string {
   return isoDay(new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000));
 }
 
-export function windowDays(): number {
-  return getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS;
+/** Days after a deposit's date within which it must be booked; a Benevity deposit keeps donation's window. */
+export function windowDays(source: string = DEPOSIT_SOURCE.SHOPIFY): number {
+  return source === DEPOSIT_SOURCE.BENEVITY ? BENEVITY_MATCH_WINDOW_DAYS : (getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS);
 }
 
 /** The idempotency key of the deposit income creates for a payout. */
@@ -99,10 +103,10 @@ export function incomeKey(payoutGid: string): string {
   return qbKey("income", payoutGid);
 }
 
-/** The days a payout's deposit may be dated: [payoutDate − grace, payoutDate + window]. */
-export function matchWindow(payoutDate: string): { from: string; to: string } {
-  const grace = getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS;
-  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays()) };
+/** The days a deposit may be dated: [date − grace, date + window] for a payout, ± the window for Benevity. */
+export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.SHOPIFY): { from: string; to: string } {
+  const grace = source === DEPOSIT_SOURCE.BENEVITY ? BENEVITY_MATCH_WINDOW_DAYS : (getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS);
+  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source)) };
 }
 
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
@@ -147,6 +151,7 @@ export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]
     const txns = await mirror.transactions(p.payoutGid);
     const txnNet = txns.reduce((s, t) => s + t.netCents, 0);
     facts.push({
+      depositSource: DEPOSIT_SOURCE.SHOPIFY,
       payoutGid: p.payoutGid,
       payoutDate: isoDay(p.issuedAt),
       netCents: p.netCents,
@@ -157,15 +162,20 @@ export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]
   return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.payoutGid.localeCompare(b.payoutGid));
 }
 
-/** Why a settled row must reopen, or null when its payout and deposit still agree with it. */
+/**
+ * Why a settled row must reopen, or null when its payout and deposit still agree with it. A
+ * Benevity row's expected deposit is frozen once posted, so only its deposit is checked.
+ */
 function driftCause(
   row: PayoutReconciliation,
   payout: MirrorPayout | null,
   deposits: Map<string, QbDeposit>,
 ): string | null {
-  if (!payout) return "payout_missing";
-  if (payout.status !== "paid") return `payout_status:${payout.status}`;
-  if (payout.netCents !== row.payoutNetCents) return "payout_amount";
+  if (!isBenevity(row)) {
+    if (!payout) return "payout_missing";
+    if (payout.status !== "paid") return `payout_status:${payout.status}`;
+    if (payout.netCents !== row.payoutNetCents) return "payout_amount";
+  }
   if (!row.depositId) return null;
   const d = deposits.get(row.depositId);
   if (!d) return "deposit_missing";
@@ -178,27 +188,42 @@ function driftCause(
  * Idempotent; a no-op until a deposit source is bound. Reads the ledger only.
  */
 export async function runReconcile(orgId: string, now: Date = new Date()): Promise<ReconcileResult> {
-  const { deposits: depositSource, mirror, bankAccountId: bank } = getIncomeConfig();
-  // Without the bank account a deposit in any account could match, so nothing runs.
-  if (!depositSource || !mirror || !bank) return { status: "unbound" };
+  const { deposits: depositSource, mirror } = getIncomeConfig();
+  if (!depositSource) return { status: "unbound" };
+  // Without its bank account a deposit in any account could match, so a source without one is not read.
+  const accounts = await roleAccounts();
+  const banks = { shopify: mirror ? accounts[BANK_ROLE.shopify] : undefined, benevity: accounts[BANK_ROLE.benevity] };
+  if (!banks.shopify && !banks.benevity) return { status: "unbound" };
+  const bankOf = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? banks.benevity : banks.shopify);
+  const sources = (Object.keys(banks) as (keyof typeof banks)[]).filter((s) => banks[s]);
 
-  const window = windowDays();
   const today = isoDay(now);
-  const facts = await collectPayouts(mirror);
+  // Another lane's expected deposits are facts as income holds them; settled ones are past matching.
+  const expected = await db.payoutReconciliation.findMany({
+    where: { orgId, source: DEPOSIT_SOURCE.BENEVITY, status: { in: [RECON_STATUS.WAITING, RECON_STATUS.OPEN] } },
+  });
+  const facts = [
+    ...(mirror && banks.shopify ? await collectPayouts(mirror) : []),
+    ...(banks.benevity
+      ? expected.map((r): PayoutFact => ({ depositSource: r.source, payoutGid: r.payoutGid, payoutDate: r.payoutDate, netCents: r.payoutNetCents, sumMismatch: false, source: null }))
+      : []),
+  ];
 
   // Settled rows are drift-checked against the payout's current state, whether or not it is
   // still paid and inside reconcileFrom. Rows settled after this read are checked next run.
   const settled = await db.payoutReconciliation.findMany({
-    where: { orgId, status: { in: SETTLED_STATUSES } },
-    select: { payoutGid: true, depositTxnDate: true },
+    where: { orgId, status: { in: SETTLED_STATUSES }, source: { in: sources } },
+    select: { source: true, payoutGid: true, depositTxnDate: true },
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
-  for (const { payoutGid } of settled) settledPayouts.set(payoutGid, await mirror.payout(payoutGid));
+  for (const { source, payoutGid } of settled) {
+    settledPayouts.set(payoutGid, source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
+  }
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
   const ranges: DayRange[] = [
     ...facts.map((f): DayRange => {
-      const w = matchWindow(f.payoutDate);
+      const w = matchWindow(f.payoutDate, f.depositSource);
       return [w.from, w.to];
     }),
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
@@ -260,16 +285,16 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           : findMatch(candidates, {
               date: fact.payoutDate,
               amountCents: fact.netCents,
-              ref: bank,
-              key: incomeKey(fact.payoutGid),
-              window: matchWindow(fact.payoutDate),
+              ref: bankOf(fact.depositSource),
+              key: rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid }),
+              window: matchWindow(fact.payoutDate, fact.depositSource),
               claimedIds: claimed,
               excludedIds: excluded,
             });
 
         // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
         const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
-        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, window);
+        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, windowDays(fact.depositSource));
 
         // An attempted payout's own deposit may sit outside the window, so it never matches by amount
         // here: the drain's post or finance's match looks up its own deposit first.

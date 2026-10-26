@@ -11,16 +11,19 @@
  * - deposits: QuickBooks deposit reads through checkin's one guarded client,
  *   bound only where QBO_REALM_ID is set. While the guard keeps QuickBooks off,
  *   every read throws, so a run fails and writes nothing.
- * - bankAccountId: the QuickBooks bank account payouts land in, from
- *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
- *   nothing.
+ * - bankAccountId / benevityBankAccountId: the environment's bank accounts for
+ *   Shopify payouts (QBO_INCOME_BANK_ACCOUNT_ID) and Benevity disbursements
+ *   (QBO_DONATION_BANK_ACCOUNT_ID), used where the books map sets no bank role.
+ *   With neither for a source, its deposits are not matched.
  * - posting: deposit creation through a client built here by checkin's guarded
- *   builder, bound only where QBO_REALM_ID and all four QBO_INCOME_*_ACCOUNT_ID
- *   deposit-line accounts are set and the guard admits the company. Unbound, the
- *   drain and the orphan sweep answer "unbound". Creation stays gated until
- *   INCOME_MIRROR_NEWEST_WINS is "true".
+ *   builder, bound where QBO_REALM_ID is set and the guard admits the company.
+ *   The four QBO_INCOME_*_ACCOUNT_ID deposit-line accounts, when all set, stand
+ *   in for Shopify roles the books map leaves unset; a row whose roles neither
+ *   sets is skipped. Unbound, the drain and the orphan sweep answer "unbound".
+ *   Shopify creation stays gated until INCOME_MIRROR_NEWEST_WINS is "true".
  * - owners: checkin's budget-owner buckets.
- * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class).
+ * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class),
+ *   which income resolves every deposit's accounts and Classes through.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
  * - otherLaneClaims: deposits bulk donation holds, kept out of income's matching.
@@ -30,9 +33,12 @@
  *   person. An orphan sweep that cannot read every new deposit emails finance.
  */
 import {
+  BANK_ROLE,
+  SHOPIFY_LINE_ROLES,
   configureIncome,
   mirrorPayoutStatus,
   mirrorSource,
+  roleAccounts,
   toQbDeposit,
   type MirrorBalanceTxn,
   type IncomeAlerts,
@@ -56,6 +62,7 @@ import {
 } from "@/lib/shopifyRead/client";
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import type { BooksMap } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
@@ -162,23 +169,23 @@ function qbAccounts(): IncomeQbAccounts | undefined {
   return income && charge_remainder && fees && adjustments ? { income, charge_remainder, fees, adjustments } : undefined;
 }
 
-/** What income posting lacks, in plain words; empty when every piece is set. */
-export function incomePostingMissing(): string[] {
+/** What Shopify income posting lacks, in plain words; empty when it can post. Roles resolve as the drain resolves them. */
+export async function incomePostingMissing(): Promise<string[]> {
+  const accounts = await roleAccounts();
+  const unpicked = [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)].filter((r) => !accounts[r]);
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
-    ...(qbAccounts() ? [] : ["deposit-line accounts (all four QBO_INCOME_*_ACCOUNT_ID)"]),
-    ...(process.env.QBO_INCOME_BANK_ACCOUNT_ID ? [] : ["bank account (QBO_INCOME_BANK_ACCOUNT_ID)"]),
     ...(mirrorConfigured() ? [] : ["Shopify mirror"]),
     ...(process.env.INCOME_MIRROR_NEWEST_WINS === "true" ? [] : ["the switch INCOME_MIRROR_NEWEST_WINS=true"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
   ];
 }
 
 function posting(): IncomePosting | undefined {
-  const accounts = qbAccounts();
-  if (!process.env.QBO_REALM_ID || !accounts) return undefined;
+  if (!process.env.QBO_REALM_ID) return undefined;
   const client = buildQuickBooks();
   if (!client) return undefined;
-  return { client, accounts, mirrorNewestWins: process.env.INCOME_MIRROR_NEWEST_WINS === "true" };
+  return { client, accounts: qbAccounts(), mirrorNewestWins: process.env.INCOME_MIRROR_NEWEST_WINS === "true" };
 }
 
 async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
@@ -192,6 +199,7 @@ export function configureRuntime(): void {
     mirror: mirrorConfigured() ? payoutMirror : undefined,
     deposits: depositSource(),
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
+    benevityBankAccountId: process.env.QBO_DONATION_BANK_ACCOUNT_ID || undefined,
     posting: posting(),
     owners,
     booksMap,

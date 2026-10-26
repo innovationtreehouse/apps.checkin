@@ -144,6 +144,8 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
             expenseBooking: 'unbooked',
             withdrawalSettledAt: null,
             donationDate: '2026-10-01',
+            qbState: 'unmatched',
+            qbNote: 'no clearing-account entry on 2026-10-01',
             lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
         };
         const row = {

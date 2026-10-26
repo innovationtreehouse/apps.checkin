@@ -253,7 +253,7 @@ export interface ExpensePosting {
   client: QuickBooksClient;
   paymentAccountId: string;
   paymentType: "Cash" | "CreditCard";
-  /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
+  /** The client talks to the production QuickBooks API. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
   prod: boolean;
 }
 

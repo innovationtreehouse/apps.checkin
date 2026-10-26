@@ -7,6 +7,7 @@
  */
 import { BOOKS_MAP_ROLES, type BooksMapRole } from "@checkin/quickbooks";
 import type { ConfigCheck } from "@/lib/configHealth";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
 
 const CACHE_MS = 60_000;
@@ -74,20 +75,21 @@ async function closingDateCheck(read: () => Promise<string | null>): Promise<Con
     }
 }
 
-function roleName(role: BooksMapRole): string {
-    return role.toLowerCase().replace(/_/g, " ");
-}
-
 type Lane = {
     id: string;
     label: string;
-    missing: () => string[];
+    missing: () => string[] | Promise<string[]>;
     switchedOnAt: (orgId: string) => Promise<Date | null>;
     rolePrefix?: string;
 };
 
 async function laneCheck(lane: Lane, orgId: string | null, mapped: Partial<Record<BooksMapRole, string>> | null): Promise<ConfigCheck> {
-    const missing = lane.missing();
+    let missing: string[];
+    try {
+        missing = await withTimeout(Promise.resolve(lane.missing()), "The binding check");
+    } catch (err) {
+        missing = [`a readable binding (${message(err)})`];
+    }
     const parts = [missing.length === 0 ? "Bound." : `Unbound; missing: ${missing.join(", ")}.`];
     if (orgId) {
         try {
@@ -97,11 +99,11 @@ async function laneCheck(lane: Lane, orgId: string | null, mapped: Partial<Recor
             parts.push(`Switch-on date unreadable (${message(err)}).`);
         }
     }
-    // ponytail: map roles are information until the lane binds through the map; then they count toward ok.
+    // Roles a lane does not bind through yet are information only; a lane that does counts them in `missing`.
     const prefix = lane.rolePrefix;
     if (prefix && mapped) {
         const unpicked = BOOKS_MAP_ROLES.filter((r) => r.startsWith(prefix) && !mapped[r]);
-        if (unpicked.length) parts.push(`No account picked for: ${unpicked.map(roleName).join(", ")}.`);
+        if (unpicked.length) parts.push(`No account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}.`);
     }
     return { id: lane.id, label: lane.label, ok: missing.length === 0, detail: parts.join(" ") };
 }
@@ -120,7 +122,6 @@ async function laneChecks(): Promise<ConfigCheck[]> {
             label: "QuickBooks posting: Shopify income",
             missing: income.incomePostingMissing,
             switchedOnAt: async (orgId) => (await import("@checkin/income")).postingOnAt(orgId),
-            rolePrefix: "SHOPIFY_",
         },
         {
             id: "quickbooks-lane-donations",

@@ -5,6 +5,7 @@ export const classifications = {
     PayoutReconciliation: {
         id: 'public',
         orgId: 'internal',
+        source: 'internal',
         payoutGid: 'internal',
         payoutDate: 'internal',
         payoutNetCents: 'internal',
@@ -23,6 +24,7 @@ export const classifications = {
         postClaimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
         qbNote: 'internal',
+        expected: 'internal',
     },
     IncomeItemCategory: {
         id: 'public',
@@ -36,6 +38,7 @@ export const classifications = {
         orgId: 'internal',
         maxCreatesPerRun: 'internal',
         maxCreateCentsPerRun: 'internal',
+        benevityMaxCreateCentsPerRun: 'internal',
         qbPostingOnAt: 'internal',
     },
     IncomeQbMatchExclusion: {
