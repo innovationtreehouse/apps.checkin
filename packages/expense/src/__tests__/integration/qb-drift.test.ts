@@ -42,7 +42,6 @@ beforeEach(() => {
         client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
         paymentAccountId: "41",
         paymentType: "CreditCard",
-        takeoverDate: "2026-01-01",
         prod: false,
       },
     },
@@ -52,7 +51,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 /**
  * An expense the drain created in QuickBooks: lines of $7 on account 60 and $3 on 61, a Bill to
- * vendor 77 when `bill`, else a Purchase. The QuickBooks entry sits two days after the receipt.
+ * vendor 77 when `bill`, else a Purchase, dated on the receipt date as the drain posts it.
  */
 async function created(day: string, opts: { bill?: boolean; state?: string } = {}) {
   const id = await seedExpense({ state: "qb_complete", receiptTotalCents: 1000, needsReimbursement: !!opts.bill, reimburseePersonId: opts.bill ? 9 : undefined });
@@ -71,11 +70,9 @@ async function created(day: string, opts: { bill?: boolean; state?: string } = {
     where: { id },
     data: { receiptDate: day, qbMatchState: opts.state ?? "CREATED", qbTxnId: qbId, qbTxnEntity: entity, qbVendorId: opts.bill ? "77" : null },
   });
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 2);
   const entry: QboBill = {
     Id: qbId,
-    TxnDate: d.toISOString().slice(0, 10),
+    TxnDate: day,
     TotalAmt: 10,
     PrivateNote: `TEST-Acme\n[checkin:${qbKey("expense", id)}]`,
     Line: [line(7, "60"), line(3, "61")],
@@ -143,6 +140,31 @@ describeDb("QB-3 drift", () => {
 
     await checkQbDrift();
     expect(await driftFlag(id)).toMatchObject({ detail: "missing" });
+  });
+
+  it("flags an entry finance re-dated inside the window", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TxnDate = "2026-09-12";
+
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect(await driftFlag(id)).toMatchObject({ detail: "date" });
+    expect(JSON.parse((await driftFlag(id))?.observed ?? "null")).toEqual({ date: "2026-09-12" });
+  });
+
+  it("flags a matched entry finance re-dated after the match", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.TxnDate = "2026-09-11";
+
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "date" });
+  });
+
+  it("does not compare the date of a baseline stored without one", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchBaseline: JSON.stringify({ amountCents: 1000, accounts: ["60", "61"], vendorId: null }) } });
+    entry.TxnDate = "2026-09-11";
+
+    expect(await checkQbDrift()).toMatchObject({ drifted: 0 });
   });
 
   it("flags a memo edit that dropped the app key", async () => {
@@ -252,7 +274,7 @@ describeDb("QB-3 drift", () => {
 
     expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, failed: 0 });
     expect(await driftFlag(id)).toBeNull();
-    expect(JSON.parse((await baseline(id)) ?? "null")).toEqual({ amountCents: 1100, accounts: ["60", "61"], vendorId: null });
+    expect(JSON.parse((await baseline(id)) ?? "null")).toEqual({ amountCents: 1100, accounts: ["60", "61"], vendorId: null, txnDate: "2026-09-10" });
 
     entry.TotalAmt = 12;
     await checkQbDrift();

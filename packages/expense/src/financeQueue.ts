@@ -44,6 +44,7 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   QB_NO_CLASS: "No QuickBooks class",
   QB_AWAITING_MATCH: "Waiting for a match",
   QB_VENDOR_MISSING: "No QuickBooks vendor",
+  QB_UNBOOKED: "Not booked in QuickBooks",
   BOARD_APPROVAL: "Board approval not recorded",
   SIGNER_HELD: "Held, no conflict-free signer",
   BOARD_SIGNATURE: "Board signature to give",

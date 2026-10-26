@@ -393,7 +393,7 @@ describeDb("flags", () => {
 });
 
 describeDb("QuickBooks match inputs", () => {
-  it("skips claimed and excluded ids; the takeover line is the newest hand-booked match", async () => {
+  it("skips claimed and excluded ids", async () => {
     const early = await seedExpense();
     const late = await seedExpense();
     await db.expense.update({ where: { id: early }, data: { receiptDate: "2026-03-01" } });
@@ -409,7 +409,6 @@ describeDb("QuickBooks match inputs", () => {
         { orgId: ORG, qbTxnEntity: "Bill", qbTxnId: "qb-3" },
       ],
     });
-    expect((await qbMatchInputs("Purchase")).takeoverDate).toBe("2026-03-01");
 
     await excludeQbTxn(FINANCE, "qb-9", "hand-booked, no receipt");
     await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
@@ -418,14 +417,8 @@ describeDb("QuickBooks match inputs", () => {
     expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
   });
 
-  it("an expense matched by hand sets the takeover line too", async () => {
-    const id = await seedExpense();
-    await db.expense.update({ where: { id }, data: { receiptDate: "2026-06-01", qbMatchState: "MATCHED", qbTxnId: "qb-5", qbTxnEntity: "Purchase" } });
-    expect((await qbMatchInputs("Purchase")).takeoverDate).toBe("2026-06-01");
-  });
-
-  it("with no hand-booked match there is no takeover line", async () => {
-    expect(await qbMatchInputs("Purchase")).toEqual({ skipIds: [], takeoverDate: null });
+  it("with nothing claimed or excluded there is nothing to skip", async () => {
+    expect(await qbMatchInputs("Purchase")).toEqual({ skipIds: [] });
   });
 
   it("a QuickBooks entry is claimed by one line at most", async () => {
@@ -490,6 +483,13 @@ describeDb("QuickBooks match", () => {
     const id = await qbExpense({ purchases: ["42"] });
     await matchExpenseToQb(FINANCE, id, "42");
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("stores the baseline from the candidate it matched", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await matchExpenseToQb(FINANCE, id, "42");
+    const { qbMatchBaseline } = await db.expense.findUniqueOrThrow({ where: { id } });
+    expect(JSON.parse(qbMatchBaseline ?? "null")).toEqual({ amountCents: 100, vendorId: null, txnDate: "2026-05-02" });
   });
 
   it("records the expense's claim, so the entry is never offered again", async () => {

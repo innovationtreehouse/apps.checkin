@@ -111,6 +111,8 @@ const NOT_SENT: Record<string, string> = {
   TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
   NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
   AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
+  UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
+  BEFORE_LINE: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
 };
 
 const REVIEW_LABEL: Record<ReviewKind, { title: string; act: string }> = {
@@ -477,7 +479,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       )}
       <ReasonsAlert reasons={reasons} currency={e.currency} />
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
-      {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING")) && (
+      {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING") || open("QB_UNBOOKED")) && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">QuickBooks</Text>
           {e.qbMatchState === "NEEDS_FINANCE" && (
@@ -487,6 +489,18 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             >
               Retry QuickBooks post
             </Button>
+          )}
+          {open("QB_UNBOOKED") && (
+            <Stack gap="xs">
+              <Text size="sm">Not in QuickBooks. Book it to have the app create the entry, or pick the entry finance already booked.</Text>
+              <Button
+                size="xs"
+                onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Booked in QuickBooks")) await decided(); }}
+              >
+                Book it
+              </Button>
+              <MatchPicker base={base} currency={e.currency} onDecided={() => void decided()} />
+            </Stack>
           )}
           {open("QB_AWAITING_MATCH") && (
             <Stack gap="xs">

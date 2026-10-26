@@ -253,11 +253,6 @@ export interface ExpensePosting {
   client: QuickBooksClient;
   paymentAccountId: string;
   paymentType: "Cash" | "CreditCard";
-  /**
-   * YYYY-MM-DD: finance booked everything up to here by hand, so only later receipts may be
-   * created. Null posts nothing. A newer hand-booked match moves the line later, never earlier.
-   */
-  takeoverDate: string | null;
   /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
   prod: boolean;
 }

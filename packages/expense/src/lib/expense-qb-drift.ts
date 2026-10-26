@@ -13,17 +13,19 @@ import { logError } from "./logger";
 /** QuickBooks reads per run: one windowed read per checked expense. */
 export const MAX_DRIFT_CHECKS_PER_RUN = 25;
 
-export type DriftField = "missing" | "amount" | "key" | "accounts" | "vendor";
+export type DriftField = "missing" | "amount" | "date" | "key" | "accounts" | "vendor";
 
 /** What the app expects of one expense's entry: as the drain posted it, or as it was when matched. */
 export interface PostedEntry {
   /** The entry's app key; undefined on a hand-booked entry, which carries none. */
   key: string | undefined;
   amountCents: number;
-  /** Each line's account id. */
-  accounts: string[];
+  /** Each line's account id; undefined on a matched entry, whose accounts are finance's. */
+  accounts?: string[];
   /** The Bill's Vendor; null when the entry has none to check. */
   vendorId: string | null;
+  /** The entry's date; undefined on a baseline stored before dates were compared. */
+  txnDate?: string;
 }
 
 const sorted = (ids: (string | undefined)[]) => ids.map((id) => id ?? "").sort();
@@ -36,8 +38,9 @@ export function driftOf(posted: PostedEntry, entry: QboPurchase | QboBill | unde
   if (!entry) return ["missing"];
   const drift: DriftField[] = [];
   if (dollarsToCents(entry.TotalAmt) !== posted.amountCents) drift.push("amount");
+  if (posted.txnDate !== undefined && entry.TxnDate !== posted.txnDate) drift.push("date");
   if (appKeyOf(entry) !== posted.key) drift.push("key");
-  if (sorted(lineAccounts(entry)).join() !== sorted(posted.accounts).join()) drift.push("accounts");
+  if (posted.accounts && sorted(lineAccounts(entry)).join() !== sorted(posted.accounts).join()) drift.push("accounts");
   if (posted.vendorId !== null && entry.VendorRef?.value !== posted.vendorId) drift.push("vendor");
   return drift;
 }
@@ -49,7 +52,17 @@ export function baselineOf(entry: QboPurchase | QboBill): PostedEntry {
     amountCents: dollarsToCents(entry.TotalAmt),
     accounts: sorted(lineAccounts(entry)),
     vendorId: entry.VendorRef?.value ?? null,
+    txnDate: entry.TxnDate,
   };
+}
+
+/**
+ * The baseline to store on a match, as JSON, from the read that matched the entry, so an edit
+ * after that read is drift. A hand entry carries no key.
+ */
+export function matchedBaseline(entry: { amountCents: number; txnDate: string; vendorId: string | null }): string {
+  const baseline: PostedEntry = { key: undefined, amountCents: entry.amountCents, vendorId: entry.vendorId, txnDate: entry.txnDate };
+  return JSON.stringify(baseline);
 }
 
 /** What QuickBooks shows for each drifted field, as JSON; equal JSON means the same drift. */
@@ -58,6 +71,7 @@ export function observedOf(entry: QboPurchase | QboBill | undefined, drift: Drif
   const shown: Record<DriftField, unknown> = {
     missing: false,
     amount: dollarsToCents(entry.TotalAmt),
+    date: entry.TxnDate,
     key: appKeyOf(entry) ?? null,
     accounts: sorted(lineAccounts(entry)),
     vendor: entry.VendorRef?.value ?? null,
@@ -106,39 +120,25 @@ async function readEntry(posting: ExpensePosting, entity: string | null, qbTxnId
   return entries.find((e) => e.Id === qbTxnId);
 }
 
-/**
- * The baseline to store on a match, as JSON. Null when QuickBooks is unbound or the read fails;
- * the drift check then takes it on its first read.
- */
-export async function matchBaseline(entity: string, qbTxnId: string, receiptDate: string | null): Promise<string | null> {
-  const posting = getExpenseRuntime().quickbooks.posting;
-  if (!posting || !receiptDate) return null;
-  try {
-    const entry = await readEntry(posting, entity, qbTxnId, receiptDate);
-    return entry ? JSON.stringify(baselineOf(entry)) : null;
-  } catch (err) {
-    logError("qb_match_baseline_failed", { qbTxnId }, err);
-    return null;
-  }
-}
-
 export type DriftCounts = { checked: number; drifted: number; failed: number };
 
 /** What the drain posted for a CREATED expense: its lines' amounts and the account each was posted to. */
-async function postedEntry(id: string, vendorId: string | null): Promise<PostedEntry> {
+async function postedEntry(id: string, vendorId: string | null, txnDate: string): Promise<PostedEntry> {
   const lines = await db.expenseLineItem.findMany({ where: { expenseId: id } });
   return {
     key: qbKey("expense", id),
     amountCents: sumCents(...lines.map(lineCents)),
-    accounts: lines.map((l) => l.qbAccountId ?? ""),
+    // Lines the app never recorded an account for (an entry finance linked as the app's own) are not compared.
+    accounts: lines.every((l) => l.qbAccountId) ? lines.map((l) => l.qbAccountId ?? "") : undefined,
     vendorId,
+    txnDate,
   };
 }
 
 /**
  * The cron's drift step over CREATED and MATCHED expenses. A created entry is compared with what
- * the drain posted, a matched one with its baseline; a matched entry with no baseline stores one
- * on this read and raises nothing. Each entry is read through the windowed reader around the
+ * the drain posted, its date included, a matched one with its baseline; a matched entry with no
+ * baseline stores one on this read and raises nothing. Each entry is read through the windowed reader around the
  * receipt date, padded with the match grace on both sides. Capped; returns counts only.
  */
 export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unbound"> {
@@ -156,7 +156,7 @@ export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unb
       const expense = await db.expense.findUniqueOrThrow({ where: { id } });
       const expected =
         expense.qbMatchState === "CREATED"
-          ? await postedEntry(id, expense.qbTxnEntity === "Bill" ? expense.qbVendorId : null)
+          ? await postedEntry(id, expense.qbTxnEntity === "Bill" ? expense.qbVendorId : null, expense.receiptDate!)
           : expense.qbMatchBaseline
             ? (JSON.parse(expense.qbMatchBaseline) as PostedEntry)
             : null;

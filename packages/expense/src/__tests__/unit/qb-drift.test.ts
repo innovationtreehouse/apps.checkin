@@ -53,7 +53,7 @@ describe("baselineOf", () => {
   const hand = entry({ PrivateNote: "hand-booked" });
 
   it("holds a hand-booked entry as it is, so the same entry shows no drift", () => {
-    expect(baselineOf(hand)).toEqual({ key: undefined, amountCents: 1000, accounts: ["60", "61"], vendorId: "77" });
+    expect(baselineOf(hand)).toEqual({ key: undefined, amountCents: 1000, accounts: ["60", "61"], vendorId: "77", txnDate: hand.TxnDate });
     expect(driftOf(baselineOf(hand), hand)).toEqual([]);
   });
 
