@@ -488,6 +488,13 @@ describeDb("QuickBooks match", () => {
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
   });
 
+  it("checks off the expense's open held-post review once it is linked", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId: id, kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted" } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_POST_HELD" } })).checkedOffAt).not.toBeNull();
+  });
+
   it("stores the baseline from the candidate it matched", async () => {
     const id = await qbExpense({ purchases: ["42"] });
     await matchExpenseToQb(FINANCE, id, "42");

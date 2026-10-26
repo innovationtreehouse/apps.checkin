@@ -15,6 +15,7 @@ import {
   MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
 import { matchExpenseToQb } from "../../services/qbMatchService";
+import { POSTED_CHECK_OFF } from "../../services/flagService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { runExpenseQbPosting } from "../../services/sweeps";
 
@@ -81,12 +82,14 @@ class FakeQbo {
 }
 
 let qbo: FakeQbo;
+let sweepAlerts: { orgId: string; since: Date }[];
 
 const posting = (prod = false) => ({
   client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
   paymentAccountId: PAYMENT_ACCOUNT,
   paymentType: "CreditCard" as const,
   prod,
+  sweepIncomplete: async (event: { orgId: string; since: Date }) => void sweepAlerts.push(event),
 });
 
 function bindQbo(prod?: boolean) {
@@ -147,6 +150,7 @@ const expenseRow = (id: string) => db.expense.findUniqueOrThrow({ where: { id } 
 
 beforeEach(async () => {
   qbo = new FakeQbo();
+  sweepAlerts = [];
   vi.stubGlobal("fetch", vi.fn(qbo.handle));
   bindQbo();
   // Switched on before any seeded expense, with no closing date: nothing dated before 2026 is created.
@@ -674,6 +678,21 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).checkedOffAt).not.toBeNull();
   });
 
+  it("a held flag still open when the expense posts is checked off by the post", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+
+    await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: lines[0], seat: "TREASURER", signerUserId: 9002 } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+
+    expect(await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_POST_HELD" } })).toMatchObject({
+      checkedOffByUsername: "system",
+      notes: POSTED_CHECK_OFF,
+    });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off", valueAfter: "QB_POST_HELD" } })).toBe(1);
+  });
+
   it("a checked-off held flag reopens when the hold's reason changes", async () => {
     const { id, lines } = await outboxed("2026-09-10");
     await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
@@ -1115,10 +1134,79 @@ describeDb("QB closed books — daily orphan sweep", () => {
     qbo.mode = "ok";
     await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
 
-    expect(await sweepExpenseQbStrays(ORG, posting().client)).toEqual({ entries: 1, flagged: 1, full: false });
-    expect(await sweepExpenseQbStrays(ORG, posting().client)).toEqual({ entries: 1, flagged: 0, full: false });
+    expect(await sweepExpenseQbStrays(ORG, posting())).toEqual({ entries: 1, flagged: 1, full: false });
+    expect(await sweepExpenseQbStrays(ORG, posting())).toEqual({ entries: 1, flagged: 0, full: false });
     const flag = await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_DUPLICATE_TO_VOID" } });
     expect(flag.detail).toBe(`QuickBooks Purchase ${qbo.purchases[0].Id} carries this expense's key but is not linked to it; void it or link it`);
+  });
+
+  /** Checks off the expense's duplicate-to-void review as finance would. */
+  const checkOffStray = (expenseId: string) =>
+    db.expenseFlag.updateMany({ where: { expenseId, kind: "QB_DUPLICATE_TO_VOID" }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
+
+  it("an answered stray stays answered, and two strays on one expense do not take turns reopening it", async () => {
+    const { id } = await outboxed("2026-09-10");
+    qbo.mode = "accept-then-drop";
+    await postExpenseToQb(ORG, id);
+    qbo.mode = "ok";
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+    const [first] = qbo.purchases;
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ flagged: 1 });
+    await checkOffStray(id);
+
+    qbo.purchases.push({ ...first, Id: "7001" });
+    qbo.createdAt.set("7001", new Date());
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ entries: 2, flagged: 1 });
+    await checkOffStray(id);
+
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ entries: 2, flagged: 0 });
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ entries: 2, flagged: 0 });
+    const flag = await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_DUPLICATE_TO_VOID" } });
+    expect(flag.checkedOffAt).not.toBeNull();
+    expect(JSON.parse(flag.observed ?? "[]")).toEqual([`Purchase:${first.Id}`, "Purchase:7001"]);
+  });
+
+  it("a stray the post already raised is not raised again, before or after finance checks it off", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "5000" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ entries: 1, flagged: 0 });
+    await checkOffStray(id);
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ entries: 1, flagged: 0 });
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_DUPLICATE_TO_VOID" } })).checkedOffAt).not.toBeNull();
+  });
+
+  it("a second stray while the review is open joins its detail", async () => {
+    const { id } = await outboxed("2026-09-10");
+    qbo.mode = "accept-then-drop";
+    await postExpenseToQb(ORG, id);
+    qbo.mode = "ok";
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+    qbo.purchases.push({ ...qbo.purchases[0], Id: "7001" });
+    qbo.createdAt.set("7001", new Date());
+
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ flagged: 2 });
+    const flag = await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_DUPLICATE_TO_VOID" } });
+    expect(flag.detail).toContain(`Purchase ${qbo.purchases[0].Id} `);
+    expect(flag.detail).toContain("Purchase 7001 ");
+  });
+
+  it("alerts finance once when a read fills a page, and a failed alert does not stop the sweep", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await postExpenseToQb(ORG, id);
+    const attempted = (await expenseRow(id)).qbCreateAttemptedAt;
+    for (let i = 0; i < 1000; i++) {
+      qbo.purchases.push({ Id: `h${i}`, TxnDate: "2026-10-01", TotalAmt: 1, AccountRef: { value: PAYMENT_ACCOUNT } });
+      qbo.createdAt.set(`h${i}`, new Date());
+    }
+
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ full: true, flagged: 0 });
+    expect(sweepAlerts).toEqual([{ orgId: ORG, since: attempted }]);
+
+    const failing = { ...posting(), sweepIncomplete: async () => { throw new Error("SES down"); } };
+    expect(await sweepExpenseQbStrays(ORG, failing)).toMatchObject({ full: true, flagged: 0 });
   });
 
   it("reports nothing for an entry its expense holds, and runs at the end of the drain", async () => {
@@ -1127,7 +1215,7 @@ describeDb("QB closed books — daily orphan sweep", () => {
   });
 
   it("reads nothing when no expense was attempted", async () => {
-    expect(await sweepExpenseQbStrays(ORG, posting().client)).toEqual({ entries: 0, flagged: 0, full: false });
+    expect(await sweepExpenseQbStrays(ORG, posting())).toEqual({ entries: 0, flagged: 0, full: false });
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });

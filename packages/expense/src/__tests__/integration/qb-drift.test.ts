@@ -43,6 +43,7 @@ beforeEach(() => {
         paymentAccountId: "41",
         paymentType: "CreditCard",
         prod: false,
+        sweepIncomplete: async () => {},
       }),
     },
   });

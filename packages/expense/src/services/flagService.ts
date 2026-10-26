@@ -4,6 +4,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
+import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { FLAG_AUDIENCE, FLAG_KINDS, isFlagKind, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
@@ -18,6 +19,43 @@ export async function raiseFlag(expenseId: string, kind: FlagKind, detail: strin
   const reopen = await client.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
   if (reopen.count > 0) return;
   await client.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
+}
+
+/** The entries a QB_DUPLICATE_TO_VOID row has raised, from its `observed` list. */
+function strayEntriesOf(observed: string | null): string[] {
+  const parsed: unknown = observed ? JSON.parse(observed) : [];
+  return Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string") : [];
+}
+
+/**
+ * Raises QB_DUPLICATE_TO_VOID for one QuickBooks entry ("Purchase:123"); false when the row already
+ * raised it. The row lists every entry it has raised, so an entry finance checked off stays
+ * answered; a new entry reopens a checked-off row, or joins an open row's detail. Call it under the
+ * expense's lock.
+ */
+export async function raiseStray(tx: Db, expenseId: string, entry: string, detail: string): Promise<boolean> {
+  const flag = await tx.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DUPLICATE_TO_VOID" } });
+  const raised = strayEntriesOf(flag?.observed ?? null);
+  if (raised.includes(entry)) return false;
+  const observed = JSON.stringify([...raised, entry]);
+  if (flag && !flag.checkedOffAt) {
+    await tx.expenseFlag.update({ where: { id: flag.id }, data: { detail: [flag.detail, detail].filter(Boolean).join("; "), observed } });
+  } else {
+    await raiseFlag(expenseId, "QB_DUPLICATE_TO_VOID", detail, tx, observed);
+  }
+  return true;
+}
+
+/** Text a QB_POST_HELD check-off carries when the expense's posting settles the hold. */
+export const POSTED_CHECK_OFF = "posted to QuickBooks";
+
+/** An expense linked to its QuickBooks entry no longer waits on finance: its open QB_POST_HELD is checked off. */
+export async function checkOffHeldOnPost(tx: Db, expenseId: string): Promise<void> {
+  const { count } = await tx.expenseFlag.updateMany({
+    where: { expenseId, kind: "QB_POST_HELD", checkedOffAt: null },
+    data: { checkedOffAt: new Date(), checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes: POSTED_CHECK_OFF },
+  });
+  if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_POST_HELD", notes: POSTED_CHECK_OFF });
 }
 
 /** Whether the stored expense's tax still waits on finance, from its stored receipt review. */

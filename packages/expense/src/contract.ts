@@ -255,6 +255,8 @@ export interface ExpensePosting {
   paymentType: "Cash" | "CreditCard";
   /** The client talks to the production QuickBooks API. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
   prod: boolean;
+  /** Tells finance the daily orphan sweep read a full page, so some entries went unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
 // ── Surfaces expense exports to other libraries (bound by the host into theirs) ─
