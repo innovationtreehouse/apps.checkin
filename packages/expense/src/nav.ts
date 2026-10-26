@@ -23,6 +23,52 @@ export function expenseActionCountKey(view: ExpenseActionView): string {
   return `actionable:${view}`;
 }
 
+/** The expense list's views, in tab order. */
+export const EXPENSE_LIST_VIEWS = [
+  "all",
+  "awaiting_me",
+  "assign_ownership",
+  "resolve_ownership",
+  "owner_approval",
+  "owner_exception",
+  "capital_review",
+  "set_depreciation_cycle",
+  "qb_pending",
+] as const;
+export type ExpenseListView = (typeof EXPENSE_LIST_VIEWS)[number];
+
+/** The roles the services check before an act on an expense. */
+export interface ExpenseViewer {
+  /** An owner or treasurer of at least one bucket. */
+  approver: boolean;
+  isFinance: boolean;
+  isBoard: boolean;
+}
+
+/**
+ * Who can act in each view, by the checks the view's acts run: approving admits a bucket approver
+ * or a Board member (approvalRefusal), raising an exception a bucket approver or FINANCE; bucket
+ * assignment, exceptions, capital review and depreciation are FINANCE only (requireFinance); in QB
+ * pending FINANCE names the reimbursee and FINANCE or the Board records the Board authorization.
+ * All lists whatever the viewer may open.
+ */
+const VIEW_ACTORS: Record<ExpenseListView, (v: ExpenseViewer) => boolean> = {
+  all: () => true,
+  awaiting_me: (v) => v.approver || v.isBoard,
+  assign_ownership: (v) => v.isFinance,
+  resolve_ownership: (v) => v.isFinance,
+  owner_approval: (v) => v.approver || v.isBoard || v.isFinance,
+  owner_exception: (v) => v.isFinance,
+  capital_review: (v) => v.isFinance,
+  set_depreciation_cycle: (v) => v.isFinance,
+  qb_pending: (v) => v.isFinance || v.isBoard,
+};
+
+/** The views the viewer can act in, in tab order; the routes refuse the others. */
+export function expenseViewsFor(viewer: ExpenseViewer): ExpenseListView[] {
+  return EXPENSE_LIST_VIEWS.filter((view) => VIEW_ACTORS[view](viewer));
+}
+
 export interface ExpenseNavLink {
   name: string;
   href: string;

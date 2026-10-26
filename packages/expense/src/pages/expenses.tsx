@@ -6,6 +6,7 @@ import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import { EXPENSE_LIST_VIEWS } from "../nav";
 
 interface ExpenseRow {
   id: string;
@@ -20,6 +21,7 @@ interface ExpenseRow {
 
 const VIEWS = [
   { value: "all", label: "All", description: "Every expense you can see, newest first. Open one to act on it." },
+  { value: "awaiting_me", label: "Waiting on you", description: "Expenses with lines waiting on your approval." },
   {
     value: "assign_ownership",
     label: "Assign ownership",
@@ -64,22 +66,27 @@ export default function ExpensesPage() {
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Finance and the approver's Programs I Lead tab. `viewBadge` is the host's
+ * same list serves Finance and the approver's Programs I Lead tab. `views` are the views the
+ * viewer can act in (expenseViewsFor); the routes refuse the others. `viewBadge` is the host's
  * pill beside a view's label: what the viewer can act on there.
  */
 export function ExpenseList({
   detailBase,
   defaultView,
+  views = EXPENSE_LIST_VIEWS,
   viewBadge,
 }: {
   detailBase: string;
   defaultView: string;
+  views?: readonly string[];
   viewBadge?: (view: string) => ReactNode;
 }) {
   // The view and page ride in the URL, so an expense opened from here returns to the same slice.
   const router = useRouter();
   const params = useSearchParams();
-  const current = VIEWS.find((v) => v.value === params.get("view")) ?? VIEWS.find((v) => v.value === defaultView) ?? VIEWS[0];
+  const shown = VIEWS.filter((v) => views.includes(v.value));
+  const current =
+    shown.find((v) => v.value === params.get("view")) ?? shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0];
   const view = current.value;
   const page = Math.max(1, Number(params.get("page")) || 1);
   // Only the All view lists closed expenses; the other views are work still in progress.
@@ -106,7 +113,7 @@ export function ExpenseList({
         mb="md"
         value={view}
         onChange={(v) => show(v, 1)}
-        data={VIEWS.map((v) => ({ value: v.value, label: label(v) }))}
+        data={shown.map((v) => ({ value: v.value, label: label(v) }))}
       />
       <Text c="dimmed" size="sm" mb="md">{current.description}</Text>
       {view === "all" && (
