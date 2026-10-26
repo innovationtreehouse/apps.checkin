@@ -12,13 +12,14 @@ import type {
 } from "./contract";
 import type { DepositAccount } from "./lib/deposit-lines";
 
-/** QuickBooks account ids a created deposit's lines book to. */
+/** QuickBooks account ids a created Shopify deposit's lines book to, where the books map has none. */
 export type IncomeQbAccounts = Record<DepositAccount, string>;
 
 /** What the create path needs to write deposits. Unbound, nothing is created. */
 export interface IncomePosting {
   client: QuickBooksClient;
-  accounts: IncomeQbAccounts;
+  /** The environment's Shopify line accounts; each books-map role set overrides its own. */
+  accounts?: IncomeQbAccounts;
   /**
    * True only on a deploy whose Shopify mirror keeps the newest version of every row, so a
    * replay cannot hand the create path a reverted payout. Anything else creates nothing.
@@ -66,10 +67,12 @@ export interface IncomeConfig {
    * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
    */
   classes?: QbClassSource;
-  /** Finance's books map: role -> QuickBooks account, bucket -> Class. Nothing reads it yet. */
+  /** Finance's books map: role -> QuickBooks account, bucket -> Class. Its roles override the environment's. */
   booksMap?: BooksMap;
-  /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
+  /** The environment's Shopify bank account. With neither it nor the map's, no payout is matched. */
   bankAccountId?: string;
+  /** The environment's Benevity bank account. With neither it nor the map's, no Benevity deposit is matched. */
+  benevityBankAccountId?: string;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;
   otherLaneClaims?: OtherLaneClaims;

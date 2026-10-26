@@ -164,11 +164,15 @@ source shown. Finance resolves them with the same actions as payouts.
 
 **Where donation's rules differ.** Donation's closed-books work shipped the same
 rules as income's (switch-on per lane, UNBOOKED and book-it, the key lookup, the
-orphan sweep), so they merge rather than collide. Two differences carry over as
-per-source settings on income's side: donation's per-run cents cap, and its
-"uploaded after switch-on but dated in closed books" note.
+orphan sweep), so they merge rather than collide. Three differences carry over
+as per-source settings on income's side: donation's per-run cents cap, its
+"uploaded after switch-on but dated in closed books" note, and its match window
+of seven days either side of the disbursement. A narrower window could miss a
+deposit finance booked by hand and create a second one. Donation's daily create
+cap and its match-only handling of a disbursement over the cap do not carry
+over; income's caps and its over-cap hold apply to both sources.
 
-A third difference does not carry over: drift. Donation keeps a drifted deposit
+One difference does not carry over: drift. Donation keeps a drifted deposit
 held in a separate column, so no other disbursement can take it before finance
 looks. Income clears the link on drift, which frees the deposit. Under one
 owner, income's rule applies to both sources. Every income row still competes
@@ -246,7 +250,11 @@ PR 2. With all four, every run passed.
    Shopify's and Benevity's account roles.
 1. **Income: second source.** Columns, ports, per-source settings, and income
    resolving accounts and Classes through the map. Shopify unchanged. Income
-   package and its `configure.ts`.
+   package and its `configure.ts`. The row's payout-id column holds each
+   source's key, and its unique index stays on organisation and that key: a
+   Shopify payout id and a Benevity disbursement id cannot collide. A role the
+   map leaves unset falls back to the host's environment setting where one
+   existed (Shopify's bank and four line accounts, Benevity's bank).
 2. **Donation: hand deposits to income.** The port calls after the completion
    commit, the re-send job, status reads, the one-off move script, the host
    binding, and the switch-off of donation's poster and of every QuickBooks
@@ -257,8 +265,9 @@ PR 2. With all four, every run passed.
    `qb-exclusions` under `api/donations/` with their registry entries and screen,
    under the decommission exception (whole entries for routes that cease to
    exist).
-4. **Contract,** a release after 2: the drops in Migration step 4, and the
-   cross-lane list.
+4. **Contract,** a release after 2: the drops in Migration step 4, the
+   cross-lane list, income's environment fallback for map roles, and moving
+   income's row index to organisation, source and key.
 5. **Expense intake,** with in-kind's posting lane (#2182), not before.
 
 **Security boundary and registry.** PR 3 removes whole registry entries with
