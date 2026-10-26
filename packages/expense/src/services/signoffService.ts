@@ -234,7 +234,8 @@ export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: s
 }
 
 /** Each line's status with its facts, for the caller; `readOnly` reads without taking a seat lock. */
-async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
+/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, and its facts. */
+export async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
   const [facts, filled, approvalNeeded, approvals] = await Promise.all([
     signoffFactsByLine(db, expense, { readOnly }),
     filledSeatsByLine(db, expense.id),

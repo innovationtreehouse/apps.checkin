@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { expenses } from "../../routes";
-import { expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
 // submitter 1 · approvers 2 and 9 (bucket 100), 6 (bucket 200) · org-level bucket 7 · finance 3 and 8 · board 5 · 8 and 9 in the submitter's household
@@ -123,6 +123,22 @@ describeDb("lines waiting on the caller's approval", () => {
     as(CONFLICTED_APPROVER);
     expect(await viewIds(CONFLICTED_APPROVER)).toEqual([approversOwn]);
     expect(await signoffsAwaitingCount(CONFLICTED_APPROVER)).toBe(1);
+  });
+
+  it("does not let newer expenses with nothing for the caller crowd older work out of the cap", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) await seedLines({}, [{ ownerId: 100 }]);
+    await seedLines({ needsReimbursement: true }, [{ ownerId: 100 }]);
+    as(CONFLICTED_APPROVER);
+    expect(await viewIds(CONFLICTED_APPROVER)).toEqual([approversOwn]);
+    expect(await signoffsAwaitingCount(CONFLICTED_APPROVER)).toBe(1);
+    expect((await expenseActionCounts(CONFLICTED_APPROVER)).owner_approval).toBe(1);
+  });
+
+  it("caps at the newest expenses that have work for the caller", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) await seedLines({}, [{ ownerId: 200 }]);
+    as(OTHER_APPROVER);
+    expect(await viewIds(OTHER_APPROVER)).not.toContain(both);
+    expect(await signoffsAwaitingCount(OTHER_APPROVER)).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
   });
 
   it("counts nothing for FINANCE outside its own buckets, and hides the view from it", async () => {

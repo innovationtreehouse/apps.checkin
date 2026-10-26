@@ -11,8 +11,8 @@ const isActionView = (view: string): view is ExpenseActionView => (EXPENSE_ACTIO
 
 /**
  * The expense list showing only the views the viewer can act in, with a green pill on each view
- * tab: the items there the viewer can act on. It waits for the session and the nav counts, which
- * say whether the viewer approves a bucket.
+ * tab: the items there the viewer can act on. It waits only for the session; until the nav counts
+ * say the viewer approves a bucket, or when they fail, the viewer is shown as not an approver.
  */
 export function ExpenseActionList({ detailBase, defaultView }: { detailBase: string; defaultView: string }) {
   const { data: session } = useSession();
@@ -21,7 +21,7 @@ export function ExpenseActionList({ detailBase, defaultView }: { detailBase: str
     const n = isActionView(view) ? libraryCount(counts, "expense", expenseActionCountKey(view)) : 0;
     return n > 0 ? <CountBadge intent="action" size="sm" aria-label={`${n} you can act on`}>{n}</CountBadge> : null;
   };
-  if (!session?.user || counts === null) return null;
+  if (!session?.user) return null;
   const views = expenseViewsFor({
     approver: libraryCount(counts, "expense", "approver") > 0,
     isFinance: session.user.isFinance === true,

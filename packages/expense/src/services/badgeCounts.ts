@@ -9,9 +9,9 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
 import { boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, signoffFactsByLine } from "../lib/signoff-facts";
-import { lineActions } from "../lib/line-actions";
+import { boardApprovalNeeded, conflictedParties, signoffFactsByLine } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES } from "./approvalService";
+import { callerLines } from "./signoffService";
 
 /** The most open expenses one badge poll examines, so a poll costs a fixed amount of work. */
 export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
@@ -24,51 +24,37 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval, across at most SIGNOFF_BADGE_EXPENSE_CAP candidate
- * expenses (newest first); past the cap it is a lower bound. The query keeps expenses in owner
- * approval, not the caller's own receipt, with a line waiting for approval in the caller's
- * buckets, or in any bucket for a Board member; lineActions decides each line. The approver pill,
- * its "Waiting on you" view and the owner-approval view count all read this.
+ * caller (from lineActions) is approval: the SIGNOFF_BADGE_EXPENSE_CAP newest such expenses; past
+ * the cap it is a lower bound. Candidates are expenses in owner approval, not the caller's own
+ * receipt and not a reimbursement with no reimbursee (the approve service refuses both), with a
+ * line waiting for approval in the caller's buckets, or in any bucket for a Board member. They are
+ * read newest first, a batch at a time, until the cap is reached, so candidates with nothing for
+ * the caller never crowd out older work. The approver pill, its "Waiting on you" view and the
+ * owner-approval view count all read this.
  */
 export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
   const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
   if (buckets.length === 0 && !principal.isBoard) return [];
-  const expenses = await db.expense.findMany({
-    where: {
-      orgId: await getOrgId(),
-      backfill: false,
-      state: "owner_approval",
-      submitterId: { not: me },
-      approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
-    },
-    orderBy: { submittedAt: "desc" },
-    take: SIGNOFF_BADGE_EXPENSE_CAP,
-  });
-  const caller = { id: me, isFinance: principal.isFinance };
+  const where: Prisma.ExpenseWhereInput = {
+    orgId: await getOrgId(),
+    backfill: false,
+    state: "owner_approval",
+    submitterId: { not: me },
+    NOT: { needsReimbursement: true, reimburseePersonId: null },
+    approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
+  };
   const out: ExpenseAwaitingApproval[] = [];
-  for (const expense of expenses) {
-    const [facts, filled, approvalNeeded, approvals] = await Promise.all([
-      signoffFactsByLine(db, expense, { readOnly: true }),
-      filledSeatsByLine(db, expense.id),
-      boardApprovalNeeded(db, expense),
-      db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, status: true, ownerId: true } }),
-    ]);
-    const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
-    const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
-    const lineItemIds = [...facts].flatMap(([lineItemId, f]) => {
-      const seats = filled.get(lineItemId) ?? [];
-      const { actions } = lineActions({
-        caller,
-        expense: held,
-        approval: approvalOf.get(lineItemId) ?? null,
-        facts: f,
-        filled: seats,
-        holds: lineHolds(approvalNeeded, f, seats),
-      });
-      return actions.some((a) => a.act === "approve" && a.primary) ? [lineItemId] : [];
-    });
-    if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
+  for (let skip = 0; out.length < SIGNOFF_BADGE_EXPENSE_CAP; skip += SIGNOFF_BADGE_EXPENSE_CAP) {
+    const batch = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], skip, take: SIGNOFF_BADGE_EXPENSE_CAP });
+    for (const expense of batch) {
+      if (out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
+      const lineItemIds = (await callerLines(principal, expense, true))
+        .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
+        .map((line) => line.lineItemId);
+      if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
+    }
+    if (batch.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
   }
   return out;
 }

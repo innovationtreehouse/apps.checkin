@@ -53,11 +53,12 @@ describe("ExpenseActionList", () => {
     expect(screen.getByText("Capital review (2)")).toBeInTheDocument();
   });
 
-  it("shows no list before the counts arrive, so no view it can't act in flashes up", () => {
+  it("still shows the list when the counts are missing or failed, with no pills and no approver views", () => {
     mockedUseTodoCounts.mockReturnValue(null);
-    render(<MantineProvider><ExpenseActionList detailBase="/programs-i-lead/expense-approvals" defaultView="owner_approval" /></MantineProvider>);
+    render(<MantineProvider><ExpenseActionList detailBase="/programs-i-lead/expense-approvals" defaultView="awaiting_me" /></MantineProvider>);
     expect(screen.queryAllByLabelText(/you can act on$/)).toEqual([]);
-    expect(screen.queryAllByRole("radio")).toEqual([]);
+    expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /Waiting on you/ })).toBeNull();
   });
 
   it("shows FINANCE who approves no bucket every view but Waiting on you", () => {
