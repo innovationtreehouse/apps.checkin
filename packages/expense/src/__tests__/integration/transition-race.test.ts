@@ -54,7 +54,7 @@ describeDb("flags", () => {
     const id = await seedExpense();
     await raiseFlag(id, "QB_POST_HELD", "first hold");
     const [flag] = await listOpenFlags(FINANCE);
-    await checkOffFlag(FINANCE, flag.id, "seen");
+    await checkOffFlag(FINANCE, flag.id, "seen", flag);
     expect(await listOpenFlags(FINANCE)).toEqual([]);
 
     await raiseFlag(id, "QB_POST_HELD", "second hold");

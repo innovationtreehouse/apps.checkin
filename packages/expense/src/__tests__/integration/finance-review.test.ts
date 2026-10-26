@@ -3,7 +3,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
-import { checkOffFlag, raiseFlag } from "../../services/flagService";
+import { checkOffFlag, raiseFlag, raiseStray } from "../../services/flagService";
 import { approveTax } from "../../services/taxApprovalService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
@@ -26,11 +26,28 @@ describeDb("reviews need a note", () => {
 
     for (const kind of ["QB_DRIFT", "QB_POST_HELD", "QB_DUPLICATE_TO_VOID"]) {
       const flag = (await openFlag(id, kind))!;
-      await expect(checkOffFlag(FINANCE, flag.id, null)).rejects.toMatchObject({ status: 400 });
-      await expect(checkOffFlag(FINANCE, flag.id, "   ")).rejects.toMatchObject({ status: 400 });
-      await checkOffFlag(FINANCE, flag.id, "voided Purchase 9 on 2026-10-24");
+      await expect(checkOffFlag(FINANCE, flag.id, null, flag)).rejects.toMatchObject({ status: 400 });
+      await expect(checkOffFlag(FINANCE, flag.id, "   ", flag)).rejects.toMatchObject({ status: 400 });
+      await checkOffFlag(FINANCE, flag.id, "voided Purchase 9 on 2026-10-24", flag);
       expect((await openFlag(id, kind))!.checkedOffAt).not.toBeNull();
     }
+  });
+});
+
+describeDb("a check-off answers the review as shown", () => {
+  it("refuses a duplicate-to-void review that gained an entry after it was shown", async () => {
+    bind();
+    const id = await seedExpense({ state: "qb_complete" });
+    await raiseStray(db, id, "Purchase:5001", "QuickBooks Purchase 5001 carries this expense's key but is not linked to it; void it or link it");
+    const shown = (await openFlag(id, "QB_DUPLICATE_TO_VOID"))!;
+    await raiseStray(db, id, "Bill:6002", "QuickBooks Bill 6002 carries this expense's key but is not linked to it; void it or link it");
+
+    await expect(checkOffFlag(FINANCE, shown.id, "voided Purchase 5001", shown)).rejects.toMatchObject({ status: 409 });
+    const current = (await openFlag(id, "QB_DUPLICATE_TO_VOID"))!;
+    expect(current.checkedOffAt).toBeNull();
+
+    await checkOffFlag(FINANCE, current.id, "voided Purchase 5001 and Bill 6002", current);
+    expect((await openFlag(id, "QB_DUPLICATE_TO_VOID"))!.checkedOffAt).not.toBeNull();
   });
 });
 

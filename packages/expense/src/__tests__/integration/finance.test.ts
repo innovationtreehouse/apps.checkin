@@ -383,15 +383,15 @@ describeDb("flags", () => {
     const [flag] = await listOpenFlags(FINANCE);
     expect(await listOpenFlags(BOARD)).toEqual([]);
 
-    await expect(checkOffFlag(BOARD, flag.id)).rejects.toMatchObject({ status: 403 });
-    await checkOffFlag(FINANCE, flag.id, "voided Bill 41 on 10/20");
+    await expect(checkOffFlag(BOARD, flag.id, "seen", flag)).rejects.toMatchObject({ status: 403 });
+    await checkOffFlag(FINANCE, flag.id, "voided Bill 41 on 10/20", flag);
 
     expect(await listOpenFlags(FINANCE)).toEqual([]);
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off", userId: 3 } })).toBe(1);
 
     const old = await db.expenseFlag.create({ data: { orgId: ORG, expenseId: id, kind: "THRESHOLD_CROSSED", audience: "BOARD" } });
     expect(await listOpenFlags(BOARD)).toEqual([]);
-    await expect(checkOffFlag(BOARD, old.id, "seen")).rejects.toMatchObject({ status: 409 });
+    await expect(checkOffFlag(BOARD, old.id, "seen", old)).rejects.toMatchObject({ status: 409 });
   });
 });
 

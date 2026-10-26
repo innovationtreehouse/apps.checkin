@@ -6,7 +6,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { FLAG_AUDIENCE, FLAG_KINDS, isFlagKind, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
-import { conflictedParties } from "../lib/signoff-facts";
+import { conflictedParties, lockExpense } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
 
 /**
@@ -80,7 +80,10 @@ export async function listOpenFlags(principal: ExpensePrincipal) {
   });
 }
 
-export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, notes: string | null = null): Promise<void> {
+/** The review as finance was shown it; a check-off answers that version only. */
+export type ShownFlag = { detail: string | null; observed: string | null };
+
+export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, notes: string | null, shown: ShownFlag): Promise<void> {
   const actor = actorOf(principal);
   const flag = await db.expenseFlag.findFirst({ where: { id: flagId, orgId: await getOrgId() } });
   if (!flag) throw new ServiceError(404, "Flag not found");
@@ -99,6 +102,13 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   }
 
   await db.$transaction(async (tx) => {
+    // Raisers write under the expense lock, so the row read here is the one the check-off answers.
+    await lockExpense(tx, flag.expenseId);
+    const current = await tx.expenseFlag.findUniqueOrThrow({ where: { id: flagId } });
+    if (current.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
+    if (current.detail !== shown.detail || current.observed !== shown.observed) {
+      throw new ServiceError(409, "This review changed since it was shown; reload it and check it again");
+    }
     await tx.expenseFlag.update({
       where: { id: flagId },
       data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes },

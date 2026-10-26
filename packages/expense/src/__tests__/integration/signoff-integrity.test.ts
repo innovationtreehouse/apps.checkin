@@ -156,9 +156,9 @@ describeDb("flags are checked off independently", () => {
     await raiseFlag(id, "QB_DRIFT", "amount");
     const flag = (await db.expenseFlag.findFirst({ where: { expenseId: id } }))!;
 
-    await expect(checkOffFlag(principal(1, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
-    await expect(checkOffFlag(principal(6, { isFinance: true }), flag.id, "seen")).rejects.toMatchObject({ status: 403 });
-    await checkOffFlag(FINANCE, flag.id, "seen");
+    await expect(checkOffFlag(principal(1, { isFinance: true }), flag.id, "seen", flag)).rejects.toMatchObject({ status: 403 });
+    await expect(checkOffFlag(principal(6, { isFinance: true }), flag.id, "seen", flag)).rejects.toMatchObject({ status: 403 });
+    await checkOffFlag(FINANCE, flag.id, "seen", flag);
   });
 });
 

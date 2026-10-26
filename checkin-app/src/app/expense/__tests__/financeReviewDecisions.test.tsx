@@ -109,7 +109,7 @@ describe("the Reviews panel", () => {
     expect(accept).toBeEnabled();
     fireEvent.click(accept);
     await waitFor(() =>
-      expect(mockSend).toHaveBeenCalledWith("/flags/9/check-off", "POST", { notes: "Treasurer corrected the amount in QuickBooks" }, "Review closed"),
+      expect(mockSend).toHaveBeenCalledWith("/flags/9/check-off", "POST", { notes: "Treasurer corrected the amount in QuickBooks", shown: { detail: drift.detail, observed: drift.observed } }, "Review closed"),
     );
   });
 
