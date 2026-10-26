@@ -3,7 +3,7 @@
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
  * are read lazily, inside a request, and so are households. Bound crossings: X6 (the S1 sink,
  * workflow-mapping's intake, which dedupes on `receiptId`), X12 (reimbursement status, read
- * by expense from QuickBooks; QuickBooks off or any failure answers "not yet paid") and X13
+ * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable") and X13
  * (the donor sink, bound to donations in-process). Mail intake (§2a) is bound only on a deployed
  * instance with both the token refresher and the mailbox configured.
  */

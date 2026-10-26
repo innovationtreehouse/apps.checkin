@@ -178,13 +178,25 @@ export interface QbReader {
   billPaymentsByIds(ids: string[]): Promise<{ id: string; txnDate: string }[]>;
 }
 
+/** Thrown by a QbReader while QuickBooks is off, so "not connected" never reads as "no entries". */
+export class QuickBooksNotConnectedError extends Error {
+  constructor() {
+    super("QuickBooks is not connected");
+    this.name = "QuickBooksNotConnectedError";
+  }
+}
+
+const notConnected = async (): Promise<never> => {
+  throw new QuickBooksNotConnectedError();
+};
+
 export const inertQbReader: QbReader = {
-  purchasesBetween: async () => [],
-  billsBetween: async () => [],
-  billPaymentsBetween: async () => [],
-  purchasesByIds: async () => [],
-  billsByIds: async () => [],
-  billPaymentsByIds: async () => [],
+  purchasesBetween: notConnected,
+  billsBetween: notConnected,
+  billPaymentsBetween: notConnected,
+  purchasesByIds: notConnected,
+  billsByIds: notConnected,
+  billPaymentsByIds: notConnected,
 };
 
 /**

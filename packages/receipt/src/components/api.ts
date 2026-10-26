@@ -105,7 +105,8 @@ export interface ReceiptListRow {
   isInKind: boolean;
   validationNotes?: string | null;
   pushedAt?: string | null;
-  reimbursement?: { paidOn: string | null } | null;
+  /** `statusUnavailable`: QuickBooks could not say whether it was paid. */
+  reimbursement?: { paidOn: string | null; statusUnavailable?: boolean } | null;
   complete?: boolean;
   reimburseePersonId?: number | null;
   /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */

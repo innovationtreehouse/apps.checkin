@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
-import { inertOutbound, inertOwnerDirectory } from "../../contract";
+import { inertOutbound, inertOwnerDirectory, QuickBooksNotConnectedError } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
@@ -29,7 +29,7 @@ describe("runtime", () => {
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
-    expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
+    await expect(rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).rejects.toBeInstanceOf(QuickBooksNotConnectedError);
     await expect(rt.quickbooks.posting()).resolves.toBeNull();
   });
 

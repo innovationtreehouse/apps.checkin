@@ -57,7 +57,7 @@ export default function ReceiptTable({
               </Table.Td>
               {paid && (
                 <Table.Td>
-                  {r.reimbursement ? (r.reimbursement.paidOn ? `Paid on ${r.reimbursement.paidOn}` : "Not yet paid") : "—"}
+                  {r.reimbursement ? (r.reimbursement.paidOn ? `Paid on ${r.reimbursement.paidOn}` : r.reimbursement.statusUnavailable ? "Payment status unavailable" : "Not yet paid") : "—"}
                 </Table.Td>
               )}
               {delivery && (

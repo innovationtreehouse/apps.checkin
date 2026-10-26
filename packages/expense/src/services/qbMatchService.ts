@@ -2,7 +2,7 @@
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
 import { appKeyOf, qbKey, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
-import type { ExpensePrincipal, QbTxn } from "../contract";
+import { QuickBooksNotConnectedError, type ExpensePrincipal, type QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
@@ -150,7 +150,10 @@ async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): 
   const expectedRef =
     entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
   if (expectedRef === null) return { entity, txns: [] };
-  const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
+  const txns = await (entity === "Bill" ? reader.billsBetween(from, to) : reader.purchasesBetween(from, to)).catch((err: unknown) => {
+    if (err instanceof QuickBooksNotConnectedError) throw new ServiceError(503, err.message);
+    throw err;
+  });
   const skip = new Set((await qbMatchInputs(entity)).skipIds);
   const totalCents = postedTotalCents(expense);
   const matches = (t: QbTxn) =>
