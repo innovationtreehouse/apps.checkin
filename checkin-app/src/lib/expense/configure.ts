@@ -204,7 +204,7 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
   const { config } = await import("@/lib/config");
   await notifyFinanceAlert(
     "Expenses: QuickBooks posting is off until the payment account is fixed",
-    `<p>The books map's "Card and direct-paid expenses: paid from" account (QuickBooks id ${accountId}) is ${accountType ? `a ${accountType} account` : "not in QuickBooks"}. Expenses post only from a Bank or Credit Card account, so none are posting. <a href="${config.baseUrl()}/books-map">Open the books map</a></p>`,
+    `<p>The books map's "Organisation card" account (QuickBooks id ${accountId}) is ${accountType ? `a ${accountType} account` : "not in QuickBooks"}. Expenses post only from a Bank or Credit Card account, so none are posting. <a href="${config.baseUrl()}/books-map">Open the books map</a></p>`,
     "Expense payment-account alert failed:",
   );
 }
