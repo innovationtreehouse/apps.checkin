@@ -1,8 +1,8 @@
 import prisma from "@/lib/prisma";
 import type { Person } from "@/generated/prisma/client";
+import { MAX_MERGE_HOPS } from "@/lib/person/filters";
 
-/** Real merges are one hop; the cap stops a corrupt or cyclic chain from looping the lookup. */
-export const MAX_MERGE_HOPS = 5;
+export { MAX_MERGE_HOPS };
 
 export type MergeResolution =
     /** `first` is the row the id itself names (null when only the archive knew it); `hops` counts merges followed. */

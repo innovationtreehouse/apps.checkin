@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * The in-kind conflict set and surname warning read a merged-away uploader or recorder
- * through the person they were merged into.
+ * The in-kind conflict set and surname warning read a merged-away uploader or recorder through
+ * both households: their own, which a merge keeps, and the one of the person they were merged into.
  */
 import prisma from '@/lib/prisma';
 import { householdMembersOf, householdsSharingSurname } from '../donorSurname';
@@ -24,6 +24,7 @@ async function person(label: string, name: string, householdId: number) {
 }
 
 let tombstone: number;
+let tombstoneMate: number;
 let survivor: number;
 let survivorMate: number;
 
@@ -32,6 +33,7 @@ beforeAll(async () => {
     const oldHome = await prisma.household.create({ data: { name: `${TAG} old` } });
     const newHome = await prisma.household.create({ data: { name: `${TAG} new` } });
     tombstone = (await person('tombstone', 'Pat Old', oldHome.id)).id;
+    tombstoneMate = (await person('old-mate', 'Lee Abara', oldHome.id)).id;
     survivor = (await person('survivor', 'Pat New', newHome.id)).id;
     survivorMate = (await person('mate', 'Sam Okafor', newHome.id)).id;
     await prisma.person.update({ where: { id: tombstone }, data: { mergedIntoId: survivor } });
@@ -42,13 +44,16 @@ afterAll(async () => {
     await prisma.$disconnect();
 });
 
-it("puts a merged person's survivor and the survivor's household in the conflict set", async () => {
+it("keeps a merged uploader's own household in the conflict set and adds the survivor's", async () => {
+    // An uploader in the old household merged into a keeper in the new one: a finance holder
+    // in either household is conflicted out.
     const members = (await householdMembersOf(prisma, [tombstone])).get(tombstone);
-    expect(members).toEqual(expect.arrayContaining([tombstone, survivor, survivorMate]));
+    expect(members).toEqual(expect.arrayContaining([tombstone, tombstoneMate, survivor, survivorMate]));
 });
 
-it("matches the donor's surname against the survivor's household", async () => {
-    expect(await householdsSharingSurname(prisma, [{ personId: tombstone, lastName: 'Okafor' }])).toEqual([true]);
+it("matches the donor's surname against both households", async () => {
+    const checks = [{ personId: tombstone, lastName: 'Okafor' }, { personId: tombstone, lastName: 'Abara' }, { personId: tombstone, lastName: 'Nobody' }];
+    expect(await householdsSharingSurname(prisma, checks)).toEqual([true, true, false]);
 });
 
 it('follows the merge archive when the tombstone row is gone', async () => {

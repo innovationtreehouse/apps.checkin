@@ -1,7 +1,7 @@
 // Household and surname reads for in-kind gifts. Loaded at boot by the bulk-donation wiring, so it
 // imports nothing beyond the person model: no handler, auth or session code.
 import type { DbClient } from "@/lib/db-client";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, MAX_MERGE_HOPS } from "@/lib/person/filters";
 
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 
@@ -15,9 +15,6 @@ interface Member {
   id: number;
   name: string;
 }
-
-/** Real merges are one hop; the cap stops a corrupt or cyclic chain from looping. */
-const MAX_MERGE_HOPS = 5;
 
 /**
  * Each id's surviving person: follows mergedIntoId, or the merge archive when the tombstone row
@@ -39,15 +36,14 @@ async function survivorsOf(db: DbClient, ids: number[]): Promise<Map<number, num
 
 /**
  * Each person's household as live members, the person and their survivor included. A merged
- * person is read through the person they were merged into. A person with no household is a
- * household of one.
+ * person keeps their own household and gains their survivor's: both count. A person with no
+ * household is a household of one.
  */
 async function householdsByPerson(db: DbClient, personIds: number[]): Promise<Map<number, Member[]>> {
   const ids = [...new Set(personIds)];
   if (ids.length === 0) return new Map();
   const survivors = await survivorsOf(db, ids);
-  const survivorIds = [...new Set(survivors.values())];
-  const people = await db.person.findMany({ where: { id: { in: survivorIds } }, select: { id: true, name: true, householdId: true } });
+  const people = await db.person.findMany({ where: { id: { in: [...new Set([...ids, ...survivors.values()])] } }, select: { id: true, name: true, householdId: true } });
   const householdIds = [...new Set(people.map((p) => p.householdId).filter((h): h is number => h !== null))];
   const members =
     householdIds.length === 0
@@ -55,9 +51,10 @@ async function householdsByPerson(db: DbClient, personIds: number[]): Promise<Ma
       : await db.person.findMany({ where: { householdId: { in: householdIds }, ...LIVE_PERSON }, select: { id: true, name: true, householdId: true } });
   return new Map(
     ids.map((id) => {
-      const person = people.find((p) => p.id === survivors.get(id));
-      const mates = person?.householdId == null ? [] : members.filter((m) => m.householdId === person.householdId);
-      return [id, person && !mates.some((m) => m.id === person.id) ? [person, ...mates] : mates];
+      const selves = people.filter((p) => p.id === id || p.id === survivors.get(id));
+      const homes = new Set(selves.map((p) => p.householdId).filter((h): h is number => h !== null));
+      const all = [...selves, ...members.filter((m) => m.householdId !== null && homes.has(m.householdId))];
+      return [id, [...new Map(all.map((m) => [m.id, m])).values()]];
     }),
   );
 }
