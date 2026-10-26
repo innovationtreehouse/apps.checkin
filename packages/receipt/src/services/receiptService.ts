@@ -580,8 +580,12 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "clear duplicate");
-    const others = ((await computeGroup(row.orgId, id))?.members ?? []).filter((m) => m.id !== id && m.state !== "discarded");
-    await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
+    try {
+      assertLegalTransition(row.state, { type: "DUPLICATE_CLEARED" });
+    } catch (e) {
+      transitionError(e);
+    }
+    const others =((await computeGroup(row.orgId, id))?.members ?? []).filter((m) => m.id !== id && m.state !== "discarded");
     await db.receiptPairDecision.createMany({
       data: others.map((m) => ({
         orgId: row.orgId,
@@ -592,6 +596,7 @@ export const receiptService = {
       })),
       skipDuplicates: true,
     });
+    await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
   },

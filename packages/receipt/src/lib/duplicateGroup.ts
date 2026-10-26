@@ -72,7 +72,7 @@ const day = (at: Date) => at.toLocaleDateString("en-GB", { day: "numeric", month
 async function labels(nodes: Node[]): Promise<Map<string, string>> {
   const ended = nodes.filter((n) => n.state === "rejected" || n.state === "discarded").map((n) => n.id);
   const logs = await db.receiptAuditLog.findMany({
-    where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded"] } },
+    where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded", BODY_COPY_DISCARDED] } },
     orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const last = new Map(logs.map((l) => [`${l.receiptId}:${l.action}`, l]));
@@ -83,6 +83,7 @@ async function labels(nodes: Node[]): Promise<Map<string, string>> {
         return [n.id, log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected"];
       }
       if (n.state === "discarded") {
+        if (last.has(`${n.id}:${BODY_COPY_DISCARDED}`)) return [n.id, "Discarded at mail intake as a copy of its attachment"];
         const log = last.get(`${n.id}:discarded`);
         return [n.id, log ? `Withdrawn by its submitter on ${day(log.changedAt)}` : "Withdrawn by its submitter"];
       }
