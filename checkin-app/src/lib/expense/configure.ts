@@ -4,16 +4,19 @@
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
- * The posting writer stays unbound (inert); it is a later crossing. Whatever the library sends
- * out goes through checkin's outbound gateway, which strips it to the surface's declared tiers.
+ * The posting writer is bound only where QBO_REALM_ID, QBO_EXPENSE_PAYMENT_ACCOUNT_ID and
+ * QBO_EXPENSE_PAYMENT_TYPE are set and the guard admits the company; unbound, a drain answers
+ * "unbound". Whatever the library sends out goes through checkin's outbound gateway, which
+ * strips it to the surface's declared tiers.
  */
 import { configureExpense, reimburseeVendorId } from "@checkin/expense";
-import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
 
 async function db() {
@@ -114,22 +117,17 @@ function qbTxn(t: QboPurchase | QboBill): QbTxn {
   };
 }
 
-/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
-async function quickBooks() {
-  return (await import("@/lib/quickbooks/client")).getQuickBooks();
-}
-
 const qbReader: QbReader = {
   async purchasesBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.purchasesBetween(from, to)).map(qbTxn) : [];
   },
   async billsBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.billsBetween(from, to)).map(qbTxn) : [];
   },
   async billPaymentsBetween(from, to) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return [];
     return (await qb.billPaymentsBetween(from, to)).map((p) => ({
       id: p.Id,
@@ -138,11 +136,11 @@ const qbReader: QbReader = {
     }));
   },
   async purchasesByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.purchasesByIds(ids)).map(qbTxn) : [];
   },
   async billsByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return [];
     return (await qb.billsByIds(ids)).map((b) => ({
       id: b.Id,
@@ -152,7 +150,7 @@ const qbReader: QbReader = {
     }));
   },
   async billPaymentsByIds(ids) {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     return qb ? (await qb.billPaymentsByIds(ids)).map((p) => ({ id: p.Id, txnDate: p.TxnDate })) : [];
   },
 };
@@ -160,7 +158,7 @@ const qbReader: QbReader = {
 /** Finance's Vendor search, verify and create, through the guarded client (off = null). */
 const qbVendors: QbVendors = {
   async open() {
-    const qb = await quickBooks();
+    const qb = await getQuickBooks();
     if (!qb) return null;
     const option = (v: QboVendor) => ({ id: v.Id, displayName: v.DisplayName });
     return {
@@ -185,6 +183,23 @@ const people: PeopleDirectory = {
   },
 };
 
+/** The card or bank account a non-reimbursement expense is paid from, or undefined while unset. */
+function paymentAccount(): Pick<ExpensePosting, "paymentAccountId" | "paymentType"> | undefined {
+  const paymentAccountId = process.env.QBO_EXPENSE_PAYMENT_ACCOUNT_ID;
+  const paymentType = process.env.QBO_EXPENSE_PAYMENT_TYPE;
+  if (!paymentAccountId || (paymentType !== "Cash" && paymentType !== "CreditCard")) return undefined;
+  return { paymentAccountId, paymentType };
+}
+
+/** Production is the client's own API environment, which the guard admits only on CHECKIN_ENV=prod. */
+function posting(): ExpensePosting | undefined {
+  const account = paymentAccount();
+  if (!process.env.QBO_REALM_ID || !account) return undefined;
+  const client = buildQuickBooks();
+  if (!client) return undefined;
+  return { client, ...account, prod: client.env === "production" };
+}
+
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,
@@ -194,7 +209,7 @@ export function configureRuntime(): void {
     catalog: catalogReader,
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
     people,
-    quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting: posting() },
     outbound: outboundCall,
   });
 }

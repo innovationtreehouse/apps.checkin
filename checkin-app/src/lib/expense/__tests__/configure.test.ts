@@ -1,4 +1,4 @@
-import type { Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -17,14 +17,15 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors }; outbound: Outbound }]>();
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors; posting?: ExpensePosting }; outbound: Outbound }]>();
 const reimburseeVendorId = jest.fn();
 jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId }));
 const createVendor = jest.fn();
 jest.mock("@checkin/quickbooks", () => ({ createVendor }));
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
-jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
+const buildQuickBooks = jest.fn();
+jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
 
 const NOT_DENIED = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
 
@@ -223,5 +224,63 @@ describe("expense reimbursee Vendor ports", () => {
     personFindFirst.mockResolvedValue({ name: "Pat Lee" });
     await expect((await ports()).people.nameOf(9)).resolves.toBe("Pat Lee");
     expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9, mergedIntoId: null });
+  });
+});
+
+describe("expense posting binding", () => {
+  const VARS = ["QBO_REALM_ID", "QBO_EXPENSE_PAYMENT_ACCOUNT_ID", "QBO_EXPENSE_PAYMENT_TYPE", "CHECKIN_ENV"];
+  const saved = Object.fromEntries(VARS.map((name) => [name, process.env[name]]));
+
+  async function posting() {
+    await jest.isolateModulesAsync(async () => {
+      (await import("../configure")).configureRuntime();
+    });
+    return configureExpense.mock.calls.at(-1)![0].quickbooks.posting;
+  }
+
+  beforeEach(() => {
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_EXPENSE_PAYMENT_ACCOUNT_ID = "41";
+    process.env.QBO_EXPENSE_PAYMENT_TYPE = "CreditCard";
+  });
+
+  afterEach(() => {
+    for (const name of VARS) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  it("binds the guarded client and the payment account; a sandbox client is not prod", async () => {
+    const client = { env: "sandbox" };
+    buildQuickBooks.mockReturnValue(client);
+    expect(await posting()).toEqual({ client, paymentAccountId: "41", paymentType: "CreditCard", prod: false });
+  });
+
+  it("takes prod from the client's own environment, not a separate flag", async () => {
+    process.env.CHECKIN_ENV = "dev";
+    buildQuickBooks.mockReturnValue({ env: "production" });
+    expect((await posting())?.prod).toBe(true);
+  });
+
+  it("is unbound without a QuickBooks realm", async () => {
+    delete process.env.QBO_REALM_ID;
+    expect(await posting()).toBeUndefined();
+    expect(buildQuickBooks).not.toHaveBeenCalled();
+  });
+
+  it.each(["QBO_EXPENSE_PAYMENT_ACCOUNT_ID", "QBO_EXPENSE_PAYMENT_TYPE"])("is unbound while %s is unset", async (name) => {
+    delete process.env[name];
+    expect(await posting()).toBeUndefined();
+  });
+
+  it("is unbound for a payment type QuickBooks does not take", async () => {
+    process.env.QBO_EXPENSE_PAYMENT_TYPE = "Check";
+    expect(await posting()).toBeUndefined();
+  });
+
+  it("is unbound when the guard refuses the company", async () => {
+    buildQuickBooks.mockReturnValue(null);
+    expect(await posting()).toBeUndefined();
   });
 });
