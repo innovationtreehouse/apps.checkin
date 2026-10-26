@@ -6,11 +6,11 @@
  * bound in-process: the catalog lookup (X10) to the catalog's reads and the
  * inventory load (X11) to local-inventory's apply. The in-kind receipt callees
  * X9 and X13 are bound by their callers (workflow-mapping and receipt). Income
- * books and matches every Benevity deposit: donation hands each completed
- * disbursement to income's intake ports, and its own QuickBooks posting stays
- * unbound. A stop in the one-off move of donation's holdings alerts finance. The
- * in-kind drain books through checkin's one guarded client and reads its accounts
- * and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind
+ * books and matches every Benevity deposit: where QBO_REALM_ID is set, donation
+ * hands each completed disbursement to income's intake ports. Its own QuickBooks
+ * posting stays unbound. A stop in the one-off move of donation's holdings alerts
+ * finance. The in-kind drain books through checkin's one guarded client and reads
+ * its accounts and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
@@ -41,7 +41,7 @@ export function donationPostingMissing(): string[] {
   return process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"];
 }
 
-/** Income's intake ports, loaded on first use so binding at boot stays DB-free. */
+/** Income's intake ports, loaded on first use so binding at boot stays DB-free; bound where QBO_REALM_ID is set. */
 const incomeDeposits: IncomeDeposits = {
   prod: config.isProd(),
   async expectDeposit(orgId, disbursementId, expected) {
@@ -136,7 +136,7 @@ export function configureRuntime(): void {
     catalog: { search: catalogReader.searchItems, getItem: catalogReader.getItem },
     inventory: createLocalInventoryApply(getOrg),
     inKindQb: inKindQbPosting(),
-    deposits: incomeDeposits,
+    deposits: donationPostingMissing().length ? undefined : incomeDeposits,
     otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
     inKind,
     capital,

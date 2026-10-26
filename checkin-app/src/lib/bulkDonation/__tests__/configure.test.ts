@@ -152,8 +152,14 @@ describe("bulk-donation wiring", () => {
     await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
 
+  it("leaves income's intake ports unbound without a realm, so nothing is handed over", async () => {
+    delete process.env.QBO_REALM_ID;
+    expect((await config()).deposits).toBeUndefined();
+  });
+
   it("binds income's intake ports for Benevity, and the move to income's adopt", async () => {
     process.env.CHECKIN_ENV = "dev";
+    process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
     const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ role: "BENEVITY_DONATIONS" as const, budgetOwnerId: null, amountCents: 100 }] };
     const move = { holdings: [], exclusions: [], postingOnAt: null };
@@ -170,6 +176,7 @@ describe("bulk-donation wiring", () => {
   });
 
   it("tells finance when the move of donation's holdings stopped, naming the cause", async () => {
+    process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
 
     await deposits!.moveStopped({ orgId: ORG.id, cause: "deposit 77 held by disbursement D1 is already held by payout 5 <b>" });
