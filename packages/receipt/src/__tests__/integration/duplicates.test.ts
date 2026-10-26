@@ -127,7 +127,8 @@ describeDb("deciding a duplicate group", () => {
   });
 
   it("Undo is refused once the dismissal released the match, which stays decided", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    // The original that keeps B held after B dismisses C.
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     const scan = textFile();
     const b = await receiptService.upload(scan, "text/plain", { details: manualDetails() });
     const c = await receiptService.upload(scan, "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
