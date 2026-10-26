@@ -45,7 +45,7 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_complete");
     const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff" }, orderBy: { id: "asc" } });
-    expect(audit.map((a) => [a.userId, a.valueAfter])).toEqual([[1, "SUBMITTER"], [3, "TREASURER"]]);
+    expect(audit.map((a) => [a.userId, a.valueAfter])).toEqual([[3, "TREASURER"]]);
   });
 
   it("refuses the line's approver and a household member of the submitter", async () => {
@@ -113,7 +113,7 @@ describeDb("sign-off seats", () => {
 
     // The submitter confirms first; the approval follows.
     await expect(approveLine(principal(5, { isBoard: true }), id, approvalId)).rejects.toMatchObject({ status: 403 });
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
     await expect(approveLine(principal(2), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await approveLine(principal(5, { isBoard: true }), id, approvalId);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");

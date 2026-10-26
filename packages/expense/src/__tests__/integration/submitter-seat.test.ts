@@ -2,7 +2,7 @@
  * The reimbursement submitter's seat (#2432): recorded at intake from their confirmation of the
  * receipt, absent on a card charge, and given again through the receipt once finance clears it.
  */
-import { it, expect } from "vitest";
+import { beforeEach, it, expect } from "vitest";
 import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
@@ -29,6 +29,9 @@ const submitterSeats = (expenseId: string) =>
   db.expenseLineSignoff.findMany({ where: { expenseId, seat: "SUBMITTER" }, orderBy: { lineItemId: "asc" } });
 
 describeDb("the submitter seat at intake", () => {
+  // The directory knows every person, so the receipt's reimbursee resolves.
+  beforeEach(() => bindPorts({ signoff: directory({}) }));
+
   it("a confirmed reimbursement records the seat on every line, signed by the submitter and citing the confirmation", async () => {
     const r = reimbursement();
     await receiveCompletedReceipt(r);
