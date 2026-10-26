@@ -20,6 +20,8 @@ const expectDeposit = jest.fn();
 const depositStatus = jest.fn();
 const adoptBenevityDeposits = jest.fn();
 jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds, expectDeposit, depositStatus, adoptBenevityDeposits }));
+const getQuickBooks = jest.fn();
+jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
 // local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check is used here.
 jest.mock("@checkin/local-inventory", () => ({ isProvisionalGtin13: (g: string) => g.startsWith("0200") && g.substring(6, 8) === "27" }));
 const signoff = {
