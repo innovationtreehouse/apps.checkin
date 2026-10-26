@@ -19,7 +19,7 @@ export const InKindDecisionInputSchema = z.object({
   outcome: z.enum(["accept", "refuse", "return"]),
   bucketId: z.number().int().positive().optional(),
   lineValues: z
-    .array(z.object({ lineId: z.number().int().positive(), valueCents: z.number().int().nonnegative().max(MAX_IN_KIND_LINE_VALUE_CENTS) }))
+    .array(z.object({ lineId: z.number().int().positive(), valueCents: z.number().int().positive().max(MAX_IN_KIND_LINE_VALUE_CENTS) }))
     .max(MAX_IN_KIND_LINES)
     .refine((values) => values.reduce((sum, v) => sum + v.valueCents, 0) <= MAX_IN_KIND_TOTAL_CENTS, { message: "The gift's total is over the limit" })
     .optional(),
@@ -455,10 +455,15 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       const sides = (await readBookings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id)) ?? [];
       const posting = await tx.inKindPosting.findUnique({ where: { orgId_source_giftId: { orgId, source, giftId: id } }, select: { matchState: true } });
       if (sides.length > 0 || posting?.matchState === QB_MATCH_STATE.POSTING) throw new ServiceError(409, "This gift has started booking; its bucket can no longer change");
-      const to = await assignableBucket(input.bucketId);
-      await writeBucket(tx, source, id, { budgetOwnerId: to, bucketAssignedByUserId: callerId, bucketAssignedAt: now });
-      await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
-      return { view: decisionView({ ...gift, budgetOwnerId: to, bucketAssignedAt: now }), send: gift.capitalSubmittedAt === null ? capitalReviewLines(gift, to) : null };
+      // The current bucket is kept as is, held or not; resubmitting it only resends to capital review.
+      const to = gift.budgetOwnerId !== null && input.bucketId === gift.budgetOwnerId ? gift.budgetOwnerId : await assignableBucket(input.bucketId);
+      const unchanged = to === gift.budgetOwnerId;
+      if (!unchanged) {
+        await writeBucket(tx, source, id, { budgetOwnerId: to, bucketAssignedByUserId: callerId, bucketAssignedAt: now });
+        await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
+      }
+      const result = unchanged ? gift : { ...gift, budgetOwnerId: to, bucketAssignedAt: now };
+      return { view: decisionView(result), send: gift.capitalSubmittedAt === null ? capitalReviewLines(gift, to) : null };
     }
 
     const outcome = OUTCOME[input.outcome];

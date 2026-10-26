@@ -219,6 +219,10 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
 async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedThrough: string; mayCreate: boolean }, attemptedBefore: Date | null): Promise<Settlement> {
   try {
     if (gift.totalCents <= 0) return needsFinance("This gift has no value to book; skip it");
+    // A receipt's free line is real; a gift without one was valued line by line by finance.
+    if (gift.source === "manual" && gift.lines.some((l) => l.valueCents <= 0)) {
+      return needsFinance("A line of this gift has no value; the app will not book it, so finance books it by hand or skips it");
+    }
     if (attemptedBefore) {
       const own = await lookupOwnJournal(run, gift, attemptedBefore);
       if (own) return own;

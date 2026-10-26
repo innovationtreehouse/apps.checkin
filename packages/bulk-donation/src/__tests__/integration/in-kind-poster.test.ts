@@ -141,6 +141,7 @@ const switchOn = async () => expect(await runInKindQbPosting(orgId, new Date(Dat
 beforeEach(async () => {
   await db.workflowEvent.deleteMany({});
   await db.inKindDonation.deleteMany({});
+  await db.manualInKindDonation.deleteMany({});
   await db.inKindSyncMark.deleteMany({});
   await db.inKindBooking.deleteMany({});
   await db.inKindPosting.deleteMany({});
@@ -200,6 +201,33 @@ describeDb("in-kind drain", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0 });
     expect(qbo.posts).toHaveLength(0);
     expect(await db.inKindPosting.count()).toBe(0);
+  });
+
+  it("a gift without a receipt accepted with a $0 line goes to finance, never booked", async () => {
+    await switchOn();
+    const now = new Date();
+    const { id } = await db.manualInKindDonation.create({
+      data: {
+        orgId,
+        donorFirstName: "Sam",
+        donorLastName: "Giver",
+        donationDate: "2026-10-20",
+        recordedByUserId: UPLOADER,
+        decisionOutcome: "ACCEPTED",
+        decidedByUserId: FINANCE,
+        decidedAt: now,
+        donorHouseholdAttestedAt: now,
+        budgetOwnerId: 1,
+        bucketAssignedByUserId: FINANCE,
+        bucketAssignedAt: now,
+        capitalSubmittedAt: now,
+        lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
+      },
+    });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    const held = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: id } } });
+    expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringContaining("no value") });
   });
 
   it("before switch-on it only matches: a gift it cannot match waits for finance, unbooked", async () => {

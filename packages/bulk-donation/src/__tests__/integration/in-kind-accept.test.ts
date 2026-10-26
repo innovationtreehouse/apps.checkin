@@ -230,6 +230,16 @@ describeDb("the bucket after acceptance", () => {
     expect((await queueFor(FINANCE))[0]).toMatchObject({ revenueBooking: "MATCHED", expenseBooking: null, state: "booking" });
   });
 
+  it("resubmitting the current bucket changes nothing and writes no audit row, even while it is held", async () => {
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const assignedAt = (await db.inKindDonation.findUniqueOrThrow({ where: { id } })).bucketAssignedAt;
+    buckets = BUCKETS.map((b) => (b.id === 1 ? { ...b, archivedAt: new Date() } : b));
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).resolves.toMatchObject({ budgetOwnerId: 1 });
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "IN_KIND_BUCKET_CHANGED" } })).toBe(0);
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).bucketAssignedAt).toEqual(assignedAt);
+  });
+
   it("a bucket archived or losing its Class later holds the gift", async () => {
     const id = await receiptGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
@@ -298,6 +308,11 @@ describeDb("listQueue lookups", () => {
 });
 
 describeDb("accepting: the total cap", () => {
+  it("refuses a line value of 0", () => {
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues: [{ lineId: 1, valueCents: 0 }] }).success).toBe(false);
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues: [{ lineId: 1, valueCents: 1 }] }).success).toBe(true);
+  });
+
   it("refuses line values whose total is over $1,000,000", () => {
     const lineValues = [1, 2].map((lineId) => ({ lineId, valueCents: 60_000_000 }));
     expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues }).success).toBe(false);
