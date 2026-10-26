@@ -20,6 +20,7 @@
  *   drain and the orphan sweep answer "unbound". Creation stays gated until
  *   INCOME_MIRROR_NEWEST_WINS is "true".
  * - owners: checkin's budget-owner buckets.
+ * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class).
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
  * - otherLaneClaims: deposits bulk donation holds, kept out of income's matching.
@@ -55,6 +56,7 @@ import {
 } from "@/lib/shopifyRead/client";
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
+import type { BooksMap } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -88,6 +90,15 @@ const owners: OwnerDirectory = {
   async list() {
     const { default: prisma } = await import("@/lib/prisma");
     return prisma.budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
+  },
+};
+
+const booksMap: BooksMap = {
+  async accounts() {
+    return (await import("@/lib/finance/booksMap")).booksMap.accounts();
+  },
+  async classes() {
+    return (await import("@/lib/finance/booksMap")).booksMap.classes();
   },
 };
 
@@ -172,6 +183,7 @@ export function configureRuntime(): void {
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
     posting: posting(),
     owners,
+    booksMap,
     classes: classSource(),
     alerts,
     otherLaneClaims: { claimedDepositIds: donationClaimedDepositIds },

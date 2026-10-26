@@ -501,6 +501,10 @@ export const classifications = {
         budgetOwnerId: 'internal',
         personId: 'public',
     },
+    BooksMapRoleAccount: {
+        role: 'internal',
+        quickBooksAccountId: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -695,6 +699,8 @@ export const relations = {
     BudgetOwnerTreasurer: {
         budgetOwner: { model: 'BudgetOwner', isList: false },
         person: { model: 'Person', isList: false },
+    },
+    BooksMapRoleAccount: {
     },
 } as const;
 

@@ -1,5 +1,5 @@
 import { defineRuntime } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
   IncomePrincipal,
@@ -66,6 +66,8 @@ export interface IncomeConfig {
    * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
    */
   classes?: QbClassSource;
+  /** Finance's books map: role -> QuickBooks account, bucket -> Class. Nothing reads it yet. */
+  booksMap?: BooksMap;
   /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
   bankAccountId?: string;
   posting?: IncomePosting;

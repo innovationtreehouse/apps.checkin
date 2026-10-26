@@ -43,6 +43,7 @@ export const FINANCE: NavSection = {
     receipt(RECEIPT_FLOW_LINK),
     ...EXPENSE_FINANCE_TABS.setup.map(expense),
     { name: "Budgets", href: "/budgets", icon: "💰", library: "expense" },
+    { name: "Books map", href: "/books-map", icon: "🗺️", library: "expense" },
     ...RECEIPT_MAIL_NAV.map((l) => ({ ...receipt(l), visible: anyRole(["isFinance"]) })),
     ...RECEIPT_FINANCE_NAV.map(receipt),
   ],

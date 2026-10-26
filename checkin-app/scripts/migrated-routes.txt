@@ -67,6 +67,10 @@ GET /api/budget-owners/approver-options
 PUT /api/budget-owners/[id]/owner
 PUT /api/budget-owners/[id]/treasurers/[personId]
 DELETE /api/budget-owners/[id]/treasurers/[personId]
+GET /api/books-map
+GET /api/books-map/quickbooks-accounts
+PUT /api/books-map/classes/[budgetOwnerId]
+PUT /api/books-map/accounts/[role]
 GET /api/donations/uploaded-files
 POST /api/donations/uploaded-files
 GET /api/donations/uploaded-files/[id]/blob
