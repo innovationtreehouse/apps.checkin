@@ -129,11 +129,13 @@ Income and donation rules are in `revenue.md`.
   [Decision — owner]
 
 - An expense's sign-offs run in steps: first the line's approval, then the
-  Treasurer, then the Board. Each step refuses everyone who signed an earlier
-  step anywhere on the expense, and everyone in their households. A step is
-  also refused to whoever already signed a later one on the expense. One
-  person may sign the same step on several lines. This holds for card charges
-  and reimbursements alike, and for recording the Board's authorization.
+  Treasurer, then the Board. Finance moving a line out of an exception is a
+  signature at the Treasurer step, and recording the Board's authorization is
+  one at the Board step. Each step refuses everyone who signed an
+  earlier step anywhere on the expense, and a step is also refused to whoever
+  already signed a later one. Nobody signs while someone in their household
+  holds a seat on the expense. One person may sign the same step on several
+  lines. This holds for card charges and reimbursements alike.
   [Decision — owner]
 
 - Only a bucket approver, or a Board member without a conflict in their place,

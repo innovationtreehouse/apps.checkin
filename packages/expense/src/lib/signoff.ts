@@ -126,14 +126,15 @@ function treasurerConflicted(facts: SignoffFacts): Set<number> {
  * Why `userId` may not record the Board authorization, or null. Recording is not an approval: a
  * FINANCE holder without a conflict records what the Board decided; with none, a Board member
  * without one. It is the Board's step, so whoever signs an earlier step on the expense, or shares
- * a household with them, does not record it.
+ * a household with anyone seated on it, does not record it. The recorder then counts as the
+ * Board step's signer.
  */
 export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: number): string | null {
   if (factsByLine.length === 0) return "the expense has no lines";
   const blocked = new Set(factsByLine.flatMap((f) => f.conflicted));
   if (blocked.has(userId)) return "someone conflicted on the charge cannot record the Board authorization";
-  for (const f of factsByLine) for (const id of [...otherStepSigners(f, "BOARD"), ...f.seatedHouseholds]) blocked.add(id);
-  if (blocked.has(userId)) return "someone who signs an earlier step on this expense, or shares a household with its signer, cannot record the Board authorization";
+  for (const id of [...otherStepSigners(factsByLine[0], "BOARD"), ...factsByLine[0].seatedHouseholds]) blocked.add(id);
+  if (blocked.has(userId)) return "someone who signs an earlier step on this expense, or shares a household with anyone seated on it, cannot record the Board authorization";
   const { finance, board } = factsByLine[0];
   if (finance.some((id) => !blocked.has(id))) return finance.includes(userId) ? null : "signer does not hold FINANCE";
   return board.includes(userId) ? null : "signer is not a Board member";
