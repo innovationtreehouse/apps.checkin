@@ -44,6 +44,14 @@ describeDb("duplicate detection", () => {
     expect(row && (await checkDuplicate(row))).toBe(first.id);
   });
 
+  it.each(["orderNumber", "receiptNumber"])("does not match an empty %s", async (field) => {
+    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
+    await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "" } });
+    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    expect(row && (await checkDuplicate(row))).toBeNull();
+  });
+
   it("does not match a different retailer name on the same date and total", async () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });

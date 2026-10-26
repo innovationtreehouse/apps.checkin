@@ -14,7 +14,8 @@ const byUpload = (a: Node, b: Node) => a.uploadedAt.getTime() - b.uploadedAt.get
 /**
  * Every receipt matching one of `ids` on any tier, in either direction, minus pairs a person
  * decided are different purchases. A mailed body discarded as a copy of its own message's
- * attachment matches nothing. Retailers compare case- and whitespace-folded on both sides.
+ * attachment matches nothing. Retailers compare case- and whitespace-folded on both sides; an
+ * empty retailer, order number or receipt number matches nothing.
  */
 async function matchesOf(orgId: string, ids: string[]): Promise<Node[]> {
   return db.$queryRaw<Node[]>`
@@ -27,11 +28,12 @@ async function matchesOf(orgId: string, ids: string[]): Promise<Node[]> {
       AND (
         r.file_hash = ro.file_hash
         OR (
-          lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) = lower(btrim(regexp_replace(o.retailer, '\\s+', ' ', 'g')))
+          btrim(d.retailer) <> ''
+          AND lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) = lower(btrim(regexp_replace(o.retailer, '\\s+', ' ', 'g')))
           AND (
             (d.receipt_date = o.receipt_date AND d.receipt_total_cents = o.receipt_total_cents)
-            OR d.order_number = o.order_number
-            OR d.receipt_number = o.receipt_number
+            OR (d.order_number <> '' AND d.order_number = o.order_number)
+            OR (d.receipt_number <> '' AND d.receipt_number = o.receipt_number)
           )
         )
       )
