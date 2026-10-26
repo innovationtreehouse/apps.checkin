@@ -240,12 +240,14 @@ describe("bulk donation — finance journey", () => {
     expect(dropped.json).toMatchObject({ id: again.json.id, blobDeleted: true });
     expect((await api(f, `/api/donations/uploaded-files/${again.json.id}/blob`)).status).toBe(404);
 
-    // The QuickBooks queue: exclusions persist once; candidates need QuickBooks; only a held disbursement resolves.
+    // Income owns every deposit: donation refuses new exclusions and QuickBooks actions; candidates need QuickBooks.
     const exclusion = { qbTxnId: `qb-${stamp}`, reason: "hand-booked twice" };
-    expect((await send(f, "POST", "/api/donations/qb-exclusions", exclusion)).status).toBe(200);
     expect((await send(f, "POST", "/api/donations/qb-exclusions", exclusion)).status).toBe(409);
     const candidates = await api(f, `/api/donations/disbursement-events/${disbursement}/qb-candidates`);
     expect([candidates.status, candidates.json]).toEqual([503, { error: "QuickBooks is not connected" }]);
-    expect((await send(f, "POST", `/api/donations/disbursement-events/${disbursement}/qb-resolve`, { action: "retry" })).status).toBe(409);
+    for (const action of ["match", "dismiss", "retry", "book"]) {
+      const body = { action, qbTxnId: `qb-${stamp}`, reason: "hand-booked" };
+      expect((await send(f, "POST", `/api/donations/disbursement-events/${disbursement}/qb-resolve`, body)).status).toBe(409);
+    }
   });
 });
