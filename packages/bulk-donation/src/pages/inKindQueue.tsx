@@ -151,7 +151,7 @@ export default function InKindQueuePage() {
   const buckets = (owners.data ?? []).filter((b) => !b.archivedAt && b.quickBooksClassId !== null);
 
   const mayDecide = (q: QueueItem) => !q.callerConflicted && (isFinance || (isBoard && q.allFinanceConflicted));
-  const decidable = (q: QueueItem) => q.state === "decision" || (q.outcome === "ACCEPTED" && q.revenueBooking === null && q.expenseBooking === null && (q.state === "bucket" || q.state === "booking"));
+  const decidable = (q: QueueItem) => q.state === "decision" || (q.outcome === "ACCEPTED" && q.revenueBooking === null && q.expenseBooking === null && (q.state === "bucket" || q.state === "capital" || q.state === "booking"));
   const settleKind = (q: QueueItem) => (q.state === "withdrawal" ? "withdrawal" : q.state === "replay" ? "replay" : null);
 
   return (

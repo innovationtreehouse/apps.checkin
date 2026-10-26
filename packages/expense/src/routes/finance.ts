@@ -1,6 +1,6 @@
 /**
  * FINANCE and Board surfaces: holds, account mapping, QuickBooks accounts, bucket ownership,
- * ledgers, settings, flags, the capital seed and QuickBooks matching. The registry gates each
+ * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
@@ -14,6 +14,7 @@ import { getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
+import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
 import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
 import { financeQueueTab } from "../financeQueue";
@@ -292,6 +293,18 @@ export const capitalSeed: ExpenseRouteHandler = async ({ req }) => {
   const rows = await parseBody(req, CapitalSeedSchema);
   const principal = await getPrincipal();
   return { ExpenseCapitalSeedResult: await mapServiceErrors(() => seedCapitalAssets(principal, rows)) };
+};
+
+export const donatedCapital: ExpenseRouteHandler = async () => {
+  const principal = await getPrincipal();
+  return { DonatedCapitalLineView: await mapServiceErrors(() => listDonatedCapital(principal)) };
+};
+
+export const reviewDonatedCapital: ExpenseRouteHandler = async ({ req, params }) => {
+  const id = parseId(params.id);
+  const body = await parseBody(req, DonatedCapitalReviewSchema);
+  const principal = await getPrincipal();
+  return { DonatedCapitalLineView: await mapServiceErrors(() => reviewDonatedLine(principal, id, body)) };
 };
 
 export const candidates: ExpenseRouteHandler = async ({ params }) => {
