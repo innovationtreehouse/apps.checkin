@@ -1,5 +1,5 @@
 import { db, type Db } from "../db";
-import type { Prisma } from "../generated/prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import { BODY_COPY_DISCARDED } from "./receipt-flow";
 import { STATE_LABELS } from "./stateLabels";
 
@@ -14,11 +14,20 @@ type Client = Db | Prisma.TransactionClient;
 const isLive = (n: Pick<Node, "state">) => n.state !== "discarded";
 const byUpload = (a: Node, b: Node) => a.uploadedAt.getTime() - b.uploadedAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
+type NumberColumn = "order_number" | "receipt_number";
+
+/** An order or receipt number, case-folded with all whitespace and a leading `#` dropped. */
+const foldedNumber = (side: "d" | "o", column: NumberColumn) =>
+  Prisma.raw(`regexp_replace(lower(regexp_replace(${side}.${column}, '\\s+', '', 'g')), '^#', '')`);
+const sameNumber = (column: NumberColumn) =>
+  Prisma.sql`(${foldedNumber("d", column)} <> '' AND ${foldedNumber("d", column)} = ${foldedNumber("o", column)})`;
+
 /**
  * Every receipt matching one of `ids` on any tier, in either direction, minus pairs a person
  * decided are different purchases. A mailed body discarded as a copy of its own message's
- * attachment matches nothing. Retailers compare case- and whitespace-folded on both sides; an
- * empty retailer, order number or receipt number matches nothing.
+ * attachment matches nothing. Retailers compare case- and whitespace-folded on both sides, and
+ * order and receipt numbers as `foldedNumber`; an empty retailer, or a number empty once folded,
+ * matches nothing.
  */
 async function matchesOf(client: Client, orgId: string, ids: string[]): Promise<Node[]> {
   return client.$queryRaw<Node[]>`
@@ -35,8 +44,8 @@ async function matchesOf(client: Client, orgId: string, ids: string[]): Promise<
           AND lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) = lower(btrim(regexp_replace(o.retailer, '\\s+', ' ', 'g')))
           AND (
             (d.receipt_date = o.receipt_date AND d.receipt_total_cents = o.receipt_total_cents)
-            OR (d.order_number <> '' AND d.order_number = o.order_number)
-            OR (d.receipt_number <> '' AND d.receipt_number = o.receipt_number)
+            OR ${sameNumber("order_number")}
+            OR ${sameNumber("receipt_number")}
           )
         )
       )
