@@ -63,19 +63,30 @@ function useRoles(): { isFinance: boolean; isBoard: boolean } {
 function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Bucket[]; onDone: () => void }) {
   const accepted = item.outcome === "ACCEPTED";
   const [bucketId, setBucketId] = useState<string | null>(item.budgetOwnerId === null ? null : String(item.budgetOwnerId));
-  const [values, setValues] = useState<Record<number, number>>(
-    Object.fromEntries(item.lines.map((l) => [l.id, (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
+  const [values, setValues] = useState<Record<number, number | "">>(
+    Object.fromEntries(item.lines.map((l) => [l.id, l.valueCents === null && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
   );
   const [attested, setAttested] = useState(false);
   const [busy, setBusy] = useState(false);
   const needsValues = item.source === "manual" && !accepted;
+  // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
+  const settings = useLoad<{ capitalLineItemThresholdCents: number }>(needsValues ? "/api/expense/org-settings" : null);
+  const valueCents = (lineId: number) => Math.round(Number(values[lineId] || 0) * 100);
+  const allValued = item.lines.every((l) => valueCents(l.id) > 0);
+  const threshold = settings.data?.capitalLineItemThresholdCents;
+  const warnLargeValue =
+    needsValues && threshold !== undefined ? item.lines.reduce((sum, l) => sum + valueCents(l.id), 0) >= threshold : item.warnLargeValue;
+  const bucketOptions = buckets.map((b) => ({ value: String(b.id), label: b.name }));
+  if (item.budgetOwnerId !== null && !buckets.some((b) => b.id === item.budgetOwnerId)) {
+    bucketOptions.unshift({ value: String(item.budgetOwnerId), label: item.budgetOwnerName ?? "Current bucket" });
+  }
 
   async function send(outcome: "accept" | "refuse" | "return") {
     const body = {
       outcome,
       confirmOutsideDonorHousehold: true,
       ...(outcome === "accept" ? { bucketId: Number(bucketId) } : {}),
-      ...(outcome === "accept" && needsValues ? { lineValues: item.lines.map((l) => ({ lineId: l.id, valueCents: Math.round((values[l.id] ?? 0) * 100) })) } : {}),
+      ...(outcome === "accept" && needsValues ? { lineValues: item.lines.map((l) => ({ lineId: l.id, valueCents: valueCents(l.id) })) } : {}),
     };
     setBusy(true);
     const label = accepted ? "Bucket changed" : outcome === "accept" ? "Gift accepted" : outcome === "refuse" ? "Gift refused" : "Gift marked returned";
@@ -83,7 +94,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
     setBusy(false);
   }
 
-  const shown = WARNINGS.filter((w) => item[w.key]);
+  const shown = WARNINGS.filter((w) => (w.key === "warnLargeValue" ? warnLargeValue : item[w.key]));
   return (
     <Paper withBorder p="md" radius="md">
       <Stack>
@@ -103,7 +114,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
                 <Table.Td>{l.quantity}</Table.Td>
                 <Table.Td>
                   {needsValues ? (
-                    <NumberInput aria-label={`Value of line ${l.id}`} min={0} decimalScale={2} value={values[l.id]} onChange={(v) => setValues({ ...values, [l.id]: Number(v) || 0 })} w={140} />
+                    <NumberInput aria-label={`Value of line ${l.id}`} min={0} decimalScale={2} value={values[l.id]} onChange={(v) => setValues({ ...values, [l.id]: v === "" ? "" : Number(v) || 0 })} w={140} />
                   ) : (
                     cents(l.valueCents)
                   )}
@@ -116,7 +127,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
         <Select
           label="Budget bucket"
           placeholder="Pick a bucket"
-          data={buckets.map((b) => ({ value: String(b.id), label: b.name }))}
+          data={bucketOptions}
           value={bucketId}
           onChange={setBucketId}
           searchable
@@ -128,7 +139,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
           onChange={(e) => setAttested(e.currentTarget.checked)}
         />
         <Group>
-          <Button onClick={() => send("accept")} disabled={!attested || !bucketId} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
+          <Button onClick={() => send("accept")} disabled={!attested || !bucketId || (needsValues && !allValued)} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
           {!accepted && (
             <>
               <Button variant="light" color="red" onClick={() => send("refuse")} disabled={!attested} loading={busy}>Refuse</Button>
