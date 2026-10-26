@@ -158,6 +158,11 @@ export const classifications = {
         bucketAssignedAt: 'internal',
         capitalSubmittedAt: 'internal',
     },
+    InKindSyncMark: {
+        orgId: 'internal',
+        receiptId: 'internal',
+        seq: 'internal',
+    },
     ManualInKindDonation: {
         id: 'internal',
         orgId: 'internal',
@@ -235,6 +240,8 @@ export const relations = {
     },
     InKindDonation: {
         lines: { model: 'InKindDonationLine', isList: true },
+    },
+    InKindSyncMark: {
     },
     ManualInKindDonation: {
         lines: { model: 'ManualInKindDonationLine', isList: true },

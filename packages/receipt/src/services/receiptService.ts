@@ -677,7 +677,10 @@ export const receiptService = {
       ? donorNames(input.donor, actor)
       : { donorFirstName: null, donorLastName: null, donorCompanyName: null };
     await db.$transaction(async (tx) => {
-      await tx.receipt.update({ where: { id }, data: { isInKind: input.isInKind, donorSync: "pending", ...donor } });
+      // Locked against finalize: from finalize on the mark is fixed (1280 §2.4).
+      const [locked] = await tx.$queryRaw<{ state: string }[]>`SELECT state FROM receipt_details WHERE id = ${id} FOR UPDATE`;
+      if (!EDITABLE.has(locked.state)) throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
+      await tx.receipt.update({ where: { id }, data: { isInKind: input.isInKind, donorSync: "pending", donorSyncSeq: { increment: 1 }, ...donor } });
       await audit(tx, id, actor, {
         action: "in_kind_updated",
         fieldChanged: "isInKind",

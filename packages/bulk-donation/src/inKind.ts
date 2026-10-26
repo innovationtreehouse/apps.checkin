@@ -12,6 +12,7 @@ import { inKindService } from "./services/inKindService";
 import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
 const receiptIdSchema = z.string().min(1);
+const syncSeqSchema = z.number().int().nonnegative();
 
 /** Built at call time: the org is only known once the host has configured the runtime. */
 async function thisOrg() {
@@ -45,18 +46,21 @@ export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
   });
 }
 
-/** X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the donor. */
-export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
+/**
+ * X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the
+ * donor. `seq` is the receipt's sync sequence: a call older than one already seen is ignored.
+ */
+export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  await inKindService.recordDonor(orgId, receiptId, InKindDonorSchema.parse(donor));
+  await inKindService.recordDonor(orgId, receiptId, InKindDonorSchema.parse(donor), syncSeqSchema.parse(seq));
 }
 
-/** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt is a no-op. */
-export async function withdrawInKind(orgId: string, receiptId: string): Promise<void> {
+/** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt or a stale `seq` is a no-op. */
+export async function withdrawInKind(orgId: string, receiptId: string, seq: number): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  await inKindService.withdraw(orgId, receiptId);
+  await inKindService.withdraw(orgId, receiptId, syncSeqSchema.parse(seq));
 }
 
 /** The host showed these in-kind receipts with their donor names: one donor-read audit row per receipt. */

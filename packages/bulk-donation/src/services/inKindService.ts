@@ -2,7 +2,7 @@
 // and the donor (X13) land on one row per (orgId, receiptId), in either order. The money side is
 // written once: a replay with the same values does nothing, and one that differs is kept out and
 // raised for finance.
-import { db } from "../db";
+import { db, type PrismaTransactionClient } from "../db";
 import type { InKindDonor } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
@@ -82,12 +82,27 @@ async function recordMoney(orgId: string, receiptId: string, money: InKindMoney)
 }
 
 /**
- * X13: record the donor; a later call replaces it, and a replacement that differs stamps
- * donorReplacedAt for the accept screen. The audit row carries no donor field.
+ * Raise the receipt's sync mark to `seq` and lock it for the rest of the transaction. False when
+ * a newer X13 call has already been seen: this one is stale. An equal seq is a resend of the same
+ * receipt state and goes through.
  */
-async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
+async function claimSyncMark(tx: PrismaTransactionClient, orgId: string, receiptId: string, seq: number): Promise<boolean> {
+  const claimed = await tx.$queryRaw<unknown[]>`
+    INSERT INTO in_kind_sync_marks (org_id, receipt_id, seq) VALUES (${orgId}, ${receiptId}, ${seq})
+    ON CONFLICT (org_id, receipt_id) DO UPDATE SET seq = EXCLUDED.seq WHERE in_kind_sync_marks.seq <= EXCLUDED.seq
+    RETURNING seq`;
+  return claimed.length > 0;
+}
+
+/**
+ * X13: record the donor; a later call replaces it, and a replacement that differs stamps
+ * donorReplacedAt for the accept screen. A stale call, or one for a gift whose withdrawal is
+ * settled, changes nothing. The audit row carries no donor field.
+ */
+async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void> {
   await db.$transaction(async (tx) => {
-    await tx.$executeRaw`
+    if (!(await claimSyncMark(tx, orgId, receiptId, seq))) return;
+    const written = await tx.$executeRaw`
       INSERT INTO in_kind_donations (org_id, receipt_id, donor_first_name, donor_last_name, donor_company_name, donor_recorded_at)
       VALUES (${orgId}, ${receiptId}, ${donor.firstName}, ${donor.lastName}, ${donor.companyName}, now())
       ON CONFLICT (org_id, receipt_id) DO UPDATE SET
@@ -100,7 +115,9 @@ async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor)
         donor_first_name = EXCLUDED.donor_first_name,
         donor_last_name = EXCLUDED.donor_last_name,
         donor_company_name = EXCLUDED.donor_company_name,
-        donor_recorded_at = EXCLUDED.donor_recorded_at`;
+        donor_recorded_at = EXCLUDED.donor_recorded_at
+      WHERE in_kind_donations.withdrawal_settled_at IS NULL`;
+    if (written === 0) return;
     await recordEvent(tx, { orgId, entityType: "in_kind", entityId: receiptId, eventType: "IN_KIND_DONOR_RECORDED" });
   });
 }
@@ -108,10 +125,11 @@ async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor)
 /**
  * X13: the in-kind mark was cleared. Without a money side the row (and its donor pii) is
  * deleted; with one, nothing is deleted and the receipt is flagged as an anomaly for finance.
- * An unknown receipt is a no-op.
+ * An unknown receipt, or a stale call, is a no-op.
  */
-async function withdraw(orgId: string, receiptId: string): Promise<void> {
+async function withdraw(orgId: string, receiptId: string, seq: number): Promise<void> {
   await db.$transaction(async (tx) => {
+    if (!(await claimSyncMark(tx, orgId, receiptId, seq))) return;
     const deleted = await tx.inKindDonation.deleteMany({ where: { orgId, receiptId, moneyReceivedAt: null } });
     if (deleted.count > 0) {
       await recordEvent(tx, { orgId, entityType: "in_kind", entityId: receiptId, eventType: "IN_KIND_WITHDRAWN" });

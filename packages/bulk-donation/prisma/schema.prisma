@@ -376,6 +376,20 @@ model InKindDonation {
   @@map("in_kind_donations")
 }
 
+// The newest X13 donor/withdraw call seen per receipt (the receipt's donorSyncSeq). A call older
+// than this is stale and ignored. Never deleted, so it outlives a withdrawn row; holds no pii.
+model InKindSyncMark {
+  /// @sensitivity:internal
+  orgId     String @map("org_id")
+  /// @sensitivity:internal
+  receiptId String @map("receipt_id")
+  /// @sensitivity:internal
+  seq       Int
+
+  @@id([orgId, receiptId])
+  @@map("in_kind_sync_marks")
+}
+
 // An in-kind donation entered by ops with no receipt (FR5): each line is a catalog item with a
 // quantity and ops' suggested value; finance sets the value when accepting it. Its goods load into inventory under `donation:<id>` (X11);
 // inventoryLoadedAt is set once that load succeeds.

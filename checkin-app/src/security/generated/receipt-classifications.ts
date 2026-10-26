@@ -26,6 +26,7 @@ export const classifications = {
         donorLastName: 'pii',
         donorCompanyName: 'pii',
         donorSync: 'internal',
+        donorSyncSeq: 'internal',
         pushedAt: 'internal',
     },
     ReceiptDetail: {

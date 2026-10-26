@@ -91,7 +91,7 @@ function receipt(totalCents = 2500): CompletedReceipt {
 
 async function receiptGift(totalCents = 2500): Promise<number> {
   await ingestInKind(receipt(totalCents));
-  await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null });
+  await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
   return (await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } })).id;
 }
 
@@ -116,6 +116,7 @@ const queueFor = (callerId: number) => inKindAcceptService.listQueue(orgId, call
 beforeEach(async () => {
   await db.workflowEvent.deleteMany({});
   await db.inKindDonation.deleteMany({});
+  await db.inKindSyncMark.deleteMany({});
   await db.manualInKindDonation.deleteMany({});
   await db.inKindBooking.deleteMany({});
   buckets = BUCKETS;
@@ -253,7 +254,7 @@ describeDb("warnings", () => {
   it("warns on a surname match, a large value and a replaced donor, and never blocks", async () => {
     largeValueCents = 2500;
     const id = await receiptGift(2500);
-    await recordInKindDonor(orgId, R1, { firstName: "Janet", lastName: "Doe", companyName: null });
+    await recordInKindDonor(orgId, R1, { firstName: "Janet", lastName: "Doe", companyName: null }, 0);
     const [item] = await queueFor(FINANCE);
     expect(item).toMatchObject({ warnDonorSurnameMatch: true, warnDonorIsRecorder: false, warnLargeValue: true, warnDonorReplaced: true });
     expect(item).not.toHaveProperty("donorLastName");
@@ -389,7 +390,7 @@ describeDb("getGift", () => {
 
   it("shows a settled withdrawal with nothing left to do and no donor", async () => {
     const id = await receiptGift();
-    await withdrawInKind(orgId, R1);
+    await withdrawInKind(orgId, R1, 0);
     await inKindService.settle(orgId, id, "withdrawal", by(FINANCE));
     expect(await inKindAcceptService.getGift(orgId, "receipt", id, reader)).toMatchObject({
       state: null,
@@ -423,7 +424,7 @@ describeDb("capital review", () => {
       { ...r.lineItems[0], receiptLineItemId: 2, lineNumber: 2, description: "Saw", totalPriceCents: 600 },
     ];
     await ingestInKind(r);
-    await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null });
+    await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
     const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } });
 
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
