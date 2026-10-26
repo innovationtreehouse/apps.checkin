@@ -141,9 +141,12 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
 });
 
 /** A manual reimbursement Alice uploads for `reimburseePersonId`, waiting in submitter review. */
+let uploads = 0;
 async function uploadFor(reimburseePersonId: number) {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId });
+  // A retailer of its own, so a second upload is not flagged as a duplicate of the first.
+  const details = manualDetails({ retailer: `Acme Hardware ${++uploads}` });
+  const r = await receiptService.upload(textFile(), "text/plain", { details, needsReimbursement: true, reimburseePersonId });
   expect(r.state).toBe("submitter_review");
   return r.id;
 }
