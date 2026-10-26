@@ -39,8 +39,8 @@ moment (principle *Apply once*), without a shared database or a master.
 - **Purchases and Bills (money out) → expense.** No change today: only expense
   books them. When in-kind needs one, expense takes the request through an
   intake port and books it with its existing machinery.
-- **Journal entries → their only user.** In-kind, if finance books a gift that
-  way. A second user would get one owner by the same rule.
+- **Journal entries → in-kind,** which books each gift as one. A second user
+  would get one owner by the same rule.
 - **One books map.** Which QuickBooks account and Class a line books to is
   answered in one place, beside the budget buckets, through one port. No lane
   keeps its own copy, so two lanes cannot disagree about the bank account.
@@ -93,7 +93,7 @@ kind can clash.
 |---|---|---|
 | Deposit | income (Shopify payouts), donation (Benevity disbursements) | income |
 | Purchase, Bill | expense (expenses and single lines) | expense |
-| Journal entry | nobody yet; in-kind possibly | in-kind, while it is the only user |
+| Journal entry | in-kind (one per gift) | in-kind, while it is the only user |
 
 Expense already keeps one entry per record across its expenses and lines with
 its own claim table, unique on organisation, entry kind and id. It needs nothing
@@ -182,32 +182,23 @@ which changed after it was matched") instead of adding a column for it.
 
 ### Expense owns every Purchase and Bill
 
-Nothing changes until in-kind's posting lane (#2182) needs it. Then expense
-gains the same shape of port:
-
-- `expectOutgoing(source, sourceKey, expected)`: entry kind, date, amount,
-  vendor where a Bill needs one, lines by account and bucket, and whether it
-  may only match.
-- `outgoingStatus(source, sourceKeys)`.
-
-Expense stores each request as a light posting-request row, not an expense, so
-it skips receipts and sign-off. Its poster, key lookup, closed-books gate, claim
-table, finance flag, drift and orphan sweep take the row as they take an
-expense.
+Nothing changes. In-kind books journal entries, so it needs no port into
+expense. If another part of the app ever needs a Purchase or Bill, expense
+takes the request through an intake port and books it with its own machinery.
 
 ### In-kind
 
-Whether in-kind matches hand entries, and how finance books a gift, is open.
-Either shape fits the rule:
+Each gift books as one journal entry: in-kind income credited, and each line
+debited to in-kind expense or fixed assets (owner, 2026-10-25). In-kind owns
+journal entries and clashes with nobody, so it needs no port to income or
+expense. The app creates a journal entry only through an in-kind function that
+refuses any account outside the in-kind roles.
 
-- **One journal entry per gift** (expense debit and in-kind revenue credit
-  together). In-kind owns journal entries, clashes with nobody, and needs no
-  port.
-- **Two entries** (a Deposit or revenue-side entry, and a Purchase or Bill). In-kind
-  hands each half to its owner. Each half is keyed, retried and swept by its
-  owner, so neither can double-book, but the gift can sit half booked. In-kind
-  shows the gift as partly booked until both halves report booked, and raises
-  it to finance after a day.
+Finance's earlier hand bookings went through a clearing account as a Deposit
+and a Purchase. In-kind matches those pairs, but only entries in the clearing
+account, which no other lane books to, so the rule above still holds: income
+and expense never see them. Details are in `2182_IN_KIND_EXPENSE.md`, Posting to
+QuickBooks.
 
 ## Migration
 
@@ -268,15 +259,14 @@ PR 2. With all four, every run passed.
 4. **Contract,** a release after 2: the drops in Migration step 4, the
    cross-lane list, income's environment fallback for map roles, and moving
    income's row index to organisation, source and key.
-5. **Expense intake,** with in-kind's posting lane (#2182), not before.
 
 **Security boundary and registry.** PR 3 removes whole registry entries with
 their routes, under the decommission exception. Income's reconciliation routes
 return whole rows, so the new columns reach finance and the board as internal
 fields under their existing entries. The resolve roles already match (OWN-3).
 PR 0's finance screen adds routes: their registry entries land
-first, each in its own PR based on `main`. PRs 1, 2, 4 and 5 add no route and
-change no grant.
+first, each in its own PR based on `main`. PRs 1, 2 and 4 add no route and
+change no grant. In-kind's posting lane is #2182's own work.
 
 ## Open questions
 
@@ -292,8 +282,8 @@ change no grant.
   both lanes, so no registry change. The board keeps the queue and outcomes but
   loses the live QuickBooks candidates for Benevity batches, which it can read
   in donation today.
-- **OWN-4. In-kind's shape.** One journal entry per gift if finance agrees,
-  decided with #2182 (owner agrees the default, 2026-10-25).
+- **OWN-4. In-kind's shape.** Resolved: one journal entry per gift (owner,
+  2026-10-25). See "In-kind".
 - **OWN-5. The package name.** Resolved: keep "income" (owner, 2026-10-25).
 - **OWN-6. Rules text.** Rules stay at board level: no new principle, one
   bullet under Donations, landing in PR 2 (owner, 2026-10-25). See "Rules".

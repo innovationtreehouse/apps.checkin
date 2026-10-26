@@ -16,6 +16,10 @@ export const BOOKS_MAP_ROLES = [
   "BENEVITY_MATCHES",
   "BENEVITY_FEES",
   "EXPENSE_PAYMENT",
+  "INKIND_INCOME",
+  "INKIND_EXPENSE",
+  "FIXED_ASSETS",
+  "INKIND_CLEARING",
 ] as const;
 
 export type BooksMapRole = (typeof BOOKS_MAP_ROLES)[number];

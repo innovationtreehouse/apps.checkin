@@ -411,7 +411,7 @@ describeDb("getGift", () => {
 describeDb("capital review", () => {
   function captureCapital(awaiting: { giftSource: string; giftId: number }[] = []) {
     const sent: CapitalReviewLine[][] = [];
-    capital = { submit: async (_org, lines) => void sent.push(lines), awaitingReview: async () => awaiting };
+    capital = { submit: async (_org, lines) => void sent.push(lines), awaitingReview: async () => awaiting, assetLineIds: async () => [] };
     configure();
     return sent;
   }
@@ -458,7 +458,7 @@ describeDb("capital review", () => {
 
   it("a failed send keeps the accept, waits on capital review, and accepting again resends", async () => {
     const id = await receiptGift();
-    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [] };
+    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
     configure();
     await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 502 });
     const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });

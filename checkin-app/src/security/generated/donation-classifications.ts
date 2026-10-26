@@ -132,6 +132,7 @@ export const classifications = {
     DonationOrgSettings: {
         orgId: 'internal',
         qbPostingOnAt: 'internal',
+        inKindQbPostingOnAt: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -209,7 +210,22 @@ export const classifications = {
         giftId: 'internal',
         side: 'internal',
         matchState: 'internal',
+        qbEntity: 'internal',
         qbTxnId: 'internal',
+        createdAt: 'internal',
+        updatedAt: 'internal',
+    },
+    InKindPosting: {
+        id: 'internal',
+        orgId: 'internal',
+        source: 'internal',
+        giftId: 'internal',
+        matchState: 'internal',
+        claimedAt: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
+        bookedTotalCents: 'internal',
+        bookedTxnDate: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -253,6 +269,8 @@ export const relations = {
         donation: { model: 'InKindDonation', isList: false },
     },
     InKindBooking: {
+    },
+    InKindPosting: {
     },
 } as const;
 
