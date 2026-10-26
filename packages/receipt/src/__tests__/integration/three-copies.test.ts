@@ -1,24 +1,11 @@
 import { beforeEach, expect, it } from "vitest";
+import type { DuplicateMember } from "../../lib/duplicateGroup";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 // Three receipts for one purchase, A uploaded first, then B, then C. Each test drives finance's
 // decisions through the service and asserts the group behaviour of 2516_RECEIPT_DUPLICATES.md.
-// A test is `it.fails` until the decisions it drives land.
-
-type DuplicateMember = { id: string; state: string; label: string };
-/** The viewed receipt and every member not dismissed against it, in upload order. */
-type DuplicateGroup = { members: DuplicateMember[]; dismissed: string[] };
-
-/** The group API of design §5–6, which receiptService does not have yet. */
-interface DuplicateGroupApi {
-  duplicateGroup(id: string): Promise<DuplicateGroup>;
-  notThisOne(id: string, otherId: string): Promise<DuplicateGroup>;
-  differentPurchases(id: string, shownIds: string[]): Promise<unknown>;
-  keepThisOne(id: string, shownIds: string[]): Promise<unknown>;
-}
-const groups = receiptService as typeof receiptService & DuplicateGroupApi;
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -33,11 +20,11 @@ const upload = (file: Buffer) => receiptService.upload(file, "text/plain", { det
 const uploadForReview = (file: Buffer) => receiptService.upload(file, "text/plain", {});
 
 async function groupOf(id: string): Promise<string[]> {
-  return (await groups.duplicateGroup(id)).members.map((m) => m.id);
+  return (await receiptService.duplicateGroup(id)).members.map((m) => m.id);
 }
 
 async function memberOf(viewed: string, id: string): Promise<DuplicateMember | undefined> {
-  return (await groups.duplicateGroup(viewed)).members.find((m) => m.id === id);
+  return (await receiptService.duplicateGroup(viewed)).members.find((m) => m.id === id);
 }
 
 async function statesOf(...ids: string[]): Promise<Array<string | undefined>> {
@@ -88,21 +75,21 @@ describeDb("three copies of one purchase", () => {
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
   });
 
-  it.fails("a third copy shows the copy already dismissed against the original, and clearing it decides both pairs", async () => {
+  it("a third copy shows the copy already dismissed against the original, and clearing it decides both pairs", async () => {
     const { a, b, c } = await sameFileThrice();
     actAs(FINANCE);
-    await groups.notThisOne(b.id, a.id);
+    await receiptService.notThisOne(b.id, a.id);
     expect(await stateOf(b.id)).toBe("duplicate_flagged");
 
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
-    await groups.differentPurchases(c.id, [a.id, b.id, c.id]);
+    await receiptService.differentPurchases(c.id, [a.id, b.id, c.id]);
 
-    expect((await groups.duplicateGroup(c.id)).dismissed.sort()).toEqual([a.id, b.id].sort());
+    expect((await receiptService.duplicateGroup(c.id)).dismissed.sort()).toEqual([a.id, b.id].sort());
     expect(await statesOf(a.id, b.id, c.id)).toEqual(["receipt_finalized", "receipt_finalized", "receipt_finalized"]);
     expect(ports.calls.pushes.map((p) => p.receiptId).sort()).toEqual([a.id, b.id, c.id].sort());
   });
 
-  it.fails("matched by fields, each copy's group holds the other until a decision covers that pair", async () => {
+  it("matched by fields, each copy's group holds the other until a decision covers that pair", async () => {
     const a = await upload(textFile());
     const b = await upload(textFile());
     const c = await upload(textFile());
@@ -110,13 +97,13 @@ describeDb("three copies of one purchase", () => {
     expect(await groupOf(c.id)).toContain(b.id);
 
     actAs(FINANCE);
-    await groups.notThisOne(b.id, c.id);
+    await receiptService.notThisOne(b.id, c.id);
     expect(await groupOf(b.id)).toEqual([a.id, b.id]);
     expect(await groupOf(c.id)).toEqual([a.id, c.id]);
     expect(await statesOf(b.id, c.id)).toEqual(["duplicate_flagged", "duplicate_flagged"]);
   });
 
-  it.fails("keeping B rejects the open original as a copy of B, and a later copy C is held against live B", async () => {
+  it("keeping B rejects the open original as a copy of B, and a later copy C is held against live B", async () => {
     const file = textFile();
     const a = await uploadForReview(file);
     expect(a.state).toBe("submitter_review");
@@ -124,7 +111,7 @@ describeDb("three copies of one purchase", () => {
     expect(await groupOf(b.id)).toEqual([a.id, b.id]);
 
     actAs(FINANCE);
-    await groups.keepThisOne(b.id, [a.id, b.id]);
+    await receiptService.keepThisOne(b.id, [a.id, b.id]);
     expect(await statesOf(a.id, b.id)).toEqual(["rejected", "receipt_finalized"]);
 
     actAs(ALICE);
@@ -134,7 +121,7 @@ describeDb("three copies of one purchase", () => {
     expect((await memberOf(c.id, a.id))?.label).toMatch(/^Rejected as a copy of /);
 
     actAs(FINANCE);
-    await groups.notThisOne(c.id, a.id);
+    await receiptService.notThisOne(c.id, a.id);
     expect(await stateOf(c.id)).toBe("duplicate_flagged");
   });
 
@@ -184,10 +171,10 @@ describeDb("three copies of one purchase", () => {
     expect(await memberOf(c.id, a.id)).toMatchObject({ state: "receipt_finalized" });
   });
 
-  it.fails("when B is dismissed against the original, C stays held in a group with A and B", async () => {
+  it("when B is dismissed against the original, C stays held in a group with A and B", async () => {
     const { a, b, c } = await chainedThroughB();
     actAs(FINANCE);
-    await groups.notThisOne(b.id, a.id);
+    await receiptService.notThisOne(b.id, a.id);
 
     expect(await statesOf(b.id, c.id)).toEqual(["duplicate_flagged", "duplicate_flagged"]);
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
@@ -208,7 +195,7 @@ describeDb("every member is held before it can finalize", () => {
 });
 
 describeDb("re-check after a discard", () => {
-  it.fails("a copy whose only match is withdrawn re-runs its pipeline and finalizes", async () => {
+  it("a copy whose only match is withdrawn re-runs its pipeline and finalizes", async () => {
     const file = textFile();
     const a = await uploadForReview(file);
     const b = await upload(file);
@@ -233,7 +220,7 @@ describeDb("re-check after a discard", () => {
 });
 
 describeDb("when the group changes after the panel was drawn", () => {
-  it.fails("a copy arriving after the panel was drawn stays held after Different purchases on the old ids", async () => {
+  it("a copy arriving after the panel was drawn stays held after Different purchases on the old ids", async () => {
     const a = await upload(textFile());
     const b = await upload(textFile());
     const shown = await groupOf(b.id);
@@ -241,33 +228,33 @@ describeDb("when the group changes after the panel was drawn", () => {
 
     const c = await upload(textFile());
     actAs(FINANCE);
-    await expect(groups.differentPurchases(b.id, shown)).rejects.toMatchObject({ status: 409 });
+    await expect(receiptService.differentPurchases(b.id, shown)).rejects.toMatchObject({ status: 409 });
 
     expect(await statesOf(b.id, c.id)).toEqual(["duplicate_flagged", "duplicate_flagged"]);
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
   });
 
-  it.fails("a group-wide action on a stale set of ids writes nothing and answers 409", async () => {
+  it("a group-wide action on a stale set of ids writes nothing and answers 409", async () => {
     const { a, b, c } = await openOriginalAndTwoCopies();
     const shown = await groupOf(b.id);
     expect(shown).toEqual([a.id, b.id, c.id]);
 
     await receiptService.discard(c.id, "submitter");
     actAs(FINANCE);
-    await expect(groups.keepThisOne(b.id, shown)).rejects.toMatchObject({ status: 409 });
+    await expect(receiptService.keepThisOne(b.id, shown)).rejects.toMatchObject({ status: 409 });
 
     expect(await statesOf(a.id, b.id, c.id)).toEqual(["submitter_review", "duplicate_flagged", "discarded"]);
-    expect((await groups.duplicateGroup(b.id)).dismissed).toEqual([]);
+    expect((await receiptService.duplicateGroup(b.id)).dismissed).toEqual([]);
   });
 
-  it.fails("two finance decisions on one group at once: one wins, the other answers 409 and writes nothing", async () => {
+  it("two finance decisions on one group at once: one wins, the other answers 409 and writes nothing", async () => {
     const { a, b, c } = await openOriginalAndTwoCopies();
     const shown = await groupOf(b.id);
 
     actAs(FINANCE);
     const [keep, different] = await Promise.allSettled([
-      groups.keepThisOne(b.id, shown),
-      groups.differentPurchases(c.id, shown),
+      receiptService.keepThisOne(b.id, shown),
+      receiptService.differentPurchases(c.id, shown),
     ]);
     expect([keep.status, different.status].sort()).toEqual(["fulfilled", "rejected"]);
     const loser = keep.status === "rejected" ? keep : different;
@@ -276,10 +263,10 @@ describeDb("when the group changes after the panel was drawn", () => {
     const states = await statesOf(a.id, b.id, c.id);
     if (keep.status === "fulfilled") {
       expect(states).toEqual(["rejected", "receipt_finalized", "rejected"]);
-      expect((await groups.duplicateGroup(b.id)).dismissed).toEqual([]);
+      expect((await receiptService.duplicateGroup(b.id)).dismissed).toEqual([]);
     } else {
       expect(states).not.toContain("rejected");
-      expect((await groups.duplicateGroup(c.id)).dismissed.sort()).toEqual([a.id, b.id].sort());
+      expect((await receiptService.duplicateGroup(c.id)).dismissed.sort()).toEqual([a.id, b.id].sort());
     }
   });
 });

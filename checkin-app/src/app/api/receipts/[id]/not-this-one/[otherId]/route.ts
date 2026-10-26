@@ -4,7 +4,9 @@ import { receiptService } from "@checkin/receipt";
 import { handler } from "@/security/handler";
 import { receiptRoute } from "@/lib/receipt/route";
 
-export const POST = handler(
-  "POST /api/receipts/[id]/clear-duplicate",
-  receiptRoute<{ id: string }>(async ({ params }) => ({ ReceiptView: await receiptService.clearDuplicate(params.id) })),
+export const DELETE = handler(
+  "DELETE /api/receipts/[id]/not-this-one/[otherId]",
+  receiptRoute<{ id: string; otherId: string }>(async ({ params }) => ({
+    ReceiptDuplicateGroup: await receiptService.undoNotThisOne(params.id, params.otherId),
+  })),
 );

@@ -92,12 +92,18 @@ export async function getOrgSettings(orgId: string, client: Db | Prisma.Transact
 export const BODY_COPY_DISCARDED = "body_copy_discarded";
 
 /**
- * The earliest live member of this receipt's duplicate group, or null when it has none and so
- * is not held. Every member counts, earlier or later, open, finalized or rejected.
+ * The earliest live member of this receipt's duplicate group still undecided against it, or
+ * null when it has none and so is not held. Every member counts, earlier or later, open,
+ * finalized or rejected, except one finance rejected as a copy of it, or kept in its place.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
   const group = await duplicateGroup(row.orgId, row.id);
-  return group?.members.find((m) => m.id !== row.id && m.state !== "discarded")?.id ?? null;
+  const copies = await db.receiptPairDecision.findMany({
+    where: { kind: "copy_of", OR: [{ receiptId: row.id }, { otherReceiptId: row.id }] },
+    select: { receiptId: true, otherReceiptId: true },
+  });
+  const decided = new Set(copies.map((p) => (p.receiptId === row.id ? p.otherReceiptId : p.receiptId)));
+  return group?.members.find((m) => m.id !== row.id && m.state !== "discarded" && !decided.has(m.id))?.id ?? null;
 }
 
 /**

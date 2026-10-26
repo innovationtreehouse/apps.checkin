@@ -42,6 +42,8 @@ const original = {
   lineItems: [{ id: 9, lineNumber: 1, description: "Arduino Uno", partNumber: null, quantity: 2, unitPriceCents: 460, totalPriceCents: 920, isDelayed: false }],
 };
 
+const group = (...members: Array<{ id: string; state: string }>) => ({ members: members.map((m) => ({ ...m, label: m.state })), dismissed: [] });
+
 beforeAll(() => {
   window.matchMedia ||= ((query: string) =>
     ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} }) as unknown as MediaQueryList);
@@ -56,7 +58,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockRoles = { isFinance: true, isBoard: false };
   mockUserId = 2;
-  mockLoads = { "/r1": flagged, "/r0": original, "/r1/audit-logs": [] };
+  mockLoads = {
+    "/r1": flagged,
+    "/r0": original,
+    "/r1/audit-logs": [],
+    "/r1/duplicate-group": group({ id: "r0", state: "submitter_review" }, { id: "r1", state: "duplicate_flagged" }),
+  };
   mockErrors = {};
   mockSend.mockResolvedValue(true);
 });
@@ -110,11 +117,57 @@ describe("a suspected duplicate's detail page", () => {
     for (const a of downloads) expect(a).toHaveAttribute("download");
   });
 
-  it("clears the flag and returns to the queue", async () => {
+  it("records different purchases for the two receipts shown and returns to the queue", async () => {
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Not a duplicate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Different purchases" }));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=duplicate_flagged"));
-    expect(mockSend).toHaveBeenCalledWith("/r1/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag");
+    expect(mockSend).toHaveBeenCalledWith("/r1/different-purchases", "POST", { shownIds: ["r0", "r1"] }, "Recorded as different purchases", "Couldn't record different purchases");
+  });
+
+  it("keeps this receipt, rejecting the other as its copy, and returns to the queue", async () => {
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Keep this one" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=duplicate_flagged"));
+    expect(mockSend).toHaveBeenCalledWith("/r1/keep-this-one", "POST", { shownIds: ["r0", "r1"] }, "Kept; the other copy is rejected", "Couldn't keep this receipt");
+  });
+
+  it("dismisses the match shown with Not this one and stays to redraw", async () => {
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Not this one" }));
+    await waitFor(() => expect(mockReload).toHaveBeenCalled());
+    expect(mockSend).toHaveBeenCalledWith("/r1/not-this-one", "POST", { otherId: "r0" }, "Dismissed as a different purchase", "Couldn't dismiss this match");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("offers only Not this one when the group holds more receipts than the two shown", () => {
+    mockLoads["/r1/duplicate-group"] = group({ id: "r0", state: "submitter_review" }, { id: "r1", state: "duplicate_flagged" }, { id: "r2", state: "duplicate_flagged" });
+    wrap();
+    expect(screen.getByRole("button", { name: "Not this one" })).toBeInTheDocument();
+    for (const name of ["Different purchases", "Keep this one"]) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
+
+  it("offers no Keep this one beside a finalized copy", () => {
+    mockLoads["/r0"] = { ...original, state: "receipt_finalized" };
+    mockLoads["/r1/duplicate-group"] = group({ id: "r0", state: "receipt_finalized" }, { id: "r1", state: "duplicate_flagged" });
+    wrap();
+    expect(screen.getByRole("button", { name: "Different purchases" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Keep this one" })).toBeNull();
+  });
+
+  it("offers Different purchases on this receipt alone when no other receipt still matches it", async () => {
+    mockLoads["/r1/duplicate-group"] = group({ id: "r1", state: "duplicate_flagged" });
+    wrap();
+    expect(screen.getByText("No other receipt matches this one now.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Different purchases" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockSend).toHaveBeenCalledWith("/r1/different-purchases", "POST", { shownIds: ["r1"] }, "Released from the duplicate hold", "Couldn't release this receipt");
+  });
+
+  it("raises a chip that stays when the group cannot be loaded", () => {
+    mockLoads["/r1/duplicate-group"] = null;
+    mockErrors["/r1/duplicate-group"] = "Receipt not found";
+    wrap();
+    expect(mockShow).toHaveBeenCalledWith({ title: "Couldn't load the possible copies", message: "Receipt not found", color: "red", autoClose: false });
   });
 
   it("rejects this receipt with a reason and returns to the queue, offering finance no discard", async () => {
@@ -145,7 +198,7 @@ describe("a suspected duplicate's detail page", () => {
     mockLoads["/r0"] = { ...original, ...change };
     wrap();
     expect(screen.queryByRole("button", { name: "Reject the original" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Not this one" })).toBeInTheDocument();
   });
 
   it("names a finalized original's state in plain words", () => {
@@ -159,16 +212,16 @@ describe("a suspected duplicate's detail page", () => {
     wrap();
     expect(within(row("Vendor")).getByText("Same")).toBeInTheDocument();
     expect(screen.getByText("Finance decides whether this is a duplicate.")).toBeInTheDocument();
-    for (const name of ["Not a duplicate", "Reject the original", "Reject", "Discard"]) {
+    for (const name of ["Not this one", "Different purchases", "Keep this one", "Reject the original", "Reject", "Discard"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
   });
 
-  it("offers the uploader in finance a discard of their own receipt, and no clear or reject", () => {
+  it("offers the uploader in finance a discard of their own receipt, and no decision or reject", () => {
     mockUserId = 1;
     wrap();
     expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
-    for (const name of ["Not a duplicate", "Reject the original", "Reject"]) {
+    for (const name of ["Not this one", "Different purchases", "Keep this one", "Reject the original", "Reject"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
     expect(screen.getByText("Someone else in finance decides whether your own receipt is a duplicate.")).toBeInTheDocument();
@@ -182,7 +235,7 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.getByText("The suspected original is not loaded.")).toBeInTheDocument();
     expect(screen.getByText("The original's file is not loaded.")).toBeInTheDocument();
     expect(screen.getByRole("figure", { name: "This receipt's file" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Not a duplicate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Not this one" })).toBeInTheDocument();
   });
 
   it("links the original once the flag is cleared", () => {

@@ -5,7 +5,7 @@
  * refuses restarts and edits, and a re-send is answered as a replay. Real HTTP against the
  * running dev server.
  */
-import { api, BASE, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -44,9 +44,9 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     const auto = await upload(submitter, `pipeline receipt ${stamp}`);
     expect(auto.status).toBe(200);
     // The OCR mock reads every file as the same receipt, so an earlier mock upload in this run
-    // flags this one as a duplicate; finance clears it.
+    // flags this one as a duplicate; finance records them as different purchases.
     const state = auto.json.state === "duplicate_flagged"
-      ? (await post<Receipt>(finance, `/api/receipts/${auto.json.id}/clear-duplicate`)).json.state
+      ? (await differentPurchases<Receipt>(finance, auto.json.id)).json.state
       : auto.json.state;
     expect(state).toBe("submitter_review");
     expect((await received(submitter, auto.json.id))).toHaveLength(0);

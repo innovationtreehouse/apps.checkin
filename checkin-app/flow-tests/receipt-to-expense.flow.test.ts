@@ -5,7 +5,7 @@
  * line and the receipt in its review lists. Only routes with no external integration: the local OCR
  * mock reads the upload. Real HTTP against the running dev server.
  */
-import { api, BASE, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -64,12 +64,12 @@ afterAll(async () => {
 });
 
 describe("receipt to expense journey", () => {
-  it("flags a repeat upload, clears it on review, applies it and approves its line into finance review", async () => {
+  it("flags a repeat upload, decides it on review, applies it and approves its line into finance review", async () => {
     // The OCR mock reads every upload as the same purchase, so the second copy repeats the first.
     const first = await upload(submitter, `journey original ${stamp}`);
     expect(first.status).toBe(200);
     original = first.json.state === "duplicate_flagged"
-      ? (await post<Receipt>(finance, `/api/receipts/${first.json.id}/clear-duplicate`)).json
+      ? (await differentPurchases<Receipt>(finance, first.json.id)).json
       : first.json;
     expect(original?.state).toBe("submitter_review");
 
@@ -85,7 +85,9 @@ describe("receipt to expense journey", () => {
     expect(flagged.status).toBe(200);
     expect(flagged.json.duplicateSuspectReceiptId).toEqual(expect.any(String));
 
-    const cleared = await post<Receipt>(finance, `/api/receipts/${copy.json.id}/clear-duplicate`);
+    const group = await api<{ members: Array<{ id: string }> }>(finance, `/api/receipts/${copy.json.id}/duplicate-group`);
+    expect(group.json.members.map((m) => m.id)).toEqual(expect.arrayContaining([original?.id, copy.json.id]));
+    const cleared = await differentPurchases<Receipt>(finance, copy.json.id);
     expect(cleared.status).toBe(200);
     expect(cleared.json.state).toBe("submitter_review");
     const confirmed = await post<Receipt>(submitter, `/api/receipts/${copy.json.id}/submitter-confirm`);

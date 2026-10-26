@@ -6,10 +6,10 @@
  * line in its expense review. Every page on the way must show no error.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { api } from "../flow-tests/helpers";
+import { api, differentPurchases } from "../flow-tests/helpers";
 import { lineAct, lineRow } from "./support/expenseLines";
 import { watchPage, type PageWatch } from "./support/pageErrors";
-import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, send, type Undo } from "./support/seedState";
+import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -68,7 +68,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const read = await api<{ state: string }>(finance.session, `/api/receipts/${encodeURIComponent(receiptId)}`);
     expect([receiptId, read.status]).toEqual([receiptId, 200]);
     if (read.json.state === "duplicate_flagged") {
-      expect((await send(finance.session, "POST", `/api/receipts/${receiptId}/clear-duplicate`)).status).toBe(200);
+      expect((await differentPurchases(finance.session, receiptId)).status).toBe(200);
     }
 
     // The submitter's review: name the retailer and the line as the receipt reads, then confirm.
