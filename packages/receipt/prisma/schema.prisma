@@ -70,6 +70,9 @@ model Receipt {
   // X13 delivery: none (never in-kind) | pending | synced
   /// @sensitivity:internal
   donorSync          String   @default("none") @map("donor_sync")
+  // Bumped by every in-kind mark or donor change; sent with each X13 call so donations can drop a stale one.
+  /// @sensitivity:internal
+  donorSyncSeq       Int      @default(0) @map("donor_sync_seq")
   // Stamped when the S1 push returns; null means not yet delivered.
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")

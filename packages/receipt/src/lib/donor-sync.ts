@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
-import { audit, receiptRepo, type Actor } from "../repositories/receipt";
+import { audit, type Actor } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
 
 const MAX_SENDS = 3;
@@ -9,21 +9,25 @@ const MAX_SENDS = 3;
  * X13: tell donations the receipt's current in-kind state. Which call is made comes from the
  * receipt now, not a stored operation: in-kind sends the donor, otherwise a withdrawal. A
  * `none` receipt (never in-kind) sends nothing. The receipt flips to `synced` only if what was
- * sent is still current; a change made during the call is sent again (the callee is
- * idempotent per receipt, so the last write wins). After MAX_SENDS it stays `pending` for the
- * catch-up step. Never throws.
+ * sent is still current; a change made during the call is sent again. Each call carries the
+ * receipt's donorSyncSeq, and the callee drops one older than it has seen, so a slow send can
+ * never overwrite a newer one. After MAX_SENDS it stays `pending` for the catch-up step. Never throws.
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
     const orgId = (await getOrg()).id;
     for (let attempt = 0; attempt < MAX_SENDS; attempt++) {
-      const row = await receiptRepo.find(receiptId, orgId);
+      const row = await db.receipt.findFirst({
+        where: { id: receiptId, orgId },
+        select: { donorSync: true, isInKind: true, donorFirstName: true, donorLastName: true, donorCompanyName: true, donorSyncSeq: true },
+      });
       if (!row || row.donorSync !== "pending") return false;
       const sent = {
         isInKind: row.isInKind,
         donorFirstName: row.donorFirstName,
         donorLastName: row.donorLastName,
         donorCompanyName: row.donorCompanyName,
+        donorSyncSeq: row.donorSyncSeq,
       };
       if (sent.isInKind) {
         const donor = InKindDonorSchema.parse({
@@ -31,9 +35,9 @@ export async function sendDonorSync(receiptId: string, actor: Actor | null): Pro
           lastName: sent.donorLastName,
           companyName: sent.donorCompanyName ?? null,
         });
-        await ports().donorSink.recordInKindDonor(orgId, receiptId, donor);
+        await ports().donorSink.recordInKindDonor(orgId, receiptId, donor, sent.donorSyncSeq);
       } else {
-        await ports().donorSink.withdrawInKind(orgId, receiptId);
+        await ports().donorSink.withdrawInKind(orgId, receiptId, sent.donorSyncSeq);
       }
       const settled = await db.receipt.updateMany({
         where: { id: receiptId, donorSync: "pending", ...sent },

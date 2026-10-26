@@ -146,7 +146,8 @@ describe('receipt donor and reimbursee names', () => {
 
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob');
+        // ReceiptRow omits these two columns (repositories/receipt.ts listShape).
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'donorSyncSeq');
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
         const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
         expect(view).toEqual({ ...receipt, ...detail });

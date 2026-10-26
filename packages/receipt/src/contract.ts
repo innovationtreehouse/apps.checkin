@@ -52,10 +52,13 @@ export const InKindDonorSchema = z.object({
 });
 export type InKindDonor = z.infer<typeof InKindDonorSchema>;
 
-/** X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor. */
+/**
+ * X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor.
+ * `seq` is the receipt's donorSyncSeq: the callee ignores a call older than one it has seen.
+ */
 export interface DonorSink {
-  recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void>;
-  withdrawInKind(orgId: string, receiptId: string): Promise<void>;
+  recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void>;
+  withdrawInKind(orgId: string, receiptId: string, seq: number): Promise<void>;
 }
 
 // ── X12: reimbursement status ← expense ──────────────────────────────────────

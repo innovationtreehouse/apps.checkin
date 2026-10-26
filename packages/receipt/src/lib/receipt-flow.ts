@@ -4,6 +4,7 @@ import { Prisma, type ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
+import { sendDonorSync } from "./donor-sync";
 import { retailerKey } from "./retailer";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
@@ -127,13 +128,20 @@ export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend.
+ * null with an audit row, for the catch-up step or the manual button to resend. A receipt whose
+ * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
+ * any older call still in flight) before the money side reaches it.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
     const orgId = (await getOrg()).id;
+    await sendDonorSync(receiptId, actor);
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
+    if (row.donorSync === "pending") {
+      await audit(db, receiptId, actor, { action: "push_deferred", valueAfter: "donor sync pending" });
+      return false;
+    }
     const lineItems = await receiptRepo.listLineItems(receiptId);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
     const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);

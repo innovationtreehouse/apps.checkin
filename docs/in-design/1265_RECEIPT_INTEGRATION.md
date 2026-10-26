@@ -697,7 +697,7 @@ test lands with X6.
 ### X13: in-kind donor → donations
 
 The bulk-donation design (§2.4) owns the callee; agreed signature:
-`recordInKindDonor(receiptId: string, donor: InKindDonor): Promise<void>`,
+`recordInKindDonor(receiptId: string, donor: InKindDonor, seq: number): Promise<void>`,
 `InKindDonor = { firstName: string; lastName: string; companyName: string | null }`.
 `receiptId` is the receipt's UUID string.
 
@@ -707,7 +707,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   `receiptId`, in either arrival order.
 - "I am the donor" fills the names from the uploader's `Person` before the call;
   donations needs no separate flag.
-- **`withdrawInKind(receiptId: string): Promise<void>`**, sent when the in-kind
+- **`withdrawInKind(receiptId: string, seq: number): Promise<void>`**, sent when the in-kind
   mark is cleared: donations deletes the waiting donor record and any queue entry
   for that receipt. Idempotent; a no-op for a receipt donations never saw. Without
   it donations would keep `pii` for a receipt that became a purchase, with no money
@@ -716,6 +716,11 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   operation: in-kind sends `recordInKindDonor` with the current donor, not in-kind
   sends `withdrawInKind`. One state field covers both, and a never-in-kind
   receipt stays `none`, so it never sends anything.
+- Each call carries the receipt's `donorSyncSeq`, raised by every mark or donor
+  change; donations ignores a call older than one it has seen. A finalized
+  receipt is not pushed while `donorSync` is `pending` (the push first tries the
+  send), and `setInKind` re-checks the state under the detail row's lock, so the
+  mark is fixed from finalize on.
 - A throw means not delivered: `donorSync` stays `pending`, and the daily catch-up
   step or the next edit re-sends. **Inert at S:** throws `not wired`, so nothing is lost
   while donations is not live.

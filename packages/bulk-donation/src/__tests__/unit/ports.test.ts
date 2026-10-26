@@ -86,23 +86,28 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
   const DONOR = { firstName: "Jane", lastName: "Doe", companyName: null };
 
   it("rejects another org at parse time", async () => {
-    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR)).rejects.toBeInstanceOf(ZodError);
-    await expect(withdrawInKind("other-org", RECEIPT_ID)).rejects.toBeInstanceOf(ZodError);
+    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR, 0)).rejects.toBeInstanceOf(ZodError);
+    await expect(withdrawInKind("other-org", RECEIPT_ID, 0)).rejects.toBeInstanceOf(ZodError);
   });
 
   it("rejects a blank donor name", async () => {
-    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "" })).rejects.toBeInstanceOf(ZodError);
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "" }, 0)).rejects.toBeInstanceOf(ZodError);
   });
 
   it("rejects an empty receipt id", async () => {
-    await expect(withdrawInKind(ORG, "")).rejects.toBeInstanceOf(ZodError);
+    await expect(withdrawInKind(ORG, "", 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("rejects a negative or fractional sync seq", async () => {
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, DONOR, -1)).rejects.toBeInstanceOf(ZodError);
+    await expect(withdrawInKind(ORG, RECEIPT_ID, 1.5)).rejects.toBeInstanceOf(ZodError);
   });
 
   it("records a valid call", async () => {
-    await recordInKindDonor(ORG, RECEIPT_ID, DONOR);
-    await withdrawInKind(ORG, RECEIPT_ID);
-    expect(inKindService.recordDonor).toHaveBeenCalledWith(ORG, RECEIPT_ID, DONOR);
-    expect(inKindService.withdraw).toHaveBeenCalledWith(ORG, RECEIPT_ID);
+    await recordInKindDonor(ORG, RECEIPT_ID, DONOR, 2);
+    await withdrawInKind(ORG, RECEIPT_ID, 3);
+    expect(inKindService.recordDonor).toHaveBeenCalledWith(ORG, RECEIPT_ID, DONOR, 2);
+    expect(inKindService.withdraw).toHaveBeenCalledWith(ORG, RECEIPT_ID, 3);
   });
 });
 

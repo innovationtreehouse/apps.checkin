@@ -12,11 +12,11 @@ export class ReceiptStateConflictError extends Error {
 }
 
 /** A receipt and its details, flattened, without the file. */
-export type ReceiptRow = Omit<Receipt, "fileBlob"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
+export type ReceiptRow = Omit<Receipt, "fileBlob" | "donorSyncSeq"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
 
-const listShape = { omit: { fileBlob: true }, include: { details: true } } as const;
+const listShape = { omit: { fileBlob: true, donorSyncSeq: true }, include: { details: true } } as const;
 
-function flatten(r: Omit<Receipt, "fileBlob"> & { details: ReceiptDetail | null }): ReceiptRow {
+function flatten(r: Omit<Receipt, "fileBlob" | "donorSyncSeq"> & { details: ReceiptDetail | null }): ReceiptRow {
   const { details, ...core } = r;
   if (!details) throw new Error(`receipt ${r.id} has no details row`);
   const { id: _id, orgId: _orgId, ...rest } = details;

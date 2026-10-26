@@ -152,7 +152,7 @@ New crossings (numbered after the plan's X1–X8), each a port in this library's
 | X9 | orchestrator → donations: an in-kind receipt's money side only (`ingestInKind(receipt)`, idempotent on `receiptId`) | sync, in-process, callee | throws, so the caller retries; same as the receipt design's inert S1 sink |
 | X10 | donations → catalog: item search and lookup for the no-receipt picker | sync read, caller | empty results |
 | X11 | donations → local-inventory: load identified goods (idempotent per source, keyed `donation:<id>`, beside the receipt pipeline's `receipt:<id>`) | sync, in-process, caller | throws |
-| X13 | receipt → donations, directly: the donor entered at upload (`recordInKindDonor(receiptId, donor)`, idempotent on `receiptId`; a later call replaces the donor, which is how edits arrive), and `withdrawInKind(receiptId)` when the uploader clears the in-kind mark | sync, in-process, callee | throws |
+| X13 | receipt → donations, directly: the donor entered at upload (`recordInKindDonor(receiptId, donor, seq)`, idempotent on `receiptId`; a later call replaces the donor, which is how edits arrive), and `withdrawInKind(receiptId, seq)` when the uploader clears the in-kind mark | sync, in-process, callee | throws |
 
 **Each callee's zod parse asserts `orgId`.** X9 and X13 reject a payload whose
 `orgId` is not the injected org; Inventory enforced per-org scoping at the bearer,
@@ -163,7 +163,7 @@ string | null }` and is never null. The receipt design declares the caller side 
 `receiptId` is the receipt's UUID, and "I am the donor" is resolved to the
 uploader's name before the call. Clearing the in-kind mark is its own call.
 
-**`withdrawInKind(receiptId: string): Promise<void>`** is idempotent, and a
+**`withdrawInKind(receiptId: string, seq: number): Promise<void>`** is idempotent, and a
 receipt donations never heard of is a no-op (the receipt side re-sends from
 current state, so a withdraw can arrive with no donor ever recorded). It deletes the waiting donor
 record for that receipt (donor details are `pii` and would otherwise sit
@@ -171,6 +171,15 @@ unmatched forever) and any *donor needed* queue entry. In normal flow no money
 side can exist yet: X9 is sent only after the receipt proceeds, and the in-kind
 mark is locked from then on. If a money side has arrived anyway, donations does
 not delete anything; it raises the receipt in the finance queue as an anomaly.
+
+**Both X13 calls carry `seq`**, the receipt's sync sequence, raised by every
+in-kind mark or donor change. Donations keeps the highest `seq` it has seen per
+receipt (kept after a withdrawal deletes the row; it holds no `pii`) and ignores
+an older call, so a slow send never overwrites a newer state. An equal `seq` is a
+resend and goes through. A donor call never writes onto a gift whose withdrawal
+finance has settled. The receipt side does not deliver the money side (X9) while
+its donor sync is pending, and the mark cannot change once the receipt is
+finalized, so by the time money arrives every older call is refused.
 
 **The donor never passes through the orchestrator** (owner decision). Donations
 joins the two halves on `receiptId`, and either may arrive first:

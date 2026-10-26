@@ -20,8 +20,8 @@ export function actAs(p: ReceiptPrincipal | null): void {
 export function recordingPorts() {
   const calls = {
     pushes: [] as CompletedReceipt[],
-    donors: [] as Array<{ orgId: string; receiptId: string; donor: InKindDonor }>,
-    withdrawals: [] as Array<{ orgId: string; receiptId: string }>,
+    donors: [] as Array<{ orgId: string; receiptId: string; donor: InKindDonor; seq: number }>,
+    withdrawals: [] as Array<{ orgId: string; receiptId: string; seq: number }>,
   };
   const fail = { push: false, donor: false };
   return {
@@ -35,12 +35,12 @@ export function recordingPorts() {
       },
     },
     donorSink: {
-      recordInKindDonor: async (orgId: string, receiptId: string, donor: InKindDonor) => {
-        calls.donors.push({ orgId, receiptId, donor });
+      recordInKindDonor: async (orgId: string, receiptId: string, donor: InKindDonor, seq: number) => {
+        calls.donors.push({ orgId, receiptId, donor, seq });
         if (fail.donor) throw new Error("donations down");
       },
-      withdrawInKind: async (orgId: string, receiptId: string) => {
-        calls.withdrawals.push({ orgId, receiptId });
+      withdrawInKind: async (orgId: string, receiptId: string, seq: number) => {
+        calls.withdrawals.push({ orgId, receiptId, seq });
         if (fail.donor) throw new Error("donations down");
       },
     },
