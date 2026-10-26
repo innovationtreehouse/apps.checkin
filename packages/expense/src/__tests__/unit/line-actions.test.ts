@@ -21,6 +21,7 @@ const base: SignoffFacts = {
   boardSeat: false,
   approved: false,
   approver: null,
+  expenseSigners: [],
 };
 
 interface Case {

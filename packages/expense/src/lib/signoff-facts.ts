@@ -2,7 +2,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
-import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts, type StepSigner } from "./signoff";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
@@ -32,18 +32,25 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
   return [...new Set([...parties, ...(await getExpenseRuntime().signoff.householdOf(parties))])];
 }
 
-/**
- * Household members of everyone seated on the expense outside the submitter seat, the approvers
- * of its lines included, minus the seated people themselves: one household holds at most one
- * seat on an expense.
- */
-export async function seatedHouseholds(db: Db, expenseId: string): Promise<number[]> {
-  const dir = getExpenseRuntime().signoff;
+/** Everyone seated on the expense outside the submitter seat, with the step they sign: the approvers of its lines included. */
+export async function expenseSigners(db: Db, expenseId: string): Promise<StepSigner[]> {
   const [rows, approvals] = await Promise.all([
-    db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { signerUserId: true } }),
+    db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { seat: true, signerUserId: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
   ]);
-  const signers = [...new Set([...rows.map((r) => r.signerUserId), ...approvals.map((a) => a.decidedByUserId!)])];
+  return [
+    ...rows.map((r): StepSigner => ({ step: r.seat === "BOARD" ? "BOARD" : "TREASURER", userId: r.signerUserId })),
+    ...approvals.flatMap((a): StepSigner[] => (a.decidedByUserId === null ? [] : [{ step: "APPROVAL", userId: a.decidedByUserId }])),
+  ];
+}
+
+/**
+ * Household members of everyone seated on the expense, minus the seated people themselves: one
+ * household holds at most one seat on an expense.
+ */
+export async function seatedHouseholds(seated: StepSigner[]): Promise<number[]> {
+  const dir = getExpenseRuntime().signoff;
+  const signers = [...new Set(seated.map((s) => s.userId))];
   const mates = await Promise.all(signers.map(async (s) => (await dir.householdOf([s])).filter((id) => id !== s)));
   return [...new Set(mates.flat())];
 }
@@ -71,16 +78,17 @@ async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCen
  */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { readOnly = false } = {}): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, signers, isMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true, status: true, decidedByUserId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
     conflictedParties(expense),
-    seatedHouseholds(db, expense.id),
+    expenseSigners(db, expense.id),
     reimburseeIsMember(expense),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
   ]);
+  const seated = await seatedHouseholds(signers);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
   const bucketsById = new Map<number, BucketApprovers>();
@@ -115,6 +123,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
         boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),
         approved,
         approver: approved ? (approvalOf.get(l.id)?.decidedByUserId ?? null) : null,
+        expenseSigners: signers,
       };
       return [l.id, facts];
     }),
