@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * POST /api/donations/in-kind/{receipt,manual}/[id]/qb-resolve: FINANCE only, replying with the gift's queue row and no donor.
- * The library's route factory is mocked; book, skip and match are covered in packages/bulk-donation's in-kind drain integration tests.
+ * POST /api/donations/in-kind/{receipt,manual}/[id]/qb-resolve (book, skip, match, clear): FINANCE only, replying with the gift's queue row and no donor.
+ * The library's route factory is mocked; the actions are covered in packages/bulk-donation's in-kind drain integration tests.
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -63,6 +63,7 @@ describe('in-kind qb-resolve routes', () => {
         { action: 'skip', reason: 'Booked by hand' },
         { action: 'match', journalEntryId: '88' },
         { action: 'match', depositId: '51', purchaseId: '52' },
+        { action: 'clear', reason: 'Voided the stray entry' },
     ])('replies to finance with the queue row and no donor: %p', async body => {
         signIn({ isFinance: true });
         for (const [route, source] of [[resolveReceipt, 'receipt'], [resolveManual, 'manual']] as const) {

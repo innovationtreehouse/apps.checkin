@@ -1,6 +1,6 @@
 // Finance's QuickBooks actions on an in-kind gift the drain handed over (QB_CLOSED_BOOKS §4 and §6):
 // book it, skip it with a reason, or match it by id to entries finance booked by hand. Skip and
-// match look first for the app's own entry when a create may have landed.
+// match look first for the app's own entry when a create may have landed. Clear answers a note.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
 import { appKeyOf } from "@checkin/quickbooks";
@@ -11,8 +11,8 @@ import { getInKindQbPosting } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
-  IN_KIND_HELD_STATES, IN_KIND_ROLES, claimedDepositIds, inKindAccountsReady, inKindKey, inKindPostingOnAt, lockPosting, lookupOwnJournal, postGift,
-  writeSettlement, type Run, type Settlement,
+  IN_KIND_HELD_STATES, IN_KIND_NOTE_CLEARED, IN_KIND_ROLES, answeredEntryRef, claimedDepositIds, inKindAccountsReady, inKindKey, inKindPostingOnAt,
+  lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
 import { readCloseDate } from "./qb-poster";
@@ -24,6 +24,7 @@ export const InKindQbResolveInputSchema = z.union([
   z.object({ action: z.literal("skip"), reason: z.string().trim().min(1, "A reason is required to skip").max(500) }).strict(),
   z.object({ action: z.literal("match"), journalEntryId: qbId }).strict(),
   z.object({ action: z.literal("match"), depositId: qbId, purchaseId: qbId }).strict(),
+  z.object({ action: z.literal("clear"), reason: z.string().trim().min(1, "A reason is required to clear a note").max(500) }).strict(),
 ]);
 export type InKindQbResolveInput = z.infer<typeof InKindQbResolveInputSchema>;
 
@@ -197,7 +198,31 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
   }
 }
 
-/** Book, skip or match one gift, then reply with its queue row. */
+/**
+ * Answers a gift's note without another action, for example after voiding a stray entry in
+ * QuickBooks. The stray entries it named are recorded as answered, so the sweep never notes them again.
+ */
+async function clearNote(orgId: string, source: InKindSource, id: number, reason: string, actor: Actor): Promise<void> {
+  const why = reason.trim();
+  if (!why) throw new ServiceError(400, "A reason is required to clear a note");
+  const ref = await giftRef(orgId, source, id);
+  await db.$transaction(async (tx) => {
+    const posting = await lockPosting(tx, orgId, source, id);
+    if (!posting?.qbNote) throw new ServiceError(409, "The gift has no note");
+    if (posting.matchState === QB_MATCH_STATE.POSTING) throw new ServiceError(409, "The gift is being posted; try again shortly");
+    await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: null } });
+    await recordEvent(tx, {
+      orgId,
+      entityType: ref.entityType,
+      entityId: ref.entityId,
+      eventType: IN_KIND_NOTE_CLEARED,
+      ...actor,
+      payload: { qbNote: posting.qbNote, reason: why, answeredEntries: strayEntriesOf(posting.qbNote).map(answeredEntryRef) },
+    });
+  });
+}
+
+/** Book, skip, match or clear the note of one gift, then reply with its queue row. */
 export async function resolveInKindQb(orgId: string, source: InKindSource, id: number, input: InKindQbResolveInput, actor: Actor) {
   switch (input.action) {
     case "book":
@@ -208,6 +233,9 @@ export async function resolveInKindQb(orgId: string, source: InKindSource, id: n
       break;
     case "match":
       await match(orgId, source, id, input, actor);
+      break;
+    case "clear":
+      await clearNote(orgId, source, id, input.reason, actor);
       break;
   }
   return inKindAcceptService.queueItem(orgId, actor.actorUserId, source, id);

@@ -345,7 +345,10 @@ on and never in closed books. *Skip* needs a reason; the gift leaves the queue
 and the drain for good. *Match* takes a journal entry id, or a Deposit and a
 Purchase id. Skip and match first look for the app's own entry when a create
 may have landed, and link it instead. A gift's bucket cannot change once a
-create has been attempted, since that entry carries the bucket's Class.
+create has been attempted, since that entry carries the bucket's Class. A gift
+with a QuickBooks note, such as the sweep's stray entry, stays in the queue
+until finance *clears* the note with how it was answered; the stray entries it
+named are recorded as answered, and the sweep never notes them again.
 
 **When the app may create** follows the closed-books model shared by every
 QuickBooks lane (`QB_CLOSED_BOOKS.md`): nothing is booked on or before

@@ -374,6 +374,8 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(ok({ action: "match", depositId: "51", purchaseId: "52" })).toBe(true);
     expect(ok({ action: "match", depositId: "51" })).toBe(false);
     expect(ok({ action: "match", journalEntryId: "88", depositId: "51", purchaseId: "52" })).toBe(false);
+    expect(ok({ action: "clear", reason: "Voided it" })).toBe(true);
+    expect(ok({ action: "clear" })).toBe(false);
   });
 
   it("skip settles the gift with the reason audited, and it leaves the queue and the drain for good", async () => {
@@ -476,6 +478,28 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     const qbNote = "QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it";
     await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } }, data: { qbNote } });
     expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toMatchObject([{ id, state: null, waitingOn: [], qbState: "DISMISSED", qbNote }]);
+  });
+
+  it("clear answers a note, audited with the stray entry it names, and the sweep never notes that entry again", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    const key = inKindKey(orgId, "receipt", id);
+    qbo.journals.push({ Id: "9100", TxnDate: "2026-10-20", TotalAmt: 33, PrivateNote: `[checkin-test] [checkin:${key}]` });
+    qbo.createTimes.set("9100", new Date());
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toMatchObject([{ id, qbState: "CREATED", qbNote: expect.stringMatching(/JournalEntry 9100/) }]);
+
+    await expect(resolve(id, { action: "clear", reason: " " })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(id, { action: "clear", reason: "Voided 9100 in QuickBooks" })).toMatchObject({ qbState: "CREATED", qbNote: null });
+    const [cleared] = await events("IN_KIND_QB_NOTE_CLEARED");
+    expect(cleared).toMatchObject({ actorUserId: FINANCE });
+    expect(JSON.parse(cleared.payload ?? "{}")).toMatchObject({ reason: "Voided 9100 in QuickBooks", answeredEntries: ["JournalEntry:9100"] });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toEqual([]);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
+    expect((await posting(id)).qbNote).toBeNull();
+    await expect(resolve(id, { action: "clear", reason: "again" })).rejects.toMatchObject({ status: 409 });
   });
 
   it("skip and match look first for the app's own entry and link it instead", async () => {

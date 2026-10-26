@@ -81,13 +81,16 @@ describe("in-kind queue: finance's QuickBooks actions", () => {
     expect(screen.getAllByRole("button", { name: "QuickBooks" })).toHaveLength(1);
   });
 
-  it("shows a gift that stays only for its QuickBooks note, with the note and no actions", () => {
+  it("shows a gift that stays only for its QuickBooks note, and clears the note with how it was answered", async () => {
     const qbNote = "QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it";
     mockQueue = [{ ...unbooked, state: null, waitingOn: [], qbState: "DISMISSED", qbNote }];
     wrap();
     expect(screen.getByText("QuickBooks note")).toBeInTheDocument();
-    expect(screen.getByText(qbNote)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "QuickBooks" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "QuickBooks" }));
+    expect(screen.queryByRole("button", { name: "Book" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("How it was answered"), { target: { value: "Voided 9100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear note" }));
+    await waitFor(() => expect(lastBody()).toEqual({ action: "clear", reason: "Voided 9100" }));
   });
 
   it("shows a board member no QuickBooks actions", () => {

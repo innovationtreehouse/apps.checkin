@@ -342,12 +342,32 @@ export async function postGift(run: Run, source: GiftToBook["source"], id: numbe
   }
 }
 
+/** The audit event of finance clearing a gift's note; its `answeredEntries` name the stray entries it answered. */
+export const IN_KIND_NOTE_CLEARED = "IN_KIND_QB_NOTE_CLEARED";
+/** How a cleared note's audit names a stray app entry it answered. */
+export const answeredEntryRef = (entryId: string) => `JournalEntry:${entryId}`;
+
+/** Every stray app JournalEntry a note names: one the sweep found unlinked, or one a post created after losing its claim. */
+export function strayEntriesOf(note: string | null): string[] {
+  return [...(note ?? "").matchAll(/QuickBooks JournalEntry (\S+) (?:carries this gift's key|was created by a post that lost its claim)/g)].map((m) => m[1]);
+}
+
+/** Whether finance already answered this stray entry by clearing a note that named it. */
+async function answeredStray(orgId: string, entryId: string): Promise<boolean> {
+  const answer = await db.workflowEvent.findFirst({
+    where: { orgId, eventType: IN_KIND_NOTE_CLEARED, actorUserId: { not: null }, payload: { contains: JSON.stringify(answeredEntryRef(entryId)) } },
+    select: { id: true },
+  });
+  return answer !== null;
+}
+
 export type InKindSweepCounts = { entries: number; flagged: number; full: boolean } | { failed: true };
 
 /**
  * The daily orphan sweep: every JournalEntry created since the oldest attempt in the last
  * SWEEP_DAYS days, one page. An entry carrying a gift's key that the gift does not hold gets a
- * note for finance to void or link it; a full page alerts finance. QuickBooks is only read.
+ * note for finance to void or link it, unless finance already answered it; a full page alerts
+ * finance. QuickBooks is only read.
  */
 export async function sweepInKindQbStrays(
   orgId: string,
@@ -386,6 +406,7 @@ export async function sweepInKindQbStrays(
         console.warn(`[bulk-donation] QuickBooks JournalEntry ${entry.Id} carries an in-kind key no attempted gift has`);
         continue;
       }
+      if (await answeredStray(orgId, entry.Id)) continue;
       const noted = await db.$transaction(async (tx) => {
         const posting = await lockPosting(tx, orgId, gift.source, gift.giftId);
         if (!posting || posting.matchState === QB_MATCH_STATE.POSTING) return false;

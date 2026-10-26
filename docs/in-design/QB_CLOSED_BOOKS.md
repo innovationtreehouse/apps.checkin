@@ -220,7 +220,7 @@ lane already offers. The new actions are "book it" and "skip".
 | Expense | `POST /api/expense/expenses/[id]/qb-match` (match only) | book, skip | new `POST /api/expense/expenses/[id]/qb-resolve`, finance, returns `Expense` |
 | Income | `POST /api/income/reconciliation/[id]/resolve` with match, dismiss, retry | book | same route, new action |
 | Donation | `POST /api/donations/disbursement-events/[disbursementId]/qb-resolve` with match, dismiss, retry (`src/lib/qb-queue.ts:22-25`) | book | same route, new action |
-| Donation, in-kind (#2182) | none | book, skip, match by id | new `POST /api/donations/in-kind/{receipt,manual}/[id]/qb-resolve`, finance, returns the queue row |
+| Donation, in-kind (#2182) | none | book, skip, match by id, clear a note | new `POST /api/donations/in-kind/{receipt,manual}/[id]/qb-resolve`, finance, returns the queue row |
 
 Expense and in-kind need new registry entries. Income and donation add an
 action to a finance-only route whose role and response types stay the same.
