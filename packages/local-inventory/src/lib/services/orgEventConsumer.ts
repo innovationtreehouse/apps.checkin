@@ -72,13 +72,13 @@ export const orgEventConsumer = {
  * provisional row is otherwise applied only by the reconcile right after the creating commit.
  * Idempotent, since reconcile skips a provisional that already left pending. Capped.
  */
-async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<number> {
+async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; reconcileFailed: number }> {
   // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
   const pending = await db.inventoryProvisionalItem.findMany({
     where: { orgId, status: "pending" },
     select: { provisionalGtin13: true },
   });
-  if (pending.length === 0) return 0;
+  if (pending.length === 0) return { reconciled: 0, reconcileFailed: 0 };
   const resolved = await db.inventoryProvisionalResolution.findMany({
     where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13) } },
     select: { provisionalGtin13: true },
@@ -87,15 +87,17 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   });
   const service = getServices().provisionalItemService;
   let reconciled = 0;
+  let reconcileFailed = 0;
   for (const { provisionalGtin13 } of resolved) {
     try {
       await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
       reconciled++;
     } catch (err) {
+      reconcileFailed++;
       console.error(`[local-inventory/org-events] reconcile of provisional ${provisionalGtin13} failed`, err);
     }
   }
-  return reconciled;
+  return { reconciled, reconcileFailed };
 }
 
 /**
@@ -104,7 +106,7 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
  * provisionals that have a stored resolution. The host's daily reconcile cron step calls it.
  * Capped; counts only.
  */
-export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled", number>> {
+export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed", number>> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
@@ -116,5 +118,5 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   const received = new Set(await repo.idsAfter(from));
   const fresh = (await getCatalogEventSource().eventsSince(orgId, from)).filter((e) => !received.has(e.id));
   for (const ev of fresh.slice(0, Math.max(0, limit - pending.length))) counts[await consumeOrgEvent(ev)]++;
-  return { ...counts, reconciled: await reconcilePendingProvisionals(orgId, limit) };
+  return { ...counts, ...(await reconcilePendingProvisionals(orgId, limit)) };
 }

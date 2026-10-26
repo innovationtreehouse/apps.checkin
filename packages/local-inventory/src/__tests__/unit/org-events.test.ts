@@ -3,11 +3,11 @@
  * sweep re-reads behind the cursor so an event that committed after a higher id is not skipped.
  * Real Postgres; describeDb skips without one.
  */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
 import type { CatalogEventSource, OrgEventRecord } from "../../contract";
-import { configureLocalInventory } from "../../runtime";
+import { configureLocalInventory, getServices } from "../../runtime";
 import { catchUpOrgEvents, orgEventConsumer } from "../../lib/services/orgEventConsumer";
 import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
@@ -61,7 +61,7 @@ describeDb("S5 handler", () => {
 
 describeDb("S5 catch-up", () => {
   it("is a no-op with the inert event source", async () => {
-    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0 });
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {
@@ -69,7 +69,7 @@ describeDb("S5 catch-up", () => {
     await orgEventConsumer.onOrgEvents([rejected(21)]);
     configure({ eventsSince: async (_org, after) => [approved(20), rejected(21)].filter((e) => e.id > after) });
 
-    expect(await catchUpOrgEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0 });
 
     expect(await resolution(PROV)).toMatchObject({ realGtin13: REAL });
     expect(await db.inventoryReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
@@ -109,5 +109,21 @@ describeDb("S5 catch-up: stored resolutions", () => {
     expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
     expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending" });
     expect(await qty(PROV)).toBe(2);
+  });
+
+  it("counts a reconcile that throws as failed, and the next run applies it", async () => {
+    await orgEventConsumer.onOrgEvents([approved(5)]);
+    await pendingProvisionalWithStock(3);
+    const spy = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate").mockRejectedValueOnce(new Error("boom"));
+
+    try {
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 1 });
+      expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending" });
+
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1, reconcileFailed: 0 });
+      expect(await qty(REAL)).toBe(3);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
