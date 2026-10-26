@@ -11,6 +11,8 @@ import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
 import { clearAll, ORG_A } from "../helpers/fixtures";
+import { depositStatus, expectDeposit, type ExpectedDeposit } from "../../lib/intake";
+import type { BooksMap, BooksMapRole } from "@checkin/quickbooks";
 
 const NOW = new Date("2026-06-30T12:00:00Z");
 /** When the shared setup switches income posting on: before any payout the tests add. */
@@ -1113,8 +1115,12 @@ describeDb("income settings", () => {
   const finance = { userId: 9, username: "fin", isFinance: true, isBoard: false };
   const board = { userId: 8, isFinance: false, isBoard: true };
 
-  it("defaults to 25 creates and $25,000 per run", async () => {
-    await expect(updateIncomeSettings(ORG_A, {}, finance)).resolves.toEqual({ maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 });
+  it("defaults to 25 creates and $25,000 per run for each source", async () => {
+    await expect(updateIncomeSettings(ORG_A, {}, finance)).resolves.toEqual({
+      maxCreatesPerRun: 25,
+      maxCreateCentsPerRun: 2_500_000,
+      benevityMaxCreateCentsPerRun: 2_500_000,
+    });
   });
 
   it("finance may lower a cap; raising one takes the board; each change is audited", async () => {
@@ -1128,5 +1134,150 @@ describeDb("income settings", () => {
       [9, JSON.stringify({ maxCreatesPerRun: 25 }), JSON.stringify({ maxCreatesPerRun: 10 })],
       [8, JSON.stringify({ maxCreatesPerRun: 10 }), JSON.stringify({ maxCreatesPerRun: 20 })],
     ]);
+  });
+});
+
+describeDb("a second source: Benevity deposits handed over through expectDeposit", () => {
+  const BENEVITY_BANK = "36";
+  const ROLES: Partial<Record<BooksMapRole, string>> = { BENEVITY_BANK, BENEVITY_DONATIONS: "60", BENEVITY_MATCHES: "61", BENEVITY_FEES: "62" };
+  let roleAccounts: Partial<Record<BooksMapRole, string>>;
+  const booksMap: BooksMap = { accounts: async () => roleAccounts, classes: async () => new Map([[7, "700"]]) };
+
+  /** A disbursement of a $100 gift to bucket 7 and a $50 match at organization level, less a $3 fee. */
+  const disbursement = (txnDate = "2026-06-28", over: Partial<ExpectedDeposit> = {}): ExpectedDeposit => ({
+    txnDate,
+    netCents: 14_700,
+    bankRole: "BENEVITY_BANK",
+    lines: [
+      { role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 10_000, description: "Benevity donations" },
+      { role: "BENEVITY_MATCHES", budgetOwnerId: null, amountCents: 5_000 },
+      { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -300 },
+    ],
+    memo: "Benevity disbursement D1",
+    ...over,
+  });
+  const expect1 = (key = "D1", e: ExpectedDeposit = disbursement()) => expectDeposit(ORG_A, "benevity", key, e);
+  const status = async (key = "D1") => (await depositStatus(ORG_A, "benevity", [key]))[key];
+
+  beforeEach(() => {
+    roleAccounts = { ...ROLES };
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    bind({ booksMap, org: async () => ({ id: ORG_A, name: "A" }) });
+  });
+
+  it("records a deposit once; a repeat changes nothing; a change updates it only while unposted", async () => {
+    expect(await expect1()).toBe("recorded");
+    expect(await expect1()).toBe("unchanged");
+    expect(await rowFor("D1")).toMatchObject({ source: "benevity", status: "WAITING", payoutDate: "2026-06-28", payoutNetCents: 14_700 });
+    expect(await status()).toEqual({ state: "waiting" });
+
+    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_800 }] });
+    expect(await expect1("D1", later)).toBe("updated");
+    expect(await rowFor("D1")).toMatchObject({ payoutDate: "2026-06-29", payoutNetCents: 14_800 });
+
+    qbo.hand("H1", "2026-06-29", 14_800, BENEVITY_BANK);
+    await runReconcile(ORG_A, NOW);
+    expect(await expect1("D1", disbursement())).toBe("frozen");
+    expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", depositId: "H1", payoutNetCents: 14_800 });
+    expect(await status()).toEqual({ state: "matched", depositId: "H1", txnDate: "2026-06-29", totalCents: 14_800 });
+  });
+
+  it("refuses a deposit whose lines do not sum to its net, and answers nothing for a key it never received", async () => {
+    await expect(expect1("D1", disbursement("2026-06-28", { netCents: 1 }))).rejects.toMatchObject({ status: 400 });
+    expect(await depositStatus(ORG_A, "benevity", ["D1"])).toEqual({});
+  });
+
+  it("matches a hand-booked deposit in the Benevity bank inside donation's ±7-day window, never one in the Shopify bank", async () => {
+    await expect1();
+    qbo.hand("HS", "2026-06-23", 14_700, BANK);
+    qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 1 });
+    expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "HB" });
+  });
+
+  it("creates a deposit after switch-on with its accounts and Classes from the books map, under income's Benevity key", async () => {
+    await switchOn();
+    await expect1();
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts).toHaveLength(1);
+    const { key, body } = qbo.posts[0];
+    expect(key).toBe(qbKey("income", "benevity:D1"));
+    expect(body).toMatchObject({ TxnDate: "2026-06-28", DepositToAccountRef: { value: BENEVITY_BANK } });
+    expect(body.Line.map((l) => [l.Amount, l.DepositLineDetail.AccountRef.value, l.DepositLineDetail.ClassRef?.value])).toEqual([
+      [100, "60", "700"],
+      [50, "61", undefined],
+      [-3, "62", undefined],
+    ]);
+    expect(await status()).toMatchObject({ state: "booked", totalCents: 14_700 });
+  });
+
+  it("skips a deposit whose role finance has not mapped, without failing it", async () => {
+    await switchOn();
+    delete roleAccounts.BENEVITY_FEES;
+    await expect1();
+    expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor("D1")).toMatchObject({ status: "WAITING", kind: null });
+  });
+
+  it("falls back to the environment's Benevity bank when the map sets none", async () => {
+    delete roleAccounts.BENEVITY_BANK;
+    bind({ booksMap, benevityBankAccountId: BENEVITY_BANK, org: async () => ({ id: ORG_A, name: "A" }) });
+    await switchOn();
+    await expect1();
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts[0].body.DepositToAccountRef.value).toBe(BENEVITY_BANK);
+  });
+
+  it("parks a Benevity deposit over its own cents cap while a Shopify payout of the same size posts", async () => {
+    await updateIncomeSettings(ORG_A, { benevityMaxCreateCentsPerRun: 10_000 }, { userId: 9, isFinance: true, isBoard: false });
+    roleAccounts = { ...ROLES, SHOPIFY_BANK: BANK };
+    await switchOn();
+    await expect1();
+    const p = payout(2, "2026-06-28", 14_700);
+    expect(await drain()).toMatchObject({ post: { posted: 1, over_cap: 1 } });
+    expect(await rowFor("D1")).toMatchObject({ status: "OPEN", kind: "OVER_CAP" });
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED" });
+    expect(await status()).toMatchObject({ state: "with_finance", kind: "OVER_CAP" });
+  });
+
+  it("notes a deposit uploaded after switch-on but dated in closed books", async () => {
+    await switchOn();
+    await expect1("D1", disbursement("2026-05-20"));
+    expect(await drain()).toMatchObject({ post: { queued: 1 } });
+    expect(await rowFor("D1")).toMatchObject({
+      status: "OPEN",
+      kind: "NO_DEPOSIT",
+      qbNote: "Uploaded after posting was switched on, but dated 2026-05-20, in closed books; skip it",
+    });
+  });
+
+  it("is never drift-checked against the Shopify mirror once posted", async () => {
+    await switchOn();
+    await expect1();
+    await drain();
+    expect(await runReconcile(ORG_A, new Date("2026-07-01T12:00:00Z"))).toMatchObject({ drifted: 0 });
+    expect(await rowFor("D1")).toMatchObject({ status: "POSTED" });
+  });
+
+  it("reopens as drift when its deposit changes, freeing the deposit", async () => {
+    await switchOn();
+    await expect1();
+    await drain();
+    const { depositId } = await rowFor("D1");
+    qbo.deposits = qbo.deposits.map((d) => (d.Id === depositId ? { ...d, TotalAmt: 140 } : d));
+    expect(await runReconcile(ORG_A, new Date("2026-07-01T12:00:00Z"))).toMatchObject({ drifted: 1 });
+    expect(await rowFor("D1")).toMatchObject({ status: "OPEN", kind: "DRIFT", depositId: null });
+    expect(await status()).toMatchObject({ state: "drifted" });
+  });
+
+  it("the orphan sweep reports an unlinked deposit carrying a Benevity row's key", async () => {
+    await switchOn();
+    await expect1();
+    await drain();
+    qbo.deposits.push({ Id: "X9", TxnDate: "2026-06-28", TotalAmt: 147, DepositToAccountRef: { value: BENEVITY_BANK }, PrivateNote: `[checkin:${qbKey("income", "benevity:D1")}]` });
+    qbo.createdAt.set("X9", Date.now());
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
+    expect((await rowFor("D1")).qbNote).toBe("app entry X9 is not linked; void or link it");
   });
 });

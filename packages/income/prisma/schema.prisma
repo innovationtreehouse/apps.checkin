@@ -17,9 +17,11 @@ datasource db {
   provider = "postgresql"
 }
 
-// One row per paid mirror payout once it is matched to a QuickBooks deposit or raised for
-// finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
-// deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
+// One row per deposit income expects: a paid mirror payout (source shopify) once it is matched
+// or raised for finance, or a giving-platform disbursement another lane handed over through
+// expectDeposit (source benevity). deposit_id is set only while the row holds a deposit, so the
+// unique pair means a deposit backs at most one row across every source. payout_net_cents is the
+// net seen at the last decision.
 // status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
 // the row holds a deposit. WAITING, POSTED, POST_FAILED, OVER_CAP and "created" belong to the create path.
 model PayoutReconciliation {
@@ -27,6 +29,10 @@ model PayoutReconciliation {
   id                Int       @id @default(autoincrement()) @map("id")
   /// @sensitivity:internal
   orgId             String    @map("org_id")
+  /// Where the money comes from: shopify | benevity.
+  /// @sensitivity:internal
+  source            String    @default("shopify") @map("source")
+  /// The source's key: a Shopify payout GID, or a Benevity disbursement id.
   /// @sensitivity:internal
   payoutGid         String    @map("payout_gid")
   /// @sensitivity:internal
@@ -66,6 +72,9 @@ model PayoutReconciliation {
   /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
+  /// The deposit another lane expects (bank role, lines, memo); null on Shopify rows, built from the mirror.
+  /// @sensitivity:internal
+  expected            Json?     @map("expected")
 
   @@unique([orgId, payoutGid])
   @@unique([orgId, depositId])
@@ -103,6 +112,9 @@ model IncomeOrgSettings {
   maxCreatesPerRun     Int    @default(25) @map("max_creates_per_run")
   /// @sensitivity:internal
   maxCreateCentsPerRun Int    @default(2500000) @map("max_create_cents_per_run")
+  /// The cents cap for Benevity deposits, per deposit and per run; maxCreateCentsPerRun is Shopify's.
+  /// @sensitivity:internal
+  benevityMaxCreateCentsPerRun Int @default(2500000) @map("benevity_max_create_cents_per_run")
   /// When income posting switched on: set once, by the first connected drain, never cleared.
   /// @sensitivity:internal
   qbPostingOnAt        DateTime? @map("qb_posting_on_at")
