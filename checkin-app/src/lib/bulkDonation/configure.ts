@@ -33,10 +33,18 @@ async function listOwners(): Promise<OwnerInfo[]> {
   });
 }
 
+/** What donation posting lacks, in plain words; empty when it binds. */
+export function donationPostingMissing(): string[] {
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(process.env.QBO_DONATION_BANK_ACCOUNT_ID ? [] : ["bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]),
+  ];
+}
+
 /** Loaded on first use, so binding at boot pulls in no AWS SDK. */
 function qbPosting(): DonationQbPosting | undefined {
   const bankAccountId = process.env.QBO_DONATION_BANK_ACCOUNT_ID;
-  if (!process.env.QBO_REALM_ID || !bankAccountId) return undefined;
+  if (donationPostingMissing().length > 0 || !bankAccountId) return undefined;
   return {
     client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
     bankAccountId,

@@ -185,6 +185,11 @@ const people: PeopleDirectory = {
   },
 };
 
+/** What expense posting lacks, in plain words; the posting port is not bound here yet. */
+export function expensePostingMissing(): string[] {
+  return ["the posting writer, which this app does not bind yet"];
+}
+
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,

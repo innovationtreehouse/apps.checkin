@@ -162,6 +162,17 @@ function qbAccounts(): IncomeQbAccounts | undefined {
   return income && charge_remainder && fees && adjustments ? { income, charge_remainder, fees, adjustments } : undefined;
 }
 
+/** What income posting lacks, in plain words; empty when every piece is set. */
+export function incomePostingMissing(): string[] {
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(qbAccounts() ? [] : ["deposit-line accounts (all four QBO_INCOME_*_ACCOUNT_ID)"]),
+    ...(process.env.QBO_INCOME_BANK_ACCOUNT_ID ? [] : ["bank account (QBO_INCOME_BANK_ACCOUNT_ID)"]),
+    ...(mirrorConfigured() ? [] : ["Shopify mirror"]),
+    ...(process.env.INCOME_MIRROR_NEWEST_WINS === "true" ? [] : ["the switch INCOME_MIRROR_NEWEST_WINS=true"]),
+  ];
+}
+
 function posting(): IncomePosting | undefined {
   const accounts = qbAccounts();
   if (!process.env.QBO_REALM_ID || !accounts) return undefined;

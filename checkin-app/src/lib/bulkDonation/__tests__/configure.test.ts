@@ -124,6 +124,16 @@ describe("bulk-donation wiring", () => {
     expect((await config()).qb).toBeUndefined();
   });
 
+  it("names what the drain lacks, for the status page", async () => {
+    const { donationPostingMissing } = await import("../configure");
+    delete process.env.QBO_REALM_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    expect(donationPostingMissing()).toEqual(["QuickBooks company (QBO_REALM_ID)", "bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]);
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
+    expect(donationPostingMissing()).toEqual([]);
+  });
+
   it("binds the drain to checkin's one guarded client and the donation bank account", async () => {
     process.env.QBO_REALM_ID = "123";
     process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";

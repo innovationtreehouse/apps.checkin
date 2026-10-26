@@ -93,4 +93,12 @@ describe("income posting binding", () => {
     buildQuickBooks.mockReturnValue(null);
     expect((await config()).posting).toBeUndefined();
   });
+  it("names what posting still lacks, for the status page", async () => {
+    const { incomePostingMissing } = await import("../configure");
+    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
+    expect(incomePostingMissing()).toEqual(["bank account (QBO_INCOME_BANK_ACCOUNT_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
+    delete process.env.QBO_REALM_ID;
+    delete process.env.QBO_INCOME_FEES_ACCOUNT_ID;
+    expect(incomePostingMissing().slice(0, 2)).toEqual(["QuickBooks company (QBO_REALM_ID)", "deposit-line accounts (all four QBO_INCOME_*_ACCOUNT_ID)"]);
+  });
 });
