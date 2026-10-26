@@ -323,4 +323,48 @@ describeDb("merge after a concurrent resolution", () => {
     expect(await qty(REAL)).toBe(3);
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
+
+  it("a reject that read pending before an approve merged is a 409 and leaves the approve standing", async () => {
+    const { provisional } = services();
+    await provisionalItem(1);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
+
+    // Hold the provisional's row so the approve queues on it first, then the reject's claim behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 23, 1);
+    await someoneBlocked(1);
+    const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, approve]);
+    await expect(reject).rejects.toMatchObject({ status: 409 });
+
+    expect(await db.inventoryProvisionalItem.findFirst()).toMatchObject({ status: "approved", resolvedToGtin13: REAL });
+    expect(await qty(REAL)).toBe(5);
+    expect(await db.provisionalItemLog.count({ where: { eventType: "rejected" } })).toBe(0);
+  });
+
+  it("an immediate receipt line on a resolved provisional receives under the real GTIN", async () => {
+    const { receipts } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(1)).id },
+      data: { status: "approved", resolvedToGtin13: REAL },
+    });
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 4 } });
+
+    const result = await receipts.applyReceipt(TEST_ORG_ID, "r-1", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 2, isProvisional: true }]);
+
+    expect(result.updatedItems).toEqual([{ gtin13: REAL, newQuantity: 6 }]);
+    expect(await qty(REAL)).toBe(6);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
 });

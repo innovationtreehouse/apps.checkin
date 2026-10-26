@@ -33,6 +33,22 @@ export async function lockProvisional(tx: Prisma.TransactionClient, orgId: strin
   return tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13 } });
 }
 
+/**
+ * The GTIN a stock add on `gtin13` lands on. A provisional GTIN since resolved by the global
+ * catalog receives under its real GTIN, unless a unit conflict on it is still open: then it joins
+ * the provisional stock that the conflict's resolution settles. The locks order this against a
+ * merge or resolution.
+ */
+export async function receivingGtin13(tx: Prisma.TransactionClient, orgId: string, gtin13: string): Promise<string> {
+  const provisional = await lockProvisional(tx, orgId, gtin13);
+  if (!provisional?.resolvedToGtin13) return gtin13;
+  await lockOrgItemPair(tx, orgId, gtin13, provisional.resolvedToGtin13);
+  const openConflict = await tx.inventoryMergeConflict.findFirst({
+    where: { orgId, provisionalGtin13: gtin13, status: "pending" },
+  });
+  return openConflict ? gtin13 : provisional.resolvedToGtin13;
+}
+
 export function createProvisionalItemService({
   provisionalRepo,
   resolutionRepo,
@@ -255,10 +271,13 @@ export function createProvisionalItemService({
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.inventoryProvisionalItem.update({
-          where: { id: provisional.id },
+        // The status was read outside this transaction; a concurrent approve or map that
+        // already moved the provisional's stock wins.
+        const claimed = await tx.inventoryProvisionalItem.updateMany({
+          where: { id: provisional.id, status: "pending" },
           data: { status: nextStatus, rejectionReason: rejectionReason ?? null, reviewedAt: now },
         });
+        if (claimed.count === 0) throw new ServiceError(409, "Provisional item was already resolved");
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisional.id, gtin13: provisionalGtin13,

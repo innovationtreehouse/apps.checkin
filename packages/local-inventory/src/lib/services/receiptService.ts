@@ -5,7 +5,7 @@ import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
 import { isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
-import type { ProvisionalItemService } from "./provisionalItemService";
+import { receivingGtin13, type ProvisionalItemService } from "./provisionalItemService";
 import { isServiceError, ServiceError } from "@checkin/component-kit";
 
 export type ApplyLineItem = {
@@ -216,14 +216,15 @@ export function createReceiptService({
             continue;
           }
 
-          const newQuantity = await applyQtyChangeIn(tx, orgId, li.gtin13, li.quantityDelta, {
+          const gtin13 = li.isProvisional ? await receivingGtin13(tx, orgId, li.gtin13) : li.gtin13;
+          const newQuantity = await applyQtyChangeIn(tx, orgId, gtin13, li.quantityDelta, {
             userId: null,
             changeType: "automatic",
             receiptId,
             conversionFactor: li.conversionFactor ?? 1,
             conversionVersion: li.conversionVersion ?? 1,
           });
-          updatedItems.push({ gtin13: li.gtin13, newQuantity });
+          updatedItems.push({ gtin13, newQuantity });
         }
 
         const applied = { status: "applied", deltaJson, resultJson: JSON.stringify(updatedItems), failureReason: null };
