@@ -43,5 +43,6 @@ export const EXPENSE_FINANCE_TABS = {
     { name: "QuickBooks Accounts", href: "/expense/qb-accounts", icon: "📒" },
     { name: "Part Buckets", href: "/expense/ownership-map", icon: "🪣" },
     { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️" },
+    { name: "Donated Equipment", href: "/expense/donated-capital", icon: "🎁" },
   ],
 } as const satisfies { expenses: ExpenseNavLink; setup: readonly ExpenseNavLink[] };

@@ -197,6 +197,7 @@ export const PAGES: PageEntry[] = [
   { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Finance', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
   { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Finance', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
   { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Finance', keywords: 'itfa capital register asset', visible: EXPENSES },
+  { href: '/expense/donated-capital', label: 'Donated Equipment', section: 'Finance', keywords: 'in-kind gift capital asset itfa', visible: EXPENSES },
 
   // Donations — FINANCE or BOARD
   { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },

@@ -14,6 +14,7 @@ import {
   type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
+import { duplicateGroup as computeGroup, type DuplicateGroup } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
@@ -571,11 +572,30 @@ export const receiptService = {
     return load(id, "finance", actor);
   },
 
-  /** A person's decision that this is not a duplicate; the pipeline never re-flags it. */
+  /**
+   * A person's decision that this receipt and each live member of its group are different
+   * purchases, recorded per pair; a copy arriving later is still matched against it.
+   */
   async clearDuplicate(id: string) {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "clear duplicate");
+    try {
+      assertLegalTransition(row.state, { type: "DUPLICATE_CLEARED" });
+    } catch (e) {
+      transitionError(e);
+    }
+    const others =((await computeGroup(row.orgId, id))?.members ?? []).filter((m) => m.id !== id && m.state !== "discarded");
+    await db.receiptPairDecision.createMany({
+      data: others.map((m) => ({
+        orgId: row.orgId,
+        receiptId: id < m.id ? id : m.id,
+        otherReceiptId: id < m.id ? m.id : id,
+        kind: "different",
+        decidedByUserId: actor.id,
+      })),
+      skipDuplicates: true,
+    });
     await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -695,6 +715,14 @@ export const receiptService = {
   },
 
   // ── Reads ──────────────────────────────────────────────────────────────────
+
+  /** The receipt's duplicate group (design §5.1). Org-wide: the host route admits finance only. */
+  async duplicateGroup(id: string): Promise<DuplicateGroup> {
+    await requireActor();
+    const group = await computeGroup((await getOrg()).id, id);
+    if (!group) throw new ServiceError(404, "Receipt not found");
+    return group;
+  },
 
   async get(id: string, access: Access) {
     const actor = await requireActor();

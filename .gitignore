@@ -16,6 +16,7 @@ node_modules
 coverage/
 test-results/
 playwright-report/
+e2e-results.json
 .jest-cache
 
 # next.js

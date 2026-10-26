@@ -37,6 +37,7 @@ export {
   type InKindOutcome,
   type InKindSource,
   type WaitingOn,
+  spreadToTotal,
 } from "./services/inKindAcceptService";
 export {
   manualInKindService,

@@ -30,6 +30,7 @@ import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
+import { configureRuntime as configureIncomeRuntime } from '@/lib/income/configure';
 import '@/security/registry';
 import libraries from '../../libraries.json';
 
@@ -140,6 +141,7 @@ describe('Registry route admission gates', () => {
         // Bind the library runtimes the routes call into, as server boot (instrumentation.ts) does.
         configureBulkDonationRuntime();
         configureExpenseRuntime();
+        configureIncomeRuntime();
 
         const plain = await prisma.person.create({
             data: {

@@ -13,10 +13,11 @@
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
- * Boot stays DB-free.
+ * An accepted gift's lines go to the expense library's capital review, which
+ * keeps donated equipment at or over its thresholds. Boot stays DB-free.
  */
 import { configureBulkDonation } from "@checkin/bulk-donation";
-import type { DonationQbPosting, InKindDirectory, OwnerInfo } from "@checkin/bulk-donation";
+import type { DonationQbPosting, InKindCapital, InKindDirectory, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
@@ -73,6 +74,15 @@ const inKind: InKindDirectory = {
   },
 };
 
+const capital: InKindCapital = {
+  async submit(orgId, lines) {
+    await (await import("@checkin/expense")).submitDonatedLines(orgId, lines);
+  },
+  async awaitingReview(orgId) {
+    return (await import("@checkin/expense")).giftsAwaitingCapitalReview(orgId);
+  },
+};
+
 export function configureRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal },
@@ -83,5 +93,6 @@ export function configureRuntime(): void {
     qb: qbPosting(),
     otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
     inKind,
+    capital,
   });
 }

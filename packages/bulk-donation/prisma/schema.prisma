@@ -367,6 +367,9 @@ model InKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
+  // When the expense library took this accepted gift's lines for capital review.
+  /// @sensitivity:internal
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
   lines                      InKindDonationLine[]
 
   @@unique([orgId, receiptId])
@@ -428,6 +431,9 @@ model ManualInKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
+  // When the expense library took this accepted gift's lines for capital review.
+  /// @sensitivity:internal
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
   lines              ManualInKindDonationLine[]
 
   @@index([orgId, recordedAt])

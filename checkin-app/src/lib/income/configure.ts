@@ -14,6 +14,11 @@
  * - bankAccountId: the QuickBooks bank account payouts land in, from
  *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
  *   nothing.
+ * - posting: deposit creation through a client built here by checkin's guarded
+ *   builder, bound only where QBO_REALM_ID and all four QBO_INCOME_*_ACCOUNT_ID
+ *   deposit-line accounts are set and the guard admits the company. Unbound, the
+ *   drain and the orphan sweep answer "unbound". Creation stays gated until
+ *   INCOME_MIRROR_NEWEST_WINS is "true".
  * - owners: checkin's budget-owner buckets.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
@@ -30,6 +35,8 @@ import {
   toQbDeposit,
   type MirrorBalanceTxn,
   type IncomeAlerts,
+  type IncomePosting,
+  type IncomeQbAccounts,
   type MirrorPayout,
   type OwnerDirectory,
   type PayoutMirror,
@@ -46,6 +53,7 @@ import {
   isConfigured as mirrorConfigured,
   type IncomeMirrorPayoutRow,
 } from "@/lib/shopifyRead/client";
+import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
@@ -113,16 +121,11 @@ const alerts: IncomeAlerts = {
 };
 
 
-/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
-async function quickBooks() {
-  return (await import("@/lib/quickbooks/client")).getQuickBooks();
-}
-
 function depositSource(): QbDepositSource | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
     async depositsBetween(from, to) {
-      const qb = await quickBooks();
+      const qb = await getQuickBooks();
       if (!qb) throw new Error("QuickBooks is off");
       return (await qb.depositsBetween(from, to)).map(toQbDeposit);
     },
@@ -133,11 +136,27 @@ function classSource(): QbClassSource | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
     async activeClassIds() {
-      const qb = await quickBooks();
+      const qb = await getQuickBooks();
       if (!qb) throw new Error("QuickBooks is off");
       return (await qb.classes()).filter((c) => c.Active !== false).map((c) => c.Id);
     },
   };
+}
+
+function qbAccounts(): IncomeQbAccounts | undefined {
+  const income = process.env.QBO_INCOME_INCOME_ACCOUNT_ID;
+  const charge_remainder = process.env.QBO_INCOME_CHARGE_REMAINDER_ACCOUNT_ID;
+  const fees = process.env.QBO_INCOME_FEES_ACCOUNT_ID;
+  const adjustments = process.env.QBO_INCOME_ADJUSTMENTS_ACCOUNT_ID;
+  return income && charge_remainder && fees && adjustments ? { income, charge_remainder, fees, adjustments } : undefined;
+}
+
+function posting(): IncomePosting | undefined {
+  const accounts = qbAccounts();
+  if (!process.env.QBO_REALM_ID || !accounts) return undefined;
+  const client = buildQuickBooks();
+  if (!client) return undefined;
+  return { client, accounts, mirrorNewestWins: process.env.INCOME_MIRROR_NEWEST_WINS === "true" };
 }
 
 async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
@@ -151,6 +170,7 @@ export function configureRuntime(): void {
     mirror: mirrorConfigured() ? payoutMirror : undefined,
     deposits: depositSource(),
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
+    posting: posting(),
     owners,
     classes: classSource(),
     alerts,
