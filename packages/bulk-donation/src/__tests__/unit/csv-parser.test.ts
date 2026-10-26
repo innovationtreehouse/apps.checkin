@@ -215,7 +215,8 @@ describe('Donations Report layout', () => {
   const gift = (txn: string, date: string, comment: string, gross: string, match: string) =>
     `Example Co,Example Nonprofit,${date},Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
     `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
-  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string } = {}) => Buffer.from([
+  const TOTALS = 'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00';
+  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string; totals?: string | null } = {}) => Buffer.from([
     'Donations Report,',
     '"#-------------------------------------------",',
     'Charity Name,Example Nonprofit',
@@ -231,7 +232,7 @@ describe('Donations Report layout', () => {
     gift('TXNAAAA001', '2026-02-06T15:03:38Z', 'For the robotics team', '"1,500.00"', `"${opts.match ?? '3,000.00'}"`),
     gift('TXNAAAA002', '2026-03-29T17:03:08Z', '', '200.00', '200.00'),
     ...(opts.extraGift === undefined ? [] : [opts.extraGift]),
-    'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00',
+    ...(opts.totals === null ? [] : [opts.totals ?? TOTALS]),
     'Total Donations (Gross),"4,900.00"',
     `${opts.checkFeeLabel ?? 'Check Fee'},${opts.checkFee ?? '0.00'}`,
     'Net Total Payment,"4,900.00"',
@@ -287,6 +288,20 @@ describe('Donations Report layout', () => {
   it('fails a short row that lost its Transaction ID rather than skipping it', () => {
     expect(() => parseBenevityCsv(report({ extraGift: 'Example Co,Example Nonprofit' })))
       .toThrow('line 15: 2 cells, but the header has 23');
+  });
+
+  it('passes when the Totals row matches the parsed gifts', () => {
+    expect(parseBenevityCsv(report()).map((r) => r.transactionId)).toEqual(['TXNAAAA001', 'TXNAAAA002']);
+  });
+
+  it('refuses the file when a Totals column is a cent off the parsed gifts', () => {
+    const offByOne = 'Totals,,,,,,,,,,,,,,,,,,"1,700.01","3,200.00",0.00,0.00';
+    expect(() => parseBenevityCsv(report({ totals: offByOne })))
+      .toThrow('Could not import the CSV (1 problem):\nline 15, Totals, "Total Donation to be Acknowledged": report says $1,700.01, gifts add up to $1,700.00');
+  });
+
+  it('reads the gifts unchecked when there is no Totals row', () => {
+    expect(parseBenevityCsv(report({ totals: null })).map((r) => r.transactionId)).toEqual(['TXNAAAA001', 'TXNAAAA002']);
   });
 
   it('lists every problem and counts them', () => {
