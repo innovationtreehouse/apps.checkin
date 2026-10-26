@@ -43,6 +43,8 @@ class FakeQbo {
   closeDate: string | null = null;
   dropAfterCreate = false;
   createTimes = new Map<string, Date>();
+  /** Runs inside a by-id read, standing in for a drain post that lands meanwhile. */
+  duringByIdRead: (() => Promise<void>) | null = null;
   private nextId = 9000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -59,6 +61,7 @@ class FakeQbo {
       const m = /FROM (JournalEntry|Deposit|Purchase) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(query);
       const byId = /FROM (JournalEntry|Deposit|Purchase) WHERE Id IN \('([^']+)'\)/.exec(query);
       if (byId) {
+        await this.duringByIdRead?.();
         const all: { Id: string }[] = byId[1] === "JournalEntry" ? this.journals : byId[1] === "Deposit" ? this.deposits : this.purchases;
         const list = all.filter((e) => e.Id === byId[2]);
         return json({ QueryResponse: list.length ? { [byId[1]]: list } : {} });
@@ -453,6 +456,26 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     otherLaneDeposits = ["53"];
     await expect(resolve(id, { action: "match", depositId: "53", purchaseId: "52" })).rejects.toMatchObject({ status: 409 });
     expect(await bookings(id)).toEqual([]);
+  });
+
+  it("a match is refused when the drain attempts a create between the read and the write", async () => {
+    const id = await unbookedGift();
+    qbo.journals.push(handJournal("82", [["Credit", "400", 33], ["Debit", "600", 33]]));
+    qbo.duringByIdRead = async () => {
+      await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } }, data: { qbCreateAttemptedAt: new Date() } });
+    };
+    await expect(resolve(id, { action: "match", journalEntryId: "82" })).rejects.toMatchObject({ status: 409 });
+    expect(await bookings(id)).toEqual([]);
+    expect((await posting(id)).matchState).toBe("UNBOOKED");
+  });
+
+  it("a skipped gift stays in the queue while it carries a note, such as the sweep's stray entry", async () => {
+    const id = await unbookedGift();
+    await resolve(id, { action: "skip", reason: "Booked by hand" });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toEqual([]);
+    const qbNote = "QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it";
+    await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } }, data: { qbNote } });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toMatchObject([{ id, state: null, waitingOn: [], qbState: "DISMISSED", qbNote }]);
   });
 
   it("skip and match look first for the app's own entry and link it instead", async () => {

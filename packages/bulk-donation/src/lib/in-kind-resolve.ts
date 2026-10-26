@@ -68,12 +68,16 @@ async function readyGift(run: Run, source: InKindSource, id: number): Promise<Gi
   return gift;
 }
 
-/** Saves a settlement finance made, while the gift is still finance's; another gift holding an entry is refused. */
-async function settleByFinance(orgId: string, gift: GiftRef, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
+/**
+ * Saves a settlement finance made, while the gift is still finance's and no create was attempted
+ * since `attemptedAt` was read (that create may have landed); another gift holding an entry is refused.
+ */
+async function settleByFinance(orgId: string, gift: GiftRef, attemptedAt: Date | null, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
   try {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
       if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) throw new ServiceError(409, "Already resolved");
+      if (posting.qbCreateAttemptedAt?.getTime() !== attemptedAt?.getTime()) throw new ServiceError(409, "The app tried to book this gift meanwhile; reload and try again");
       await writeSettlement(tx, orgId, gift, posting.id, s, actor, { from: posting.matchState, manual: true, ...payload });
     });
   } catch (err) {
@@ -93,7 +97,7 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, attemptedAt: Date | nu
   const own = await lookupOwnJournal({ orgId, client }, gift, attemptedAt);
   if (!own) return false;
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
-  await settleByFinance(orgId, gift, own, actor, { note: "the app had already booked this gift" });
+  await settleByFinance(orgId, gift, attemptedAt, own, actor, { note: "the app had already booked this gift" });
   return true;
 }
 
@@ -149,7 +153,7 @@ async function match(orgId: string, source: InKindSource, id: number, input: Ext
   const run = await openRun(orgId, actor);
   const gift = await readyGift(run, source, id);
   if (await linkOwnFirst(orgId, ref, posting.qbCreateAttemptedAt, actor)) return;
-  await settleByFinance(orgId, ref, await readMatch(run, gift, input), actor, {});
+  await settleByFinance(orgId, ref, posting.qbCreateAttemptedAt, await readMatch(run, gift, input), actor, {});
 }
 
 async function skip(orgId: string, source: InKindSource, id: number, reason: string, actor: Actor): Promise<void> {
@@ -158,7 +162,7 @@ async function skip(orgId: string, source: InKindSource, id: number, reason: str
   const ref = await giftRef(orgId, source, id);
   const posting = await heldPosting(orgId, source, id);
   if (await linkOwnFirst(orgId, ref, posting.qbCreateAttemptedAt, actor)) return;
-  await settleByFinance(orgId, ref, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
+  await settleByFinance(orgId, ref, posting.qbCreateAttemptedAt, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
 }
 
 /**

@@ -317,9 +317,9 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
 }
 
 /**
- * The finance queue: every gift with something left to do, from either source, with what the
- * accept screen shows. It carries no donor field. A receipt gift whose money has not arrived is
- * still being uploaded and is left out.
+ * The finance queue: every gift with something left to do or a QuickBooks note for finance, from
+ * either source, with what the accept screen shows. It carries no donor field. A receipt gift whose
+ * money has not arrived is still being uploaded and is left out.
  */
 async function listQueue(orgId: string, callerId: number) {
   const [receipts, manuals, buckets, bookings, postings, awaiting] = await Promise.all([
@@ -337,7 +337,8 @@ async function listQueue(orgId: string, callerId: number) {
       const posting = postings.get(bookingKey(g.source, g.id));
       return { g, sides, posting, waits: waitingOn(g, buckets, sides, inCapitalReview, posting) };
     })
-    .filter((w) => w.waits.length > 0);
+    // A gift with nothing left to wait on stays while it carries a note, such as the sweep's stray entry.
+    .filter((w) => w.waits.length > 0 || !!w.posting?.qbNote);
   // ponytail: every waiting gift in one list; page it when the queue outgrows one screen.
   const lk = await readLookups(waiting.map((w) => w.g), callerId);
   return waiting

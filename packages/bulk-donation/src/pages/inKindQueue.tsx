@@ -26,7 +26,8 @@ interface QueueItem {
   budgetOwnerName: string | null;
   totalValueCents: number | null;
   outcome: string | null;
-  state: WaitingOn;
+  /** Null once the gift waits on nothing and stays only for its QuickBooks note. */
+  state: WaitingOn | null;
   waitingOn: WaitingOn[];
   revenueBooking: string | null;
   expenseBooking: string | null;
@@ -242,13 +243,16 @@ export default function InKindQueuePage() {
               const kind = settleKind(q);
               return [
                 <Table.Tr key={key}>
-                  <Table.Td><Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge></Table.Td>
+                  <Table.Td>
+                    {q.state ? <Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge> : <Badge color="yellow">QuickBooks note</Badge>}
+                  </Table.Td>
                   <Table.Td><Anchor href={`/donations/in-kind/${q.source}/${q.id}`}>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Anchor></Table.Td>
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
                   <Table.Td>{q.totalValueCents === null ? "—" : cents(q.totalValueCents)}</Table.Td>
                   <Table.Td>{q.budgetOwnerName ?? "—"}</Table.Td>
                   <Table.Td>
                     {q.revenueBooking || q.expenseBooking ? `Revenue ${q.revenueBooking ?? "—"}, expense ${q.expenseBooking ?? "—"}` : q.qbState ?? "—"}
+                    {q.qbNote && <Text size="xs" c="dimmed">{q.qbNote}</Text>}
                   </Table.Td>
                   <Table.Td>
                     {decidable(q) && mayDecide(q) && (
