@@ -180,7 +180,7 @@ export async function qbCandidates(principal: ExpensePrincipal, expenseId: strin
  */
 async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, entity: QbMatchEntity, principal: ExpensePrincipal): Promise<boolean> {
   if (!expense.qbCreateAttemptedAt) return false;
-  const posting = getExpenseRuntime().quickbooks.posting;
+  const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt);
   switch (own.kind) {

@@ -34,6 +34,7 @@ const ROLE_LABELS: Record<BooksMapRole, string> = {
   BENEVITY_DONATIONS: "Benevity: donations",
   BENEVITY_MATCHES: "Benevity: employer matches",
   BENEVITY_FEES: "Benevity: fees",
+  EXPENSE_PAYMENT: "Organisation card",
 };
 
 /** Reads JSON, or says why it could not; never throws. */

@@ -142,7 +142,7 @@ async function postedEntry(id: string, vendorId: string | null, txnDate: string)
  * receipt date, padded with the match grace on both sides. Capped; returns counts only.
  */
 export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unbound"> {
-  const posting = getExpenseRuntime().quickbooks.posting;
+  const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const inQb = await db.expense.findMany({
     where: { qbMatchState: { in: ["CREATED", "MATCHED"] }, qbTxnId: { not: null }, receiptDate: { not: null } },

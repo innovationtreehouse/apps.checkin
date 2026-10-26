@@ -28,8 +28,8 @@ export interface QuickBooksPorts {
   reader: QbReader;
   refs: QbRefs;
   vendors: QbVendors;
-  /** Null until the host binds QuickBooks: nothing is posted. */
-  posting: ExpensePosting | null;
+  /** Resolved per run; null while the host has no client or payment account: nothing is posted. */
+  posting: () => Promise<ExpensePosting | null>;
 }
 
 export interface ExpenseConfig {
@@ -77,7 +77,7 @@ export function configureExpense(config: ExpenseConfig): void {
       reader: config.quickbooks?.reader ?? inertQbReader,
       refs: config.quickbooks?.refs ?? inertQbRefs,
       vendors: config.quickbooks?.vendors ?? inertQbVendors,
-      posting: config.quickbooks?.posting ?? null,
+      posting: config.quickbooks?.posting ?? (async () => null),
     },
     outbound: config.outbound ?? inertOutbound,
   });
