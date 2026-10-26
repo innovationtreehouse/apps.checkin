@@ -15,9 +15,9 @@ beforeEach(() => {
 describe("send()", () => {
   it("raises a red chip that stays, titled with what failed and giving the server's reason", async () => {
     respond(403, JSON.stringify({ error: "You cannot decide on a receipt that you or your household uploaded or is reimbursed for" }));
-    expect(await send("/r1/clear-duplicate", "POST", {}, "Cleared", "Couldn't clear the duplicate flag")).toBe(false);
+    expect(await send("/r1/not-this-one", "POST", {}, "Dismissed", "Couldn't dismiss this match")).toBe(false);
     expect(show).toHaveBeenCalledWith({
-      title: "Couldn't clear the duplicate flag",
+      title: "Couldn't dismiss this match",
       message: "You cannot decide on a receipt that you or your household uploaded or is reimbursed for",
       color: "red",
       autoClose: false,

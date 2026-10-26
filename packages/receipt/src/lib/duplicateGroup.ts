@@ -1,4 +1,5 @@
-import { db } from "../db";
+import { db, type Db } from "../db";
+import type { Prisma } from "../generated/prisma/client";
 import { BODY_COPY_DISCARDED } from "./receipt-flow";
 import { STATE_LABELS } from "./stateLabels";
 
@@ -7,6 +8,7 @@ export type DuplicateMember = { id: string; state: string; label: string };
 export type DuplicateGroup = { members: DuplicateMember[]; dismissed: string[] };
 
 type Node = { id: string; state: string; uploadedAt: Date; pushedAt: Date | null };
+type Client = Db | Prisma.TransactionClient;
 
 const isLive = (n: Pick<Node, "state">) => n.state !== "discarded";
 const byUpload = (a: Node, b: Node) => a.uploadedAt.getTime() - b.uploadedAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -17,8 +19,8 @@ const byUpload = (a: Node, b: Node) => a.uploadedAt.getTime() - b.uploadedAt.get
  * attachment matches nothing. Retailers compare case- and whitespace-folded on both sides; an
  * empty retailer, order number or receipt number matches nothing.
  */
-async function matchesOf(orgId: string, ids: string[]): Promise<Node[]> {
-  return db.$queryRaw<Node[]>`
+async function matchesOf(client: Client, orgId: string, ids: string[]): Promise<Node[]> {
+  return client.$queryRaw<Node[]>`
     SELECT DISTINCT o.id, o.state, ro.uploaded_at AS "uploadedAt", ro.pushed_at AS "pushedAt"
     FROM receipt_details d
     JOIN receipts r ON r.id = d.id
@@ -48,13 +50,13 @@ async function matchesOf(orgId: string, ids: string[]): Promise<Node[]> {
  * The live receipts connected to `start` through live matches, and the discarded receipts
  * matching any of them. A discarded receipt joins a group but never links one.
  */
-async function component(orgId: string, start: Node): Promise<{ live: Map<string, Node>; discarded: Map<string, Node> }> {
+async function component(client: Client, orgId: string, start: Node): Promise<{ live: Map<string, Node>; discarded: Map<string, Node> }> {
   const live = new Map([[start.id, start]]);
   const discarded = new Map<string, Node>();
   let frontier = [start.id];
   while (frontier.length > 0) {
     const next: string[] = [];
-    for (const node of await matchesOf(orgId, frontier)) {
+    for (const node of await matchesOf(client, orgId, frontier)) {
       if (!isLive(node)) discarded.set(node.id, node);
       else if (!live.has(node.id)) {
         live.set(node.id, node);
@@ -68,17 +70,40 @@ async function component(orgId: string, start: Node): Promise<{ live: Map<string
 
 const day = (at: Date) => at.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
-/** How each member is shown: its state, with the date and reason of a rejection or withdrawal. */
-async function labels(nodes: Node[]): Promise<Map<string, string>> {
+type Described = { retailer: string | null; receiptDate: string | null; receiptTotalCents: number | null };
+
+/** A receipt in a line of text: its vendor, receipt date and total, as "Home Depot, 3 Oct, $84.12". */
+export function describeReceipt(r: Described): string {
+  const date = r.receiptDate && /^\d{4}-\d{2}-\d{2}$/.test(r.receiptDate) ? day(new Date(`${r.receiptDate}T00:00:00Z`)) : r.receiptDate;
+  const total = r.receiptTotalCents == null ? null : `$${(r.receiptTotalCents / 100).toFixed(2)}`;
+  return [r.retailer?.trim() || "Receipt", date, total].filter(Boolean).join(", ");
+}
+
+/** Each receipt's description by id, for labels and messages. */
+export async function describeReceipts(client: Client, ids: string[]): Promise<Map<string, string>> {
+  const rows = await client.receiptDetail.findMany({ where: { id: { in: ids } }, select: { id: true, retailer: true, receiptDate: true, receiptTotalCents: true } });
+  return new Map(rows.map((r) => [r.id, describeReceipt(r)]));
+}
+
+/**
+ * How each member is shown: its state, with the date and reason of a rejection or withdrawal. A
+ * member rejected as a copy names the receipt kept in its place.
+ */
+async function labels(client: Client, nodes: Node[]): Promise<Map<string, string>> {
   const ended = nodes.filter((n) => n.state === "rejected" || n.state === "discarded").map((n) => n.id);
-  const logs = await db.receiptAuditLog.findMany({
+  const logs = await client.receiptAuditLog.findMany({
     where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded", BODY_COPY_DISCARDED] } },
     orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const last = new Map(logs.map((l) => [`${l.receiptId}:${l.action}`, l]));
+  const copies = await client.receiptPairDecision.findMany({ where: { kind: "copy_of", copyReceiptId: { in: ended } } });
+  const keptOf = new Map(copies.map((p) => [p.copyReceiptId, p.receiptId === p.copyReceiptId ? p.otherReceiptId : p.receiptId]));
+  const kept = await describeReceipts(client, [...keptOf.values()]);
   return new Map(
     nodes.map((n) => {
       if (n.state === "rejected") {
+        const keptId = keptOf.get(n.id);
+        if (keptId) return [n.id, `Rejected as a copy of ${kept.get(keptId) ?? "another receipt"}`];
         const log = last.get(`${n.id}:reject_financial`);
         return [n.id, log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected"];
       }
@@ -99,14 +124,14 @@ async function labels(nodes: Node[]): Promise<Map<string, string>> {
  * receipt raises no flag, so it shows only beside two live members that match. Members
  * dismissed against the viewed receipt are left out of its view and listed in `dismissed`.
  */
-export async function duplicateGroup(orgId: string, id: string): Promise<DuplicateGroup | null> {
-  const [viewed] = await db.$queryRaw<Node[]>`
+export async function duplicateGroup(orgId: string, id: string, client: Client = db): Promise<DuplicateGroup | null> {
+  const [viewed] = await client.$queryRaw<Node[]>`
     SELECT d.id, d.state, r.uploaded_at AS "uploadedAt", r.pushed_at AS "pushedAt"
     FROM receipt_details d JOIN receipts r ON r.id = d.id
     WHERE d.id = ${id} AND d.org_id = ${orgId}`;
   if (!viewed) return null;
 
-  const decided = await db.receiptPairDecision.findMany({
+  const decided = await client.receiptPairDecision.findMany({
     where: { orgId, kind: "different", OR: [{ receiptId: id }, { otherReceiptId: id }] },
     select: { receiptId: true, otherReceiptId: true },
   });
@@ -114,10 +139,10 @@ export async function duplicateGroup(orgId: string, id: string): Promise<Duplica
 
   const live = new Map<string, Node>();
   const discarded = new Map<string, Node>();
-  const starts = isLive(viewed) ? [viewed] : (await matchesOf(orgId, [id])).filter(isLive);
+  const starts = isLive(viewed) ? [viewed] : (await matchesOf(client, orgId, [id])).filter(isLive);
   for (const start of starts) {
     if (live.has(start.id)) continue;
-    const found = await component(orgId, start);
+    const found = await component(client, orgId, start);
     if (found.live.size < 2) continue;
     for (const [k, n] of found.live) live.set(k, n);
     for (const [k, n] of found.discarded) discarded.set(k, n);
@@ -130,8 +155,8 @@ export async function duplicateGroup(orgId: string, id: string): Promise<Duplica
 
   const dismissedRows = dismissedIds.size === 0
     ? []
-    : await db.receipt.findMany({ where: { id: { in: [...dismissedIds] } }, select: { id: true, uploadedAt: true }, orderBy: [{ uploadedAt: "asc" }, { id: "asc" }] });
-  const label = await labels(shown);
+    : await client.receipt.findMany({ where: { id: { in: [...dismissedIds] } }, select: { id: true, uploadedAt: true }, orderBy: [{ uploadedAt: "asc" }, { id: "asc" }] });
+  const label = await labels(client, shown);
   return {
     members: shown.map((n) => ({ id: n.id, state: n.state, label: label.get(n.id) ?? n.state })),
     dismissed: dismissedRows.map((r) => r.id),

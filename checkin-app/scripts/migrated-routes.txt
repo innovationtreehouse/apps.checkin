@@ -196,7 +196,11 @@ GET /api/receipts/settings
 PUT /api/receipts/settings
 POST /api/receipts/[id]/approve
 POST /api/receipts/[id]/reject
-POST /api/receipts/[id]/clear-duplicate
+GET /api/receipts/[id]/duplicate-group
+POST /api/receipts/[id]/not-this-one
+DELETE /api/receipts/[id]/not-this-one/[otherId]
+POST /api/receipts/[id]/different-purchases
+POST /api/receipts/[id]/keep-this-one
 POST /api/receipts/[id]/restart-flow
 POST /api/receipts/[id]/push-to-inventory
 POST /api/receipts/import

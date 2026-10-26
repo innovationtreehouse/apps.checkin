@@ -6,7 +6,7 @@ import { receiptRepo } from "../../repositories/receipt";
 import { getOrg } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 beforeEach(async () => {
   await clearAll();
@@ -72,21 +72,120 @@ describeDb("duplicate detection", () => {
     }
   });
 
-  it("a cleared flag sticks while the original still exists, and the clear is audited", async () => {
+  it("Different purchases finalizes the copy, and the decision and the clear are audited", async () => {
     const file = textFile();
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     expect(dup.state).toBe("duplicate_flagged");
 
     actAs(FINANCE);
-    await receiptService.clearDuplicate(dup.id);
+    await receiptService.differentPurchases(dup.id, [first.id, dup.id]);
     expect(await stateOf(dup.id)).toBe("receipt_finalized");
 
     const cleared = await db.receiptAuditLog.findFirst({ where: { receiptId: dup.id, action: "duplicate_cleared" } });
     expect(cleared).toMatchObject({ userId: FINANCE.id, username: FINANCE.name });
-    expect(cleared?.changedAt).toBeInstanceOf(Date);
-    const detail = await db.receiptDetail.findUnique({ where: { id: dup.id } });
-    expect(detail?.duplicateFlagClearedAt).toBeInstanceOf(Date);
+    for (const [receiptId, other] of [[first.id, dup.id], [dup.id, first.id]]) {
+      const decided = await db.receiptAuditLog.findFirst({ where: { receiptId, action: "duplicate_pair_different" } });
+      expect(decided).toMatchObject({ userId: FINANCE.id, valueAfter: other });
+    }
+  });
+});
+
+describeDb("deciding a duplicate group", () => {
+  beforeEach(() => configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr() }));
+
+  const pairDecision = (a: string, b: string) =>
+    db.receiptPairDecision.findFirst({ where: { receiptId: a < b ? a : b, otherReceiptId: a < b ? b : a } });
+
+  it("Undo of Not this one deletes the pair decision, audits it, and the match returns", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+
+    actAs(FINANCE);
+    const after = await receiptService.notThisOne(c.id, a.id);
+    expect(after).toMatchObject({ members: [{ id: b.id }, { id: c.id }], dismissed: [a.id] });
+    expect(await stateOf(c.id)).toBe("duplicate_flagged");
+
+    const undone = await receiptService.undoNotThisOne(c.id, a.id);
+    expect(undone.members.map((m) => m.id)).toEqual([a.id, b.id, c.id]);
+    expect(undone.dismissed).toEqual([]);
+    expect(await pairDecision(a.id, c.id)).toBeNull();
+    expect(await actions(c.id)).toEqual(expect.arrayContaining(["duplicate_pair_different", "duplicate_pair_undone"]));
+    expect(await actions(a.id)).toEqual(expect.arrayContaining(["duplicate_pair_different", "duplicate_pair_undone"]));
+  });
+
+  it("Undo is refused once the viewed receipt has left the hold, and the decision stands", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    await receiptService.notThisOne(b.id, a.id);
+    expect(await stateOf(b.id)).toBe("receipt_finalized");
+
+    await expect(receiptService.undoNotThisOne(b.id, a.id)).rejects.toMatchObject({ status: 409 });
+    expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "different" });
+  });
+
+  it("Not this one on a match already dismissed answers 409", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    await receiptService.notThisOne(c.id, a.id);
+    await expect(receiptService.notThisOne(c.id, a.id)).rejects.toMatchObject({ status: 409 });
+    expect(await stateOf(b.id)).toBe("duplicate_flagged");
+  });
+
+  it("Not this one is not refused for a copy that arrived after the panel was drawn", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    const fresh = await receiptService.notThisOne(b.id, a.id);
+    expect(fresh.members.map((m) => m.id)).toEqual([b.id, c.id]);
+    expect(await stateOf(b.id)).toBe("duplicate_flagged");
+  });
+
+  it("a stale Different purchases names the new copy in its 409", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    await expect(receiptService.differentPurchases(b.id, [a.id, b.id])).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/^A new possible copy arrived after you opened this: /),
+    });
+    expect(await pairDecision(a.id, b.id)).toBeNull();
+  });
+
+  it("a decision replacing an earlier one for the same pair is audited again", async () => {
+    const file = textFile();
+    actAs(ALICE);
+    const a = await receiptService.upload(file, "text/plain", {});
+    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    await receiptService.keepThisOne(b.id, [a.id, b.id]);
+    expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "copy_of", copyReceiptId: a.id });
+
+    actAs(ALICE);
+    const c = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    await receiptService.differentPurchases(c.id, [a.id, b.id, c.id]);
+    expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "different", copyReceiptId: null });
+    expect(await actions(a.id)).toEqual(expect.arrayContaining(["duplicate_pair_copy_of", "duplicate_pair_different"]));
+  });
+
+  it("Keep this one rejects the open copy with the kept receipt named, and labels it so", async () => {
+    const file = textFile();
+    actAs(ALICE);
+    const a = await receiptService.upload(file, "text/plain", {});
+    const b = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "Home Depot" }) });
+    actAs(FINANCE);
+    await receiptService.keepThisOne(b.id, [a.id, b.id]);
+    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: a.id, action: "reject_financial" } });
+    expect(row?.valueAfter).toMatch(/^Copy of Home Depot, /);
+    const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
+    expect(member?.label).toMatch(/^Rejected as a copy of Home Depot, /);
   });
 });
 

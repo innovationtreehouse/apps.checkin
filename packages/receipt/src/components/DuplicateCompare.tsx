@@ -109,15 +109,20 @@ interface Props {
   isFinance: boolean;
   /** The caller uploaded this receipt, so someone else in finance decides it. */
   own: boolean;
-  onClear: () => void;
+  /** The two receipts shown are the whole group, so a decision on the group covers only what is shown. */
+  wholeGroup: boolean;
+  onNotThisOne: () => void;
+  onDifferentPurchases: () => void;
+  onKeepThisOne: () => void;
   onRejectOriginal: (reason: string) => void;
 }
 
 /**
- * A suspected duplicate beside the receipt it was matched to, with finance's decisions on the
- * original. Rejecting this receipt, or its uploader discarding it, sits with its other actions.
+ * A suspected duplicate beside one receipt of its group, with finance's decisions on the group
+ * and on that match. Rejecting this receipt, or its uploader discarding it, sits with its other
+ * actions.
  */
-export default function DuplicateCompare({ receipt, original, originalHref, isFinance, own, onClear, onRejectOriginal }: Props) {
+export default function DuplicateCompare({ receipt, original, originalHref, isFinance, own, wholeGroup, onNotThisOne, onDifferentPurchases, onKeepThisOne, onRejectOriginal }: Props) {
   const [reason, setReason] = useState("");
   const sameFile = original != null && same(receipt.fileHash, original.fileHash);
   return (
@@ -186,7 +191,19 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
         {isFinance ? (
           <Group gap="xs">
             {receipt.state === "duplicate_flagged" && !own && (
-              <Button size="xs" onClick={onClear}>Not a duplicate</Button>
+              <>
+                <Button size="xs" variant="light" onClick={onNotThisOne}>Not this one</Button>
+                {wholeGroup ? (
+                  <>
+                    <Button size="xs" onClick={onDifferentPurchases}>Different purchases</Button>
+                    {original && original.state !== "receipt_finalized" && (
+                      <Button size="xs" variant="light" onClick={onKeepThisOne}>Keep this one</Button>
+                    )}
+                  </>
+                ) : (
+                  <Text size="sm" c="dimmed">This receipt matches more receipts than are shown here. Dismiss the ones that are different purchases with Not this one.</Text>
+                )}
+              </>
             )}
             {original && !own && !TERMINAL.has(original.state) && !original.pushedAt && (
               <Group align="end" gap="xs">

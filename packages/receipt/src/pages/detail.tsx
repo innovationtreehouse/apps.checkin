@@ -11,6 +11,7 @@ import ReceiptEditor from "../components/ReceiptEditor";
 import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
+import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -76,9 +77,17 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
-  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
-  const comparing = (isFinance || isBoard) && suspectId !== null && receipt.data?.state === "duplicate_flagged";
-  const original = useLoad<Receipt>(comparing ? `/${suspectId}` : null);
+  const held = (isFinance || isBoard) && receipt.data?.state === "duplicate_flagged";
+  const group = useLoad<DuplicateGroup>(held ? `/${id}/duplicate-group` : null);
+  // The panel compares two receipts, so a group-wide decision is offered only when they are the whole group.
+  const liveIds = group.data?.members.filter((m) => m.state !== "discarded").map((m) => m.id) ?? [];
+  const matchId = liveIds.find((m) => m !== id) ?? null;
+  const comparing = held && matchId !== null;
+  const suspectId = comparing ? matchId : (receipt.data?.duplicateSuspectReceiptId ?? null);
+  const original = useLoad<Receipt>(comparing ? `/${matchId}` : null);
+  useEffect(() => {
+    if (group.error) notifications.show({ title: "Couldn't load the possible copies", message: group.error, color: "red", autoClose: false });
+  }, [group.error]);
   useEffect(() => {
     if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
   }, [original.error]);
@@ -132,9 +141,18 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     if (!suspectId) return;
     if (await send(`/${suspectId}/reject`, "POST", { reason }, "The original is rejected", "Couldn't reject the original")) {
       receipt.reload();
+      group.reload();
       original.reload();
       audit.reload();
     }
+  };
+  /** Not this one: the match is a different purchase, and the panel redraws from the fresh group. */
+  const notThisOne = async (otherId: string) => {
+    if (await send(`/${id}/not-this-one`, "POST", { otherId }, "Dismissed as a different purchase", "Couldn't dismiss this match")) {
+      receipt.reload();
+      group.reload();
+      audit.reload();
+    } else group.reload();
   };
   const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
@@ -248,7 +266,12 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           originalHref={originalHref}
           isFinance={isFinance}
           own={own}
-          onClear={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}
+          wholeGroup={liveIds.length === 2}
+          onNotThisOne={() => {
+            if (matchId) void notThisOne(matchId);
+          }}
+          onDifferentPurchases={() => void act("/different-purchases", "POST", { shownIds: liveIds }, "Recorded as different purchases", "Couldn't record different purchases", true).then(group.reload)}
+          onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copy is rejected", "Couldn't keep this receipt", true).then(group.reload)}
           onRejectOriginal={(reason) => void rejectOriginal(reason)}
         />
       )}
@@ -329,9 +352,6 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
-                {r.state === "duplicate_flagged" && !comparing && !own && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared as not a duplicate", "Couldn't clear the duplicate flag", true)}>Not a duplicate</Button>
-                )}
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}

@@ -54,16 +54,20 @@ export const receiptRepo = {
     return rows.flatMap((r) => (r.details ? [{ uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
   },
 
-  /** Writes both tables in one transaction; with `expectedState` it is a compare-and-set. */
-  async update(id: string, set: ReceiptUpdate, expectedState?: string): Promise<void> {
-    await db.$transaction(async (tx) => {
+  /**
+   * Writes both tables in one transaction, or in the caller's `tx`; with `expectedState` it is a
+   * compare-and-set.
+   */
+  async update(id: string, set: ReceiptUpdate, expectedState?: string, tx?: Prisma.TransactionClient): Promise<void> {
+    const write = async (client: Prisma.TransactionClient) => {
       if (expectedState !== undefined) {
-        const current = await tx.receiptDetail.findUnique({ where: { id }, select: { state: true } });
+        const current = await client.receiptDetail.findUnique({ where: { id }, select: { state: true } });
         if (current?.state !== expectedState) throw new ReceiptStateConflictError(expectedState, current?.state);
       }
-      if (set.core && Object.keys(set.core).length) await tx.receipt.update({ where: { id }, data: set.core });
-      if (set.detail && Object.keys(set.detail).length) await tx.receiptDetail.update({ where: { id }, data: set.detail });
-    });
+      if (set.core && Object.keys(set.core).length) await client.receipt.update({ where: { id }, data: set.core });
+      if (set.detail && Object.keys(set.detail).length) await client.receiptDetail.update({ where: { id }, data: set.detail });
+    };
+    await (tx ? write(tx) : db.$transaction(write));
   },
 
   listLineItems: (receiptId: string) =>
