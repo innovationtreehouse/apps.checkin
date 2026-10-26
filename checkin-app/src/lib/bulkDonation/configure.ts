@@ -17,7 +17,7 @@
  * An accepted gift's lines go to the expense library's capital review, which
  * keeps donated equipment at or over its thresholds. Boot stays DB-free.
  */
-import { configureBulkDonation } from "@checkin/bulk-donation";
+import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
 import type { DonationQbPosting, InKindCapital, InKindDirectory, InKindQbPosting, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -25,6 +25,7 @@ import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 async function listOwners(): Promise<OwnerInfo[]> {
   const { default: prisma } = await import("@/lib/prisma");
@@ -34,10 +35,18 @@ async function listOwners(): Promise<OwnerInfo[]> {
   });
 }
 
+/** What donation posting lacks, in plain words; empty when it binds. */
+export function donationPostingMissing(): string[] {
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(process.env.QBO_DONATION_BANK_ACCOUNT_ID ? [] : ["bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]),
+  ];
+}
+
 /** Loaded on first use, so binding at boot pulls in no AWS SDK. */
 function qbPosting(): DonationQbPosting | undefined {
   const bankAccountId = process.env.QBO_DONATION_BANK_ACCOUNT_ID;
-  if (!process.env.QBO_REALM_ID || !bankAccountId) return undefined;
+  if (donationPostingMissing().length > 0 || !bankAccountId) return undefined;
   return {
     client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
     bankAccountId,
@@ -51,6 +60,17 @@ function qbPosting(): DonationQbPosting | undefined {
       );
     },
   };
+}
+
+/** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
+export async function inKindPostingMissing(): Promise<string[]> {
+  const accounts = await (await import("@/lib/finance/booksMap")).booksMap.accounts();
+  const unpicked = IN_KIND_ROLES.filter((r) => !accounts[r]);
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+    ...(unpicked.length === 0 && !inKindAccountsReady(accounts) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
+  ];
 }
 
 /** Loaded on first use, like the donation drain's binding; the books map is read per run. */

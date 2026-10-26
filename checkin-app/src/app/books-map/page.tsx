@@ -6,6 +6,7 @@ import { notifications } from "@mantine/notifications";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 interface ClassRow {
   budgetOwnerId: number;
@@ -23,23 +24,6 @@ interface Option {
   name: string;
   active: boolean;
 }
-
-const ROLE_LABELS: Record<BooksMapRole, string> = {
-  SHOPIFY_BANK: "Shopify payouts: bank account",
-  SHOPIFY_SALES: "Shopify: sales",
-  SHOPIFY_CHARGE_REMAINDER: "Shopify: card remainder",
-  SHOPIFY_FEES: "Shopify: fees",
-  SHOPIFY_ADJUSTMENTS: "Shopify: adjustments",
-  BENEVITY_BANK: "Benevity disbursements: bank account",
-  BENEVITY_DONATIONS: "Benevity: donations",
-  BENEVITY_MATCHES: "Benevity: employer matches",
-  BENEVITY_FEES: "Benevity: fees",
-  EXPENSE_PAYMENT: "Organisation card",
-  INKIND_INCOME: "Gifts of goods: in-kind income",
-  INKIND_EXPENSE: "Gifts of goods: in-kind expense",
-  FIXED_ASSETS: "Gifts of goods: fixed assets (donated equipment)",
-  INKIND_CLEARING: "Gifts of goods: clearing account (finance's past bookings)",
-};
 
 /** Reads JSON, or says why it could not; never throws. */
 async function request<T>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
@@ -113,10 +97,10 @@ export default function BooksMapPage() {
         <Table.Tbody>
           {accountRows.map((r) => (
             <Table.Tr key={r.role}>
-              <Table.Td>{ROLE_LABELS[r.role] ?? r.role}</Table.Td>
+              <Table.Td>{BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}</Table.Td>
               <Table.Td>
                 <Select
-                  aria-label={ROLE_LABELS[r.role] ?? r.role}
+                  aria-label={BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}
                   data={choices(accounts, r.quickBooksAccountId)}
                   value={r.quickBooksAccountId}
                   placeholder="Not set"

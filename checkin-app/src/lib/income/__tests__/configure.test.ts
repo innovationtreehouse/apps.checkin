@@ -5,7 +5,11 @@ import type { IncomeConfig } from "@checkin/income";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureIncome = jest.fn<void, [IncomeConfig]>();
+const roleAccounts = jest.fn();
 jest.mock("@checkin/income", () => ({
+  BANK_ROLE: { shopify: "SHOPIFY_BANK", benevity: "BENEVITY_BANK" },
+  SHOPIFY_LINE_ROLES: { income: "SHOPIFY_SALES", charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
+  roleAccounts,
   configureIncome,
   mirrorPayoutStatus: (s: string) => s.toLowerCase(),
   mirrorSource: () => "api",
@@ -92,6 +96,19 @@ describe("income posting binding", () => {
   it("is unbound when the guard refuses the company", async () => {
     buildQuickBooks.mockReturnValue(null);
     expect((await config()).posting).toBeUndefined();
+  });
+
+  it("names what posting still lacks, counting the Shopify roles as the drain resolves them", async () => {
+    const { incomePostingMissing } = await import("../configure");
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_FEES: "3" });
+    await expect(incomePostingMissing()).resolves.toEqual([
+      "Shopify mirror",
+      "the switch INCOME_MIRROR_NEWEST_WINS=true",
+      "no account picked for: Shopify: card remainder, Shopify: adjustments",
+    ]);
+    delete process.env.QBO_REALM_ID;
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
+    await expect(incomePostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
   });
 });
 

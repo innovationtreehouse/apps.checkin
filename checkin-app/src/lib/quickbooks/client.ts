@@ -92,24 +92,32 @@ function tokenSource(checkinEnv: string | undefined, realmId: string): AccessTok
   return null;
 }
 
-/** Builds the client, or answers null with the reason logged. Never throws. */
-export function buildQuickBooks(): QuickBooksClient | null {
+export type QuickBooksBuild =
+  | { ok: true; client: QuickBooksClient; tokens: AccessTokenSource; env: QboRealm["env"] }
+  | { ok: false; reason: string };
+
+/** Builds the client, or answers why QuickBooks is off. Never throws. */
+export function tryBuildQuickBooks(): QuickBooksBuild {
   const realmId = process.env.QBO_REALM_ID;
-  if (!realmId) return null;
+  if (!realmId) return { ok: false, reason: "no company set (QBO_REALM_ID)" };
   try {
     const checkinEnv = process.env.CHECKIN_ENV;
     const realm: QboRealm = { env: qboEnvFromEnv(), realmId };
     assertQboTarget({ checkinEnv, realm, sandboxRealmAllowed: process.env.QBO_SANDBOX_REALM_ALLOWED });
     const tokens = tokenSource(checkinEnv, realmId);
-    if (!tokens) {
-      logger.error("QuickBooks is off: no token source (set QBO_REFRESHER_FN)");
-      return null;
-    }
-    return new QuickBooksClient(tokens, realm);
+    if (!tokens) return { ok: false, reason: "no token source (set QBO_REFRESHER_FN)" };
+    return { ok: true, client: new QuickBooksClient(tokens, realm), tokens, env: realm.env };
   } catch (err) {
-    logger.error("QuickBooks is off:", err instanceof Error ? err.message : String(err));
-    return null;
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Builds the client, or answers null with the reason logged. Never throws. */
+export function buildQuickBooks(): QuickBooksClient | null {
+  const built = tryBuildQuickBooks();
+  if (built.ok) return built.client;
+  if (process.env.QBO_REALM_ID) logger.error("QuickBooks is off:", built.reason);
+  return null;
 }
 
 let built: { at: number; client: Promise<QuickBooksClient | null> } | null = null;

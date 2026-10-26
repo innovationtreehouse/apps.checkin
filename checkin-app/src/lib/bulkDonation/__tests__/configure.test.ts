@@ -5,7 +5,9 @@ import type { BulkDonationConfig } from "@checkin/bulk-donation";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureBulkDonation = jest.fn<void, [BulkDonationConfig]>();
-jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation }));
+const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"];
+const inKindAccountsReady = jest.fn();
+jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation, IN_KIND_ROLES, inKindAccountsReady }));
 const ORG = { id: "treehouse", name: "Treehouse" };
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: async () => ORG, getPrincipal: jest.fn() }));
 const searchItems = jest.fn();
@@ -125,6 +127,32 @@ describe("bulk-donation wiring", () => {
     process.env.QBO_REALM_ID = "123";
     delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
     expect((await config()).qb).toBeUndefined();
+  });
+
+  it("names what the drain lacks, for the status page", async () => {
+    const { donationPostingMissing } = await import("../configure");
+    delete process.env.QBO_REALM_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    expect(donationPostingMissing()).toEqual(["QuickBooks company (QBO_REALM_ID)", "bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]);
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
+    expect(donationPostingMissing()).toEqual([]);
+  });
+
+  it("names what gift-of-goods posting lacks, from the books map the drain reads", async () => {
+    const { inKindPostingMissing } = await import("../configure");
+    delete process.env.QBO_REALM_ID;
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401" });
+    await expect(inKindPostingMissing()).resolves.toEqual([
+      "QuickBooks company (QBO_REALM_ID)",
+      "no account picked for: Gifts of goods: fixed assets (donated equipment), Gifts of goods: clearing account (finance's past bookings)",
+    ]);
+    process.env.QBO_REALM_ID = "123";
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
+    inKindAccountsReady.mockReturnValue(false);
+    await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
+    inKindAccountsReady.mockReturnValue(true);
+    await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
 
   it("binds the drain to checkin's one guarded client and the donation bank account", async () => {

@@ -16,6 +16,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
 
@@ -209,19 +210,34 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
   );
 }
 
+type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
+
 /** Production is the client's own API environment, which the guard admits only on CHECKIN_ENV=prod. */
-async function posting(): Promise<ExpensePosting | null> {
+async function resolvePosting(): Promise<PostingResolution> {
   const accountId = await paymentAccountId();
-  if (!accountId) return null;
+  if (!accountId) return { missing: `no account picked for: ${BOOKS_MAP_ROLE_LABELS.EXPENSE_PAYMENT}` };
   const client = await getQuickBooks();
-  if (!client) return null;
+  if (!client) return { missing: "a QuickBooks connection" };
   const accountType = (await client.accounts()).find((a) => a.Id === accountId)?.AccountType;
   const paymentType = paymentTypeOf(accountType);
   if (!paymentType) {
-    await alertRefusedAccount(accountId, accountType);
-    return null;
+    const is = accountType ? `a ${accountType} account` : "not in QuickBooks";
+    return { missing: `a Bank or Credit Card account for ${BOOKS_MAP_ROLE_LABELS.EXPENSE_PAYMENT} (the one picked is ${is})`, refused: { accountId, accountType } };
   }
-  return { client, paymentAccountId: accountId, paymentType, prod: client.env === "production" };
+  return { posting: { client, paymentAccountId: accountId, paymentType, prod: client.env === "production" } };
+}
+
+async function posting(): Promise<ExpensePosting | null> {
+  const resolved = await resolvePosting();
+  if ("posting" in resolved) return resolved.posting;
+  if (resolved.refused) await alertRefusedAccount(resolved.refused.accountId, resolved.refused.accountType);
+  return null;
+}
+
+/** What expense posting lacks, in plain words; empty when it binds. Reads QuickBooks live. */
+export async function expensePostingMissing(): Promise<string[]> {
+  const resolved = await resolvePosting();
+  return "posting" in resolved ? [] : [resolved.missing];
 }
 
 export function configureRuntime(): void {

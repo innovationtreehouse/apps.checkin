@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { getConfigHealth } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
+import { getQuickBooksHealth } from "@/lib/quickbooks/health";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,8 @@ export const dynamic = "force-dynamic";
  *
  * Two halves, both feeding the same red nav badge via /api/nav/todo-counts (which reads
  * only the counts; this is the detail view):
- *   - `checks`   — static env/config presence (lib/configHealth.ts).
+ *   - `checks`   — static env/config presence (lib/configHealth.ts), then the QuickBooks
+ *                  rows (lib/quickbooks/health.ts), which read live and so stay off the badge.
  *   - `cronJobs` — last successful run per cron sweep (lib/cronRuns.ts). Rides on this
  *                  route rather than its own: same page, same gate, same question, and a
  *                  new registered route would need its registry entry landed separately.
@@ -21,5 +23,6 @@ export const dynamic = "force-dynamic";
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
-    return NextResponse.json({ checks: getConfigHealth(), cronJobs: await getCronJobStatuses() });
+    const [quickBooks, cronJobs] = await Promise.all([getQuickBooksHealth(), getCronJobStatuses()]);
+    return NextResponse.json({ checks: [...getConfigHealth(), ...quickBooks], cronJobs });
 });

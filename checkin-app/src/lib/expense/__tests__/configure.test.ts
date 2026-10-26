@@ -280,6 +280,19 @@ describe("expense posting binding", () => {
     expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
   });
 
+  it("names what posting lacks for the status page, without emailing finance", async () => {
+    const { expensePostingMissing } = await import("../configure");
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
+    await expect(expensePostingMissing()).resolves.toEqual([]);
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Expense"));
+    await expect(expensePostingMissing()).resolves.toEqual(["a Bank or Credit Card account for Organisation card (the one picked is a Expense account)"]);
+    getQuickBooks.mockResolvedValue(null);
+    await expect(expensePostingMissing()).resolves.toEqual(["a QuickBooks connection"]);
+    booksMapAccounts.mockResolvedValue({});
+    await expect(expensePostingMissing()).resolves.toEqual(["no account picked for: Organisation card"]);
+    expect(notifyFinanceAlert).not.toHaveBeenCalled();
+  });
+
   it("matches Purchases against the same books-map account", async () => {
     await expect((await ports()).refs.paymentAccountId()).resolves.toBe("41");
     booksMapAccounts.mockResolvedValue({});

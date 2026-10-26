@@ -33,9 +33,12 @@
  *   person. An orphan sweep that cannot read every new deposit emails finance.
  */
 import {
+  BANK_ROLE,
+  SHOPIFY_LINE_ROLES,
   configureIncome,
   mirrorPayoutStatus,
   mirrorSource,
+  roleAccounts,
   toQbDeposit,
   type MirrorBalanceTxn,
   type IncomeAlerts,
@@ -59,6 +62,7 @@ import {
 } from "@/lib/shopifyRead/client";
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import type { BooksMap } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
@@ -163,6 +167,18 @@ function qbAccounts(): IncomeQbAccounts | undefined {
   const fees = process.env.QBO_INCOME_FEES_ACCOUNT_ID;
   const adjustments = process.env.QBO_INCOME_ADJUSTMENTS_ACCOUNT_ID;
   return income && charge_remainder && fees && adjustments ? { income, charge_remainder, fees, adjustments } : undefined;
+}
+
+/** What Shopify income posting lacks, in plain words; empty when it can post. Roles resolve as the drain resolves them. */
+export async function incomePostingMissing(): Promise<string[]> {
+  const accounts = await roleAccounts();
+  const unpicked = [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)].filter((r) => !accounts[r]);
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(mirrorConfigured() ? [] : ["Shopify mirror"]),
+    ...(process.env.INCOME_MIRROR_NEWEST_WINS === "true" ? [] : ["the switch INCOME_MIRROR_NEWEST_WINS=true"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+  ];
 }
 
 function posting(): IncomePosting | undefined {
