@@ -43,6 +43,13 @@ const VIEW_SELECT = {
 
 const unitsOf = (quantity: number) => Math.max(1, Math.round(quantity));
 
+/** Each unit's share of the line's cost; the shares sum to the cost exactly, the first units taking the odd cents. */
+export function unitCosts(costCents: number, units: number): number[] {
+  const base = Math.floor(costCents / units);
+  const extra = costCents - base * units;
+  return Array.from({ length: units }, (_, u) => base + (u < extra ? 1 : 0));
+}
+
 /** Keeps the lines at or over the org's capital thresholds for review. A resend does nothing. */
 export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): Promise<void> {
   const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
@@ -105,17 +112,17 @@ export async function reviewDonatedLine(
     if (reviewed.count === 0) throw new ServiceError(409, "This line is already reviewed");
 
     if (input.isCapital) {
-      const units = unitsOf(line.quantity);
+      const costs = unitCosts(line.costCents, unitsOf(line.quantity));
       const fdd = fullyDepreciatedDate(line.acquisitionDate, input.depreciationYears);
       let seq = await nextItfaSeq(tx, orgId);
-      for (let u = 0; u < units; u++) {
+      for (const costCents of costs) {
         await tx.capitalAsset.create({
           data: {
             orgId,
             assetNumber: formatItfa(seq++),
             description: line.description,
             acquisitionDate: line.acquisitionDate,
-            costCents: Math.round(line.costCents / units),
+            costCents,
             depreciationYears: input.depreciationYears,
             fullyDepreciatedDate: fdd,
             status: "tracked",

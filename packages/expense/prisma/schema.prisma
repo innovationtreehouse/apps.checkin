@@ -628,7 +628,7 @@ model DonatedCapitalLine {
   /// @sensitivity:internal
   createdAt         DateTime  @default(now()) @map("created_at")
 
-  @@unique([orgId, giftSource, giftId, giftLineId])
+  @@unique([orgId, giftSource, giftId, giftLineId], map: "donated_capital_lines_gift_line_key")
   @@map("donated_capital_lines")
 }
 

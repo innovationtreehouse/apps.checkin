@@ -156,6 +156,7 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
     },
     ManualInKindDonation: {
         id: 'internal',
@@ -175,6 +176,7 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
     },
     ManualInKindDonationLine: {
         id: 'internal',

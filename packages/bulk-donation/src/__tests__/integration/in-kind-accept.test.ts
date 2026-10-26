@@ -448,15 +448,27 @@ describeDb("capital review", () => {
     ]);
   });
 
-  it("a refused gift sends nothing, and a failed send leaves the gift undecided", async () => {
+  it("a refused gift sends nothing", async () => {
     const id = await receiptGift();
     const sent = captureCapital();
-    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [] };
-    configure();
-    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toThrow("expense down");
-    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).decisionOutcome).toBeNull();
     await inKindAcceptService.decide("receipt", id, { outcome: "refuse", confirmOutsideDonorHousehold: true }, by(FINANCE));
     expect(sent).toEqual([]);
+  });
+
+  it("a failed send keeps the accept, waits on capital review, and accepting again resends", async () => {
+    const id = await receiptGift();
+    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [] };
+    configure();
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 502 });
+    const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
+
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(sent).toHaveLength(1);
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).capitalSubmittedAt).not.toBeNull();
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "booking", waitingOn: ["booking"] });
   });
 
   it("a gift with a line in capital review waits on it before booking", async () => {

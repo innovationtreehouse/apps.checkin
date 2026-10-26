@@ -25,6 +25,6 @@ CREATE TABLE "donated_capital_lines" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "donated_capital_lines_org_id_gift_source_gift_id_gift_line_id_key" ON "donated_capital_lines"("org_id", "gift_source", "gift_id", "gift_line_id");
+CREATE UNIQUE INDEX "donated_capital_lines_gift_line_key" ON "donated_capital_lines"("org_id", "gift_source", "gift_id", "gift_line_id");
 
 COMMIT;

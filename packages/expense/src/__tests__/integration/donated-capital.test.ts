@@ -8,6 +8,7 @@ import {
   listDonatedCapital,
   reviewDonatedLine,
   submitDonatedLines,
+  unitCosts,
   type DonatedLine,
 } from "../../services/donatedCapitalService";
 
@@ -34,6 +35,17 @@ describe("donated capital — guards", () => {
     await expect(listDonatedCapital(principal(9))).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(principal(9), 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(BOARD, 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("unitCosts", () => {
+  it.each([
+    [300_001, 2, [150_001, 150_000]],
+    [1000, 3, [334, 333, 333]],
+    [100, 1, [100]],
+    [2, 3, [1, 1, 0]],
+  ])("splits %i over %i units as %j", (cost, units, expected) => {
+    expect(unitCosts(cost, units)).toEqual(expected);
   });
 });
 
@@ -65,8 +77,8 @@ describeDb("donated capital", () => {
 
     const assets = await db.capitalAsset.findMany({ orderBy: { id: "asc" } });
     expect(assets).toHaveLength(2);
+    expect(assets.map((a) => a.costCents)).toEqual([150_001, 150_000]);
     expect(assets[0]).toMatchObject({
-      costCents: 150_001,
       acquisitionDate: "2026-05-01",
       fullyDepreciatedDate: "2031-05-01",
       sourceDonatedLineId: row.id,

@@ -69,6 +69,7 @@ interface Gift {
   decidedAt: Date | null;
   budgetOwnerId: number | null;
   bucketAssignedAt: Date | null;
+  capitalSubmittedAt: Date | null;
   lines: GiftLine[];
 }
 
@@ -78,6 +79,7 @@ const DECISION_SELECT = {
   decidedAt: true,
   budgetOwnerId: true,
   bucketAssignedAt: true,
+  capitalSubmittedAt: true,
 } as const;
 
 const RECEIPT_SELECT = {
@@ -295,7 +297,7 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
   if (g.source === "receipt" && g.receiptTotalCents === null) out.push("value");
   if (!g.decisionOutcome) out.push("decision");
   else if (g.budgetOwnerId === null || buckets.get(g.budgetOwnerId)?.held !== false) out.push("bucket");
-  if (inCapitalReview.has(bookingKey(g.source, g.id))) out.push("capital");
+  if (g.decisionOutcome === "ACCEPTED" && (g.capitalSubmittedAt === null || inCapitalReview.has(bookingKey(g.source, g.id)))) out.push("capital");
   const booked = ["revenue", "expense"].every((side) => BOOKED_STATES.includes(sideState(sides, side as "revenue" | "expense") ?? ""));
   if (!booked) out.push("booking");
   return out;
@@ -427,7 +429,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
   const callerId = audit.actorUserId;
   const entity = (g: Gift) => (source === "receipt" ? { entityType: "in_kind" as const, entityId: g.receiptId } : { entityType: "manual_in_kind" as const, entityId: g.id });
 
-  return db.$transaction(async (tx) => {
+  const { view, send } = await db.$transaction(async (tx) => {
     await lockGift(tx, source, id);
     const gift = await loadGift(tx, orgId, source, id);
     if (!gift) throw new ServiceError(404, "In-kind gift not found");
@@ -453,7 +455,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       const to = await assignableBucket(input.bucketId);
       await writeBucket(tx, source, id, { budgetOwnerId: to, bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
-      return decisionView({ ...gift, budgetOwnerId: to, bucketAssignedAt: now });
+      return { view: decisionView({ ...gift, budgetOwnerId: to, bucketAssignedAt: now }), send: gift.capitalSubmittedAt === null ? capitalReviewLines(gift, to) : null };
     }
 
     const outcome = OUTCOME[input.outcome];
@@ -477,8 +479,6 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
     }
 
     if ((await writeDecision(tx, source, id, decided)) === 0) throw new ServiceError(409, "This gift is already decided");
-    // Inside the transaction: a failed send rolls the accept back, and a resend after a failed commit does nothing.
-    if (decided.budgetOwnerId !== undefined) await getInKindCapital().submit(orgId, capitalReviewLines({ ...gift, lines }, decided.budgetOwnerId));
     const result: Gift = {
       ...gift,
       decisionOutcome: outcome,
@@ -496,8 +496,27 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...audit,
       payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...warn },
     });
-    return decisionView(result);
+    return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
+
+  if (send) await sendToCapitalReview(orgId, source, id, send);
+  return view;
+}
+
+/**
+ * Sends an accepted gift's lines once its decision has committed: the expense library has its own
+ * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
+ * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
+ */
+async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
+  try {
+    await getInKindCapital().submit(orgId, lines);
+  } catch {
+    throw new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+  }
+  const data = { capitalSubmittedAt: new Date() };
+  if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });
+  else await db.manualInKindDonation.update({ where: { id }, data });
 }
 
 /**
