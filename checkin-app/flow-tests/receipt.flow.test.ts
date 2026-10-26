@@ -96,6 +96,7 @@ describe("receipts — route auth", () => {
 });
 
 describe("receipts — submitter journey", () => {
+  // Five of this journey's routes are first hit here, and each waits on the dev server compiling it.
   it("auto-reads an upload, finalizes it on confirm, and lists it with the owed one, which stays when completed are hidden", async () => {
     const submitter = await loginAs(SUBMITTER);
 
@@ -154,7 +155,7 @@ describe("receipts — submitter journey", () => {
     const push = await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`);
     expect(push.status).toBe(200);
     expect(push.json).toEqual({ pushed: true });
-  });
+  }, 60_000);
 });
 
 describe("receipts — finance review", () => {
