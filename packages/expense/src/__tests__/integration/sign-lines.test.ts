@@ -7,7 +7,8 @@ import { beforeEach, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
-import { signLines, signaturesWaiting } from "../../services/signoffService";
+import { ServiceError } from "@checkin/component-kit";
+import { signLine, signLines, signaturesWaiting } from "../../services/signoffService";
 
 // submitter 1 · approver 2 (bucket 100) · FINANCE 3 and 4 · Board 5 · 8 in the submitter's household
 const FINANCE = principal(3, { isFinance: true });
@@ -47,10 +48,16 @@ describeDb("Sign all as Treasurer", () => {
     expect(await treasurerSeats(id)).toBe(0);
   });
 
-  it("refuses whoever approved a line, as a single signature does", async () => {
+  it("refuses an approver of the expense exactly as a single signature does", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [3] }, finance: [3, 4], board: [5], households: [[1, 8]] }) });
     const { id, lines } = await expenseWith([{ status: "approved", decidedByUserId: 4 }, { status: "approved", decidedByUserId: 3 }]);
-    await expect(signLines(FINANCE, id, lines)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/^Line 2: whoever approved the line/) });
+    // Sign all refuses line 1 with whatever a single signature on it is refused for.
+    const single = await signLine(FINANCE, lines[0], "TREASURER").then(
+      () => null,
+      (err: unknown) => (err instanceof ServiceError ? err : null),
+    );
+    expect(single?.status).toBe(403);
+    await expect(signLines(FINANCE, id, lines)).rejects.toMatchObject({ status: 403, message: `Line 1: ${single?.message}` });
     expect(await treasurerSeats(id)).toBe(0);
   });
 
