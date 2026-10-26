@@ -5,7 +5,7 @@ import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../con
 import { assertOrg, getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
-import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "./sources";
+import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey, rowKeys } from "./sources";
 
 export const RECON_STATUS = {
   WAITING: "WAITING",
@@ -75,10 +75,16 @@ export function nextNote(current: string | null, depositId: string | null, next:
 /** The queue note on an attempted payout a deposit fits by amount: its own deposit may sit outside the window. */
 export const ATTEMPTED_MATCH_NOTE = "a deposit fits by amount, but the app may already have booked this payout; matching checks for the app's own deposit first";
 
-/** When income posting switched on for the org, or null while it is off. */
-export async function postingOnAt(orgId: string): Promise<Date | null> {
-  return (await db.incomeOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true } }))?.qbPostingOnAt ?? null;
+/** When each source's posting switched on for the org; null while that source is off. */
+export type SwitchOn = { shopify: Date | null; benevity: Date | null };
+
+export async function postingOnAt(orgId: string): Promise<SwitchOn> {
+  const s = await db.incomeOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true, benevityQbPostingOnAt: true } });
+  return { shopify: s?.qbPostingOnAt ?? null, benevity: s?.benevityQbPostingOnAt ?? null };
 }
+
+/** One source's switch-on stamp. */
+export const stampOf = (on: SwitchOn, source: string): Date | null => (source === DEPOSIT_SOURCE.BENEVITY ? on.benevity : on.shopify);
 export const DEFAULT_DATE_GRACE_DAYS = 2;
 
 /** A deposit income expects, normalised for matching: a paid mirror payout, or another lane's expected deposit. */
@@ -115,6 +121,12 @@ export function incomeKey(payoutGid: string): string {
 export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.SHOPIFY): { from: string; to: string } {
   const grace = source === DEPOSIT_SOURCE.BENEVITY ? BENEVITY_MATCH_WINDOW_DAYS : (getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS);
   return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source)) };
+}
+
+/** A row's keys as findMatch takes them: the one income creates under, and every other its own deposit may carry. */
+export function matchKeys(row: Pick<PayoutReconciliation, "orgId" | "source" | "payoutGid">): { key: string; alsoKeys: string[] } {
+  const [, ...alsoKeys] = rowKeys(row);
+  return { key: rowKey(row), alsoKeys };
 }
 
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
@@ -238,7 +250,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   ];
   const deposits = await depositsIn(depositSource, ranges);
   const foreign = await otherLaneClaims(orgId);
-  const onAt = await postingOnAt(orgId);
+  const switchedOn = await postingOnAt(orgId);
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
   return db.$transaction(
@@ -294,13 +306,14 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               date: fact.payoutDate,
               amountCents: fact.netCents,
               ref: bankOf(fact.depositSource),
-              key: rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid }),
+              ...matchKeys({ orgId, source: fact.depositSource, payoutGid: fact.payoutGid }),
               window: matchWindow(fact.payoutDate, fact.depositSource),
               claimedIds: claimed,
               excludedIds: excluded,
             });
 
         // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
+        const onAt = stampOf(switchedOn, fact.depositSource);
         const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
         const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, windowDays(fact.depositSource));
 

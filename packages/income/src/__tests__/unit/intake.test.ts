@@ -49,8 +49,8 @@ describe("statusOf", () => {
 
 describe("per-source rules", () => {
   it("keys a Benevity row apart from a Shopify payout of the same key", () => {
-    expect(rowKeys({ source: "shopify", payoutGid: "P1" })).toEqual([qbKey("income", "P1")]);
-    expect(rowKeys({ source: "benevity", payoutGid: "P1" })).toEqual([qbKey("income", "benevity:P1")]);
+    expect(rowKeys({ orgId: "org", source: "shopify", payoutGid: "P1" })).toEqual([qbKey("income", "P1")]);
+    expect(rowKeys({ orgId: "org", source: "benevity", payoutGid: "P1" })).toEqual([qbKey("income", "benevity:P1"), qbKey("donation", "org:P1")]);
   });
 
   it("gives a Benevity deposit donation's ±7-day window", () => {

@@ -5,7 +5,7 @@
 import { it, expect, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { disbursements, rules, uploads } from "../../routes";
+import { rules, uploads } from "../../routes";
 import { makeFile, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
@@ -56,12 +56,4 @@ describeDb("FINANCE writes are audited", () => {
     expect(event).toMatchObject({ entityType: "uploaded_file", entityId: String(file.id), eventType: "FILE_BLOB_DELETED" });
   });
 
-  it("excluding a QuickBooks entry records QB_TXN_EXCLUDED", async () => {
-    await disbursements.createExclusion({ req: req("POST", { qbTxnId: "qb-77", reason: "duplicate deposit" }), params: {} });
-
-    const row = await db.donationQbMatchExclusion.findFirstOrThrow({ where: { orgId } });
-    expect(row.excludedByUserId).toBe(1);
-    const event = await onlyEvent();
-    expect(event).toMatchObject({ entityType: "qb_exclusion", entityId: String(row.id), eventType: "QB_TXN_EXCLUDED" });
-  });
 });

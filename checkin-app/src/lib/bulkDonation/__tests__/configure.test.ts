@@ -16,9 +16,10 @@ jest.mock("@checkin/global-catalog", () => ({ readService: { searchItems, getIte
 const applyDonation = jest.fn();
 jest.mock("@/lib/workflowMapping/inventorySink", () => ({ inventoryReceipts: () => ({ applyDonation }) }));
 const incomeClaimedDepositIds = jest.fn();
-jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds }));
-const getQuickBooks = jest.fn();
-jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
+const expectDeposit = jest.fn();
+const depositStatus = jest.fn();
+const adoptBenevityDeposits = jest.fn();
+jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds, expectDeposit, depositStatus, adoptBenevityDeposits }));
 // local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check is used here.
 jest.mock("@checkin/local-inventory", () => ({ isProvisionalGtin13: (g: string) => g.startsWith("0200") && g.substring(6, 8) === "27" }));
 const signoff = {
@@ -120,22 +121,18 @@ describe("bulk-donation wiring", () => {
     expect(applyDonation).not.toHaveBeenCalled();
   });
 
-  it("leaves the QuickBooks drain unbound without a realm and a donation bank account", async () => {
-    delete process.env.QBO_REALM_ID;
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
-    expect((await config()).qb).toBeUndefined();
+  it("leaves donation's own QuickBooks posting unbound: income books every deposit", async () => {
     process.env.QBO_REALM_ID = "123";
-    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
     expect((await config()).qb).toBeUndefined();
   });
 
-  it("names what the drain lacks, for the status page", async () => {
+  it("names what the hand-over to income lacks, for the status page: only the realm; income's books map holds the bank", async () => {
     const { donationPostingMissing } = await import("../configure");
     delete process.env.QBO_REALM_ID;
     delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
-    expect(donationPostingMissing()).toEqual(["QuickBooks company (QBO_REALM_ID)", "bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]);
+    expect(donationPostingMissing()).toEqual(["QuickBooks company (QBO_REALM_ID)"]);
     process.env.QBO_REALM_ID = "123";
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
     expect(donationPostingMissing()).toEqual([]);
   });
 
@@ -155,31 +152,34 @@ describe("bulk-donation wiring", () => {
     await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
 
-  it("binds the drain to checkin's one guarded client and the donation bank account", async () => {
-    process.env.QBO_REALM_ID = "123";
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
+  it("binds income's intake ports for Benevity, and the move to income's adopt", async () => {
     process.env.CHECKIN_ENV = "dev";
-    const client = { env: "sandbox" };
-    getQuickBooks.mockResolvedValue(client);
+    const { deposits } = await config();
+    const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ role: "BENEVITY_DONATIONS" as const, budgetOwnerId: null, amountCents: 100 }] };
+    const move = { holdings: [], exclusions: [], postingOnAt: null };
+    depositStatus.mockResolvedValue({ D1: { state: "waiting" } });
 
-    const { qb } = await config();
+    expect(deposits!.prod).toBe(false);
+    await deposits!.expectDeposit(ORG.id, "D1", expected);
+    await expect(deposits!.depositStatus(ORG.id, ["D1"])).resolves.toEqual({ D1: { state: "waiting" } });
+    await deposits!.adoptHoldings(ORG.id, move);
 
-    expect(qb).toMatchObject({ bankAccountId: "35", prod: false });
-    await expect(qb!.client()).resolves.toBe(client);
+    expect(expectDeposit).toHaveBeenCalledWith(ORG.id, "benevity", "D1", expected);
+    expect(depositStatus).toHaveBeenCalledWith(ORG.id, "benevity", ["D1"]);
+    expect(adoptBenevityDeposits).toHaveBeenCalledWith(ORG.id, move);
   });
 
-  it("tells finance when the orphan sweep could not read every Deposit", async () => {
-    process.env.QBO_REALM_ID = "123";
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
-    const { qb } = await config();
+  it("tells finance when the move of donation's holdings stopped, naming the cause", async () => {
+    const { deposits } = await config();
 
-    await qb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
+    await deposits!.moveStopped({ orgId: ORG.id, cause: "deposit 77 held by disbursement D1 is already held by payout 5 <b>" });
 
     expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
     const [subject, html] = notifyFinanceAlert.mock.calls[0];
-    expect(subject).toContain("stray QuickBooks deposits");
-    expect(html).toContain("2026-10-01");
-    expect(html).toContain("/donations/qb-queue");
+    expect(subject).toContain("handed to income");
+    expect(html).toContain("disbursement D1");
+    expect(html).toContain("&lt;b&gt;");
+    expect(html).toContain("/income/reconciliation");
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {

@@ -4,6 +4,7 @@ import { disbursementMachine } from './disbursement.machine';
 import { assertEventAccepted, isLegalTransition, isConsumedTriggerReplay } from './disbursement.invariants';
 import { runAccountDetermination, isAllOwnersReady, type AccountDeterminationResult } from '../lib/disbursement-processor';
 import { recordEvent } from '../repositories/audit';
+import { handOverDeposit } from '../lib/deposit-handover';
 import type { DisbursementEvent } from './disbursement.events';
 
 /** Who/why context recorded on every workflow event. System actions pass nothing. */
@@ -268,6 +269,7 @@ export async function sendDisbursementEvent(
         },
         { isolationLevel: 'Serializable' },
       );
+      await handOverDeposit(orgId, disbursementId);
       return;
     } catch (err) {
       if (attempt < MAX_TX_RETRIES && isRetryableTxConflict(err)) continue;

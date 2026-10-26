@@ -21,6 +21,8 @@ export interface MatchRequest {
   ref?: string;
   /** The caller's idempotency key for this record. */
   key: string;
+  /** Older keys an entry the app created for this record may carry; a hit on one is the record's own, as on `key`. */
+  alsoKeys?: readonly string[];
   /** Inclusive YYYY-MM-DD range every hit's date must fall in; callers pad it with a grace on both sides. */
   window: { from: string; to: string };
   /** Entries other records of the lane already hold. */
@@ -58,8 +60,9 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
     (req.ref === undefined || c.ref === req.ref);
   const free = (c: MatchCandidate) => !req.excludedIds.has(c.id) && !req.claimedIds.has(c.id);
 
-  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key));
-  if (own.length === 1 && own[0].appKey === req.key && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
+  const keys = [req.key, ...(req.alsoKeys ?? [])];
+  const own = candidates.filter((c) => c.appKey?.split(" ").some((k) => keys.includes(k)));
+  if (own.length === 1 && keys.includes(own[0].appKey ?? "") && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
   if (own.length > 0) return { kind: "ambiguous", ids: own.map((c) => c.id) };
 
   const hits = candidates.filter((c) => fits(c) && free(c));

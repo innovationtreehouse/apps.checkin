@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { handOverDeposit } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 import type { AccountMap } from "../generated/prisma/client";
 import { z } from "zod";
@@ -69,5 +70,6 @@ export const disbursementService = {
       });
       await runDisbursementCycleTx(tx, orgId, disbursementId, { type: "HOLD_RESUBMITTED" }, audit);
     });
+    await handOverDeposit(orgId, disbursementId);
   },
 };

@@ -15,6 +15,8 @@ export type ExpectedDepositLine = {
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
+  /** The QuickBooks account's full name, used while the books map leaves `role` unset. */
+  accountName?: string;
 };
 
 /** The deposit a lane expects to land in the bank. Income resolves every role and bucket through the books map when it posts. */
@@ -50,6 +52,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
     if (!isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
     if (!Number.isInteger(l.amountCents)) throw bad("line amountCents must be a whole number");
     if (l.budgetOwnerId !== null && (!Number.isInteger(l.budgetOwnerId) || l.budgetOwnerId <= 0)) throw bad("line budgetOwnerId must be a positive integer or null");
+    if (l.accountName !== undefined && !l.accountName.trim()) throw bad("line accountName must not be blank");
   }
   const sum = raw.lines.reduce((s, l) => s + l.amountCents, 0);
   if (sum !== raw.netCents) throw bad(`lines sum to ${sum}, netCents is ${raw.netCents}`);
@@ -57,7 +60,13 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
     txnDate: raw.txnDate,
     netCents: raw.netCents,
     bankRole: raw.bankRole,
-    lines: raw.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, ...(l.description ? { description: l.description } : {}) })),
+    lines: raw.lines.map((l) => ({
+      role: l.role,
+      budgetOwnerId: l.budgetOwnerId,
+      amountCents: l.amountCents,
+      ...(l.description ? { description: l.description } : {}),
+      ...(l.accountName ? { accountName: l.accountName } : {}),
+    })),
     ...(raw.memo ? { memo: raw.memo } : {}),
   };
 }

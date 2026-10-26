@@ -12,6 +12,7 @@ import { itemCategoryService } from "../../services/itemCategoryService";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
 import { clearAll, ORG_A } from "../helpers/fixtures";
 import { depositStatus, expectDeposit, type ExpectedDeposit } from "../../lib/intake";
+import { adoptBenevityDeposits, driftedNote, type BenevityHolding } from "../../lib/adopt";
 import type { BooksMap, BooksMapRole } from "@checkin/quickbooks";
 
 const NOW = new Date("2026-06-30T12:00:00Z");
@@ -50,6 +51,8 @@ class FakeQbo {
   onWindowRead: (() => Promise<void>) | null = null;
   /** Keys whose create is refused while every other create succeeds. */
   rejectKeys = new Set<string>();
+  /** QuickBooks account ids by full name, for the account-name fallback. */
+  accountNames: Record<string, string> = {};
   private nextId = 1000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -59,6 +62,11 @@ class FakeQbo {
       if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
         if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
+      }
+      const account = /FROM Account WHERE FullyQualifiedName = '([^']+)'/.exec(url.searchParams.get("query") ?? "");
+      if (account) {
+        const Id = this.accountNames[account[1]];
+        return json({ QueryResponse: Id ? { Account: [{ Id, Name: account[1], FullyQualifiedName: account[1] }] } : {} });
       }
       const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
@@ -1381,5 +1389,171 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     qbo.createdAt.set("X9", Date.now());
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
     expect((await rowFor("D1")).qbNote).toBe("app entry X9 is not linked; void or link it");
+  });
+  // ── QB_ENTRY_OWNERSHIP PR 2: donation hands its deposits to income ──
+
+  const donationKey = (key = "D1") => qbKey("donation", `${ORG_A}:${key}`);
+  const donationDeposit = (Id: string, TxnDate: string, cents: number, key = "D1"): QboDeposit => ({
+    Id, TxnDate, TotalAmt: cents / 100, DepositToAccountRef: { value: BENEVITY_BANK }, PrivateNote: `Benevity [checkin:${donationKey(key)}]`,
+  });
+  /** A disbursement as donation held it before the move. */
+  const holding = (over: Partial<BenevityHolding> = {}): BenevityHolding => ({
+    sourceKey: "D1",
+    createdAt: new Date("2026-06-28T09:00:00Z"),
+    txnDate: "2026-06-28",
+    netCents: 14_700,
+    expected: disbursement(),
+    state: "waiting",
+    depositId: null,
+    depositTxnDate: null,
+    depositTotalCents: null,
+    driftCause: null,
+    createAttemptedAt: null,
+    note: null,
+    dismissal: null,
+    ...over,
+  });
+  const adopt = (holdings: BenevityHolding[], over: { exclusions?: { qbTxnId: string; reason: string; excludedByUserId: number; excludedAt: Date }[]; postingOnAt?: Date | null } = {}) =>
+    adoptBenevityDeposits(ORG_A, { holdings, exclusions: over.exclusions ?? [], postingOnAt: over.postingOnAt ?? null });
+  const settings = () => db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId: ORG_A } });
+
+  it("a Benevity row due while Shopify posting is gated stamps only Benevity; a Shopify payout seen later still ages out to finance", async () => {
+    bind({ booksMap, org: async () => ({ id: ORG_A, name: "A" }), posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS, mirrorNewestWins: false } });
+    await expect1();
+    await drain();
+    expect(await settings()).toMatchObject({ qbPostingOnAt: null, benevityQbPostingOnAt: NOW });
+
+    const p = payout(2, "2026-06-01", 500);
+    await drain(new Date("2026-07-01T12:00:00Z"));
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
+    expect(await settings()).toMatchObject({ qbPostingOnAt: null, benevityQbPostingOnAt: NOW });
+  });
+
+  it("Shopify's switch-on never starts Benevity's clock", async () => {
+    await switchOn();
+    expect(await settings()).toMatchObject({ qbPostingOnAt: ON_AT, benevityQbPostingOnAt: null });
+  });
+
+  it("reconcile takes a deposit carrying donation's key as the row's own, never a hand match", async () => {
+    await expect1();
+    qbo.deposits.push(donationDeposit("X1", "2026-06-28", 14_700));
+    qbo.hand("H1", "2026-06-28", 14_700, BENEVITY_BANK);
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("D1")).toMatchObject({ status: "POSTED", origin: "created", depositId: "X1" });
+  });
+
+  it("the drain finds donation's deposit for a moved row it attempted, even re-dated out of its window, and never books it again", async () => {
+    await switchOn();
+    await adopt([holding({ createdAt: new Date(), createAttemptedAt: new Date(Date.now() - 60_000) })]);
+    qbo.deposits.push(donationDeposit("X1", "2026-08-15", 14_700));
+    qbo.createdAt.set("X1", Date.now());
+    await drain();
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor("D1")).toMatchObject({ status: "POSTED", origin: "created", depositId: "X1" });
+  });
+
+  it("finance's match of donation's deposit records it as the app's own", async () => {
+    await adopt([holding({ state: "ambiguous" })]);
+    qbo.deposits.push(donationDeposit("X1", "2026-06-29", 14_700));
+    await resolve("D1", { action: "match", depositId: "X1" });
+    expect(await rowFor("D1")).toMatchObject({ status: "RESOLVED", origin: "created", depositId: "X1" });
+  });
+
+  it("the orphan sweep reports an unlinked deposit carrying donation's key", async () => {
+    await adopt([holding({ state: "matched", depositId: "H1", depositTxnDate: "2026-06-28", depositTotalCents: 14_700, createAttemptedAt: new Date(Date.now() - 60_000) })]);
+    qbo.deposits.push(donationDeposit("X2", "2026-06-28", 14_700));
+    qbo.createdAt.set("X2", Date.now());
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
+    expect((await rowFor("D1")).qbNote).toBe("app entry X2 is not linked; void or link it");
+  });
+
+  it("books lines through the account map's names while the books map leaves their roles unset; the map wins once set", async () => {
+    await switchOn();
+    roleAccounts = { BENEVITY_BANK };
+    qbo.accountNames = { "4000 Donations": "70", "4001 Match": "71", "6000 Fees": "72" };
+    const named = disbursement("2026-06-28", {
+      lines: [
+        { role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 10_000, accountName: "4000 Donations" },
+        { role: "BENEVITY_MATCHES", budgetOwnerId: null, amountCents: 5_000, accountName: "4001 Match" },
+        { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -300, accountName: "6000 Fees" },
+      ],
+    });
+    await expect1("D1", named);
+    await expect1("D2", { ...named, memo: "Benevity disbursement D2" });
+    roleAccounts = { BENEVITY_BANK, BENEVITY_DONATIONS: "60" };
+    expect(await drain()).toMatchObject({ post: { posted: 2 } });
+    for (const { body } of qbo.posts) {
+      expect(body.Line.map((l) => l.DepositLineDetail.AccountRef.value)).toEqual(["60", "71", "72"]);
+    }
+  });
+
+  it("a line whose role and account name both fail to resolve fails its post", async () => {
+    await switchOn();
+    roleAccounts = { BENEVITY_BANK };
+    await expect1("D1", disbursement("2026-06-28", { lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_700, accountName: "Gone" }] }));
+    expect(await drain()).toMatchObject({ post: { failed: 1 } });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("the move writes each holding as a Benevity row with donation's state, exclusions and the earlier switch-on", async () => {
+    await db.incomeOrgSettings.create({ data: { orgId: ORG_A, benevityQbPostingOnAt: new Date("2026-06-20T00:00:00Z") } });
+    const attempted = new Date("2026-06-29T08:00:00Z");
+    const dismissedAt = new Date("2026-06-30T08:00:00Z");
+    const out = await adopt(
+      [
+        holding({ sourceKey: "W", createAttemptedAt: attempted }),
+        holding({ sourceKey: "M", state: "matched", depositId: "H1", depositTxnDate: "2026-06-29", depositTotalCents: 14_700 }),
+        holding({ sourceKey: "C", state: "created", depositId: "H2", depositTxnDate: "2026-06-28", depositTotalCents: 14_700, note: "check it" }),
+        holding({ sourceKey: "A", state: "ambiguous" }),
+        holding({ sourceKey: "U", state: "unbooked" }),
+        holding({ sourceKey: "N", state: "needs_finance" }),
+        holding({ sourceKey: "D", state: "drifted", depositId: "H3", driftCause: "deposit_changed" }),
+        holding({ sourceKey: "X", state: "dismissed", expected: null, dismissal: { reason: "journal entry", byUserId: 4, at: dismissedAt } }),
+      ],
+      { exclusions: [{ qbTxnId: "777", reason: "payroll", excludedByUserId: 3, excludedAt: dismissedAt }], postingOnAt: new Date("2026-06-01T00:00:00Z") },
+    );
+
+    expect(out).toEqual({ adopted: 8, present: 0, exclusions: 1 });
+    expect(await rowFor("W")).toMatchObject({ source: "benevity", status: "WAITING", qbCreateAttemptedAt: attempted, createdAt: new Date("2026-06-28T09:00:00Z") });
+    expect(await rowFor("M")).toMatchObject({ status: "MATCHED", origin: "matched", resolution: "AUTO", depositId: "H1", depositTxnDate: "2026-06-29" });
+    expect(await rowFor("C")).toMatchObject({ status: "POSTED", origin: "created", depositId: "H2", qbNote: "check it" });
+    expect(await rowFor("A")).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT" });
+    expect(await rowFor("U")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
+    expect(await rowFor("N")).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
+    expect(await rowFor("D")).toMatchObject({ status: "OPEN", kind: "DRIFT", depositId: null, qbNote: driftedNote("H3", "deposit_changed") });
+    expect(await rowFor("X")).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", reason: "journal entry", resolvedByUserId: 4, resolvedAt: dismissedAt, expected: null });
+    expect(await status("D")).toEqual({ state: "drifted", note: "was linked to Deposit H3, which changed after it was matched (deposit_changed)" });
+    expect(await db.incomeQbMatchExclusion.findMany({ where: { orgId: ORG_A } })).toEqual([expect.objectContaining({ qbTxnId: "777", excludedByUserId: 3 })]);
+    expect((await settings()).benevityQbPostingOnAt).toEqual(new Date("2026-06-01T00:00:00Z"));
+
+    expect(await adopt([holding({ sourceKey: "W" }), holding({ sourceKey: "Z" })], { postingOnAt: new Date("2026-06-15T00:00:00Z") })).toEqual({ adopted: 1, present: 1, exclusions: 0 });
+    expect((await settings()).benevityQbPostingOnAt).toEqual(new Date("2026-06-01T00:00:00Z"));
+  });
+
+  it("the move stops, writing nothing, on a deposit a payout already holds", async () => {
+    const p = payout(2, "2026-06-28", 14_700);
+    qbo.hand("H1", "2026-06-28", 14_700, BANK);
+    roleAccounts = { ...ROLES, SHOPIFY_BANK: BANK };
+    await runReconcile(ORG_A, NOW);
+    const { id } = await rowFor(p);
+
+    await expect(adopt([holding({ sourceKey: "W" }), holding({ state: "matched", depositId: "H1", depositTxnDate: "2026-06-28" })], { postingOnAt: NOW })).rejects.toMatchObject({
+      status: 409,
+      message: `deposit H1 held by disbursement D1 is already held by payout ${id}`,
+    });
+    expect(await db.payoutReconciliation.count({ where: { orgId: ORG_A, source: "benevity" } })).toBe(0);
+    expect(await db.incomeOrgSettings.findUnique({ where: { orgId: ORG_A } })).toBeNull();
+  });
+
+  it("the move stops on an unsettled holding with no deposit to build, naming it", async () => {
+    await expect(adopt([holding({ sourceKey: "D9", expected: null })])).rejects.toMatchObject({ status: 409, message: expect.stringContaining("disbursement D9") });
+    expect(await db.payoutReconciliation.count()).toBe(0);
+  });
+
+  it("the move pins the date of a held deposit donation never dated, so income's drift check reads it", async () => {
+    qbo.hand("H1", "2026-06-30", 14_700, BENEVITY_BANK);
+    await adopt([holding({ state: "matched", depositId: "H1", depositTotalCents: 14_700 })]);
+    expect(await rowFor("D1")).toMatchObject({ depositTxnDate: "2026-06-30" });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
   });
 });

@@ -20,9 +20,8 @@ jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts } }));
 // The libraries' root entries pull in their generated Prisma clients, which the jest env does not build.
 const postingOnAt = jest.fn();
 jest.mock("@checkin/income", () => ({ postingOnAt }));
-const donationOnAt = jest.fn();
 const inKindOnAt = jest.fn();
-jest.mock("@checkin/bulk-donation", () => ({ qbPostingOnAt: donationOnAt, inKindPostingOnAt: inKindOnAt }));
+jest.mock("@checkin/bulk-donation", () => ({ inKindPostingOnAt: inKindOnAt }));
 const expenseOnAt = jest.fn();
 jest.mock("@checkin/expense", () => ({ qbPostingOnAt: expenseOnAt }));
 
@@ -50,8 +49,7 @@ beforeEach(() => {
     expensePostingMissing.mockResolvedValue([]);
     getOrg.mockResolvedValue({ id: "org-1" });
     accounts.mockResolvedValue(Object.fromEntries(BOOKS_MAP_ROLES.map((r) => [r, "1"])));
-    postingOnAt.mockResolvedValue(null);
-    donationOnAt.mockResolvedValue(null);
+    postingOnAt.mockResolvedValue({ shopify: null, benevity: null });
     inKindOnAt.mockResolvedValue(null);
     expenseOnAt.mockResolvedValue(null);
 });
@@ -126,8 +124,10 @@ describe("posting lane rows", () => {
     beforeEach(() => tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" }));
 
     it("is bound with the switch-on date when stamped", async () => {
-        postingOnAt.mockResolvedValue(new Date("2026-09-01T12:00:00Z"));
-        expect((await rows())["quickbooks-lane-income"]).toMatchObject({ ok: true, detail: "Bound. Posting switched on 2026-09-01." });
+        postingOnAt.mockResolvedValue({ shopify: new Date("2026-09-01T12:00:00Z"), benevity: new Date("2026-08-15T12:00:00Z") });
+        const r = await rows();
+        expect(r["quickbooks-lane-income"]).toMatchObject({ ok: true, detail: "Bound. Posting switched on 2026-09-01." });
+        expect(r["quickbooks-lane-donations"].detail).toContain("Posting switched on 2026-08-15.");
     });
 
     it("names each missing piece when unbound", async () => {

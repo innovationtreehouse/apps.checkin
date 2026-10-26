@@ -1,23 +1,18 @@
 /**
- * Disbursements: holds and resubmit, completed events, nav counts, and the
- * QuickBooks finance queue (candidates, resolve, exclusions).
+ * Disbursements: holds and resubmit, completed events, nav counts, and what is left of the
+ * QuickBooks finance queue now income owns every deposit (candidates, clearing a note, exclusions read).
  */
 import { httpError, mapServiceErrors, parseBody } from "@checkin/component-kit";
 import { z } from "zod";
-import { db, isUniqueConstraintError } from "../db";
+import { db } from "../db";
 import { disbursementService } from "../services/disbursementService";
 import { getNavCounts } from "../services/navCountsService";
 import { getOrgId } from "../runtime";
-import { recordEvent } from "../repositories/audit";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { qbCandidates as liveQbCandidates, resolveQbHold } from "../lib/qb-queue";
+import { NOW_INCOMES, withIncomeStatuses } from "../lib/deposit-handover";
 import type { DonationRouteHandler } from "../contract";
 import { auditContext, pageArgs } from "./_shared";
-
-const exclusionSchema = z.object({
-  qbTxnId: z.string().trim().min(1, "qbTxnId is required"),
-  reason: z.string().trim().min(1, "reason is required"),
-});
 
 const resolveSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("match"), qbTxnId: z.string().trim().min(1, "qbTxnId is required"), reason: z.string().optional() }),
@@ -57,14 +52,12 @@ export const resubmitHold: DonationRouteHandler = async ({ req, params }) => {
   return {};
 };
 
-export const listEvents: DonationRouteHandler = async ({ req }) => ({
-  DisbursementEvent: await disbursementService.listEvents(
-    await getOrgId(),
-    pageArgs(req),
-    qbStateFilter(req),
-    new URL(req.url).searchParams.get("noted") === "1",
-  ),
-});
+/** Completed disbursements, each showing income's status for its deposit once the holdings have moved. */
+export const listEvents: DonationRouteHandler = async ({ req }) => {
+  const orgId = await getOrgId();
+  const rows = await disbursementService.listEvents(orgId, pageArgs(req), qbStateFilter(req), new URL(req.url).searchParams.get("noted") === "1");
+  return { DisbursementEvent: await withIncomeStatuses(orgId, rows) };
+};
 
 export const navCounts: DonationRouteHandler = async () => ({
   DonationNavCounts: await getNavCounts(await getOrgId()),
@@ -92,24 +85,7 @@ export const listExclusions: DonationRouteHandler = async ({ req }) => ({
   }),
 });
 
-export const createExclusion: DonationRouteHandler = async ({ req }) => {
-  const { qbTxnId, reason } = await parseBody(req, exclusionSchema);
-  const orgId = await getOrgId();
-  const audit = await auditContext(req);
-  try {
-    return {
-      DonationQbMatchExclusion: await db.$transaction(async (tx) => {
-        const holder = await tx.disbursementEvent.findFirst({ where: { orgId, qbTxnId }, select: { disbursementId: true } });
-        if (holder) throw httpError(409, `That QuickBooks entry backs disbursement ${holder.disbursementId}`);
-        const row = await tx.donationQbMatchExclusion.create({
-          data: { orgId, qbTxnId, reason, excludedByUserId: audit.actorUserId },
-        });
-        await recordEvent(tx, { orgId, entityType: "qb_exclusion", entityId: row.id, eventType: "QB_TXN_EXCLUDED", ...audit, payload: { qbTxnId } });
-        return row;
-      }),
-    };
-  } catch (err) {
-    if (isUniqueConstraintError(err)) throw httpError(409, "That QuickBooks entry is already excluded");
-    throw err;
-  }
+/** Income owns every deposit, so its exclusions are income's; a donation exclusion would never be read. */
+export const createExclusion: DonationRouteHandler = async () => {
+  throw httpError(409, NOW_INCOMES);
 };

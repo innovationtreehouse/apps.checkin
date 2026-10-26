@@ -1,7 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { BooksMap, QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, BooksMapRole, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
@@ -93,6 +93,75 @@ export interface InKindQbPosting {
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
+/** One line of a disbursement's deposit: kind's account role, the gift's bucket (null at organization level), signed cents. */
+export type DonationDepositLine = {
+  role: BooksMapRole;
+  budgetOwnerId: number | null;
+  amountCents: number;
+  description?: string;
+  /** The account map's QuickBooks account name, used while the books map leaves `role` unset. */
+  accountName?: string;
+};
+
+/** The deposit a completed disbursement should land as; income books or matches it. */
+export type DonationExpectedDeposit = {
+  /** YYYY-MM-DD. */
+  txnDate: string;
+  netCents: number;
+  bankRole: BooksMapRole;
+  lines: DonationDepositLine[];
+  memo?: string;
+};
+
+/** What income made of a disbursement's deposit. */
+export type DonationDepositStatus =
+  | { state: "waiting" }
+  | { state: "booked" | "matched"; depositId: string; txnDate: string | null; totalCents: number | null }
+  | { state: "with_finance"; kind: string | null; note: string | null }
+  | { state: "drifted"; note: string | null }
+  | { state: "dismissed"; reason: string | null };
+
+/** Where donation left a disbursement's QuickBooks deposit, as the move hands it to income. */
+export type DonationHeldState = "waiting" | "matched" | "created" | "ambiguous" | "unbooked" | "needs_finance" | "drifted" | "dismissed";
+
+export type DonationHolding = {
+  sourceKey: string;
+  createdAt: Date;
+  txnDate: string;
+  netCents: number;
+  expected: DonationExpectedDeposit | null;
+  state: DonationHeldState;
+  depositId: string | null;
+  depositTxnDate: string | null;
+  depositTotalCents: number | null;
+  driftCause: string | null;
+  createAttemptedAt: Date | null;
+  note: string | null;
+  dismissal: { reason: string; byUserId: number | null; at: Date } | null;
+};
+
+export type DonationHoldingsMove = {
+  holdings: DonationHolding[];
+  exclusions: { qbTxnId: string; reason: string; excludedByUserId: number; excludedAt: Date }[];
+  postingOnAt: Date | null;
+};
+
+/**
+ * Income, which books and matches every deposit. Donation hands each completed disbursement over
+ * after its own commit, re-sends any income does not know, and reads back what became of it.
+ * Outside prod only a disbursement whose id starts with "TEST-" is handed over; prod never hands one over.
+ */
+export interface IncomeDeposits {
+  expectDeposit(orgId: string, disbursementId: string, expected: DonationExpectedDeposit): Promise<unknown>;
+  /** Per disbursement id; an id income has no row for is absent. */
+  depositStatus(orgId: string, disbursementIds: string[]): Promise<Record<string, DonationDepositStatus>>;
+  /** The one-off move of donation's holdings; throws, writing nothing, when it must stop. */
+  adoptHoldings(orgId: string, move: DonationHoldingsMove): Promise<unknown>;
+  prod: boolean;
+  /** Tells finance the move stopped and why; called once per cause. */
+  moveStopped(event: { orgId: string; cause: string }): Promise<void>;
+}
+
 /** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */
 export interface OtherLaneClaims {
   claimedDepositIds(orgId: string): Promise<string[]>;
@@ -146,6 +215,7 @@ export interface BulkDonationConfig {
   inventory?: InventoryApply;
   qb?: DonationQbPosting;
   inKindQb?: InKindQbPosting;
+  deposits?: IncomeDeposits;
   otherLaneClaims?: OtherLaneClaims;
   inKind?: InKindDirectory;
   capital?: InKindCapital;

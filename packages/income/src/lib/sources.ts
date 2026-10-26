@@ -65,9 +65,12 @@ export function rowKey(row: Pick<PayoutReconciliation, "source" | "payoutGid">):
   return isBenevity(row) ? qbKey("income", `benevity:${row.payoutGid}`) : qbKey("income", row.payoutGid);
 }
 
-/** Every key a deposit the app created for this row may carry. */
-export function rowKeys(row: Pick<PayoutReconciliation, "source" | "payoutGid">): string[] {
-  return [rowKey(row)];
+/**
+ * Every key a deposit the app created for this row may carry: income's own, and on a Benevity
+ * row the key donation created it under before income owned Benevity deposits.
+ */
+export function rowKeys(row: Pick<PayoutReconciliation, "orgId" | "source" | "payoutGid">): string[] {
+  return isBenevity(row) ? [rowKey(row), qbKey("donation", `${row.orgId}:${row.payoutGid}`)] : [rowKey(row)];
 }
 
 /** The queue note on a payout whose deposit would land in closed books. */
