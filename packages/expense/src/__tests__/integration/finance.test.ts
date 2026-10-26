@@ -630,4 +630,16 @@ describeDb("QuickBooks match", () => {
     await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject(notConnected);
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
+
+  it("answers 503 while QuickBooks is off even with no payment account or Vendor set", async () => {
+    const card = await qbExpense({ purchases: ["42"] });
+    const owed = await qbExpense({ bills: ["42"] }, { reimbursement: true });
+    bindPorts({
+      signoff: directory({ finance: [3], board: [5] }),
+      quickbooks: { refs: { paymentAccountId: async () => null, vendorIdFor: async () => null } },
+    });
+    const notConnected = { status: 503, message: "QuickBooks is not connected" };
+    await expect(qbCandidates(FINANCE, card)).rejects.toMatchObject(notConnected);
+    await expect(qbCandidates(FINANCE, owed)).rejects.toMatchObject(notConnected);
+  });
 });
