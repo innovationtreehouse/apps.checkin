@@ -41,6 +41,16 @@ async function viewIds(p: ExpensePrincipal): Promise<string[]> {
   return Expense.map((e) => e.id).sort();
 }
 
+/** The view's expense ids, or null when the caller can't act in it and the route refuses it. */
+async function viewIdsOrHidden(p: ExpensePrincipal): Promise<string[] | null> {
+  try {
+    return await viewIds(p);
+  } catch (err) {
+    if ((err as { status?: number }).status === 403) return null;
+    throw err;
+  }
+}
+
 async function seedLines(opts: Parameters<typeof seedExpense>[0], approvals: { ownerId: number | null; status?: string }[]): Promise<string> {
   const id = await seedExpense({ state: "owner_approval", submitterId: 1, ...opts });
   for (const a of approvals) await seedApproval(id, await seedLineItem(id), a);
@@ -52,12 +62,13 @@ describeDb("lines waiting on the caller's approval", () => {
   let mixed: string;
   let moved: string;
   let orgLevel: string;
+  let approversOwn: string;
 
   beforeEach(async () => {
     bindPorts({ signoff: directory(DIRECTORY) });
     both = await seedLines({}, [{ ownerId: 100 }, { ownerId: 200 }]);
     mixed = await seedLines({}, [{ ownerId: 100 }, { ownerId: 100 }, { ownerId: 100, status: "approved" }]);
-    await seedLines({ submitterId: 2 }, [{ ownerId: 100 }]);
+    approversOwn = await seedLines({ submitterId: 2 }, [{ ownerId: 100 }]);
     await seedLines({ state: "assign_ownership" }, [{ ownerId: 100 }]);
     await seedLines({ state: "qb_pending" }, [{ ownerId: 100, status: "approved" }]);
     await seedLines({}, [{ ownerId: 100, status: "exception_raised" }]);
@@ -67,16 +78,16 @@ describeDb("lines waiting on the caller's approval", () => {
   });
 
   describe.each(ROLES)("for %s", (_name, p) => {
-    it("the pill counts exactly the lines of the view's expenses", async () => {
+    it("the pill counts exactly the lines of the view's expenses, and nothing when the view is hidden", async () => {
       as(p);
       const awaiting = await expensesAwaitingMyApproval(p);
-      expect(await viewIds(p)).toEqual(awaiting.map((e) => e.expenseId).sort());
+      expect(await viewIdsOrHidden(p) ?? []).toEqual(awaiting.map((e) => e.expenseId).sort());
       expect(await signoffsAwaitingCount(p)).toBe(awaiting.reduce((n, e) => n + e.lineItemIds.length, 0));
     });
 
     it("the owner-approval count is the number of the view's expenses", async () => {
       as(p);
-      expect((await expenseActionCounts(p)).owner_approval).toBe((await viewIds(p)).length);
+      expect((await expenseActionCounts(p)).owner_approval).toBe((await viewIdsOrHidden(p) ?? []).length);
     });
   });
 
@@ -108,15 +119,16 @@ describeDb("lines waiting on the caller's approval", () => {
     expect(await signoffsAwaitingCount(OTHER_APPROVER)).toBe(1);
   });
 
-  it("counts nothing for an approver conflicted on the submitter's household", async () => {
+  it("counts nothing an approver is conflicted on, and still counts their bucket's other expenses", async () => {
     as(CONFLICTED_APPROVER);
-    expect(await viewIds(CONFLICTED_APPROVER)).toEqual([]);
-    expect(await signoffsAwaitingCount(CONFLICTED_APPROVER)).toBe(0);
+    expect(await viewIds(CONFLICTED_APPROVER)).toEqual([approversOwn]);
+    expect(await signoffsAwaitingCount(CONFLICTED_APPROVER)).toBe(1);
   });
 
-  it("counts nothing for FINANCE outside its own buckets", async () => {
+  it("counts nothing for FINANCE outside its own buckets, and hides the view from it", async () => {
     as(FINANCE);
-    expect(await viewIds(FINANCE)).toEqual([]);
+    expect(await viewIdsOrHidden(FINANCE)).toBeNull();
     expect(await signoffsAwaitingCount(FINANCE)).toBe(0);
+    expect((await expenseActionCounts(FINANCE)).owner_approval).toBe(0);
   });
 });
