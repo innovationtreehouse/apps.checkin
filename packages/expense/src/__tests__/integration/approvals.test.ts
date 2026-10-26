@@ -119,14 +119,14 @@ describeDb("the approval takes the seat's refusals", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], households: [[2, 3]] }) });
     const { id, a, approvalB } = await twoLines();
     await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: a, seat: "TREASURER", signerUserId: 3 } });
-    await expect(approveLine(LEADER, id, approvalB)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/household already holds a seat/) });
+    await expect(approveLine(LEADER, id, approvalB)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/household already signs off/) });
   });
 
   it("an approver whose household approved another line is refused", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2, 4] }, households: [[2, 4]] }) });
     const { id, approvalA, approvalB } = await twoLines();
     await approveLine(principal(4), id, approvalA);
-    await expect(approveLine(LEADER, id, approvalB)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/household already holds a seat/) });
+    await expect(approveLine(LEADER, id, approvalB)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/household already signs off/) });
     await approveLine(principal(4), id, approvalB);
   });
 

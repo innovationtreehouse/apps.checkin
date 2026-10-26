@@ -13,7 +13,7 @@ import { updateBudgetOwner } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
 
 const tx = {
-    booksMapRoleAccount: { findUnique: jest.fn(), upsert: jest.fn(), delete: jest.fn() },
+    booksMapRoleAccount: { findUnique: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
     auditLog: { create: jest.fn() },
 };
 const accountRows = jest.fn();
@@ -38,7 +38,7 @@ beforeEach(() => {
 
 const nothingWritten = () => {
     expect(tx.booksMapRoleAccount.upsert).not.toHaveBeenCalled();
-    expect(tx.booksMapRoleAccount.delete).not.toHaveBeenCalled();
+    expect(tx.booksMapRoleAccount.deleteMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
 };
 
@@ -70,9 +70,17 @@ describe('setBooksMapAccount', () => {
 
     it('clears a set role by deleting its row, audited', async () => {
         tx.booksMapRoleAccount.findUnique.mockResolvedValue({ quickBooksAccountId: '8004' });
+        tx.booksMapRoleAccount.deleteMany.mockResolvedValue({ count: 1 });
         await setBooksMapAccount(1, 'SHOPIFY_FEES', { quickBooksAccountId: null });
-        expect(tx.booksMapRoleAccount.delete).toHaveBeenCalledWith({ where: { role: 'SHOPIFY_FEES' } });
+        expect(tx.booksMapRoleAccount.deleteMany).toHaveBeenCalledWith({ where: { role: 'SHOPIFY_FEES' } });
         expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'DELETE' }) });
+    });
+
+    it('a clear that loses the race to another clear writes nothing and succeeds', async () => {
+        tx.booksMapRoleAccount.findUnique.mockResolvedValue({ quickBooksAccountId: '8004' });
+        tx.booksMapRoleAccount.deleteMany.mockResolvedValue({ count: 0 });
+        await expect(setBooksMapAccount(1, 'SHOPIFY_FEES', { quickBooksAccountId: null })).resolves.toEqual({ role: 'SHOPIFY_FEES', quickBooksAccountId: null });
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 
     it('writes nothing when the account is unchanged', async () => {

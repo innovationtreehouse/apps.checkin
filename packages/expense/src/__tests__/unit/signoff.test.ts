@@ -90,7 +90,7 @@ describe("approvalRefusal (C′.2)", () => {
   });
 
   it("refuses an approver whose household already holds a seat on the expense", () => {
-    expect(approvalRefusal({ ...pending, seatedHouseholds: [2] }, CONFIRMED, 2)).toMatch(/household already holds a seat/);
+    expect(approvalRefusal({ ...pending, seatedHouseholds: [2] }, CONFIRMED, 2)).toMatch(/household already signs off/);
   });
 
   it("refuses an approver who signs another seat on the line", () => {
@@ -127,7 +127,7 @@ describe("a Board stand-in (C′.3)", () => {
 
   it("takes every approval refusal", () => {
     expect(approvalRefusal({ ...pending, conflicted: [1, 5] }, CONFIRMED, 5)).toMatch(/household submitted/);
-    expect(approvalRefusal({ ...pending, seatedHouseholds: [5] }, CONFIRMED, 5)).toMatch(/household already holds a seat/);
+    expect(approvalRefusal({ ...pending, seatedHouseholds: [5] }, CONFIRMED, 5)).toMatch(/household already signs off/);
   });
 
   it("counts as a substitution: on a card charge it leaves none for the Treasurer seat", () => {
@@ -222,7 +222,7 @@ describe("independence", () => {
   });
 
   it("the person reimbursed is refused the submitter seat while someone in their household holds a seat on the expense", () => {
-    expect(signoffRefusal({ ...base, seatedHouseholds: [1] }, seats(["TREASURER", 3]), "SUBMITTER", 1)).toMatch(/signer's household already holds a seat/);
+    expect(signoffRefusal({ ...base, seatedHouseholds: [1] }, seats(["TREASURER", 3]), "SUBMITTER", 1)).toMatch(/signer's household already signs off/);
   });
 
   it("a seat is filled once", () => {
@@ -236,12 +236,12 @@ describe("independence", () => {
 
 describe("one seat per household on an expense", () => {
   it("a FINANCE holder whose spouse approved a line cannot sign the Treasurer seat", () => {
-    expect(signoffRefusal({ ...base, seatedHouseholds: [3] }, [], "TREASURER", 3)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal({ ...base, seatedHouseholds: [3] }, [], "TREASURER", 3)).toMatch(/household already signs off/);
   });
 
   it("a Board member whose household already holds a seat cannot substitute", () => {
     const facts = { ...base, conflicted: [1, 8, 3], seatedHouseholds: [5] };
-    expect(signoffRefusal(facts, [], "TREASURER", 5)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(facts, [], "TREASURER", 5)).toMatch(/household already signs off/);
     expect(signoffRefusal(facts, [], "TREASURER", 6)).toBeNull();
   });
 });
@@ -318,7 +318,7 @@ describe("one person signs one step of an expense", () => {
 
   it("the Treasurer seat refuses whoever approved any line of the expense, and their household", () => {
     expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 4)).toMatch(/another step/);
-    expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 7)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 7)).toMatch(/household already signs off/);
     expect(signoffRefusal(approvedElsewhere, [], "TREASURER", 3)).toBeNull();
     expect(availableSigners(approvedElsewhere, [], "TREASURER")).toEqual([3]);
   });
@@ -328,7 +328,7 @@ describe("one person signs one step of an expense", () => {
     const filled = seats(["TREASURER", 3]);
     expect(signoffRefusal(facts, filled, "BOARD", 4)).toMatch(/another step/);
     expect(signoffRefusal(facts, filled, "BOARD", 9)).toMatch(/another step/);
-    expect(signoffRefusal(facts, filled, "BOARD", 7)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(facts, filled, "BOARD", 7)).toMatch(/household already signs off/);
     expect(signoffRefusal(facts, filled, "BOARD", 5)).toBeNull();
   });
 
@@ -369,7 +369,7 @@ describe("submitterSeatRefusal", () => {
   });
 
   it("nobody in the signer's household may hold another seat on the expense", () => {
-    expect(submitterSeatRefusal({ ...base, seatedHouseholds: [5] }, [], 5)).toMatch(/signer's household already holds a seat/);
+    expect(submitterSeatRefusal({ ...base, seatedHouseholds: [5] }, [], 5)).toMatch(/signer's household already signs off/);
   });
 
   it("a card charge takes none, and a filled seat is filled once", () => {
