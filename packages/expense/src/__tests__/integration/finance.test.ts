@@ -118,7 +118,6 @@ describeDb("sign-off seats", () => {
     await approveLine(principal(5, { isBoard: true }), id, approvalId);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
 
-    await seedSubmitterSeat(li, 1);
     await expect(signLine(principal(5), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 

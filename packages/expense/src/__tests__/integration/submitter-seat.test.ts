@@ -140,7 +140,8 @@ describeDb("confirming again through the receipt", () => {
 
   it("only an open reimbursement, for its reimbursee", async () => {
     const { id } = await openReimbursement();
-    expect(await submitterConfirmations.confirm(id, 1, { id: 2, name: "person-2" }, "no account")).toBe(false);
+    // The expense's reimbursee is 1, so a confirmation naming anyone else is not theirs.
+    expect(await submitterConfirmations.confirm(id, 2, { id: 2, name: "person-2" }, null)).toBe(false);
     const card = await seedExpense({ state: "owner_approval" });
     await seedLineItem(card);
     expect(await submitterConfirmations.confirm(card, 1, { id: 1, name: "person-1" }, null)).toBe(false);

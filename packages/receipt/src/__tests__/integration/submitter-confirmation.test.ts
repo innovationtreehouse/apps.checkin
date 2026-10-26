@@ -47,7 +47,7 @@ const voids = (id: string) => db.receiptAuditLog.findMany({ where: { receiptId: 
 /** A reimbursement its submitter confirmed with a total the lines don't match, so it waits in validation_failed. */
 async function confirmedInValidation() {
   const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
-  await receiptService.edit(r.id, "submitter", { receiptTotal: "25.00" });
+  await receiptService.edit(r.id, "submitter", { receiptTotal: 25 });
   await receiptService.submitterConfirm(r.id);
   expect(await stateOf(r.id)).toBe("validation_failed");
   expect(await reviewedAt(r.id)).not.toBeNull();
@@ -78,10 +78,10 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
   it.each([
     ["receiptDate", { receiptDate: "2020-01-01" }],
     ["currency", { currency: "CAD" }],
-    ["shippingCents", { shipping: "1.00" }],
-    ["taxCents", { tax: "1.00" }],
-    ["discountCents", { discount: "1.00" }],
-    ["receiptTotalCents", { receiptTotal: "20.00" }],
+    ["shippingCents", { shipping: 1 }],
+    ["taxCents", { tax: 1 }],
+    ["discountCents", { discount: 1 }],
+    ["receiptTotalCents", { receiptTotal: 20 }],
   ])("a finance change to %s voids it, audited naming finance and the field", async (field, change) => {
     const { id } = await confirmedInValidation();
     actAs(FINANCE);
@@ -93,7 +93,7 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
   it("once voided, the receipt goes back to its submitter's review before finance", async () => {
     const { id } = await confirmedInValidation();
     actAs(FINANCE);
-    await receiptService.edit(id, "finance", { receiptTotal: "20.00" });
+    await receiptService.edit(id, "finance", { receiptTotal: 20 });
     await receiptService.resubmit(id, "finance");
     expect(await stateOf(id)).toBe("submitter_review");
     expect(ports.calls.pushes).toHaveLength(0);
@@ -123,7 +123,7 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
 
   it("the submitter's own correction does not void it", async () => {
     const { id, lineId } = await confirmedInValidation();
-    await receiptService.edit(id, "submitter", { receiptTotal: "20.00" });
+    await receiptService.edit(id, "submitter", { receiptTotal: 20 });
     await receiptService.editLine(id, "submitter", lineId, { quantity: 2 });
     expect(await reviewedAt(id)).not.toBeNull();
     expect(await voids(id)).toEqual([]);
@@ -133,7 +133,7 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
     expect(r.state).toBe("validation_failed");
     actAs(FINANCE);
-    await receiptService.edit(r.id, "finance", { receiptTotal: "20.00" });
+    await receiptService.edit(r.id, "finance", { receiptTotal: 20 });
     await receiptService.resubmit(r.id, "finance");
     expect(await stateOf(r.id)).toBe("receipt_finalized");
     expect(await voids(r.id)).toEqual([]);
