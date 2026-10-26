@@ -44,6 +44,7 @@ const FINANCE_TOOLS = linkGate(REVENUE_OPS, '/finance-ops/payment-plan');
 const REVENUE = (href: string): NavGate => linkGate(REVENUE_OPS, href);
 const EXPENSES = linkGate(FINANCE, '/expense/expenses');
 const BUDGETS = linkGate(FINANCE, '/budgets');
+const BOOKS_MAP = linkGate(FINANCE, '/books-map');
 const FINANCE_REVIEW = linkGate(FINANCE, FINANCE_REVIEW_PATH);
 // FINANCE and BOARD reach it from Finance, an inventory manager from Inventory.
 const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
@@ -192,6 +193,7 @@ export const PAGES: PageEntry[] = [
 
   // Finance — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Finance', keywords: 'budget owner bucket treasurer approver quickbooks class', visible: BUDGETS },
+  { href: '/books-map', label: 'Books map', section: 'Finance', keywords: 'quickbooks account class bank role shopify benevity deposit', visible: BOOKS_MAP },
   { href: '/expense/expenses', label: 'Expenses', section: 'Finance', keywords: 'receipt reimbursement approval sign-off queue', visible: EXPENSES },
   { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Finance', keywords: 'quickbooks rule category', visible: EXPENSES },
   { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Finance', keywords: 'qb account list chart of accounts category', visible: EXPENSES },

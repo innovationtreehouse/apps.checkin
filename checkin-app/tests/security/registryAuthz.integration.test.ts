@@ -109,6 +109,7 @@ const EXTERNAL_GATED_GETS = new Set([
     'GET /api/finance-ops/s-read/sync',
     'GET /api/finance-ops/s-read/match-audit',
     'GET /api/budget-owners/quickbooks-classes',
+    'GET /api/books-map/quickbooks-accounts',
 ]);
 
 function importPathFor(routePath: string): string {

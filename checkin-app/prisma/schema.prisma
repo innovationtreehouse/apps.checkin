@@ -1947,3 +1947,16 @@ model BudgetOwnerTreasurer {
   @@id([budgetOwnerId, personId])
   @@index([personId])
 }
+
+/// The books map's account half: which QuickBooks account a named role books to
+/// (a bank account, a Shopify or Benevity line). The Class half is
+/// BudgetOwner.quickBooksClassId. Finance edits it; a role without a row is unset.
+model BooksMapRoleAccount {
+  /// One of BOOKS_MAP_ROLES in @checkin/quickbooks; a string, not an enum, so a
+  /// new role needs no ADD VALUE.
+  /// @sensitivity:internal
+  role                String @id
+  /// The QuickBooks Online id of the account (external id, not a checkin FK).
+  /// @sensitivity:internal
+  quickBooksAccountId String
+}
