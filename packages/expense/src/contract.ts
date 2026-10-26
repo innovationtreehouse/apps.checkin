@@ -2,6 +2,7 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
+import { ServiceError } from "@checkin/component-kit";
 import type { QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
@@ -178,10 +179,14 @@ export interface QbReader {
   billPaymentsByIds(ids: string[]): Promise<{ id: string; txnDate: string }[]>;
 }
 
-/** Thrown by a QbReader while QuickBooks is off, so "not connected" never reads as "no entries". */
-export class QuickBooksNotConnectedError extends Error {
+/**
+ * Thrown by a QbReader while QuickBooks is off, so "not connected" never reads as "no entries".
+ * A 503 ServiceError: routes recognise it by ServiceError's brand, since the reader is bound in
+ * a different chunk from the routes and `instanceof` fails across them.
+ */
+export class QuickBooksNotConnectedError extends ServiceError {
   constructor() {
-    super("QuickBooks is not connected");
+    super(503, "QuickBooks is not connected");
     this.name = "QuickBooksNotConnectedError";
   }
 }

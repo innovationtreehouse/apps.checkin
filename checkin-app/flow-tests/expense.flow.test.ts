@@ -153,8 +153,8 @@ describe("expense — persona matrix", () => {
     for (const [method, path, , body] of ROUTES) {
       const { status } = await send(finance, method, path, body);
       expect([method, path, denied(status)]).toEqual([method, path, false]);
-      // A GET naming line 0 is admitted and then finds nothing.
-      if (method === "GET" && !path.includes("/0/")) expect([path, status]).toEqual([path, 200]);
+      // A GET naming line 0 is admitted and then finds nothing; QuickBooks is off here, so candidates answer 503.
+      if (method === "GET" && !path.includes("/0/")) expect([path, status]).toEqual([path, path.endsWith("/qb-candidates") ? 503 : 200]);
     }
   });
 });
@@ -276,14 +276,14 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
     expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).not.toContain("REIMBURSEE_TO_NAME");
 
-    // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
+    // Capital seed, then QuickBooks: exclusions record, and candidates answer "not connected" while QuickBooks is off.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
     const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
-    expect(candidates.status).toBe(200);
-    expect(candidates.json).toEqual([]);
+    expect(candidates.status).toBe(503);
+    expect(JSON.stringify(candidates.json)).toContain("QuickBooks is not connected");
   });
 
   it("server-renders an expense page (proves the library tsx transpiles)", async () => {

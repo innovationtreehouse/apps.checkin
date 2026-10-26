@@ -2,7 +2,7 @@
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
 import { appKeyOf, qbKey, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
-import { QuickBooksNotConnectedError, type ExpensePrincipal, type QbTxn } from "../contract";
+import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
@@ -147,10 +147,7 @@ async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): 
   const to = shiftDate(date, MATCH_WINDOW_DAYS);
   const { reader, refs } = getExpenseRuntime().quickbooks;
   // Read before the refs check, so QuickBooks being off answers 503, never an empty list.
-  const txns = await (entity === "Bill" ? reader.billsBetween(from, to) : reader.purchasesBetween(from, to)).catch((err: unknown) => {
-    if (err instanceof QuickBooksNotConnectedError) throw new ServiceError(503, err.message);
-    throw err;
-  });
+  const txns = await (entity === "Bill" ? reader.billsBetween(from, to) : reader.purchasesBetween(from, to));
   const personId = expense.reimburseePersonId;
   const expectedRef =
     entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
