@@ -171,8 +171,8 @@ describe('ReceiptIgnoredFileView', () => {
 describe('ReceiptDuplicateGroup', () => {
     const group = () => ({
         members: [
-            { id: 'r-1', state: 'rejected', label: 'Rejected on 2 Oct: personal purchase' },
-            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate' },
+            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2' },
+            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null },
         ],
         dismissed: ['r-3'],
     });
@@ -181,7 +181,7 @@ describe('ReceiptDuplicateGroup', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), FINANCE_VIEW, ctx())).toEqual(group());
     });
 
-    it('an internal-only view strips the receipt ids and the rejection reason', () => {
+    it('an internal-only view strips the receipt ids, the kept receipt and the rejection reason', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
             members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
         });

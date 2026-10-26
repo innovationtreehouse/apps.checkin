@@ -52,10 +52,11 @@
  *
  * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
  * its members in upload order and the ids of the receipts dismissed against it.
- * ReceiptDuplicateMember — one member: its id, state and how it is shown (the
- * state, or a rejection with its reason). Members may be other submitters'
- * receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is; the label
- * carries a rejection reason, `personal` like `validationNotes`.
+ * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
+ * state, or a rejection with its reason) and, for a member rejected as a copy,
+ * the id of the receipt kept in its place (`copyOfId`). Members may be other
+ * submitters' receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is;
+ * the label carries a rejection reason, `personal` like `validationNotes`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
@@ -175,6 +176,7 @@ export const classifications = {
     id: "pii",
     state: "internal",
     label: "personal",
+    copyOfId: "pii",
   },
   ReceiptIgnoredFileView: {
     id: "internal",
