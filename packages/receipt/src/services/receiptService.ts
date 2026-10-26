@@ -423,12 +423,14 @@ async function memberIds(orgId: string, id: string): Promise<string[]> {
  * A decision that settles the whole group (§5.5). The group is recomputed under row locks in the
  * transaction and must still be exactly the live members the panel showed, with the viewed
  * receipt still open; otherwise nothing is written and the answer is 409. Every member is
- * re-checked once it commits.
+ * re-checked once it commits. A viewed receipt still held after the re-check answers 409 naming
+ * what holds it, so a success never leaves it held.
  */
 async function decideGroup(
   id: string,
   shownIds: string[],
   attempted: string,
+  done: string,
   decide: (tx: Prisma.TransactionClient, viewed: ReceiptRow, members: DuplicateMember[], actor: ReceiptPrincipal) => Promise<void>,
 ) {
   const shown = parse(z.array(z.string().min(1)).min(1), shownIds);
@@ -447,7 +449,13 @@ async function decideGroup(
     return live;
   });
   await recheck(row.orgId, decided, actor);
-  return load(id, "finance", actor);
+  const after = await load(id, "finance", actor);
+  const holder = after.state === "duplicate_flagged" ? await checkDuplicate(after) : null;
+  if (holder) {
+    const named = (await describeReceipts(db, [holder])).get(holder) ?? "another receipt";
+    throw new ServiceError(409, `${done}, but this receipt is still held beside ${named}, which arrived or changed meanwhile`);
+  }
+  return after;
 }
 
 export const receiptService = {
@@ -710,7 +718,11 @@ export const receiptService = {
     return receiptService.duplicateGroup(id);
   },
 
-  /** Undo of Not this one: deletes that pair decision while the viewed receipt is still held (§5.3). */
+  /**
+   * Undo of Not this one: deletes that pair decision while the viewed receipt is still held (§5.3).
+   * Refused once the dismissal released the match from its own hold, since the match may have
+   * finalized on it.
+   */
   async undoNotThisOne(id: string, otherId: string): Promise<DuplicateGroup> {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
@@ -720,8 +732,11 @@ export const receiptService = {
       await lockReceipts(tx, row.orgId, [id, otherId]);
       const current = await tx.receiptDetail.findUnique({ where: { id }, select: { state: true } });
       if (current?.state !== "duplicate_flagged") throw new ServiceError(409, "This receipt has moved on, so the decision stands");
-      const { count } = await tx.receiptPairDecision.deleteMany({ where: { ...pairOf(id, otherId), kind: "different" } });
-      if (count === 0) throw new ServiceError(409, "That match is not dismissed; the group changed after you opened it");
+      const decision = await tx.receiptPairDecision.findFirst({ where: { ...pairOf(id, otherId), kind: "different" } });
+      if (!decision) throw new ServiceError(409, "That match is not dismissed; the group changed after you opened it");
+      const released = await tx.receiptAuditLog.findFirst({ where: { receiptId: otherId, action: "duplicate_cleared", changedAt: { gte: decision.decidedAt } } });
+      if (released) throw new ServiceError(409, "That match left its hold when it was dismissed, so the decision stands");
+      await tx.receiptPairDecision.delete({ where: { id: decision.id } });
       await audit(tx, id, actor, { action: "duplicate_pair_undone", valueAfter: otherId });
       await audit(tx, otherId, actor, { action: "duplicate_pair_undone", valueAfter: id });
     });
@@ -733,7 +748,7 @@ export const receiptService = {
    * is recorded as different purchases, and every held member re-runs the pipeline.
    */
   async differentPurchases(id: string, shownIds: string[]) {
-    return decideGroup(id, shownIds, "different purchases", async (tx, viewed, members, actor) => {
+    return decideGroup(id, shownIds, "different purchases", "Recorded as different purchases", async (tx, viewed, members, actor) => {
       const ids = livePairIds(members);
       const already = await tx.receiptPairDecision.findMany({
         where: { kind: "different", receiptId: { in: ids }, otherReceiptId: { in: ids } },
@@ -751,10 +766,15 @@ export const receiptService = {
 
   /**
    * Keep this one (§6.2): rejects every other open member as a copy of the viewed receipt, and
-   * records each as a copy of it. Finalized and rejected members are left as they are.
+   * records each as a copy of it. A member already rejected keeps its state and is recorded as a
+   * copy too, so the kept receipt leaves the hold. Beside a finalized member it is refused: that
+   * copy is the one to keep, and this receipt is rejected instead.
    */
   async keepThisOne(id: string, shownIds: string[]) {
-    return decideGroup(id, shownIds, "keep this one", async (tx, kept, members, actor) => {
+    return decideGroup(id, shownIds, "keep this one", "The other copies are rejected as copies of this one", async (tx, kept, members, actor) => {
+      if (members.some((m) => m.id !== kept.id && m.state === "receipt_finalized")) {
+        throw new ServiceError(409, "A finalized copy exists: reject this receipt as a copy of it instead");
+      }
       const ids = members.map((m) => m.id);
       const uploads = [...(await keptReceipts(tx, ids)).values()].map((r) => r.uploadedAt);
       const note = `Copy of ${describeKept({ retailer: kept.retailer, uploadedAt: kept.uploadedAt }, uploads)}`;
@@ -762,6 +782,9 @@ export const receiptService = {
       for (const copy of await receiptRepo.list({ orgId: kept.orgId, id: { in: open } })) {
         await decidePair(tx, kept.orgId, kept.id, copy.id, "copy_of", actor, copy.id);
         await rejectAsFinance(copy, note, actor, tx);
+      }
+      for (const rejected of members.filter((m) => m.state === "rejected")) {
+        await decidePair(tx, kept.orgId, kept.id, rejected.id, "copy_of", actor, rejected.id);
       }
     });
   },

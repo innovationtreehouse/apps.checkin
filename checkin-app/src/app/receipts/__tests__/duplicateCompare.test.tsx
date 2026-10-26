@@ -154,6 +154,15 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.queryByRole("button", { name: "Keep this one" })).toBeNull();
   });
 
+  it("offers Different purchases on this receipt alone when no other receipt still matches it", async () => {
+    mockLoads["/r1/duplicate-group"] = group({ id: "r1", state: "duplicate_flagged" });
+    wrap();
+    expect(screen.getByText("No other receipt matches this one now.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Different purchases" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockSend).toHaveBeenCalledWith("/r1/different-purchases", "POST", { shownIds: ["r1"] }, "Released from the duplicate hold", "Couldn't release this receipt");
+  });
+
   it("raises a chip that stays when the group cannot be loaded", () => {
     mockLoads["/r1/duplicate-group"] = null;
     mockErrors["/r1/duplicate-group"] = "Receipt not found";

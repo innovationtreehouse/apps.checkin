@@ -126,6 +126,20 @@ describeDb("deciding a duplicate group", () => {
     expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "different" });
   });
 
+  it("Undo is refused once the dismissal released the match, which stays decided", async () => {
+    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const scan = textFile();
+    const b = await receiptService.upload(scan, "text/plain", { details: manualDetails() });
+    const c = await receiptService.upload(scan, "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    expect(await stateOf(c.id)).toBe("duplicate_flagged");
+
+    actAs(FINANCE);
+    await receiptService.notThisOne(b.id, c.id);
+    expect([await stateOf(b.id), await stateOf(c.id)]).toEqual(["duplicate_flagged", "receipt_finalized"]);
+    await expect(receiptService.undoNotThisOne(b.id, c.id)).rejects.toMatchObject({ status: 409 });
+    expect(await pairDecision(b.id, c.id)).toMatchObject({ kind: "different" });
+  });
+
   it("Not this one on a match already dismissed answers 409", async () => {
     const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
@@ -173,6 +187,36 @@ describeDb("deciding a duplicate group", () => {
     await receiptService.differentPurchases(c.id, [a.id, b.id, c.id]);
     expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "different", copyReceiptId: null });
     expect(await actions(a.id)).toEqual(expect.arrayContaining(["duplicate_pair_copy_of", "duplicate_pair_different"]));
+  });
+
+  it("Keep this one beside an already rejected match records it as a copy and releases the kept receipt", async () => {
+    const file = textFile();
+    actAs(ALICE);
+    const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(a.id, "personal purchase");
+    actAs(ALICE);
+    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    expect(b.state).toBe("duplicate_flagged");
+
+    actAs(FINANCE);
+    await receiptService.keepThisOne(b.id, [a.id, b.id]);
+    expect([await stateOf(a.id), await stateOf(b.id)]).toEqual(["rejected", "receipt_finalized"]);
+    expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "copy_of", copyReceiptId: a.id });
+    const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
+    expect(member).toMatchObject({ label: expect.stringMatching(/^Rejected on .*: personal purchase$/), copyOfId: b.id });
+  });
+
+  it("Keep this one beside a finalized copy is refused and writes nothing", async () => {
+    const file = textFile();
+    const a = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    expect([a.state, b.state]).toEqual(["receipt_finalized", "duplicate_flagged"]);
+
+    actAs(FINANCE);
+    await expect(receiptService.keepThisOne(b.id, [a.id, b.id])).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/^A finalized copy exists/) });
+    expect(await pairDecision(a.id, b.id)).toBeNull();
+    expect(await stateOf(b.id)).toBe("duplicate_flagged");
   });
 
   it("Keep this one rejects the open copy with the kept receipt named, and labels it so", async () => {

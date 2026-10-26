@@ -111,7 +111,7 @@ export async function describeReceipts(client: Client, ids: string[]): Promise<M
 async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<DuplicateMember, "id" | "state">>> {
   const ended = nodes.filter((n) => n.state === "rejected" || n.state === "discarded").map((n) => n.id);
   const logs = await client.receiptAuditLog.findMany({
-    where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded", BODY_COPY_DISCARDED] } },
+    where: { receiptId: { in: ended }, action: { in: ["reject_financial", "discarded", BODY_COPY_DISCARDED, "duplicate_pair_copy_of"] } },
     orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const last = new Map(logs.map((l) => [`${l.receiptId}:${l.action}`, l]));
@@ -121,9 +121,11 @@ async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<D
   const uploads = nodes.map((n) => n.uploadedAt);
   const text = (n: Node): string => {
     if (n.state === "rejected") {
-      const keptRow = kept.get(keptOf.get(n.id) ?? "");
-      if (keptRow) return `Rejected as a copy of ${describeKept(keptRow, uploads)}`;
       const log = last.get(`${n.id}:reject_financial`);
+      const keptRow = kept.get(keptOf.get(n.id) ?? "");
+      // A member already rejected when Keep this one recorded it as a copy keeps its own reason.
+      const recorded = last.get(`${n.id}:duplicate_pair_copy_of`);
+      if (keptRow && (!log || !recorded || log.id > recorded.id)) return `Rejected as a copy of ${describeKept(keptRow, uploads)}`;
       return log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected";
     }
     if (n.state === "discarded") {

@@ -1,5 +1,5 @@
 /** Receipt setup over HTTP, for specs whose subject is a later page than the upload. */
-import { api, BASE, type Session } from "../../flow-tests/helpers";
+import { api, BASE, differentPurchases, type Session } from "../../flow-tests/helpers";
 
 export interface UploadedReceipt { id: string; state: string }
 
@@ -44,12 +44,12 @@ export function uploadManual(s: Session, retailer: string, lines: ManualLine[], 
 /** A receipt the local OCR mock reads; it reads every file as the same purchase. */
 export const uploadForReading = (s: Session, text: string) => postUpload(s, text);
 
-/** An OCR-read receipt waiting on its submitter's review; FINANCE clears a duplicate flag an earlier read caused. */
+/** An OCR-read receipt waiting on its submitter's review; FINANCE decides a duplicate hold an earlier read caused as different purchases. */
 export async function inReview(submitter: Session, finance: Session, text: string): Promise<UploadedReceipt> {
   const receipt = await uploadForReading(submitter, text);
   if (receipt.state !== "duplicate_flagged") return receipt;
-  const cleared = await api<UploadedReceipt>(finance, `/api/receipts/${receipt.id}/clear-duplicate`, { method: "POST", body: "{}" });
-  if (cleared.json.state !== "submitter_review") throw new Error(`clearing the duplicate left the receipt ${cleared.json.state}`);
+  const cleared = await differentPurchases<UploadedReceipt>(finance, receipt.id);
+  if (cleared.json.state !== "submitter_review") throw new Error(`deciding the duplicate left the receipt ${cleared.json.state}`);
   return cleared.json;
 }
 

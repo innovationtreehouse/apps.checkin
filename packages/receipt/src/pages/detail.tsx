@@ -352,6 +352,12 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
+                {held && group.data && !comparing && !own && (
+                  <Group gap="xs">
+                    <Text size="sm">No other receipt matches this one now.</Text>
+                    <Button size="xs" w="fit-content" onClick={() => void act("/different-purchases", "POST", { shownIds: [id] }, "Released from the duplicate hold", "Couldn't release this receipt", true)}>Different purchases</Button>
+                  </Group>
+                )}
                 {r.state === "flow_error" && (
                   <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
