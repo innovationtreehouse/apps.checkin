@@ -109,7 +109,7 @@ describeDb("in-kind mark and donor (X13)", () => {
         },
       },
     });
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
     expect(ports.calls.donors).toHaveLength(3);
     expect(await donorSync(r.id)).toBe("pending");
   });
