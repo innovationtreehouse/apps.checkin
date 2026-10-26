@@ -2,118 +2,169 @@ name: Browser e2e tests
 
 # Drives real user journeys in a browser (Playwright, checkin-app/e2e/*.e2e.ts) against the
 # dockerized DEVELOPMENT server the flow tests use (deploy/docker-compose.flow.yml).
-# See AGENTS.md → Test classes.
+# Nightly on main and on demand; never part of PR CI. See AGENTS.md → Test classes.
 
 on:
-  pull_request:
-    branches: [main, 'rel/**']
-  merge_group:
+  schedule:
+    - cron: "43 8 * * *" # nightly, off-peak for the org
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-2
   # Same least-privilege ECR Public pull role as flow-tests.yml.
   PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+  FAILURE_ISSUE_TITLE: Nightly browser tests failing
 
 jobs:
-  # A PR whose every changed file is under docs/ or client/, or is a *.md file, cannot change
-  # a page: the e2e job reports success without starting the server.
-  changes:
-    name: Detect e2e changes
+  # A scheduled run on a main that has not moved since the last green scheduled run has
+  # nothing new to test. A manual run always tests.
+  gate:
+    name: Check for new commits
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
     outputs:
-      e2e: ${{ steps.detect.outputs.e2e }}
+      run: ${{ steps.check.outputs.run }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - id: detect
+      - id: check
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
-          if printf '%s\n' "$changed" | grep -qvE '(^docs/|^client/|\.md$)'; then
-            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          last="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/e2e-tests.yml/runs?event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""')"
+          if [ "$last" = "$HEAD_SHA" ]; then
+            echo "main is still at $HEAD_SHA, which the last green nightly run tested; nothing to do."
+            echo "run=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Docs- or client-only change — skipping e2e tests."
-            echo "e2e=false" >> "$GITHUB_OUTPUT"
+            echo "main is at $HEAD_SHA; the last green nightly run tested ${last:-nothing yet}."
+            echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
   e2e:
     name: Browser e2e tests (docker dev server)
-    needs: changes
-    # A skipped job passes; run anyway and fail below, so a broken detector is visible.
-    if: ${{ !cancelled() }}
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # Seven persona sweeps and the journeys on a cold dev server; each test has its own limit.
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # mint the GitHub OIDC token to assume the AWS role (no stored creds)
     steps:
-      - name: Change detection must succeed
-        if: needs.changes.result != 'success'
-        run: |
-          echo "::error::Detect e2e changes did not succeed (${{ needs.changes.result }})."
-          exit 1
-
-      - name: No page-affecting changes
-        if: needs.changes.outputs.e2e != 'true'
-        run: echo "Docs- or client-only change — nothing for the e2e tests to verify."
-
-      - if: needs.changes.outputs.e2e == 'true'
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
       - name: Log in to Amazon ECR Public
-        if: needs.changes.outputs.e2e == 'true'
         uses: ./.github/actions/ecr-public-login
         with:
           role-to-assume: ${{ env.PULL_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Start dockerized dev server + DB
-        if: needs.changes.outputs.e2e == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml up -d --wait --wait-timeout 600
 
       # The browser runs inside the app container, next to the server and the repo's node_modules.
       - name: Install Chromium (inside the app container)
-        if: needs.changes.outputs.e2e == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml exec -T app sh -lc "cd checkin-app && npx playwright install --with-deps chromium"
 
       - name: Run e2e tests (inside the app container)
-        if: needs.changes.outputs.e2e == 'true'
         run: docker compose -f deploy/docker-compose.flow.yml exec -T -e CI=true app sh -lc "cd checkin-app && npm run test:e2e"
 
-      # The repo is bind-mounted, so the container's report and traces land in the workspace.
+      # The repo is bind-mounted, so the container's report, results and traces land in the workspace.
       # always(): a run cut off by the job limit is cancelled, not failed, and still needs them.
       - name: Upload report and traces
-        if: always() && needs.changes.outputs.e2e == 'true'
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: |
             checkin-app/playwright-report/
             checkin-app/test-results/
+            checkin-app/e2e-results.json
           retention-days: 7
 
       - name: App logs on failure
-        if: (failure() || cancelled()) && needs.changes.outputs.e2e == 'true'
+        if: failure() || cancelled()
         run: docker compose -f deploy/docker-compose.flow.yml logs --no-color --tail 300 app
 
       - name: Tear down
-        if: always() && needs.changes.outputs.e2e == 'true'
+        if: always()
         run: docker compose -f deploy/docker-compose.flow.yml down -v
+
+  # One open issue tracks a failing nightly run: opened or updated on each red run, commented
+  # on and closed by the next green one.
+  report:
+    name: Track nightly failures
+    needs: [gate, e2e]
+    if: always() && github.event_name == 'schedule' && needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      actions: read
+      contents: read
+    steps:
+      - name: Download the results
+        if: needs.e2e.result != 'success'
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: playwright-report
+          path: report
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.e2e.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          issue="$(gh issue list --state open --search "\"$FAILURE_ISSUE_TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$FAILURE_ISSUE_TITLE\")) | .[0].number // empty")"
+
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$issue" ]; then
+              gh issue comment "$issue" --body "The nightly browser tests pass again on \`$HEAD_SHA\`: $RUN_URL"
+              gh issue close "$issue"
+            fi
+            exit 0
+          fi
+
+          failed=""
+          if [ -f report/e2e-results.json ]; then
+            failed="$(node -e '
+              const r = require(process.argv[1]);
+              const out = [];
+              const walk = (suite, path) => {
+                for (const spec of suite.specs ?? []) {
+                  if (spec.tests.some((t) => t.status === "unexpected")) out.push(`- ${spec.file}:${spec.line} › ${[...path, spec.title].join(" › ")}`);
+                }
+                for (const child of suite.suites ?? []) walk(child, [...path, child.title]);
+              };
+              for (const suite of r.suites ?? []) walk(suite, []);
+              console.log(out.join("\n"));
+            ' "$PWD/report/e2e-results.json")"
+          fi
+          [ -n "$failed" ] || failed="- No test results: the run ended ($RESULT) before Playwright reported. See the run's log."
+          body="$(printf 'The nightly browser tests failed on `%s` (%s).\n\nRun: %s\n\nFailed tests:\n%s\n' "$HEAD_SHA" "$RESULT" "$RUN_URL" "$failed")"
+
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$FAILURE_ISSUE_TITLE" --body "$body"
+          fi
