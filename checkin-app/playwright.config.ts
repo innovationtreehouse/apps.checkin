@@ -12,16 +12,23 @@ export default defineConfig({
   // Specs mutate the shared seed, so they run one at a time.
   workers: 1,
   fullyParallel: false,
+  // A retry would run against the seed the first attempt already changed.
   retries: 0,
   forbidOnly: !!process.env.CI,
-  // The first spec pays the dev server's compile of every page and route it opens.
-  timeout: 600_000,
+  // Per test; a spec that walks many pages raises its own from the page count.
+  timeout: 180_000,
   expect: { timeout: 30_000 },
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
+  // Steps print as they run, so a run cut short still shows where it was; the nightly
+  // workflow lists failed tests from the JSON results.
+  reporter: process.env.CI
+    ? [["list", { printSteps: true }], ["html", { open: "never" }], ["json", { outputFile: "e2e-results.json" }]]
+    : [["list"]],
   use: {
     ...devices["Desktop Chrome"],
     baseURL: process.env.FLOW_BASE_URL || "http://localhost:4000",
-    navigationTimeout: 120_000,
+    // A dev server compiles each page on its first visit.
+    navigationTimeout: 90_000,
+    actionTimeout: 30_000,
     trace: "retain-on-failure",
   },
 });

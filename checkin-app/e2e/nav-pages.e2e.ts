@@ -4,7 +4,7 @@
  * makes, or a bounce to sign-in or access-denied. The page list is the nav's own
  * (test-support/navPages), so a new tab is covered once it is in the nav.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { api, type Session } from "../flow-tests/helpers";
@@ -19,7 +19,38 @@ const PERSONAS = [FINANCE, BOARD, APPROVER, TREASURER, INVENTORY_MANAGER, MEMBER
 interface KnownFailure { page: string; personas: string[]; bug: string }
 const KNOWN_FAILURES: KnownFailure[] = [];
 
+/** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
+interface SeedPrompt { page: string; personas: string[]; text: string }
+/** The fail-closed prompt until the Board sets the re-check interval (#2544). */
+const BG_INTERVAL_UNSET =
+  "⛔ Background-check interval is not set. Until the board enters the policy value (in months), every background check counts as expired: every renewal is sent back for a fresh background review, and no one counts as a supervising adult in the two-deep check. Enter the real Treehouse re-check interval above.";
+const SEED_PROMPTS: SeedPrompt[] = [
+  { page: "/settings", personas: [BOARD], text: BG_INTERVAL_UNSET },
+  { page: "/settings/membership", personas: [BOARD], text: BG_INTERVAL_UNSET },
+  { page: "/my-household", personas: [MEMBER], text: "No emergency contact on file. Add at least one." },
+];
+
 const isKnown = (email: string, page: string) => KNOWN_FAILURES.some((k) => k.page === page && k.personas.includes(email));
+const isSeedPrompt = (email: string, page: string, problem: string) =>
+  SEED_PROMPTS.some((p) => p.page === page && p.personas.includes(email) && problem === `error alert: ${p.text}`);
+
+/** How long a page may keep requesting after it loads; one still requesting then is itself a problem. */
+const SETTLE_MS = 30_000;
+/** A page's share of its persona's test time: the navigation limit, the settle, and a margin. */
+const PAGE_BUDGET_MS = 90_000 + SETTLE_MS + 10_000;
+
+/** Opens a page and lets it settle; a page that never finishes loading is itself a problem. */
+async function openPage(page: Page, href: string): Promise<string[]> {
+  try {
+    const res = await page.goto(href);
+    const problems = res && res.status() >= 400 ? [`page answered ${res.status()}`] : [];
+    const settled = await page.waitForLoadState("networkidle", { timeout: SETTLE_MS }).then(() => true, () => false);
+    if (!settled) problems.push(`still loading after ${SETTLE_MS / 1000} s, so a late error could be missed`);
+    return problems;
+  } catch (err) {
+    return [`did not load: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`];
+  }
+}
 
 let sections: NavSection[];
 const undo: Undo[] = [];
@@ -52,15 +83,19 @@ test.describe("nav pages in the browser", () => {
       const watch = watchPage(page);
       const pages = (await pagesFor(session)).filter((p) => !isKnown(email, p));
       expect(pages.length).toBeGreaterThan(0);
+      test.setTimeout(60_000 + pages.length * PAGE_BUDGET_MS);
 
       const failures: string[] = [];
       for (const href of pages) {
         await test.step(href, async () => {
-          const res = await page.goto(href);
-          await page.waitForLoadState("networkidle");
-          const problems = await watch.problems();
-          if (res && res.status() >= 400) problems.unshift(`page answered ${res.status()}`);
-          failures.push(...problems.map((p) => `${href}: ${p}`));
+          const problems = await openPage(page, href);
+          problems.push(...(await watch.problems()));
+          // A role gate sends a viewer it refuses to the home page.
+          if (href !== "/" && new URL(page.url()).pathname === "/") problems.unshift("sent to the home page");
+          for (const problem of problems.filter((p) => !isSeedPrompt(email, href, p))) {
+            failures.push(`${href}: ${problem}`);
+            console.log(`  ✘ ${email} ${href}: ${problem}`);
+          }
         });
       }
       await context.close();
@@ -75,9 +110,10 @@ test.describe("nav pages in the browser", () => {
         const { context } = await signIn(browser, email);
         const page = await context.newPage();
         const watch = watchPage(page);
-        await page.goto(known.page);
-        await page.waitForLoadState("networkidle");
-        expect(await watch.problems()).toEqual([]);
+        const problems = await openPage(page, known.page);
+        problems.push(...(await watch.problems()));
+        if (new URL(page.url()).pathname === "/") problems.push("sent to the home page");
+        expect(problems).toEqual([]);
       });
     }
   }

@@ -155,10 +155,14 @@ for `prisma generate` and about 13 s for a cold checkin tsc.
 
 ## Browser e2e tests
 
-`test:affected` does not run the browser tier. It runs in CI
-(`.github/workflows/e2e-tests.yml`) on the same dev-server stack as `--flow`.
-Run it locally only when your coordinator or user says yes, as with any
-Docker-backed tier.
+`test:affected` does not run the browser tier, and PR CI doesn't either.
+`.github/workflows/e2e-tests.yml` runs it nightly on `main`, on the same
+dev-server stack as `--flow`, and skips when `main` hasn't moved since the last
+green nightly run. To test a branch, start the workflow by hand on that ref
+(Actions → Browser e2e tests → Run workflow). A failing nightly run opens or
+updates the issue "Nightly browser tests failing", and the next green run closes
+it. Run the tier locally only when your coordinator or user says yes, as with
+any Docker-backed tier.
 
 - `npm run test:e2e:standalone` (from `checkin-app/`) brings up
   `deploy/docker-compose.flow.yml`, installs Chromium in the app container,
@@ -169,5 +173,9 @@ Docker-backed tier.
   browser first with `npx playwright install chromium`.
 - Start-up costs the same as `--flow`. Each spec logs in through the seeded
   personas and assumes a fresh seed.
-- On failure, CI uploads the HTML report and traces as the `playwright-report`
-  artifact. Open a trace with `npx playwright show-trace <trace.zip>`.
+- Each run uploads the HTML report, the JSON results and the traces as the
+  `playwright-report` artifact. Open a trace with
+  `npx playwright show-trace <trace.zip>`.
+- Locally, delete `checkin-app/.next` before `test:e2e:standalone`. The repo is
+  bind-mounted into the container, so a stale Turbopack cache from an earlier
+  revision makes `next dev` Fast-Refresh-reload pages in a loop.

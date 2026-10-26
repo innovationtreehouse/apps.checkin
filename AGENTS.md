@@ -189,8 +189,13 @@ crashes after its APIs answer 200, an error chip, a tab that leads to a denial.
 - **Nav sweep:** `e2e/nav-pages.e2e.ts` opens every page each seeded persona's
   nav shows. The page list comes from `test-support/navPages.ts`, which reads
   the nav section descriptors, so a new tab is covered with no list to update.
-- **In CI:** `.github/workflows/e2e-tests.yml`, on the flow-test stack. On
-  failure it uploads the report and traces as the `playwright-report` artifact.
+- **In CI: nightly, not on PRs.** `.github/workflows/e2e-tests.yml` runs on the
+  flow-test stack once a night on `main`, and skips when `main` hasn't moved since
+  the last green nightly run. It can also be run by hand on any branch (Actions →
+  Browser e2e tests → Run workflow). It uploads the report and traces as the
+  `playwright-report` artifact. A failing nightly run opens or updates one issue,
+  "Nightly browser tests failing", listing the failed tests; the next green run
+  closes it.
 - A spec that fails because of a real app bug is marked `test.fail()` with the
   bug named, until the fix lands.
 
