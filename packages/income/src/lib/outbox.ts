@@ -8,6 +8,7 @@ import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
 import { expectedOf, type ExpectedDeposit } from "./intake";
 import { toQbDeposit } from "./qb-deposits";
+import type { TxClient } from "./audit";
 import {
   BANK_ROLE,
   DEPOSIT_SOURCE,
@@ -26,6 +27,7 @@ import {
   RECON_RESOLUTION,
   RECON_STATUS,
   addDays,
+  answeredEntryRef,
   audit,
   isClaimed,
   lockReconciliation,
@@ -494,6 +496,8 @@ async function switchOn(orgId: string, now: Date): Promise<Date> {
  * The last closed date: QuickBooks' books closing date, or the day before switch-on when none
  * is set. Null when neither exists, so nothing may be created.
  */
+export function closedThroughOf(closeDate: string | null, onAt: Date): string;
+export function closedThroughOf(closeDate: string | null, onAt: Date | null): string | null;
 export function closedThroughOf(closeDate: string | null, onAt: Date | null): string | null {
   return closeDate ?? (onAt ? addDays(isoDay(onAt), -1) : null);
 }
@@ -533,7 +537,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   } catch {
     return { reconcile, post: "unreadable" };
   }
-  const closedThrough = closeDate ?? addDays(isoDay(onAt), -1);
+  const closedThrough = closedThroughOf(closeDate, onAt);
 
   const problem = await checkBuckets(orgId);
   const caps = await readIncomeSettings(db, orgId);
@@ -596,6 +600,22 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   return { reconcile, post };
 }
 
+/** Whether finance excluded an app entry from matching, or answered its warning on this payout. */
+async function financeAnswered(tx: TxClient, orgId: string, id: number, entryId: string): Promise<boolean> {
+  if (await tx.incomeQbMatchExclusion.findUnique({ where: { orgId_qbTxnId: { orgId, qbTxnId: entryId } }, select: { id: true } })) return true;
+  const answer = await tx.incomeAuditLog.findFirst({
+    where: {
+      orgId,
+      entityType: "payout_reconciliation",
+      entityId: String(id),
+      actorUserId: { not: null },
+      after: { contains: JSON.stringify(answeredEntryRef(entryId)) },
+    },
+    select: { id: true },
+  });
+  return answer !== null;
+}
+
 /** What one orphan sweep read and reported. */
 export type SweepResult = { status: "unbound" } | { status: "ran"; read: number; flagged: number; full: boolean };
 
@@ -621,21 +641,27 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
   const { entries, full } = await posting.client.createdSince("Deposit", oldest.qbCreateAttemptedAt);
   if (full) await alerts.sweepIncomplete({ orgId, since: oldest.qbCreateAttemptedAt });
 
-  const rows = await db.payoutReconciliation.findMany({ where: { orgId } });
-  const byKey = new Map(rows.flatMap((r) => rowKeys(r).map((k) => [k, r] as const)));
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId }, select: { id: true, source: true, payoutGid: true } });
+  const byKey = new Map(rows.flatMap((r) => rowKeys(r).map((k) => [k, r.id] as const)));
   let flagged = 0;
   const note = (e: { Id: string }) => `app entry ${e.Id} is not linked; void or link it`;
   for (const e of entries) {
+    // A voided entry keeps its memo at a zero total.
+    if (e.TotalAmt === 0) continue;
     for (const key of appKeysOf(e)) {
-      const row = byKey.get(key);
-      if (!row || row.depositId === e.Id || isClaimed(row, now.getTime()) || row.qbNote?.includes(note(e))) continue;
-      const qbNote = nextNote(row.qbNote, null, note(e));
-      await db.$transaction(async (tx) => {
-        const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { qbNote } });
+      const id = byKey.get(key);
+      if (id === undefined) continue;
+      // Under the lock finance's match, dismiss and clear take, so a decision made meanwhile wins.
+      const noted = await db.$transaction(async (tx) => {
+        await lockReconciliation(tx, orgId, true);
+        const row = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+        if (row.depositId === e.Id || isClaimed(row, now.getTime()) || row.qbNote?.includes(note(e))) return false;
+        if (await financeAnswered(tx, orgId, id, e.Id)) return false;
+        const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: nextNote(row.qbNote, null, note(e)) } });
         await audit(tx, orgId, "reconciliation.orphan_entry", row, saved, { userId: null, reason: note(e) });
+        return true;
       });
-      row.qbNote = qbNote;
-      flagged++;
+      if (noted) flagged++;
     }
   }
   return { status: "ran", read: entries.length, flagged, full };

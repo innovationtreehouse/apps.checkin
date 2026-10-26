@@ -4,7 +4,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
-import { ATTEMPTED_MATCH_NOTE, runReconcile } from "../../lib/reconcile";
+import { ATTEMPTED_MATCH_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
 import { CLOSED_NOTE, drainIncomeOutbox, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
@@ -331,6 +331,17 @@ describeDb("drainIncomeOutbox — closed books", () => {
     await expect(resolve(p, { action: "book" })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("no books closing date") });
     expect(qbo.posts).toHaveLength(0);
   });
+
+  it("with no closing date, the drain and finance's book close the same day", async () => {
+    qbo.closeDate = null;
+    await switchOn();
+    const p = payout(2, "2026-06-29", 500);
+
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
+    expect(await resolve(p, { action: "book" })).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: CLOSED_NOTE });
+    expect(qbo.posts).toHaveLength(0);
+  });
 });
 
 describeDb("postPayout — claim, lookup and settle", () => {
@@ -571,6 +582,97 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(linked)).qbNote).toBeNull();
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
     expect(sweepAlerts).toHaveLength(0);
+  });
+
+  /** A posted payout whose row no longer holds the deposit the app created for it. */
+  async function unlinked(): Promise<{ g: string; entry: string }> {
+    const g = payout(3, "2026-06-28", 300);
+    await drain();
+    const entry = (await rowFor(g)).depositId;
+    if (!entry) throw new Error("not posted");
+    await db.payoutReconciliation.update({
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+      data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
+    });
+    return { g, entry };
+  }
+
+  it("does not note again an entry whose note finance cleared", async () => {
+    const { g, entry } = await unlinked();
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
+    await resolve(g, { action: "clear_note", reason: "voiding it" });
+    const cleared = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.note_cleared" } });
+    expect(JSON.parse(cleared.after ?? "{}")).toMatchObject({ answeredEntries: [`Deposit:${entry}`] });
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect((await rowFor(g)).qbNote).toBeNull();
+  });
+
+  it("does not note again an entry on a drift finance dismissed", async () => {
+    const { g } = await unlinked();
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 1 });
+    expect(await resolve(g, { action: "dismiss", reason: "booked by hand" })).toMatchObject({ resolution: "DISMISSED", qbNote: null });
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect((await rowFor(g)).qbNote).toBeNull();
+  });
+
+  it("does not note an entry whose lost-claim warning finance cleared", async () => {
+    const { g, entry } = await unlinked();
+    await db.payoutReconciliation.update({
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+      data: { qbNote: `app entry ${entry} may need voiding: its post lost the payout to another` },
+    });
+    await resolve(g, { action: "clear_note", reason: "voided" });
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect((await rowFor(g)).qbNote).toBeNull();
+  });
+
+  it("does not note an entry finance excluded from matching", async () => {
+    const { g, entry } = await unlinked();
+    await db.incomeQbMatchExclusion.create({ data: { orgId: ORG_A, qbTxnId: entry, reason: "void", excludedByUserId: 9 } });
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect((await rowFor(g)).qbNote).toBeNull();
+  });
+
+  it("does not note a voided entry, which keeps its memo at a zero total", async () => {
+    const { g, entry } = await unlinked();
+    const voided = qbo.deposits.find((d) => d.Id === entry);
+    if (!voided) throw new Error("no deposit");
+    voided.TotalAmt = 0;
+
+    expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ flagged: 0 });
+    expect((await rowFor(g)).qbNote).toBeNull();
+  });
+
+  it("a link finance commits while the sweep waits on the lock wins", async () => {
+    const { g, entry } = await unlinked();
+    let release = () => {};
+    const released = new Promise<void>((r) => (release = r));
+    let locked = () => {};
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const link = db.$transaction(
+      async (tx) => {
+        await lockReconciliation(tx, ORG_A, true);
+        locked();
+        await released;
+        await tx.payoutReconciliation.update({
+          where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+          data: { status: "RESOLVED", kind: null, depositId: entry },
+        });
+      },
+      { timeout: 30_000 },
+    );
+    await isLocked;
+    const sweep = runIncomeOrphanSweep(ORG_A, new Date());
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+    await link;
+
+    expect(await sweep).toMatchObject({ flagged: 0 });
+    expect(await rowFor(g)).toMatchObject({ depositId: entry, qbNote: null });
   });
 
   it("checks every app key an entry carries", async () => {
