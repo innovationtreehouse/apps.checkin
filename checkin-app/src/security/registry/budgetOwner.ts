@@ -34,3 +34,13 @@ defineRoute({ endpoint: 'GET /api/budget-owners/approver-options', authorize: { 
 defineRoute({ endpoint: 'PUT /api/budget-owners/[id]/owner', authorize: { anyRole: ['isBoardMember'] }, envelope: null, returns: ['BudgetOwnerApprover'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'PUT /api/budget-owners/[id]/treasurers/[personId]', authorize: { anyRole: ['isBoardMember'] }, envelope: null, returns: ['BudgetOwnerApprover'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'DELETE /api/budget-owners/[id]/treasurers/[personId]', authorize: { anyRole: ['isBoardMember'] }, envelope: null, returns: ['BudgetOwnerApprover'], orderedView: BOARD_VIEW });
+
+// Books map: which QuickBooks Class each bucket books to and which QuickBooks
+// account each named role (a bank account, an income or donation account) books
+// to (docs/in-design/QB_ENTRY_OWNERSHIP.md). FINANCE or BOARD reads it; FINANCE
+// alone edits it, and every edit is audited. quickbooks-accounts lists the
+// accounts for the role picker; the Class picker is quickbooks-classes above.
+defineRoute({ endpoint: 'GET /api/books-map', authorize: 'finance-or-board', envelope: null, returns: ['BooksMapClass', 'BooksMapAccount'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/books-map/quickbooks-accounts', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksAccountOption'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'PUT /api/books-map/classes/[budgetOwnerId]', authorize: 'finance', envelope: null, returns: ['BooksMapClass'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'PUT /api/books-map/accounts/[role]', authorize: 'finance', envelope: null, returns: ['BooksMapAccount'], orderedView: FINANCE_VIEW });
