@@ -198,6 +198,10 @@ describe("independence", () => {
     expect(signoffRefusal(base, [], "SUBMITTER", 1)).toBeNull();
   });
 
+  it("the submitter is refused while someone in their household holds a seat on the expense", () => {
+    expect(signoffRefusal({ ...base, seatedHouseholds: [1] }, seats(["TREASURER", 3]), "SUBMITTER", 1)).toMatch(/submitter's household already holds a seat/);
+  });
+
   it("a seat is filled once", () => {
     expect(signoffRefusal(base, seats(["TREASURER", 3]), "TREASURER", 5)).toMatch(/already filled/);
   });
