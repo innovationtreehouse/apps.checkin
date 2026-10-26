@@ -128,6 +128,26 @@ describeDb("finance queue — To sign and Board tabs", () => {
     expect(await codes(FINANCE, "board", id)).not.toContain("BOARD_APPROVAL");
   });
 
+  it("counts only lines whose earlier steps are done, from the line-actions function, in any open state", async () => {
+    const id = await seedExpense({ state: "owner_approval" });
+    const [approved, pendingLine] = [await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" }), await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" })];
+    await seedApproval(id, approved, { ownerId: 100, status: "approved" });
+    await seedApproval(id, pendingLine, { ownerId: 100, status: "pending" });
+    expect(await codes(FINANCE, "toSign", id)).toEqual(["TREASURER_SIGNATURE"]);
+    expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1, total: 1, byReason: { TREASURER_SIGNATURE: 1 } });
+  });
+
+  it("counts a Board seat only after the Treasurer has signed", async () => {
+    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5], households: [[1, 8]] }) });
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 60_000 });
+    const line = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
+    expect(await codes(BOARD, "board", id)).not.toContain("BOARD_SIGNATURE");
+    await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "TREASURER", signerUserId: 3 } });
+    expect(await codes(BOARD, "board", id)).toContain("BOARD_SIGNATURE");
+    expect((await financeQueueCounts(BOARD)).board.byReason).toMatchObject({ BOARD_SIGNATURE: 1 });
+  });
+
   it("counts a Board signature when no FINANCE holder without a conflict can take the Treasurer seat", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const { id } = await pending();

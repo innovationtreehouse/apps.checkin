@@ -118,6 +118,14 @@ describe("an approver goes back to the approvals list after their last decision 
     expect(mockGoTo).toHaveBeenCalledWith("/finance/review?queue=to_sign");
   });
 
+  it("returns after Approve All too", async () => {
+    open([status(1, []), status(2, [])], APPROVALS);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve all 2 as Program approver" })); });
+    await settle();
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/approve-lines", "POST", { approvalIds: [11, 12] }, "Approved 2 lines");
+    expect(mockGoTo).toHaveBeenCalledWith(APPROVALS);
+  });
+
   it("always reloads in place when opened from anywhere else", async () => {
     open([status(1, []), status(2, [])]);
     await approveFirstLine();
