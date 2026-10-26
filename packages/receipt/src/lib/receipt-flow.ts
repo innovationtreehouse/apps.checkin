@@ -1,10 +1,10 @@
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
-import { Prisma, type ReceiptOrgSettings } from "../generated/prisma/client";
+import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
-import { retailerKey } from "./retailer";
+import { duplicateGroup } from "./duplicateGroup";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
 import { receiptMath, type MathLine } from "./lineMath";
@@ -91,38 +91,12 @@ export async function getOrgSettings(orgId: string, client: Db | Prisma.Transact
 export const BODY_COPY_DISCARDED = "body_copy_discarded";
 
 /**
- * The receipt this one duplicates, or null. A body discarded as a copy of its message's other
- * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
- * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
- * person has cleared the flag, the receipt is never re-flagged. The field matches compare
- * retailers ignoring case and extra whitespace, in SQL that mirrors `retailerKey`.
+ * The earliest live member of this receipt's duplicate group, or null when it has none and so
+ * is not held. Every member counts, earlier or later, open, finalized or rejected.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
-  if (row.duplicateFlagClearedAt) return null;
-  if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
-  const { orgId, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
-  const retailer = retailerKey(row.retailer);
-  const sameRetailer = async (match: Prisma.Sql) => {
-    const [hit] = await db.$queryRaw<{ id: string }[]>`
-      SELECT d.id FROM receipt_details d
-      WHERE d.org_id = ${orgId} AND d.id <> ${id} AND ${match}
-        AND lower(btrim(regexp_replace(d.retailer, '\\s+', ' ', 'g'))) IS NOT DISTINCT FROM ${retailer}
-        AND NOT EXISTS (SELECT 1 FROM receipt_audit_log a WHERE a.receipt_id = d.id AND a.action = ${BODY_COPY_DISCARDED})
-      LIMIT 1`;
-    return hit?.id ?? null;
-  };
-
-  const composite = await sameRetailer(Prisma.sql`d.receipt_date IS NOT DISTINCT FROM ${receiptDate} AND d.receipt_total_cents IS NOT DISTINCT FROM ${receiptTotalCents}`);
-  if (composite) return composite;
-  if (orderNumber) {
-    const byOrder = await sameRetailer(Prisma.sql`d.order_number = ${orderNumber}`);
-    if (byOrder) return byOrder;
-  }
-  if (receiptNumber) {
-    const byNumber = await sameRetailer(Prisma.sql`d.receipt_number = ${receiptNumber}`);
-    if (byNumber) return byNumber;
-  }
-  return null;
+  const group = await duplicateGroup(row.orgId, row.id);
+  return group?.members.find((m) => m.id !== row.id && m.state !== "discarded")?.id ?? null;
 }
 
 /**

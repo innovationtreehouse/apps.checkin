@@ -44,13 +44,21 @@ describeDb("duplicate detection", () => {
     expect(row && (await checkDuplicate(row))).toBe(first.id);
   });
 
+  it.each(["orderNumber", "receiptNumber"])("does not match an empty %s", async (field) => {
+    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
+    await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "" } });
+    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    expect(row && (await checkDuplicate(row))).toBeNull();
+  });
+
   it("does not match a different retailer name on the same date and total", async () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
     expect(second.state).not.toBe("duplicate_flagged");
   });
 
-  it("two identical files uploaded at once: exactly one is flagged, against the other", async () => {
+  it("two identical files uploaded at once: at least one is held, and both are in one group", async () => {
     for (let round = 0; round < 5; round++) {
       await clearAll();
       const file = textFile();
@@ -58,10 +66,9 @@ describeDb("duplicate detection", () => {
         receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A" }) }),
         receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B" }) }),
       ]);
-      const flagged = [a, b].filter((r) => r.state === "duplicate_flagged");
-      expect(flagged).toHaveLength(1);
-      const other = flagged[0].id === a.id ? b : a;
-      expect(flagged[0].duplicateSuspectReceiptId).toBe(other.id);
+      expect(await Promise.all([a.id, b.id].map(stateOf))).toContain("duplicate_flagged");
+      const members = (await receiptService.duplicateGroup(a.id)).members.map((m) => m.id);
+      expect(members.sort()).toEqual([a.id, b.id].sort());
     }
   });
 
