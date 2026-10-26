@@ -160,6 +160,12 @@ export async function seedPartOwner(opts: {
  * are approved. A reimbursement also takes the Board seat, which it needs whenever the directory
  * does not know its reimbursee as a member (the inert one knows nobody).
  */
+/** The submitter seat, as the person reimbursed signs it by confirming the receipt. */
+export async function seedSubmitterSeat(lineItemId: number, signerUserId: number): Promise<void> {
+  const { expenseId } = await db.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { expenseId: true } });
+  await db.expenseLineSignoff.create({ data: { expenseId, lineItemId, seat: "SUBMITTER", signerUserId } });
+}
+
 export async function signAllLines(expenseId: string): Promise<void> {
   const { needsReimbursement } = await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });

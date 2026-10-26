@@ -7,8 +7,8 @@
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
-import { setReimbursee, signLine } from "../../services/signoffService";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG, seedSubmitterSeat } from "../helpers/seed";
+import { setReimbursee } from "../../services/signoffService";
 import { approveLine, approveLines, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
 const LEADER = principal(2);
@@ -70,7 +70,7 @@ describeDb("the reimbursee is known before the approval", () => {
 
     await setReimbursee(ORG, id, 1, FINANCE);
     await expect(approveLine(LEADER, id, approvalId)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not confirmed/) });
-    await signLine(principal(1), li, "SUBMITTER");
+    await seedSubmitterSeat(li, 1);
     await approveLine(LEADER, id, approvalId);
     expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 2 });
   });
@@ -210,12 +210,12 @@ describeDb("approveLines (Approve All)", () => {
     await db.expenseLineItem.update({ where: { id: b }, data: { lineNumber: 2 } });
     const approvalIds = [await seedApproval(id, a, { ownerId: 100 }), await seedApproval(id, b, { ownerId: 100 })];
     await setReimbursee(ORG, id, 1, FINANCE);
-    await signLine(principal(1), a, "SUBMITTER");
+    await seedSubmitterSeat(a, 1);
 
     await expect(approveLines(LEADER, id, approvalIds)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/^Line 2: .*not confirmed/) });
     expect(await statuses(approvalIds)).toEqual(["pending", "pending"]);
 
-    await signLine(principal(1), b, "SUBMITTER");
+    await seedSubmitterSeat(b, 1);
     await approveLines(LEADER, id, approvalIds);
     expect(await statuses(approvalIds)).toEqual(["approved", "approved"]);
   });
@@ -414,8 +414,8 @@ describeDb("racing decisions", () => {
   it("a stale assignment never undoes a racing bucket move, and the submitter seat stays", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
     const { id, li, approvalId } = await lineInApproval(100);
-    await db.expense.update({ where: { id }, data: { state: "assign_ownership" } });
-    await signLine(principal(1), li, "SUBMITTER");
+    await db.expense.update({ where: { id }, data: { state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 1 } });
+    await seedSubmitterSeat(li, 1);
 
     const [same, moved] = await race(
       `SELECT id FROM expenses WHERE id = '${id}' FOR UPDATE`,

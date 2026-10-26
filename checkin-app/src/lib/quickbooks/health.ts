@@ -131,6 +131,12 @@ async function laneChecks(): Promise<ConfigCheck[]> {
             rolePrefix: "BENEVITY_",
         },
         {
+            id: "quickbooks-lane-in-kind",
+            label: "QuickBooks posting: gifts of goods",
+            missing: donation.inKindPostingMissing,
+            switchedOnAt: async (orgId) => (await import("@checkin/bulk-donation")).inKindPostingOnAt(orgId),
+        },
+        {
             id: "quickbooks-lane-expenses",
             label: "QuickBooks posting: expenses",
             missing: expense.expensePostingMissing,

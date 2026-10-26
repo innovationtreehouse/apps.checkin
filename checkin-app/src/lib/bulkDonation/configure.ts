@@ -9,21 +9,23 @@
  * QuickBooks drain books through checkin's one guarded client, bound only where
  * QBO_REALM_ID and QBO_DONATION_BANK_ACCOUNT_ID are set; unbound, a run answers
  * "unbound"; a daily sweep that could not read every Deposit alerts finance. Deposits income
- * holds are kept out of its matching. The in-kind
+ * holds are kept out of its matching. The in-kind drain books through the same client and reads
+ * its accounts and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
  * An accepted gift's lines go to the expense library's capital review, which
  * keeps donated equipment at or over its thresholds. Boot stays DB-free.
  */
-import { configureBulkDonation } from "@checkin/bulk-donation";
-import type { DonationQbPosting, InKindCapital, InKindDirectory, OwnerInfo } from "@checkin/bulk-donation";
+import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
+import type { DonationQbPosting, InKindCapital, InKindDirectory, InKindQbPosting, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 async function listOwners(): Promise<OwnerInfo[]> {
   const { default: prisma } = await import("@/lib/prisma");
@@ -60,6 +62,37 @@ function qbPosting(): DonationQbPosting | undefined {
   };
 }
 
+/** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
+export async function inKindPostingMissing(): Promise<string[]> {
+  const accounts = await (await import("@/lib/finance/booksMap")).booksMap.accounts();
+  const unpicked = IN_KIND_ROLES.filter((r) => !accounts[r]);
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+    ...(unpicked.length === 0 && !inKindAccountsReady(accounts) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
+  ];
+}
+
+/** Loaded on first use, like the donation drain's binding; the books map is read per run. */
+function inKindQbPosting(): InKindQbPosting | undefined {
+  if (!process.env.QBO_REALM_ID) return undefined;
+  return {
+    client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
+    booksMap: {
+      accounts: async () => (await import("@/lib/finance/booksMap")).booksMap.accounts(),
+      classes: async () => (await import("@/lib/finance/booksMap")).booksMap.classes(),
+    },
+    async sweepIncomplete({ since }) {
+      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+      await notifyFinanceAlert(
+        "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
+        `<p>QuickBooks returned more journal entries created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. <a href="${config.baseUrl()}/donations/in-kind">Open the in-kind queue</a></p>`,
+        "In-kind sweep alert failed:",
+      );
+    },
+  };
+}
+
 async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
   return (await import("@checkin/income")).incomeClaimedDepositIds(orgId);
 }
@@ -89,6 +122,9 @@ const capital: InKindCapital = {
   async awaitingReview(orgId) {
     return (await import("@checkin/expense")).giftsAwaitingCapitalReview(orgId);
   },
+  async assetLineIds(orgId, gift) {
+    return (await import("@checkin/expense")).donatedAssetLineIds(orgId, gift);
+  },
 };
 
 export function configureRuntime(): void {
@@ -99,6 +135,7 @@ export function configureRuntime(): void {
     catalog: { search: catalogReader.searchItems, getItem: catalogReader.getItem },
     inventory: createLocalInventoryApply(getOrg),
     qb: qbPosting(),
+    inKindQb: inKindQbPosting(),
     otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
     inKind,
     capital,

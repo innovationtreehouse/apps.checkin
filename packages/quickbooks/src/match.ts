@@ -1,6 +1,6 @@
 import { dollarsToCents } from "@checkin/money";
 import { qboDate } from "./client";
-import type { QboBill, QboDeposit, QboPurchase } from "./types";
+import type { QboBill, QboDeposit, QboJournalEntry, QboPurchase } from "./types";
 
 /** One QuickBooks entry offered for a match, reduced to what matching compares. */
 export interface MatchCandidate {
@@ -82,4 +82,8 @@ export function purchaseCandidate(p: QboPurchase, appKeyOf?: AppKeyOf<QboPurchas
 
 export function billCandidate(b: QboBill, appKeyOf?: AppKeyOf<QboBill>): MatchCandidate {
   return { id: b.Id, date: b.TxnDate, amountCents: dollarsToCents(b.TotalAmt), ref: b.VendorRef?.value, appKey: appKeyOf?.(b) };
+}
+
+export function journalCandidate(j: QboJournalEntry, appKeyOf?: AppKeyOf<QboJournalEntry>): MatchCandidate {
+  return { id: j.Id, date: j.TxnDate, amountCents: dollarsToCents(j.TotalAmt), appKey: appKeyOf?.(j) };
 }

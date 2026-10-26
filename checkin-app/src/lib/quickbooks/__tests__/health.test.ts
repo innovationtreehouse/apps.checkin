@@ -9,7 +9,8 @@ jest.mock("@/lib/quickbooks/client", () => ({ tryBuildQuickBooks }));
 const incomePostingMissing = jest.fn();
 jest.mock("@/lib/income/configure", () => ({ incomePostingMissing }));
 const donationPostingMissing = jest.fn();
-jest.mock("@/lib/bulkDonation/configure", () => ({ donationPostingMissing }));
+const inKindPostingMissing = jest.fn();
+jest.mock("@/lib/bulkDonation/configure", () => ({ donationPostingMissing, inKindPostingMissing }));
 const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const getOrg = jest.fn();
@@ -20,7 +21,8 @@ jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts } }));
 const postingOnAt = jest.fn();
 jest.mock("@checkin/income", () => ({ postingOnAt }));
 const donationOnAt = jest.fn();
-jest.mock("@checkin/bulk-donation", () => ({ qbPostingOnAt: donationOnAt }));
+const inKindOnAt = jest.fn();
+jest.mock("@checkin/bulk-donation", () => ({ qbPostingOnAt: donationOnAt, inKindPostingOnAt: inKindOnAt }));
 const expenseOnAt = jest.fn();
 jest.mock("@checkin/expense", () => ({ qbPostingOnAt: expenseOnAt }));
 
@@ -44,11 +46,13 @@ beforeEach(() => {
     process.env.CHECKIN_ENV = "dev";
     incomePostingMissing.mockResolvedValue([]);
     donationPostingMissing.mockReturnValue([]);
+    inKindPostingMissing.mockResolvedValue([]);
     expensePostingMissing.mockResolvedValue([]);
     getOrg.mockResolvedValue({ id: "org-1" });
     accounts.mockResolvedValue(Object.fromEntries(BOOKS_MAP_ROLES.map((r) => [r, "1"])));
     postingOnAt.mockResolvedValue(null);
     donationOnAt.mockResolvedValue(null);
+    inKindOnAt.mockResolvedValue(null);
     expenseOnAt.mockResolvedValue(null);
 });
 afterEach(() => {
@@ -142,6 +146,17 @@ describe("posting lane rows", () => {
             detail: "Bound. No account picked for: Benevity: employer matches, Benevity: fees.",
         });
         expect(r["quickbooks-lane-income"].detail).toBe("Bound.");
+    });
+
+    it("has a gift-of-goods row with its own switch-on date", async () => {
+        inKindPostingMissing.mockResolvedValue(["no account picked for: Gifts of goods: in-kind income"]);
+        inKindOnAt.mockResolvedValue(new Date("2026-10-20T08:00:00Z"));
+        expect((await rows())["quickbooks-lane-in-kind"]).toEqual({
+            id: "quickbooks-lane-in-kind",
+            label: "QuickBooks posting: gifts of goods",
+            ok: false,
+            detail: "Unbound; missing: no account picked for: Gifts of goods: in-kind income. Posting switched on 2026-10-20.",
+        });
     });
 
     it("waits on a lane whose binding check reads QuickBooks", async () => {

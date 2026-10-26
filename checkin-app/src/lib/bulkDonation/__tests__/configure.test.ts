@@ -5,7 +5,9 @@ import type { BulkDonationConfig } from "@checkin/bulk-donation";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureBulkDonation = jest.fn<void, [BulkDonationConfig]>();
-jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation }));
+const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"];
+const inKindAccountsReady = jest.fn();
+jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation, IN_KIND_ROLES, inKindAccountsReady }));
 const ORG = { id: "treehouse", name: "Treehouse" };
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: async () => ORG, getPrincipal: jest.fn() }));
 const searchItems = jest.fn();
@@ -26,7 +28,10 @@ const signoff = {
 };
 jest.mock("@/lib/expense/configure", () => ({ signoff }));
 const getExpenseSettings = jest.fn();
-jest.mock("@checkin/expense", () => ({ getExpenseSettings }));
+const donatedAssetLineIds = jest.fn();
+jest.mock("@checkin/expense", () => ({ getExpenseSettings, donatedAssetLineIds }));
+const booksMap = { accounts: jest.fn(), classes: jest.fn() };
+jest.mock("@/lib/finance/booksMap", () => ({ booksMap }));
 const notifyFinanceAlert = jest.fn();
 jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
 
@@ -134,6 +139,22 @@ describe("bulk-donation wiring", () => {
     expect(donationPostingMissing()).toEqual([]);
   });
 
+  it("names what gift-of-goods posting lacks, from the books map the drain reads", async () => {
+    const { inKindPostingMissing } = await import("../configure");
+    delete process.env.QBO_REALM_ID;
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401" });
+    await expect(inKindPostingMissing()).resolves.toEqual([
+      "QuickBooks company (QBO_REALM_ID)",
+      "no account picked for: Gifts of goods: fixed assets (donated equipment), Gifts of goods: clearing account (finance's past bookings)",
+    ]);
+    process.env.QBO_REALM_ID = "123";
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
+    inKindAccountsReady.mockReturnValue(false);
+    await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
+    inKindAccountsReady.mockReturnValue(true);
+    await expect(inKindPostingMissing()).resolves.toEqual([]);
+  });
+
   it("binds the drain to checkin's one guarded client and the donation bank account", async () => {
     process.env.QBO_REALM_ID = "123";
     process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
@@ -159,6 +180,31 @@ describe("bulk-donation wiring", () => {
     expect(subject).toContain("stray QuickBooks deposits");
     expect(html).toContain("2026-10-01");
     expect(html).toContain("/donations/qb-queue");
+  });
+
+  it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {
+    delete process.env.QBO_REALM_ID;
+    expect((await config()).inKindQb).toBeUndefined();
+    process.env.QBO_REALM_ID = "123";
+    const client = { env: "sandbox" };
+    getQuickBooks.mockResolvedValue(client);
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400" });
+    booksMap.classes.mockResolvedValue(new Map([[1, "7"]]));
+
+    const { inKindQb } = await config();
+
+    await expect(inKindQb!.client()).resolves.toBe(client);
+    await expect(inKindQb!.booksMap.accounts()).resolves.toEqual({ INKIND_INCOME: "400" });
+    await expect(inKindQb!.booksMap.classes()).resolves.toEqual(new Map([[1, "7"]]));
+    await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
+    expect(notifyFinanceAlert.mock.calls[0][0]).toContain("stray QuickBooks journal entries");
+  });
+
+  it("reads which donated lines became assets from the expense library's capital review", async () => {
+    donatedAssetLineIds.mockResolvedValue([3]);
+    const { capital } = await config();
+    await expect(capital!.assetLineIds(ORG.id, { giftSource: "receipt", giftId: 9 })).resolves.toEqual([3]);
+    expect(donatedAssetLineIds).toHaveBeenCalledWith(ORG.id, { giftSource: "receipt", giftId: 9 });
   });
 
   it("keeps deposits income holds out of donation matching", async () => {
