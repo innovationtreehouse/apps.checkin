@@ -101,7 +101,7 @@ describeDb("My receipts", () => {
     expect(await receiptService.listMine({ hideCompleted: true })).toEqual([]);
   });
 
-  it("a failing X12 reads 'status unavailable', never 'not yet paid' or an error, and leaves a finalized receipt complete", async () => {
+  it("a failing X12 reads 'status unavailable', never 'not yet paid' or an error, and keeps the owed receipt listed", async () => {
     const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.submitterConfirm(owed.id);
     configure({
@@ -114,9 +114,9 @@ describeDb("My receipts", () => {
     });
     expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({
       reimbursement: { paidOn: null, statusUnavailable: true },
-      complete: true,
+      complete: false,
     });
-    expect(await receiptService.listMine({ hideCompleted: true })).toEqual([]);
+    expect((await receiptService.listMine({ hideCompleted: true })).map((r) => r.id)).toEqual([owed.id]);
   });
 
   it("asks X12 only about the caller's own owed receipts", async () => {

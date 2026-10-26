@@ -102,6 +102,12 @@ describeDb("X12 reimbursement status", () => {
     await expect(reimbursementStatus.forReceipts([ask(id)])).rejects.toBeInstanceOf(QuickBooksNotConnectedError);
   });
 
+  it("reads nothing for a receipt with no QuickBooks entry, so it is not yet paid while QuickBooks is off", async () => {
+    bindPorts({});
+    const unbooked = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
+    expect(await reimbursementStatus.forReceipts([ask(unbooked)])).toEqual(new Map([[unbooked, { paidOn: null }]]));
+  });
+
   it("reads only this org's expenses", async () => {
     bindQb([{ id: "b1", txnDate: "2026-05-01", balance: 0, paymentIds: ["p1"] }]);
     const id = await seedExpense({ orgId: "other-org", needsReimbursement: true });

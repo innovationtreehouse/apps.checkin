@@ -908,7 +908,7 @@ export const receiptService = {
   /**
    * "My receipts": the caller's own receipts, each owed one with its QuickBooks paid status, or
    * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected, or
-   * finalized and either not owed, shown paid, or of unknown paid status.
+   * finalized and either not owed or shown paid.
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
@@ -921,7 +921,7 @@ export const receiptService = {
       const complete =
         r.state === "discarded" ||
         r.state === "rejected" ||
-        (r.state === "receipt_finalized" && (!r.needsReimbursement || paid === null || paidOn !== null));
+        (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
       const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
       return { ...toSubmitterView(r), reimbursement, complete };
     });
