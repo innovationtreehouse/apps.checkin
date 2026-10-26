@@ -52,6 +52,41 @@ describeDb("duplicate detection", () => {
     expect(row && (await checkDuplicate(row))).toBeNull();
   });
 
+  /** Two receipts on different dates carrying `a` and `b` in `field`: the earlier one's id, and what the later one matched. */
+  async function numberMatch(field: string, a: string, b: string) {
+    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
+    await db.receiptDetail.update({ where: { id: first.id }, data: { [field]: a } });
+    await db.receiptDetail.update({ where: { id: second.id }, data: { [field]: b } });
+    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    return { first: first.id, matched: row && (await checkDuplicate(row)) };
+  }
+
+  it.each(["orderNumber", "receiptNumber"])("matches %s with a leading # dropped", async (field) => {
+    const { first, matched } = await numberMatch(field, "#12345", "12345");
+    expect(matched).toBe(first);
+  });
+
+  it.each(["orderNumber", "receiptNumber"])("matches %s ignoring case and outer spaces", async (field) => {
+    const { first, matched } = await numberMatch(field, " ab-12 ", "AB-12");
+    expect(matched).toBe(first);
+  });
+
+  it.each(["orderNumber", "receiptNumber"])("matches %s ignoring inner spaces", async (field) => {
+    const { first, matched } = await numberMatch(field, "AB 12", "ab12");
+    expect(matched).toBe(first);
+  });
+
+  it.each(["orderNumber", "receiptNumber"])("does not match a different %s once folded", async (field) => {
+    const { matched } = await numberMatch(field, "#12345", "12346");
+    expect(matched).toBeNull();
+  });
+
+  it.each(["orderNumber", "receiptNumber"])("does not match a %s that folds to empty", async (field) => {
+    const { matched } = await numberMatch(field, " # ", "#");
+    expect(matched).toBeNull();
+  });
+
   it("does not match a different retailer name on the same date and total", async () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
