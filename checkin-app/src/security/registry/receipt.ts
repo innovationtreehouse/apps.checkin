@@ -60,11 +60,18 @@ defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', enve
 defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
+// A receipt's duplicate group: org-wide, since its members may be anyone's receipts.
+defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW });
 
 // FINANCE actions.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/reject', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/clear-duplicate', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+// Duplicate-group decisions (2516_RECEIPT_DUPLICATES.md §6): one pair, with its undo, or the whole group.
+defineRoute({ endpoint: 'POST /api/receipts/[id]/not-this-one', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'DELETE /api/receipts/[id]/not-this-one/[otherId]', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/different-purchases', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/keep-this-one', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/restart-flow', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/push-to-inventory', authorize: 'finance', envelope: null, returns: ['ReceiptPushResult'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/import', authorize: 'finance', envelope: null, returns: ['ReceiptImportResult'], orderedView: FINANCE_VIEW });

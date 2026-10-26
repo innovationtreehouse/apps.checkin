@@ -81,7 +81,7 @@ function request(endpoint: string) {
     const [method, path] = endpoint.split(' ');
     return new NextRequest(`http://localhost${path.replace(/\[[^\]]+\]/g, '1')}`, { method });
 }
-const params = { params: Promise.resolve({ id: '1', lineItemId: '1' }) };
+const params = { params: Promise.resolve({ id: '1', lineItemId: '1', otherId: '1' }) };
 
 beforeEach(() => mockSession.mockReset());
 
@@ -156,8 +156,12 @@ describe('role admission', () => {
             'POST /api/receipts/[id]/ignore-file',
             'GET /api/receipts/ignored-files',
             'DELETE /api/receipts/ignored-files/[id]',
+            'POST /api/receipts/[id]/not-this-one',
+            'DELETE /api/receipts/[id]/not-this-one/[otherId]',
+            'POST /api/receipts/[id]/different-purchases',
+            'POST /api/receipts/[id]/keep-this-one',
         ]));
-        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs']));
+        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group']));
     });
 
     it.each([

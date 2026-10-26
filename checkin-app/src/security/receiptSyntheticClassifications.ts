@@ -50,6 +50,14 @@
  * Person's `id` and `name`, both `public` on Person, so any receipt submitter
  * reads them.
  *
+ * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
+ * its members in upload order and the ids of the receipts dismissed against it.
+ * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
+ * state, or a rejection with its reason) and, for a member rejected as a copy,
+ * the id of the receipt kept in its place (`copyOfId`). Members may be other
+ * submitters' receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is;
+ * the label carries a rejection reason, `personal` like `validationNotes`.
+ *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -161,6 +169,15 @@ export const classifications = {
     id: "public",
     name: "public",
   },
+  ReceiptDuplicateGroup: {
+    dismissed: "pii",
+  },
+  ReceiptDuplicateMember: {
+    id: "pii",
+    state: "internal",
+    label: "personal",
+    copyOfId: "pii",
+  },
   ReceiptIgnoredFileView: {
     id: "internal",
     orgId: "internal",
@@ -177,5 +194,8 @@ export const relations = {
   },
   ReceiptConfirmationView: {
     lineItems: { model: "ReceiptConfirmationLineView", isList: true },
+  },
+  ReceiptDuplicateGroup: {
+    members: { model: "ReceiptDuplicateMember", isList: true },
   },
 } as const;
