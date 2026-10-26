@@ -4,6 +4,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { principal, ORG } from "../helpers/seed";
 import {
+  donatedAssetLineIds,
   giftsAwaitingCapitalReview,
   listDonatedCapital,
   reviewDonatedLine,
@@ -94,6 +95,8 @@ describeDb("donated capital", () => {
     });
     expect(new Set(assets.map((a) => a.assetNumber)).size).toBe(2);
     expect(await giftsAwaitingCapitalReview(ORG)).toEqual([]);
+    expect(await donatedAssetLineIds(ORG, { giftSource: "receipt", giftId: 41 })).toEqual([1]);
+    expect(await donatedAssetLineIds(ORG, { giftSource: "manual", giftId: 41 })).toEqual([]);
     await expect(reviewDonatedLine(FINANCE, row.id, { isCapital: false })).rejects.toMatchObject({ status: 409 });
   });
 
@@ -103,6 +106,7 @@ describeDb("donated capital", () => {
     const [a, b] = await listDonatedCapital(FINANCE);
 
     await reviewDonatedLine(FINANCE, a.id, { isCapital: false });
+    expect(await donatedAssetLineIds(ORG, { giftSource: "receipt", giftId: 41 })).toEqual([]);
     await expect(reviewDonatedLine(FINANCE, b.id, { isCapital: true, ownerId: 999, depreciationYears: 3 })).rejects.toMatchObject({ status: 400 });
     expect(await db.capitalAsset.count()).toBe(0);
     expect(await db.expenseOrgAuditLog.count({ where: { entityType: "donated_capital_line" } })).toBe(1);
