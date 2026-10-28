@@ -281,41 +281,49 @@ describeDb("ReceiveQueueService", () => {
     });
   });
 
-  it("cancel keeps the line, stamped with its actor, and logs it", async () => {
+  it("cancel keeps the line, stamped with its actor and reason, and logs it", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID, 42, "manager");
+    await svc.cancel(item.id, TEST_ORG_ID, 42, "  Supplier discontinued it ", "manager");
 
     expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(0);
     const kept = (await svc.listQueue(TEST_ORG_ID, true)).find((i) => i.id === item.id);
-    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", fulfilledAt: null });
+    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", cancelReason: "Supplier discontinued it", fulfilledAt: null });
     expect(kept?.cancelledAt).not.toBeNull();
     expect(await db.inventoryLog.findFirst({ where: { gtin13: item.gtin13 } })).toMatchObject({
-      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled",
+      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled: Supplier discontinued it",
     });
   });
 
   it("a cancelled line cannot be fulfilled or cancelled again", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID, 1);
+    await svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice");
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
-    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({ status: 409 });
     expect(await db.orgItem.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 
   it("throws 409 cancelling a fulfilled item", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
-    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({
       status: 409,
     });
   });
 
   it("throws 404 cancelling a non-existent item", async () => {
     const svc = makeReceiveQueueService();
-    await expect(svc.cancel(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
+    await expect(svc.cancel(9999, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({
       status: 404,
     });
+  });
+
+  it("refuses a blank reason and leaves the line open and unlogged", async () => {
+    const svc = makeReceiveQueueService();
+    const item = await seedQueueItem();
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "   ")).rejects.toMatchObject({ status: 400 });
+    expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(1);
+    expect(await db.inventoryLog.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 });
