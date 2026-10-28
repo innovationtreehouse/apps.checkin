@@ -91,7 +91,6 @@ describe("self-grant writers", () => {
     it("finds the known writers", () => {
         expect(writers.map((w) => w.rel).sort()).toEqual([
             "app/api/membership-ops/households/[id]/route.ts",
-            "app/api/membership-ops/participants/[id]/route.ts",
             "app/api/programs/[id]/volunteers/route.ts",
             "app/api/settings/membership/volunteer-designations/route.ts",
             "lib/membership/review.ts",

@@ -1,6 +1,6 @@
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import { ModalsProvider } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
@@ -66,8 +66,8 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText("Rivera Household")).toBeInTheDocument();
     expect(screen.getByText(/Submitted their own consent/)).toBeInTheDocument();
     expect(screen.getByText(/No evidence either way/)).toBeInTheDocument();
-    // Both leads get a button — the evidence is a label, not a decision.
-    expect(screen.getAllByRole("button", { name: "Remove this date" })).toHaveLength(2);
+    // Board ruling B5/B25: the date is never changed in the app, so the list only labels evidence.
+    expect(screen.queryByRole("button", { name: "Remove this date" })).not.toBeInTheDocument();
     // The board's confirmed cutoff is the default, so the list starts narrowed.
     // Unfiltered on load: a list that already hides everything before the cutoff
     // cannot be used to confirm the cutoff.
@@ -83,27 +83,6 @@ describe("membership-audit/compliance page", () => {
 
     expect(await screen.findByText("Rivera Household")).toBeInTheDocument();
     expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/api/membership-audit/compliance?bgClearedSince=2026-07-01");
-  });
-
-  it("clears one lead's date through the existing board-gated PUT", async () => {
-    const fetchMock = mockFetchJson({
-      "/api/membership-audit/compliance": { blanketStamped },
-      "/api/membership-ops/participants/12": { ok: true },
-    });
-    renderPage();
-    await screen.findByText("Rivera Household");
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove this date" })[1]);
-    expect(await screen.findByText("Remove this background-check date?")).toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove the date" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/membership-ops/participants/12",
-        expect.objectContaining({ method: "PUT", body: JSON.stringify({ lastBackgroundCheck: null }) }),
-      ),
-    );
-    expect(await screen.findByText("Date cleared")).toBeInTheDocument();
   });
 
   it("shows merge-inherited dates as a separate, permanent list", async () => {

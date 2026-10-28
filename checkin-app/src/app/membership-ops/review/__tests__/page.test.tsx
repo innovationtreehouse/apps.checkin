@@ -243,6 +243,32 @@ describe("membership-ops/review page", () => {
     });
   });
 
+  it("lets the rejector change their answer to approve, naming the adult, behind a confirmation", async () => {
+    setSession({ id: 1, isBackgroundCheckReviewer: true });
+    const blocked = { ...queue.queue[0], id: 303, attestations: [{ subjectPersonId: null }], _count: { attestations: 1 } };
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews?rejected=1": { queue: [blocked] },
+      "/api/membership/reviews": { queue: [] },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show blocked reviews I rejected" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Change to approve" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/discards every decision/)).toBeInTheDocument();
+    // No adult named: the dialog stays open and nothing is sent.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change to approve" }));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Name the adult whose check you reviewed." }));
+
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Sam Smith" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change to approve" }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/membership/reviews" && init?.method === "POST");
+      expect(JSON.parse(String(post?.[1]?.body))).toEqual({ processId: 303, result: "APPROVE", subjectPersonIds: [2] });
+    });
+  });
+
   it("does not offer a reset to a reviewer who is not on the board", async () => {
     setSession({ id: 1, isBackgroundCheckReviewer: true });
     mockFetchJson({

@@ -37,7 +37,7 @@ export const DELETE = handler<{ id: string }>("DELETE /api/membership-ops/bg-att
             if (!attestation) throw notFound("Attestation not found.");
 
             // FOR UPDATE per attest()'s contract: without it a concurrent
-            // attest()/overrideBlocked() attestation-set mutation on the same
+            // attest()/boardResetReview() attestation-set mutation on the same
             // process could interleave with this delete (e.g. a second APPROVE
             // clearing the check off a row we're mid-removing).
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${attestation.processId} FOR UPDATE`;

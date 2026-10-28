@@ -46,6 +46,9 @@ export default function MembershipReviewPage() {
   const [showMine, setShowMine] = useState(false);
   // Reviews this reviewer already approved that have not cleared.
   const [mine, setMine] = useState<QueueItem[]>([]);
+  const [showRejected, setShowRejected] = useState(false);
+  // Blocked reviews whose rejection is this reviewer's.
+  const [rejected, setRejected] = useState<QueueItem[]>([]);
 
   const fetchQueue = useCallback(() =>
     fetch("/api/membership/reviews")
@@ -71,6 +74,76 @@ export default function MembershipReviewPage() {
   useEffect(() => {
     if (showMine) loadMine();
   }, [showMine, loadMine]);
+
+  const loadRejected = useCallback(() =>
+    fetch("/api/membership/reviews?rejected=1")
+      .then(async (res) => { if (res.ok) setRejected((await res.json()).queue || []); }), []);
+
+  useEffect(() => {
+    if (showRejected) loadRejected();
+  }, [showRejected, loadRejected]);
+
+  const changeToApprove = async (processId: number, subjectPersonIds: number[]) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Your answer is now an approval. The review needs one more reviewer to clear." });
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
+      }
+      await Promise.all([load(), loadRejected()]);
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Changing a rejection starts the review over: every earlier decision is discarded
+  // and this approval is the first of the two it needs again.
+  const confirmChangeToApprove = (item: QueueItem) => {
+    const leads = item.orgMembership?.household?.householdMembers ?? [];
+    let picked: number | null = null;
+    const modalId = modals.openConfirmModal({
+      title: "Change your rejection to an approval?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This discards every decision recorded on <strong>{applicantLabel(item)}</strong>&apos;s review,
+            your rejection included, and records your approval as the first of two. Another
+            independent reviewer must still approve before the check clears.
+          </Text>
+          {!item.subjectPerson && (
+            <Radio.Group label="Whose check did you review?" onChange={(v) => { picked = Number(v); }}>
+              <Stack gap={4} mt={4}>
+                {leads.map((p) => (
+                  <Radio key={p.id} value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
+                ))}
+              </Stack>
+            </Radio.Group>
+          )}
+        </Stack>
+      ),
+      labels: { confirm: "Change to approve", cancel: "Cancel" },
+      confirmProps: { color: "orange" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!item.subjectPerson && picked === null) {
+          notifications.show({ color: "red", message: "Name the adult whose check you reviewed.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        changeToApprove(item.id, picked === null ? [] : [picked]);
+      },
+    });
+  };
 
   const resetReview = async (processId: number) => {
     setBusyId(processId);
@@ -295,6 +368,31 @@ export default function MembershipReviewPage() {
         onChange={(e) => setShowMine(e.currentTarget.checked)}
         label="Show incomplete reviews I've already approved"
       />
+
+      <Checkbox
+        mt="xs"
+        checked={showRejected}
+        onChange={(e) => setShowRejected(e.currentTarget.checked)}
+        label="Show blocked reviews I rejected"
+      />
+
+      {showRejected && (
+        <Stack mt="md">
+          {rejected.length === 0 ? (
+            <Text size="sm" c="dimmed">None — no blocked review carries your rejection.</Text>
+          ) : rejected.map((item) => (
+            <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
+              <Text fw={700}>{applicantLabel(item)}</Text>
+              <Text size="xs" c="dimmed" mt={4}>You rejected this, so it is blocked.</Text>
+              <Group mt="sm">
+                <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmChangeToApprove(item)}>
+                  Change to approve
+                </Button>
+              </Group>
+            </Card>
+          ))}
+        </Stack>
+      )}
 
       {showMine && (
         <Stack mt="md">

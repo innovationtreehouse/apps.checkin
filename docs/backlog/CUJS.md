@@ -112,7 +112,7 @@ _Extraction adds (2026-07-22):_
 6. ❌ Cert-upgrade request queue — member proposes upgrade, tool's certifiers tagged to review (`SA10`); member-facing cert visibility is `SA9` (A3-10)
 
 ### A9. Board / admin (oversight)  [bucket M/RB/PL]  — validated V7
-1. ✅ Review applications + override — board/sysadmin queue (PII field-stripped per role); `review-override` → `overrideBlocked()`
+1. ✅ Review applications + reset — board/sysadmin queue (PII field-stripped per role); `review-override` → `boardResetReview()`
 2. 🟡 Manage roles (`RB17`) — `GET/PATCH /api/roles` dual-writes PersonRole + legacy mirror; **UI doesn't scale ~10 roles** (#161/#1150). Not a security hole (PersonRole un-bound, no row-leak)
 3. ✅ Board settings (fees/BG months/membership) — gated at layer + stricter per-page. ⚠️ feeds `RB7`: `/api/admin/localization` is sysadmin-ONLY while `/api/admin/broken-households` is sysadmin|board — same prefix, two "admin" defs
 4. ✅ Admin edit household (remediation) — `PATCH households/[id]`, audit row per change

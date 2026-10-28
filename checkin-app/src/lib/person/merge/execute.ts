@@ -68,7 +68,7 @@ export async function prepareMerge(
     // The merge takes the newer of the two lastBackgroundCheck dates
     // (resolveKeeperUpdate), so without this an actor can seat a background-check
     // date on their own family with no second actor — the thing attest() and
-    // overrideBlocked refuse. Both subjects count: the tombstone's household is
+    // boardResetReview refuse. Both subjects count: the tombstone's household is
     // where the carried date comes from, the keeper's is where it lands, and the
     // two need not be the same household. No role bypasses this, and an actor
     // whose household can't be resolved is refused (fail closed).

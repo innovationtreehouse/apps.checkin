@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Radio, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
@@ -79,8 +79,8 @@ export default function AdminMembershipPage() {
 function ApplicationsBoard() {
   const { data: session } = useSession();
   const me = session?.user;
-  // Conflict of interest: no actor may advance/certify/override their OWN household's
-  // application (mirrors the server guards in certifyPaymentPlan, overrideBlocked and
+  // Conflict of interest: no actor may advance/certify/reset their OWN household's
+  // application (mirrors the server guards in certifyPaymentPlan, boardResetReview and
   // the EXTERNAL-phase route).
   // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
@@ -98,9 +98,6 @@ function ApplicationsBoard() {
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
-  // processId -> the lead a force-approve asserts was checked. The board asserts it
-  // because a blocked review has no second approval to count.
-  const [overrideSubjects, setOverrideSubjects] = useState<Record<number, number>>({});
 
   const fetchRows = useCallback((archived: boolean) =>
     fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
@@ -139,7 +136,7 @@ function ApplicationsBoard() {
     }
   };
 
-  const override = async (processId: number, action: "reset" | "approve") => {
+  const resetReview = async (processId: number) => {
     setBusyId(processId);
     setMessageId(processId);
     setMessage("");
@@ -147,18 +144,18 @@ function ApplicationsBoard() {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action, subjectPersonIds: overrideSubjects[processId] === undefined ? [] : [overrideSubjects[processId]] }),
+        body: JSON.stringify({ processId, action: "reset" }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: action === "reset" ? "Sent back for re-review." : "Overridden to payment." });
+        notifications.show({ message: "Sent back for re-review." });
         await load(showArchived);
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
         notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
         await load(showArchived);
       } else {
-        setMessage(data.error || "Override failed.");
+        setMessage(data.error || "Reset failed.");
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -208,7 +205,7 @@ function ApplicationsBoard() {
         </Text>
       ),
       labels: { confirm: "Discard approvals", cancel: "Cancel" },
-      onConfirm: () => override(r.id, "reset"),
+      onConfirm: () => resetReview(r.id),
     });
   };
 
@@ -339,10 +336,6 @@ function ApplicationsBoard() {
     await certify(processId, reason);
   };
 
-  const leads = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
-
-  const pickOverrideSubject = (processId: number, personId: number) =>
-    setOverrideSubjects((s) => ({ ...s, [processId]: personId }));
 
   const householdLabel = (r: ProcessRow) => {
     const hh = r.orgMembership?.household;
@@ -500,47 +493,21 @@ function ApplicationsBoard() {
                       💸 This household already paid — a refund is likely needed (membership was not activated).
                     </Text>
                   )}
-                  {/* A force-approve must say which adult it covers: a blocked review has
-                      no second approval to count, so an unnamed override would set
-                      bgClearedAt with nobody recorded as checked. */}
                   {me?.isBoardMember ? (
                     <>
-                      <Stack gap={4} mb="sm">
-                        {leads(r).length === 0 ? (
-                          <Text size="sm" c="dimmed">No household leads on file — this application cannot be overridden.</Text>
-                        ) : (
-                          <Radio.Group
-                            label="Whose background check does an override cover?"
-                            value={String(overrideSubjects[r.id] ?? "")}
-                            onChange={(v) => pickOverrideSubject(r.id, Number(v))}
-                          >
-                            <Stack gap={4} mt={4}>
-                              {leads(r).map((p) => (
-                                <Radio key={p.id} size="xs" value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
-                              ))}
-                            </Stack>
-                          </Radio.Group>
-                        )}
-                      </Stack>
-                      <Group gap="sm" wrap="wrap">
-                        <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "reset")}>
-                          Reset for re-review
-                        </Button>
-                        <Button
-                          size="xs"
-                          fz={15}
-                          disabled={busyId === r.id || ownHousehold(r) || overrideSubjects[r.id] === undefined}
-                          onClick={() => override(r.id, "approve")}
-                        >
-                          Override → {r.paidAt ? "activate" : "payment"}
-                        </Button>
-                      </Group>
+                      <Text size="sm" mb="sm">
+                        A reset sends the review back for two new approvals. The reviewer who rejected
+                        may also change their answer to approve, which does the same and counts as the first.
+                      </Text>
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => resetReview(r.id)}>
+                        Reset for re-review
+                      </Button>
                       {ownHousehold(r) && (
-                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — someone outside your household must.</Text>
+                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset your own household&apos;s review — someone outside your household must.</Text>
                       )}
                     </>
                   ) : (
-                    <Text size="sm" c="dimmed">A board member can reset or override this review.</Text>
+                    <Text size="sm" c="dimmed">A board member can reset this review.</Text>
                   )}
                 </Alert>
               )}

@@ -7,7 +7,7 @@
  * (payment-first) and a second approval after the refund (check-last).
  */
 
-import { attest, overrideBlocked } from '@/lib/membership/review';
+import { attest } from '@/lib/membership/review';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
@@ -148,14 +148,17 @@ describe('a refunded order never activates', () => {
         expect(emailed('you can now pay your membership dues')).toBe(false);
     });
 
-    it('a board override approve on a paid, blocked, refunded application holds instead of activating', async () => {
+    it('a paid, blocked, refunded application whose rejector changes to approve holds at the second approval instead of activating', async () => {
         const oid = orderId('Blk');
-        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'BLOCKED', paid: true, shopifyOrderId: oid });
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
+        await attest(revA, processId, { result: 'REJECT', note: 'concern' });
 
         await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`);
         await prisma.paymentException.updateMany({ where: { kind: 'REFUND', processId }, data: { status: 'RESOLVED', resolvedAt: new Date() } });
 
-        await overrideBlocked(processId, board, 'approve', [leadId]);
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
 
         expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');

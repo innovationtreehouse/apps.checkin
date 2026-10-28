@@ -148,7 +148,7 @@ across mismatched household membership") is the same pattern already landing —
 **Refusal is only viable if every refusable condition has a cleanup path.** Verified present:
 `DELETE /api/programs/[id]/participants`, `/api/events/[id]/rsvp`, `/api/shop/certifications`,
 `/api/attendance/manual/[id]`. **One gap:** `BackgroundCheckAttestation` has no user-facing removal —
-attestations are deleted only by `overrideBlocked` in `reset`, and only for a `BLOCKED` process. A
+attestations are deleted only by `boardResetReview` and a rejector's change to approve. A
 refusal there is currently a dead end. Given what that collision signals, a sysadmin-only path with
 an audit trail is probably right, but it must be built or those merges become impossible.
 

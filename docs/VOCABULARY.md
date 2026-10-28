@@ -137,7 +137,7 @@ adult) → two attestations → **clearance** (dated; the validity window runs f
 | **Approve / Reject** | the **value** carried on an attestation — what was judged, never the act of judging | `AttestationResult` | "Approve" / "Reject" |
 | **Clearance** / **cleared** | the outcome: two attestations, dated. The re-check window runs from that date | `bgClearedAt`, `PENDING_BG_CLEARANCE`, `Person.lastBackgroundCheck` | "cleared" |
 | **Consent** | the **applicant's** act — they submitted the Averity form. Never "attest" | `bgConsentAt`, `markBgConsent` | "consent" |
-| **Override** | the board acting against the flow's own outcome — force-approving a blocked application, or discarding attestations | `overrideBlocked` | "override" |
+| **Reset** | the board discarding a review's attestations so it needs two new approvals. The board never clears a check itself | `boardResetReview` | "Reset for re-review" |
 
 Rules:
 1. **A reviewer attests; two attestations clear the check.** One word per sense —

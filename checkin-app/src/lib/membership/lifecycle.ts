@@ -388,13 +388,16 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
     { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE (parallel review)" },
     { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
-    // overrideBlocked reset/approve (§5 #11)
-    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (unpaid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
-    { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked approve", actor: "board", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid on a refunded order)" },
+    // Board reset (§5 #11) and the rejector changing to approve (Board ruling B5/B25):
+    // both send a blocked review back for two approvals; nothing clears it from BLOCKED.
+    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (unpaid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
+    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (unpaid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
     // Refund recorded by the board: money undone, background check untouched. On a
     // paid BLOCKED row it only clears paidAt (flag-only, no status edge).
     { from: "PENDING_BG_CLEARANCE", to: "PENDING_PAYMENT", event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" },
