@@ -2,6 +2,7 @@ import { db, type DbOrTx } from "../db";
 import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { handOverDeposit, handOverDeposits } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 
 // Owner decisions return the row without donor identity, so the writes need no donor-read audit row.
@@ -99,7 +100,8 @@ export const transactionService = {
     const now = new Date();
     const useCommentRule = Boolean(assignFutureMatchingComment && existing.donorComment);
 
-    return db.$transaction(async (tx) => {
+    const cycled: string[] = [];
+    const saved = await db.$transaction(async (tx) => {
       await claimUndecided(tx, orgId, transactionId, { ownerId, ownerAssignedAt: now, ownerAssignedByUserId: audit.actorUserId });
       const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
@@ -156,9 +158,12 @@ export const transactionService = {
       for (const disbId of [...affectedDisbursementIds].sort()) {
         await runOwnerAssignedCycleTx(tx, orgId, disbId, audit);
       }
+      cycled.push(...affectedDisbursementIds);
 
       return row;
     });
+    await handOverDeposits(orgId, cycled);
+    return saved;
   },
 
   async markOrganizationalLevel(orgId: string, transactionId: number, audit: AuditContext) {
@@ -167,7 +172,7 @@ export const transactionService = {
     if (existing.ownerId !== null) throw new ServiceError(400, "Owner already assigned — record is finalized");
     if (existing.isOrganizationalLevel) throw new ServiceError(400, "Already marked Organizational Level");
 
-    return db.$transaction(async (tx) => {
+    const marked = await db.$transaction(async (tx) => {
       await claimUndecided(tx, orgId, transactionId, { isOrganizationalLevel: true });
       const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
@@ -188,5 +193,7 @@ export const transactionService = {
 
       return row;
     });
+    if (existing.disbursementId) await handOverDeposit(orgId, existing.disbursementId);
+    return marked;
   },
 };

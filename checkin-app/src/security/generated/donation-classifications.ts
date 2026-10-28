@@ -133,6 +133,7 @@ export const classifications = {
         orgId: 'internal',
         qbPostingOnAt: 'internal',
         inKindQbPostingOnAt: 'internal',
+        depositsHandedOverAt: 'internal',
     },
     InKindDonation: {
         id: 'internal',

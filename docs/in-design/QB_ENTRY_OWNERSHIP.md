@@ -224,7 +224,9 @@ Live data: donation's holdings move, nothing is dropped until a release after.
    code, and the cross-lane list from both libraries and the host.
 
 The script runs between donation's switch-off and its first call to the port,
-so no disbursement is posted by both.
+so no disbursement is posted by both. It runs as the first step of donation's
+daily hand-over job, which makes no port call until the move has set its marker.
+A stop alerts finance once per cause, and the job tries again each day.
 
 The hand-off was model-checked. Without any one of these four rules, the checker
 found a run that booked one disbursement twice, booked one that never completed,
@@ -257,8 +259,9 @@ PR 2. With all four, every run passed.
    under the decommission exception (whole entries for routes that cease to
    exist).
 4. **Contract,** a release after 2: the drops in Migration step 4, the
-   cross-lane list, income's environment fallback for map roles, and moving
-   income's row index to organisation, source and key.
+   cross-lane list, income's environment fallback for map roles, the account
+   names Benevity lines carry as the fallback for their unset map roles, and
+   moving income's row index to organisation, source and key.
 
 **Security boundary and registry.** PR 3 removes whole registry entries with
 their routes, under the decommission exception. Income's reconciliation routes

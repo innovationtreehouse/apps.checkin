@@ -34,8 +34,10 @@
  */
 import {
   BANK_ROLE,
+  DEPOSIT_SOURCE,
   SHOPIFY_LINE_ROLES,
   configureIncome,
+  missingRoles,
   mirrorPayoutStatus,
   mirrorSource,
   roleAccounts,
@@ -177,6 +179,18 @@ export async function incomePostingMissing(): Promise<string[]> {
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(mirrorConfigured() ? [] : ["Shopify mirror"]),
     ...(process.env.INCOME_MIRROR_NEWEST_WINS === "true" ? [] : ["the switch INCOME_MIRROR_NEWEST_WINS=true"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+  ];
+}
+
+/**
+ * What booking Benevity deposits lacks, in plain words; empty when income can book them. The
+ * drain's own role check: a line role the map leaves unset books through the account map's name.
+ */
+export async function benevityPostingMissing(): Promise<string[]> {
+  const unpicked = missingRoles({ source: DEPOSIT_SOURCE.BENEVITY, expected: null }, await roleAccounts());
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
   ];
 }

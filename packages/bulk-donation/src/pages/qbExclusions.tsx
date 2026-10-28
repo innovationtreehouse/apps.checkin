@@ -1,40 +1,24 @@
 "use client";
 import { useState } from "react";
-import { Button, Group, Paper, Table, TextInput, Title } from "@mantine/core";
-import { act, api, paged, useCanWrite, useLoad, when } from "../components/api";
+import { Alert, Anchor, Table, Title } from "@mantine/core";
+import { paged, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
 
 interface ExclusionRow { id: number; qbTxnId: string; reason: string; excludedAt: string }
 
-/** /donations/qb-exclusions — QuickBooks entries finance removed from matching for good. */
+/** /donations/qb-exclusions — the QuickBooks entries finance removed from donation's matching, now carried into income's. */
 export default function QbExclusionsPage() {
-  const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
   const rows = useLoad<ExclusionRow[]>(paged("/qb-exclusions", page));
-  const [qbTxnId, setQbTxnId] = useState("");
-  const [reason, setReason] = useState("");
-
-  async function add() {
-    const ok = await act(
-      () => api("/qb-exclusions", { method: "POST", body: JSON.stringify({ qbTxnId, reason }) }),
-      "Excluded", rows.reload,
-    );
-    if (ok) { setQbTxnId(""); setReason(""); }
-  }
 
   return (
     <>
       <Title order={3} mb="md">QuickBooks exclusions</Title>
-      {canWrite && (
-        <Paper withBorder p="md" radius="md" mb="md" maw={640}>
-          <Group align="flex-end">
-            <TextInput label="QuickBooks transaction id" value={qbTxnId} onChange={(e) => setQbTxnId(e.currentTarget.value)} />
-            <TextInput label="Reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: 1 }} />
-            <Button onClick={add} disabled={!qbTxnId.trim() || !reason.trim()}>Exclude</Button>
-          </Group>
-        </Paper>
-      )}
+      <Alert color="blue" mb="md">
+        Income now matches every Benevity deposit, and these exclusions are carried into its own. Exclude a deposit in{" "}
+        <Anchor href="/income/exclusions">income&apos;s exclusions</Anchor>.
+      </Alert>
       {rows.error && <LoadError what="exclusions" message={rows.error} onRetry={rows.reload} />}
       <Table striped>
         <Table.Thead>

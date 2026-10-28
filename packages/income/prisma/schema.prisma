@@ -115,9 +115,12 @@ model IncomeOrgSettings {
   /// The cents cap for Benevity deposits, per deposit and per run; maxCreateCentsPerRun is Shopify's.
   /// @sensitivity:internal
   benevityMaxCreateCentsPerRun Int @default(2500000) @map("benevity_max_create_cents_per_run")
-  /// When income posting switched on: set once, by the first connected drain, never cleared.
+  /// When Shopify posting switched on: set once, by the first drain that posts Shopify payouts, never cleared.
   /// @sensitivity:internal
   qbPostingOnAt        DateTime? @map("qb_posting_on_at")
+  /// When Benevity posting switched on: donation's own stamp, carried over by the move, else the first drain with Benevity deposits due. Never cleared.
+  /// @sensitivity:internal
+  benevityQbPostingOnAt DateTime? @map("benevity_qb_posting_on_at")
 
   @@map("org_settings")
 }

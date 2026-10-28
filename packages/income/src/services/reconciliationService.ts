@@ -14,13 +14,14 @@ import {
   otherLaneClaims,
   postingOnAt,
   runReconcile,
+  stampOf,
   windowDays,
   type ReconStatus,
 } from "../lib/reconcile";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
 import { closedThroughOf, isPostable, ownEntry, postPayout, type OwnEntry } from "../lib/outbox";
-import { BANK_ROLE, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "../lib/sources";
+import { BANK_ROLE, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKeys } from "../lib/sources";
 import { ServiceError } from "@checkin/component-kit";
 
 export interface Actor {
@@ -123,7 +124,7 @@ async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
   } catch {
     throw new ServiceError(503, "QuickBooks could not be read for its books closing date");
   }
-  const closedThrough = closedThroughOf(closeDate, await postingOnAt(orgId));
+  const closedThrough = closedThroughOf(closeDate, stampOf(await postingOnAt(orgId), row.source));
   if (!closedThrough) throw new ServiceError(409, "QuickBooks has no books closing date set, and income posting is not switched on");
   const turn = await postPayout(orgId, id, { closedThrough, mayCreate: true }, true, { actor, book });
   if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
@@ -165,7 +166,7 @@ async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: stri
   if (!d) return false;
   return rows.some((row, i) =>
     d.txnDate >= windows[i].from && d.txnDate <= windows[i].to &&
-    (d.appKey === rowKey(row) || (d.depositToAccount === banks[isBenevity(row) ? DEPOSIT_SOURCE.BENEVITY : DEPOSIT_SOURCE.SHOPIFY] && d.totalCents === row.payoutNetCents)));
+    ((d.appKey !== undefined && rowKeys(row).includes(d.appKey)) || (d.depositToAccount === banks[isBenevity(row) ? DEPOSIT_SOURCE.BENEVITY : DEPOSIT_SOURCE.SHOPIFY] && d.totalCents === row.payoutNetCents)));
 }
 
 export const reconciliationService = {
@@ -240,7 +241,7 @@ export const reconciliationService = {
             status: RECON_STATUS.RESOLVED,
             kind: null,
             resolution: RECON_RESOLUTION.MANUAL,
-            origin: deposit.appKey === rowKey(current) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
+            origin: deposit.appKey !== undefined && rowKeys(current).includes(deposit.appKey) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
             qbNote: null,
             postClaimedAt: null,

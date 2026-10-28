@@ -1,4 +1,4 @@
-import { appKeyOf, findOrCreate, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -17,7 +17,6 @@ import {
   closedNote,
   isBenevity,
   roleAccounts,
-  rowKey,
   rowKeys,
   type RoleAccounts,
 } from "./sources";
@@ -32,9 +31,12 @@ import {
   isClaimed,
   lockReconciliation,
   nextNote,
+  matchKeys,
   matchWindow,
   otherLaneClaims,
+  postingOnAt,
   runReconcile,
+  stampOf,
   windowDays,
   type ReconcileResult,
 } from "./reconcile";
@@ -122,11 +124,15 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
   return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
 }
 
-/** The books-map roles a row's deposit needs that neither the map nor the environment sets. */
-export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): string[] {
+/**
+ * The books-map roles a row's deposit needs that neither the map, the environment, nor a line's
+ * account name sets. A Benevity row with no deposit yet needs only its bank: every line donation
+ * hands over carries the account map's name.
+ */
+export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
   const expected = isBenevity(row) ? expectedOf(row) : null;
-  const roles = expected
-    ? [expected.bankRole, ...expected.lines.map((l) => l.role)]
+  const roles = isBenevity(row)
+    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).filter((l) => !l.accountName).map((l) => l.role)]
     : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }
@@ -182,11 +188,11 @@ type DepositBasis = { payout: MirrorPayout; sales: PayoutSales } | { expected: E
  * map. A payout's lines split by bucket; an expected deposit's lines are the lane's own. Both sum
  * to the row's net.
  */
-async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
+async function depositWrite(client: QuickBooksClient, payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
   const lines =
     "expected" in basis
-      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
-      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined }));
+      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description, accountName: l.accountName }))
+      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined, accountName: undefined }));
   const bankRole = "expected" in basis ? basis.expected.bankRole : BANK_ROLE.shopify;
 
   const bucketed = lines.some((l) => l.budgetOwnerId !== null);
@@ -197,6 +203,14 @@ async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: R
     if (!id) throw new Error(`the books-map role ${role} has no QuickBooks account`);
     return id;
   };
+  // ponytail: the account-name fallback goes with the environment fallback (QB_ENTRY_OWNERSHIP PR 4).
+  const named = new Map<string, string>();
+  for (const name of new Set(lines.flatMap((l) => (l.accountName && !accounts[l.role as keyof RoleAccounts] ? [l.accountName] : [])))) {
+    const found = await client.accountNamed(name);
+    if (!found) throw new Error(`QuickBooks has no account named "${name}"`);
+    named.set(name, found.Id);
+  }
+  const lineAccount = (l: { role: string; accountName?: string }) => accounts[l.role as keyof RoleAccounts] ?? named.get(l.accountName ?? "") ?? account(l.role);
   return {
     entity: "Deposit",
     fields: {
@@ -204,7 +218,7 @@ async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: R
       depositToAccountId: account(bankRole),
       memo: "expected" in basis ? (basis.expected.memo ?? "Benevity disbursement") : "Shopify payout",
       lines: lines.map((l): WriteLine => {
-        const base = { amountCents: l.amountCents, accountId: account(l.role), ...(l.description ? { description: l.description } : {}) };
+        const base = { amountCents: l.amountCents, accountId: lineAccount(l), ...(l.description ? { description: l.description } : {}) };
         if (l.budgetOwnerId === null) return base;
         const bucket = buckets.get(l.budgetOwnerId);
         if (!bucket) throw new Error(`bucket ${l.budgetOwnerId} is not in the owner directory`);
@@ -245,7 +259,7 @@ const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" 
 export async function ownEntry(
   client: QuickBooksClient,
   orgId: string,
-  row: Pick<PayoutReconciliation, "id" | "source" | "payoutGid">,
+  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid">,
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
@@ -334,7 +348,7 @@ export async function postPayout(
   let write: TxnWrite | null = null;
   let buildError = "";
   try {
-    write = await depositWrite(row.payoutDate, basis, accounts);
+    write = await depositWrite(posting.client, row.payoutDate, basis, accounts);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
   }
@@ -380,7 +394,7 @@ export async function postPayout(
       ]);
       result = await findOrCreate(posting.client, {
         write,
-        key: rowKey(claimed),
+        ...matchKeys(claimed),
         window,
         closedThrough: gate.closedThrough,
         mayCreate: gate.mayCreate,
@@ -482,14 +496,15 @@ async function parkOverCap(orgId: string, id: number, netCents: number, maxCents
   return parked !== null;
 }
 
-/** Stamp income's switch-on the first time a connected drain runs; a set stamp never moves. */
-async function switchOn(orgId: string, now: Date): Promise<Date> {
+/** Stamp a source's switch-on the first time a drain posts it; a set stamp never moves. */
+async function switchOn(orgId: string, source: string, now: Date): Promise<void> {
   await db.incomeOrgSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
   // Set only while null, in one statement, so overlapping runs never move it.
-  await db.incomeOrgSettings.updateMany({ where: { orgId, qbPostingOnAt: null }, data: { qbPostingOnAt: now } });
-  const { qbPostingOnAt } = await db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId }, select: { qbPostingOnAt: true } });
-  if (!qbPostingOnAt) throw new Error("income switch-on was not recorded");
-  return qbPostingOnAt;
+  if (source === DEPOSIT_SOURCE.BENEVITY) {
+    await db.incomeOrgSettings.updateMany({ where: { orgId, benevityQbPostingOnAt: null }, data: { benevityQbPostingOnAt: now } });
+  } else {
+    await db.incomeOrgSettings.updateMany({ where: { orgId, qbPostingOnAt: null }, data: { qbPostingOnAt: now } });
+  }
 }
 
 /**
@@ -525,19 +540,25 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     ...(shopifyPosts ? {} : { source: DEPOSIT_SOURCE.BENEVITY }),
     OR: [{ status: RECON_STATUS.WAITING }, { status: RECON_STATUS.OPEN, kind: RECON_KIND.NEEDS_MAPPING }],
   };
-  if (!shopifyPosts && !(await db.payoutReconciliation.count({ where: dueWhere }))) {
-    return { reconcile, post: mirror ? "gated" : "unbound" };
-  }
+  const benevityDue = (await db.payoutReconciliation.count({ where: { ...dueWhere, source: DEPOSIT_SOURCE.BENEVITY } })) > 0;
+  if (!shopifyPosts && !benevityDue) return { reconcile, post: mirror ? "gated" : "unbound" };
 
-  // After reconcile, so every payout the mirror already holds is dated before the stamp.
-  const onAt = await switchOn(orgId, now);
+  // After reconcile, so every payout the mirror already holds is dated before the stamp. Each
+  // source switches on only when it posts, so one source's rows never start the other's clock.
+  if (shopifyPosts) await switchOn(orgId, DEPOSIT_SOURCE.SHOPIFY, now);
+  if (benevityDue) await switchOn(orgId, DEPOSIT_SOURCE.BENEVITY, now);
+  const switchedOn = await postingOnAt(orgId);
+  const onAtOf = (source: string) => {
+    const at = stampOf(switchedOn, source);
+    if (!at) throw new Error(`income switch-on for ${source} was not recorded`);
+    return at;
+  };
   let closeDate: string | null;
   try {
     closeDate = await posting.client.bookCloseDate();
   } catch {
     return { reconcile, post: "unreadable" };
   }
-  const closedThrough = closedThroughOf(closeDate, onAt);
 
   const problem = await checkBuckets(orgId);
   const caps = await readIncomeSettings(db, orgId);
@@ -548,7 +569,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
       where: dueWhere,
       orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
     })
-  ).filter((r) => isHeld(r) || r.createdAt > onAt || today <= addDays(r.payoutDate, windowDays(r.source)));
+  ).filter((r) => isHeld(r) || r.createdAt > onAtOf(r.source) || today <= addDays(r.payoutDate, windowDays(r.source)));
 
   const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
   // The count cap is the org's across sources; each source has its own cents cap.
@@ -561,6 +582,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     const cents = Math.abs(r.payoutNetCents);
     const cap = centsCap(r.source);
     const sofar = createdCents[r.source] ?? 0;
+    const onAt = onAtOf(r.source);
     const mayCreate = r.createdAt > onAt;
     // The mapping check comes before the caps so a held row keeps its reason.
     const expected = isBenevity(r) ? expectedOf(r) : null;
@@ -592,6 +614,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
         break;
       }
     }
+    const closedThrough = closedThroughOf(closeDate, onAt);
     const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts });
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
@@ -641,7 +664,7 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
   const { entries, full } = await posting.client.createdSince("Deposit", oldest.qbCreateAttemptedAt);
   if (full) await alerts.sweepIncomplete({ orgId, since: oldest.qbCreateAttemptedAt });
 
-  const rows = await db.payoutReconciliation.findMany({ where: { orgId }, select: { id: true, source: true, payoutGid: true } });
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId }, select: { id: true, orgId: true, source: true, payoutGid: true } });
   const byKey = new Map(rows.flatMap((r) => rowKeys(r).map((k) => [k, r.id] as const)));
   let flagged = 0;
   const note = (e: { Id: string }) => `app entry ${e.Id} is not linked; void or link it`;

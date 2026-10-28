@@ -121,13 +121,14 @@ async function laneChecks(): Promise<ConfigCheck[]> {
             id: "quickbooks-lane-income",
             label: "QuickBooks posting: Shopify income",
             missing: income.incomePostingMissing,
-            switchedOnAt: async (orgId) => (await import("@checkin/income")).postingOnAt(orgId),
+            switchedOnAt: async (orgId) => (await (await import("@checkin/income")).postingOnAt(orgId)).shopify,
         },
         {
             id: "quickbooks-lane-donations",
             label: "QuickBooks posting: Benevity donations",
-            missing: donation.donationPostingMissing,
-            switchedOnAt: async (orgId) => (await import("@checkin/bulk-donation")).qbPostingOnAt(orgId),
+            missing: income.benevityPostingMissing,
+            // Income books Benevity deposits, so the lane's switch-on is income's Benevity stamp.
+            switchedOnAt: async (orgId) => (await (await import("@checkin/income")).postingOnAt(orgId)).benevity,
             rolePrefix: "BENEVITY_",
         },
         {

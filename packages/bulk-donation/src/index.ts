@@ -26,6 +26,7 @@ export * from "./lib/domain-rules";
 export * from "./lib/qb-match";
 export * from "./lib/qb-poster";
 export * from "./lib/in-kind-poster";
+export * from "./lib/deposit-handover";
 export { recordEvent, recordDonorDataRead, type EntityType, type WorkflowEventInput, type DonorReadContext } from "./repositories/audit";
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";

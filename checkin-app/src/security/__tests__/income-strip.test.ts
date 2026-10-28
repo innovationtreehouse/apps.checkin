@@ -76,13 +76,14 @@ describe('income tiering (§7)', () => {
         expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS, SETTINGS_MODEL].sort());
     });
 
-    it('IncomeOrgSettings: the per-run caps, the switch-on stamp and their org key are internal', () => {
+    it('IncomeOrgSettings: the per-run caps, the switch-on stamps and their org key are internal', () => {
         expect(tiersOf(SETTINGS_MODEL)).toEqual({
             orgId: 'internal',
             maxCreatesPerRun: 'internal',
             maxCreateCentsPerRun: 'internal',
             benevityMaxCreateCentsPerRun: 'internal',
             qbPostingOnAt: 'internal',
+            benevityQbPostingOnAt: 'internal',
         });
     });
 

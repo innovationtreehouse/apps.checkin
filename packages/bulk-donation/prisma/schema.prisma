@@ -311,6 +311,9 @@ model DonationOrgSettings {
   // When the in-kind lane's posting switched on; set once, by its first run with QuickBooks and every in-kind books-map role.
   /// @sensitivity:internal
   inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
+  /// When donation's QuickBooks holdings moved to income; until then no deposit is handed over.
+  /// @sensitivity:internal
+  depositsHandedOverAt DateTime? @map("deposits_handed_over_at")
 
   @@map("donation_org_settings")
 }

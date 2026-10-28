@@ -5,11 +5,11 @@
  * BudgetOwner table, read per call. The no-receipt in-kind path's crossings are
  * bound in-process: the catalog lookup (X10) to the catalog's reads and the
  * inventory load (X11) to local-inventory's apply. The in-kind receipt callees
- * X9 and X13 are bound by their callers (workflow-mapping and receipt). The
- * QuickBooks drain books through checkin's one guarded client, bound only where
- * QBO_REALM_ID and QBO_DONATION_BANK_ACCOUNT_ID are set; unbound, a run answers
- * "unbound"; a daily sweep that could not read every Deposit alerts finance. Deposits income
- * holds are kept out of its matching. The in-kind drain books through the same client and reads
+ * X9 and X13 are bound by their callers (workflow-mapping and receipt). Income
+ * books and matches every Benevity deposit: where QBO_REALM_ID is set, donation
+ * hands each completed disbursement to income's intake ports. Its own QuickBooks
+ * posting stays unbound. A stop in the one-off move of donation's holdings alerts
+ * finance. The in-kind drain books through checkin's one guarded client and reads
  * its accounts and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
@@ -18,7 +18,7 @@
  * keeps donated equipment at or over its thresholds. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { DonationQbPosting, InKindCapital, InKindDirectory, InKindQbPosting, OwnerInfo } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
@@ -26,6 +26,7 @@ import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import { escapeHtml } from "@/lib/email-templates/base";
 
 async function listOwners(): Promise<OwnerInfo[]> {
   const { default: prisma } = await import("@/lib/prisma");
@@ -35,32 +36,32 @@ async function listOwners(): Promise<OwnerInfo[]> {
   });
 }
 
-/** What donation posting lacks, in plain words; empty when it binds. */
+/** What handing Benevity deposits to income lacks, in plain words; empty when it binds. Income's books map holds the bank. */
 export function donationPostingMissing(): string[] {
-  return [
-    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
-    ...(process.env.QBO_DONATION_BANK_ACCOUNT_ID ? [] : ["bank account (QBO_DONATION_BANK_ACCOUNT_ID)"]),
-  ];
+  return process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"];
 }
 
-/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
-function qbPosting(): DonationQbPosting | undefined {
-  const bankAccountId = process.env.QBO_DONATION_BANK_ACCOUNT_ID;
-  if (donationPostingMissing().length > 0 || !bankAccountId) return undefined;
-  return {
-    client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
-    bankAccountId,
-    prod: config.isProd(),
-    async sweepIncomplete({ since }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert(
-        "Donations: the daily check for stray QuickBooks deposits could not see them all",
-        `<p>QuickBooks returned more deposits created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. <a href="${config.baseUrl()}/donations/qb-queue">Open the donations QuickBooks queue</a></p>`,
-        "Donation sweep alert failed:",
-      );
-    },
-  };
-}
+/** Income's intake ports, loaded on first use so binding at boot stays DB-free; bound where QBO_REALM_ID is set. */
+const incomeDeposits: IncomeDeposits = {
+  prod: config.isProd(),
+  async expectDeposit(orgId, disbursementId, expected) {
+    return (await import("@checkin/income")).expectDeposit(orgId, "benevity", disbursementId, expected);
+  },
+  async depositStatus(orgId, disbursementIds) {
+    return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
+  },
+  async adoptHoldings(orgId, move) {
+    return (await import("@checkin/income")).adoptBenevityDeposits(orgId, move);
+  },
+  async moveStopped({ cause }) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert(
+      "Donations: Benevity deposits could not be handed to income",
+      `<p>Donation's QuickBooks holdings could not move to income, so no Benevity deposit is being matched or booked. The app retries daily. What stopped it: ${escapeHtml(cause)}</p><p><a href="${config.baseUrl()}/income/reconciliation">Open income's reconciliation queue</a></p>`,
+      "Donation hand-over alert failed:",
+    );
+  },
+};
 
 /** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
 export async function inKindPostingMissing(): Promise<string[]> {
@@ -73,7 +74,7 @@ export async function inKindPostingMissing(): Promise<string[]> {
   ];
 }
 
-/** Loaded on first use, like the donation drain's binding; the books map is read per run. */
+/** Loaded on first use; the books map is read per run. */
 function inKindQbPosting(): InKindQbPosting | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
@@ -134,8 +135,8 @@ export function configureRuntime(): void {
     owners: { list: listOwners },
     catalog: { search: catalogReader.searchItems, getItem: catalogReader.getItem },
     inventory: createLocalInventoryApply(getOrg),
-    qb: qbPosting(),
     inKindQb: inKindQbPosting(),
+    deposits: donationPostingMissing().length ? undefined : incomeDeposits,
     otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
     inKind,
     capital,

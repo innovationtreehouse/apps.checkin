@@ -250,6 +250,9 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
 
+- Every finished giving-platform batch must match one deposit in the books.
+  Finance settles any the app can't match and records why. [Decision]
+
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of
   the same value.  [Decision]
