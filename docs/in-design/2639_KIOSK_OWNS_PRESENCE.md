@@ -1,0 +1,516 @@
+# The kiosk owns who is in the building
+
+Design for the Board's rulings on B7 and B14. Research and design only; no app
+code changes here. The owner reads this before any PR exists.
+
+## Problem
+
+Today four different places can say someone walked into or out of the
+building: a badge at the door kiosk, the website's check-in and check-out
+buttons, a program leader marking someone present, and staff editing a visit
+that is still open. Each of them can also end someone's visit, and three of
+them can close the building.
+
+Because the website can change who is inside without anyone being at the door,
+the kiosk's screen and the server's records drift apart. Most of the hard
+check-in code exists to cope with that drift:
+
+- The kiosk sends the time of the roster it last saw with every close, so the
+  server can refuse a one-badge close when the website checked someone in that
+  the kiosk never showed.
+- Every website path that ends a visit runs a "last keyholder" guard: a
+  close / leave / cancel dialog with a five-minute single-use token, a choice
+  of keyholder to hand the building over to, and an email to that keyholder.
+- Every website path that starts a visit checks "is a keyholder already in?"
+  and refuses otherwise, while the kiosk never refuses. Two rules for one
+  question, and the Board was asked (B14) which one is right.
+- The Board was also asked (B7) whether a website checkout of somebody else
+  may close the building.
+
+The rules that answer these questions take up most of the check-in rules
+register, and the formal model found most of its bugs on these paths.
+
+## Objective
+
+The Board ruled on 2026-10-27 (B7 and B14 together):
+
+1. The kiosk manages the building, and the website mirrors it.
+2. The website keeps only two things: the 11 PM auto-close and the
+   reconciliation screen. Signing in and out on the website goes.
+3. Trust in-person scans. Never lose a scan. Someone who scans in at the kiosk
+   shows as in, even with no keyholder present.
+4. Simplify the kiosk as much as possible.
+
+Once this is done:
+
+- **Only the kiosk starts or ends a visit while it is happening.** The only
+  other thing that ends visits is the 11 PM auto-close.
+- **Only the kiosk closes the building**, and the 11 PM auto-close is the
+  backstop when nobody did.
+- **The website reads.** It shows the roster the kiosk built, says "can't
+  confirm" when it has not heard from the kiosk, and offers one place to fix
+  past records after the fact.
+- Everyone the 11 PM auto-close checks out is listed as checked out by it,
+  linked to that close (the owner's 2026-10-25 ruling on forced exits stands).
+
+## Executive summary
+
+**Members and household leads** lose the Check In / Check Out button on the
+home page and on the "Who's here" page. They check in by badging at the door.
+What they can still do on the website depends on open question Q1 (correcting
+their own past visits).
+
+**Keyholders and the Board** lose website check-in, check-out, "force
+checkout" and "close the building" from the website. A keyholder closes the
+building at the kiosk, as today. If nobody closes, the 11 PM auto-close does.
+
+**Program leaders** can no longer mark someone as in the building right now.
+What a roster mark does instead is open question Q3.
+
+**The kiosk** keeps doing what it does well: it saves every badge before
+sending it, shows who it thinks is inside even offline, and decides the close
+itself. It stops forwarding anything but page loads and roster reads from its
+screen, and sheds the code that existed only to cope with website check-ins.
+
+**What does not change:** a badge at the kiosk always checks the person in,
+keyholder or not; a visit with no keyholder present is still marked "no
+keyholder"; the web never shows the building as open on the strength of
+no-keyholder visits; the web says "can't confirm the building's state" when
+the kiosk has gone quiet; scans queued offline still apply at their scan time,
+however late.
+
+**Cost:** roughly 1,000 lines of server code and 150–250 lines of kiosk code
+deleted, one small database migration (three columns dropped), one kiosk
+release. Nothing new is built except one filter on the reconciliation screen.
+
+**Supersedes:** the owner's 2026-10-11 ruling that a keyholder can close the
+building from the web, and Board B7 (who may close from the web for someone
+else). Nobody closes from the web.
+
+## Rules this relies on or changes
+
+Register lines in `docs/rules/attendance-checkin.md`, by fate. Lines kept as
+they are are not listed.
+
+**Stay (the kiosk already behaves this way):** a close is one event; only a
+keyholder closes; the kiosk's one-badge and two-badge close; nothing on the
+web stops a kiosk close; a close never ends a later visit; open is derived
+from a keyholder being in; a kiosk badge always checks in and no-keyholder
+visits are marked; never lose a scan; the direction shown is the record; the
+3-second repeat-read filter at the kiosk; late scans apply at scan time and
+are flagged; a queued close applies however late; never blank; fail-closed
+safety display; "can't confirm" without a kiosk heartbeat; the kiosk rests
+only when the building is known empty; two-deep math stays on the server; the
+kiosk's minimal names.
+
+**Go, because the path they govern goes:**
+
+- "The kiosk's view decides a one-badge close, but not past a check-in the
+  kiosk could not have known of" — nothing but the kiosk checks anyone in, so
+  there is no such check-in. Delete the hold and its review flag.
+- "A web close is the keyholder confirming in a dialog…" and the whole web
+  close-guard block (close / leave / cancel, token, handover naming, handover
+  email, "removing an open visit never closes", names shown with the choice).
+- "On the web only the keyholder checking themselves out, or a board member who
+  holds keys, closes the facility" — nobody closes on the web.
+- "Every other way of checking someone in … still needs a keyholder already
+  present" (the facility-open guard) and the household-lead "open (still
+  here)" visit line — no website path opens a visit any more, so there is
+  nothing to guard.
+- "A kiosk too old to send a close decides it from the keyholder's check-out"
+  — the door runs v1.2.7 (protocol 7); confirm on the kiosk-version status
+  page before deleting.
+- The server-side 3-second check "for callers that do not filter (older kiosk
+  builds and the web)".
+- "A correction that closes an open visit departs everyone at the typed
+  departure" — corrections no longer close open visits.
+
+**New (the Board ruling, cited as Board B7/B14, 2026-10-27):**
+
+- Only the kiosk starts or ends a visit while it is happening, and only the
+  kiosk closes the building. The website never writes presence; the nightly
+  auto-close is the one exception, and it is a close no person made.
+- A visit that is still open is changed only by the kiosk or the auto-close.
+  The reconciliation screen corrects visits once they are closed.
+
+**Unchanged but worth restating:** the auto-close records who it checked out,
+linked to that close, as forced exits.
+
+The register edits ship with the PR that makes the code match (rollout
+step 2), not before.
+
+## End state
+
+### Who writes presence
+
+| Writer | Writes | When |
+| --- | --- | --- |
+| Kiosk badge (live or queued) | Starts a visit, ends a visit, closes the building | Any time |
+| 11 PM auto-close | Ends every open visit, as one recorded close with no person behind it | Nightly |
+| Reconciliation screen | Edits, inserts or removes **closed** visits; resolves flagged scans | After the fact |
+| Person merge | Moves visits to the surviving person | Late-night cleanup, building closed |
+
+Nothing else writes `Visit` rows. In code terms: the only callers of
+`processCheckin`, `processCheckout` and `processCloseRequest`
+(`checkin-app/src/lib/attendance/`) are the kiosk branch of `/api/scan`; the
+only other caller of `processVisitCheckout` on an open visit is
+`/api/cron/nightly`. Every other visit write refuses an open visit
+(`departedAt: null`) as a target and refuses to create one.
+
+### What the website reads
+
+Unchanged: `GET /api/attendance` (via `getFullAttendance`) and the kiosk
+heartbeat link (`buildingLink` in `lib/kioskSeen`). With a recent heartbeat
+the web shows who is inside, whether a keyholder is in, and supervision state;
+without one, "can't confirm the building's state (kiosk last seen X ago)" and
+the visit record labelled as such. No-keyholder visits never make it read as
+open.
+
+Since nothing but the kiosk writes open visits, the server's open visits
+**are** the kiosk's view, delayed by whatever is still queued on the kiosk.
+That is the whole of "the website mirrors it".
+
+### The 11 PM auto-close
+
+`/api/cron/nightly` keeps its current behaviour:
+
+1. Carry out any recorded close whose departures were cut off
+   (`executePendingCloses`), at the keyholder's time.
+2. If anyone is still open, record one `FacilityClose` with
+   `via: NIGHTLY_SWEEP` and no closer, depart each open visit at run time as
+   `AUTO_CLOSE`, and log each departure against that close
+   (`logCloseDepartures`). These are the forced exits, listed and linked.
+
+Two changes:
+
+- **Schedule.** The cron's schedule lives in the infrastructure repository,
+  not here. The rollout sets (or confirms) it to fire at 23:00 in the
+  organisation's display timezone, timezone-aware so daylight saving does not
+  move it. Today the route is time-agnostic, so nothing in this repo changes.
+- **A queued kiosk scan from before 23:00 that arrives after it** already
+  behaves correctly: a queued IN scanned before the close is recorded from its
+  scan time and departed at the close (the close fence), and a queued close
+  pulls the auto-close's later stamps back to the keyholder's time. No change.
+
+The "board alert" wording around `boardNotified` (an audit row and a log line,
+no email) is untouched by this design; it is the separate decision 4 in the
+kiosk scope review.
+
+### The reconciliation screen
+
+One place for fixing what happened, all of it on **closed** records:
+
+- **Flagged and parked scans** — the existing review panel
+  (`components/admin/UnsyncedScansPanel.tsx`, `/api/system-status/unsynced-scans`).
+  Recording a parked scan always writes a **closed** visit; the "leave it
+  open" option goes.
+- **Visit corrections** — the existing visits screen
+  (`app/facility-ops/visits`, `/api/facility/visits`, `/api/facility/visits/insert`)
+  and the corrections review (`app/facility-ops/corrections`). Edits and
+  removals are refused on an open visit ("this person is still checked in;
+  they badge out at the kiosk, or the 11 PM close ends the visit").
+- **New filter: "closed out by a close"** on the visits screen: visits whose
+  departure the kiosk close or the auto-close stamped (`departedVia`
+  `FACILITY_CLOSE` / `AUTO_CLOSE`, grouped by `facilityCloseId`), so the Board
+  sees who was forcefully exited by which close and fixes the times. This is
+  the only new UI; it is a query over columns that already exist.
+
+Whether members' and household leads' own correction pages
+(`app/attendance/my-visits`, `app/attendance/household`, `app/attendance/manual`)
+and the leaders' roster marks belong to "the reconciliation screen" is Q1 and
+Q3. The design works either way; only the delete list changes.
+
+## Never lose a scan
+
+The mechanism exists and stays. It is named here so nothing in the cleanup
+cuts it.
+
+1. **Write before send.** The badge read is filtered for a repeat of the same
+   badge within 3 seconds, then written to the kiosk's local SQLite queue
+   (`client/outbox.py`, WAL with full sync) with a fresh scan id
+   (`clientEventId`, a UUID), the scan time, the direction the screen showed,
+   and the close decision if any. Only then is it sent.
+2. **Delete on acknowledgement.** The row leaves the queue only when the server
+   answers with an acknowledgement for that scan id. A timeout, a 5xx, a
+   captive-portal page answering 200, or a 426 (server older than the kiosk)
+   all leave it queued. A row is marked "being sent" while a send is in flight
+   so the drain never sends it twice concurrently.
+3. **Ordered drain.** The drain sends the oldest row first, one at a time, with
+   backoff and jitter, honouring `Retry-After`, and waits until the server
+   speaks the kiosk's protocol version.
+4. **Idempotent apply.** The server dedups on `clientEventId` under the
+   person's advisory lock: a resend after a lost acknowledgement is answered as
+   already applied and changes nothing. The server never discards a kiosk
+   scan; one it cannot apply is recorded and parked for review, and the answer
+   is still an acknowledgement, so it cannot block the queue.
+5. **Order and time.** Each scan applies at its own scan time, in the order the
+   kiosk sent it. A scan more than 10 minutes late, behind later activity, or
+   from a clock that stepped is applied and flagged. A scan ahead of server time
+   applies at server time, flagged.
+6. **Restarts.** Self-update and the Chromium watchdog can restart the kiosk at
+   any hour; a row written before the restart is sent after it.
+
+**What this design removes from the risk.** Today a queued scan can collide
+with a visit the website created or ended while the kiosk was offline, which
+is what the out-of-order hold ("a departure against one a person recorded
+after it … is held for the reviewer") mostly guards. With the website no
+longer writing open visits, the remaining collisions come from the kiosk's own
+queue and the 11 PM close, both of which the fence and pull-back rules already
+handle. The hold stays for closed records a person inserted (Q1), and gets
+rarer.
+
+**Duplicate badge reads** are one scan by the kiosk's 3-second filter; the
+server keeps only exact-duplicate dedup by scan id.
+
+## Scans with no keyholder present
+
+Behaviour stays as it is today (the owner's 2026-10-05 ruling, now Board B14):
+
+- **What shows on the kiosk:** the person, like anyone else. The kiosk is never
+  blank and does not distinguish.
+- **What shows on the website:** the person is listed as inside, marked
+  "no keyholder", and the building reads as **closed** while no keyholder is
+  in. The mark clears if a keyholder checks in within 10 minutes of the
+  arrival. It is derived from the visit record, so nothing is stored.
+- **What is flagged:** nothing that needs action. The mark is visible on the
+  roster and on the reconciliation screen's visit list. No email, no review
+  item. Escalating when no keyholder ever arrives (issue #1775) is not adopted
+  here; the 11 PM close ends such visits like any other.
+
+The B14 table of "which kind of check-in is trusted to open the building"
+collapses: only kiosk badges create live visits, so only a keyholder's own
+badge can make the building read as open.
+
+## Removed from the website
+
+Paths are under `checkin-app/src/`. "Ambiguity removed" is the question the
+code no longer has to answer.
+
+| What goes | Where | Ambiguity removed |
+| --- | --- | --- |
+| Home-page Check In / Check Out toggle | `app/page.tsx` (`handleToggleCheckin`, `canSelfCheckin`) | Who may self-check-in on the web, and in which environment |
+| Web-session branch of the scan route | `app/api/scan/route.ts`: the `sessionUser` admission, the session close-choice echo (`closeChoice`, `handoverToId`, `forceCloseToken` from a session), `recordWebClose` there; `withKiosk` admits kiosk signatures only | Two kinds of caller sharing one scan pipeline; the 3-second server debounce kept "for the web" |
+| Dashboard manual check-in | `app/api/attendance/route.ts` POST `MANUAL_CHECKIN`; "Check in" search on `app/attendance/current/page.tsx` | "Does a keyholder already need to be in?" for a web check-in |
+| Dead two-deep notification | `app/api/attendance/route.ts` POST `TWO_DEEP_VIOLATION` (no caller; it only logs) | None; dead code |
+| Dashboard checkout / force checkout | `app/api/attendance/route.ts` DELETE; buttons and confirm dialog on `app/attendance/current/page.tsx` | Who may end someone else's visit, and whether that closes the building (B7) |
+| Open "still here" self entry | `app/api/attendance/manual/route.ts`: entries without a departure are refused; the facility-open guard goes | Self-reported presence with no proof of being inside |
+| Closing an open visit by editing it | `app/api/attendance/manual/[id]/route.ts` PATCH (`closingOpenVisit` branch); `app/api/facility/visits/route.ts` PATCH on an open visit | An edit that is really a check-out, and whether it closes the building |
+| Removing an open visit | `app/api/attendance/manual/[id]/route.ts` DELETE and `app/api/facility/visits/route.ts` DELETE on an open visit; conflict resolve (`app/api/my-programs/conflicts/resolve/route.ts`) on an open visit | Erasing a person from the live roster that a kiosk scan put there |
+| Roster mark "Present, still here" | `lib/programs/events.ts` `manualEditAttendance`: no open visit created, no departure set on an open visit (shape per Q3) | A leader opening the building from the web (the B14 gap) |
+| Review panel "leave open" | `app/api/system-status/unsynced-scans/[id]/route.ts`: departure required | Whether a set-aside scan may reopen the building |
+| The web close machinery | `lib/attendance/keyholderGuard.ts` whole file (`lastKeyholderGuard`, `recordWebClose`, `finishCloseGuard`, handover candidates and email, token compare); `withCloseGuard` wrapper in `manual/[id]/route.ts`; `isCloseChoiceWarning` / `askCloseChoice` dialog in the UI; the `close_choice` wire shape in `app/api/scan/scanResponse.ts` | The five-minute token, who gets which of close / leave / cancel, naming a handover, emailing it |
+| "Unseen check-in" hold on a kiosk close | `lib/attendance/close.ts` `processCloseRequest` (`rosterAsOf`, `unseen_checkins` offer and review flag) | Whether a one-badge close should wait for a check-in the kiosk did not show |
+| Kiosk leave audit | `lib/attendance/close.ts` `auditKioskLeave` (the "leave" twin of the web handover) | None the visit record does not already show; optional, see below |
+| Old-protocol paths | `app/api/scan/route.ts`: `legacyKiosk` (below 6), the toggle path (below 5), the server debounce (below 3), the untrusted-replay parking (below 5); constants in `lib/scanProtocol.ts` | Two ways to decide a direction and a close |
+| Visit columns for the web dialog | `Visit.forceCloseWarnedAt`, `forceCloseToken`, `forceCloseActorId` (`prisma/schema.prisma`) | State only the web dialog read |
+
+`FacilityCloseVia` keeps `WEB_CHECKOUT`, `WEB_DASHBOARD`, `WEB_CORRECTION` and
+`WEB_REMOVAL`: past closes carry them and audit rows are never deleted. New
+code stops writing them.
+
+`auditKioskLeave` is listed because it exists to mirror the web "leave"
+choice. Dropping it loses only an audit row saying "the last keyholder left
+without closing", which the visit record shows anyway. Keep it if the Board
+wants that row; it is not one of the owner's questions because either answer
+is cheap.
+
+**What stays on the website** besides the reads: the reconciliation screen as
+above, the close-time correction (`correctCloseTime`, the Board moving a
+close's time moves everyone it closed out), person merge, and the event
+roster's program attendance.
+
+**Size:** about 300 lines of guard, 250 of route branches, 150 of old-protocol
+handling, 100 of close-hold, and the UI around them; roughly 1,000 production
+lines, and more in tests.
+
+**Boundary:** none of the routes above is deleted whole except
+`POST /api/attendance` (both its branches go) and `DELETE /api/attendance`.
+Neither is a `handler()` registry entry (they use `withAuth`), so no security
+registry change is needed. If review finds otherwise, the registry removal
+rides the decommission exception (whole entries for a verb deleted in the
+same PR).
+
+## The kiosk: what it does and what it drops
+
+### What it does today
+
+`client/kiosk.sh` keeps the process up, pulls the newest release tag and
+starts `client.py` and full-screen Chromium. `client.py` runs:
+
+- a badge reader thread (USB, with a 3-second repeat filter);
+- a local web server that serves the frame page, proxies **every** request the
+  screen makes to the server and signs it with the kiosk's key;
+- the close decision (one badge when it shows nobody else inside; otherwise a
+  15-second "badge again to close" prompt);
+- its own roster view (last server roster plus its queued scans), shown when
+  the server cannot answer;
+- a roster poller, a version poller with self-update, a health monitor, and the
+  queue drain (`outbox.py`).
+
+### What it keeps
+
+Signing; the write-before-send queue and its drain; scan ids; the repeat
+filter; the direction shown; the local close decision and prompt; the
+never-blank own view; resting while the building is known empty; the protocol
+handshake; self-update; Chromium restart on a silent browser; the status
+banners; the offline two-deep caution on the close prompt.
+
+### What it drops
+
+| # | Drop | Why it can go now | Size (≈ lines) |
+| --- | --- | --- | --- |
+| K1 | Proxying anything but `GET`s: the screen's `POST`/`PUT`/`PATCH`/`DELETE` are refused locally | The screen no longer writes. It also stops the kiosk signing writes for whatever script runs in its browser | 20, plus the "check-in made on the board" branch in `_proxy_request` and the `counts_known` / `presence_seq` bump it drives |
+| K2 | `rosterAsOf` bookkeeping, the "held close" banner (`_held_close_html`), and sending `rosterAsOf` | The server no longer holds a close | 40 |
+| K3 | The close-token field (`force_close_token`) and `force_close_confirmed` in the queue and `post_scan` | Server close tokens went in protocol 6; nothing sends them | 25 |
+| K4 | The 15-second "slide" while a badge is held (`slide_close`) | The repeat filter already stops a held badge toggling | 15 |
+| K5 | Blackout screen (`disable_blackout`, `#blackout`) | Off by default; nothing uses it | 40 |
+| K6 | Release-channel marker fallback (`RELEASE_CHANNEL_MARKER`, `_tracks_releases`) | Every release since v1.2.5 carries the marker | 20 |
+| K7 | Health monitor WiFi bounce and reboot escalation (`allow_wifi_bounce`, `allow_reboot`) | Off by default; keep the Chromium restart and nightly reboot. Check the door's `config.json` first | 120 |
+| K8 | Outbox: the seven copy-pasted "add column if missing" blocks become one loop over a column list | Same guarantee, fewer lines | 35 |
+
+K1 and K2 follow from this ruling. K3–K8 are the kiosk scope review's cut list
+(items 2, 4, 11, 12), restated because "simplify the kiosk as much as
+possible" makes them in scope.
+
+**Not dropped, on purpose:** the Python roster poller. The scope review called
+it mostly redundant with the screen's own poll, but it is what notices people
+leaving while the screen sits idle and decides when the kiosk may rest. Remove
+it only with a test showing the screen poll alone keeps "known empty"
+correct; not part of this design.
+
+**Server-only items that shrink the kiosk's contract** (no kiosk code, but the
+kiosk no longer has to cope with them): the held-close reply, the
+`close_choice` reply, and the old-protocol branches above.
+
+### What the kiosk does *not* take on
+
+The Board's "the kiosk manages the building" does not move the two-deep math
+or the safety display to the kiosk: they stay server-side and fail closed, as
+the register requires. The kiosk does not get a check-in-by-name screen unless
+the owner picks that in Q2.
+
+## Rollout
+
+Order matters because old code keeps serving traffic during each deploy's
+drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
+
+0. **Confirm the door.** The kiosk-version status page shows the door on
+   protocol 7 (v1.2.7 or later). If not, the old-protocol deletions (part of
+   step 3) wait for the next kiosk release.
+1. **Infrastructure:** set the nightly cron to 23:00 in the organisation's
+   timezone. Independent of the code; can go first.
+2. **PR 1 — website stops writing presence.** Remove the UI controls and refuse
+   the open-visit paths in the table above (home toggle, dashboard check-in and
+   checkout, scan route session branch, open self entry, closing or removing an
+   open visit, open roster marks, review "leave open"). Add the "closed out by a
+   close" filter. Update the rules register and `docs/ops/checkin-state-machine.md`
+   in the same PR. Keep `keyholderGuard.ts` compiled but unreferenced so the
+   diff stays reviewable.
+3. **PR 2 — server cleanup** (after PR 1 is in production): delete
+   `keyholderGuard.ts`, the close hold in `processCloseRequest`, the
+   old-protocol paths, the server debounce, and stop writing the web
+   `FacilityCloseVia` values. No schema change.
+4. **PR 3 — drop the three `Visit.forceClose*` columns** (a release after PR 2,
+   so no running code reads them). A contract-phase migration; live data in the
+   columns is transient dialog state, so nothing to preserve.
+5. **PR 4 — kiosk client** (K1–K8), shipped as the next kiosk release. It can
+   merge any time after PR 1; until PR 1 is live, K1 would only make the
+   kiosk's own screen buttons fail, which no one uses at the door. K2 needs the
+   server to have stopped holding closes (PR 2) only in the sense that a held
+   reply would show as an ordinary checkout, which is harmless.
+6. **Model.** The check-in TLA+ Base and Impl drop the web actions (web
+   check-in, web checkout, web close, web removal, open roster mark); re-run
+   the close and replay properties on PR 2's head. The coordinator owns this.
+
+### What happens at cutover
+
+- **Visits opened on the website before PR 1 deploys** stay open. They are on
+  the server's roster, so the kiosk shows them; the person badges out at the
+  door, or the 11 PM close ends them and lists them as forced exits. No data
+  migration.
+- **A close-choice dialog open in someone's browser** when PR 1 deploys: the
+  answer reaches a route that now refuses it. Nothing was written when the
+  dialog opened (only a token on the visit), so nothing is half-done. The
+  keyholder closes at the kiosk or the 11 PM close does.
+- **A close recorded but not yet carried out** (a crash between record and
+  sweep) is still carried out by the next kiosk scan or the nightly run.
+  Losing the web close as a trigger changes nothing.
+- **Old code during the drain window** may still accept a website check-in or
+  checkout for a few minutes. Those are valid rows the kiosk will see; nothing
+  breaks.
+- **A browser tab left open on the old home page** posts to the scan route with
+  a session and is refused ("check in at the kiosk").
+
+## Open questions for the owner
+
+Each has a recommended default in **bold**; the design works with any choice.
+
+**Q1. Does "the reconciliation screen" include members' and household leads'
+own corrections?** Today members insert their own past visits, correct their
+times and remove them; household leads do the same for their household. All of
+those are closed records.
+
+- **(a) Yes, keep them, closed records only.** Members fix their own hours
+  (the 11 PM close stamps a placeholder departure they are meant to fix).
+  Self-reported hours stay in the trends, as today. The website keeps three
+  member pages.
+- (b) No, Board and sysadmins only. Hours can only be fixed by asking the
+  Board; every 11 PM forced exit becomes Board work. Removes three pages, two
+  routes, and the self-correction board-email flag.
+- (c) Keep corrections of existing visits, drop inserting new past visits.
+  Members fix times on visits the kiosk recorded, but cannot add a visit the
+  kiosk never saw.
+
+**Q2. Someone without their badge.** Today a keyholder inside checks them in
+from the website. After this, nobody can.
+
+- **(a) Nobody checks in without a badge.** The Board records the visit
+  afterwards on the reconciliation screen, closed. The kiosk roster (the
+  evacuation list) misses that person while they are inside. No new code.
+- (b) Spare badges kept at the door, assigned to a "visitor" record or to the
+  person on the reconciliation screen afterwards. Keeps the roster complete
+  with no new kiosk code; needs a physical process and a few seeded badge
+  records.
+- (c) A check-in-by-name screen on the kiosk, sent through the same queue as a
+  badge. Keeps the roster complete; adds a touch UI, a name search and a new
+  scan source to the kiosk, which this ruling asked to shrink.
+
+**Q3. What a program leader's "Present" mark does.** Today it can put someone
+in the building now (and could open the building, the B14 gap).
+
+- **(a) A mark records attendance at the session.** If a kiosk visit covers
+  the session it is linked to it, as today. If not, the mark creates a
+  **closed** visit for the session's time, so the hours count; it never
+  creates an open one or ends one. The leader can mark only after the session
+  starts and enters a departure.
+- (b) A mark links to kiosk visits only and never creates one. Hours come
+  only from badges; a child who forgot to badge has session attendance but no
+  facility hours unless the Board adds a visit.
+
+**Q4. The kiosk offline across 11 PM.** The server closes everyone out at
+23:00, but a kiosk that cannot reach the server keeps showing them inside.
+Next morning, one of them badging in sees "Goodbye" (the kiosk thinks they are
+in), and the server records that out-of-turn scan as flagged, changing
+nothing; they badge again and are checked in.
+
+- **(a) Accept it.** The person sees the wrong word once and badges again;
+  the reconciliation screen shows the flagged scan. No new code.
+- (b) The kiosk applies the 23:00 close to its own view by its own clock when
+  it has not heard from the server since. Morning arrivals see "Welcome".
+  About 15 lines on the kiosk, and it brings back a clock-driven roster rule
+  of the kind removed in #2039 (a wrong Pi clock or timezone then empties the
+  door screen while people are inside).
+
+## Appendix: sources
+
+- Board rulings B7 and B14, 2026-10-27 (Board doc), as relayed in the brief.
+- Owner rulings in the check-in guidance: trust the keyholder's close
+  (2026-10-05); no-keyholder check-ins are recorded and marked (2026-10-05);
+  web shows building state only with a kiosk heartbeat (2026-10-11); a late
+  close applies at the keyholder's scan time (2026-10-05); forced exits listed
+  and linked to the close (2026-10-25); the 3-second filter belongs on the
+  kiosk (2026-10-11).
+- `docs/ops/checkin-state-machine.md` (owner-signed state machine) and
+  `docs/rules/attendance-checkin.md`, read at `main@39f1c6d19`.
+- The kiosk design and scope review (Claude Doc, 2026-10-13) for K3–K8.
+- The scope review's line counts are estimates; the PRs report real ones.
