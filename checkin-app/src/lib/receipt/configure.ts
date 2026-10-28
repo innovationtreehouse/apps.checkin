@@ -152,16 +152,22 @@ function refresherAccessToken(functionName: string, mailboxAddress: string): () 
 }
 
 /**
- * Bound only off-local with both values set; otherwise mail intake reports "unbound". Off prod
- * (dev, and ops-stg, which reads as prod) it
- * also needs RECEIPT_PROD_MAILBOX_ADDRESS, naming the real mailbox, and refuses that mailbox: a
- * non-prod instance reads only its own test mailbox.
+ * Bound only on CHECKIN_ENV prod, dev or stg (exactly), with both values set; otherwise mail
+ * intake reports "unbound". An unset or unknown CHECKIN_ENV binds nothing, though checkinEnv()
+ * reads it as prod. Off prod (dev, and ops-stg, which reads as prod) it also needs
+ * RECEIPT_PROD_MAILBOX_ADDRESS, naming the real mailbox, and refuses that mailbox: a non-prod
+ * instance reads only its own test mailbox.
  */
 function receiptMailbox(): MailboxReader | undefined {
   const functionName = process.env.GMAIL_REFRESHER_FN;
   const mailboxAddress = process.env.RECEIPT_MAILBOX_ADDRESS;
-  if (config.checkinEnv() === "local" || !functionName || !mailboxAddress) return undefined;
-  if (config.checkinEnv() !== "prod" || config.isStaging()) {
+  const env = process.env.CHECKIN_ENV;
+  if (env === "local" || !functionName || !mailboxAddress) return undefined;
+  if (env !== "prod" && env !== "dev" && env !== "stg") {
+    console.error(`[receipt] mail intake unbound: CHECKIN_ENV must be prod, dev or stg, not ${JSON.stringify(env ?? "")}`);
+    return undefined;
+  }
+  if (env !== "prod" || config.isStaging()) {
     const prodMailbox = process.env.RECEIPT_PROD_MAILBOX_ADDRESS?.trim().toLowerCase();
     if (!prodMailbox || prodMailbox === mailboxAddress.trim().toLowerCase()) {
       console.error("[receipt] mail intake unbound: off prod, RECEIPT_PROD_MAILBOX_ADDRESS must be set and name a different mailbox");
