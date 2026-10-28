@@ -15,7 +15,7 @@ import {
   lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
-import { readCloseDate } from "./qb-poster";
+import { readCloseDate } from "./qb-gate";
 
 const qbId = z.string().trim().min(1).max(64);
 
