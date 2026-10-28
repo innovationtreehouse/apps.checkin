@@ -19,7 +19,8 @@ jest.mock("@/lib/prisma", () => ({
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors; posting: () => Promise<ExpensePosting | null> }; outbound: Outbound }]>();
 const reimburseeVendorId = jest.fn();
-jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId }));
+class QuickBooksNotConnectedError extends Error {}
+jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId, QuickBooksNotConnectedError }));
 const createVendor = jest.fn();
 jest.mock("@checkin/quickbooks", () => ({ createVendor }));
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
@@ -142,15 +143,18 @@ describe("expense QuickBooks reader", () => {
     return configureExpense.mock.calls.at(-1)![0].quickbooks.reader;
   }
 
-  it("reads no rows while QuickBooks is off", async () => {
+  it("throws 'not connected', never an empty read, while QuickBooks is off", async () => {
     getQuickBooks.mockResolvedValue(null);
     const qb = await reader();
-    await expect(qb.purchasesBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.billsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.billPaymentsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.purchasesByIds(["1"])).resolves.toEqual([]);
-    await expect(qb.billsByIds(["2"])).resolves.toEqual([]);
-    await expect(qb.billPaymentsByIds(["3"])).resolves.toEqual([]);
+    const reads = [
+      qb.purchasesBetween("2026-01-01", "2026-01-31"),
+      qb.billsBetween("2026-01-01", "2026-01-31"),
+      qb.billPaymentsBetween("2026-01-01", "2026-01-31"),
+      qb.purchasesByIds(["1"]),
+      qb.billsByIds(["2"]),
+      qb.billPaymentsByIds(["3"]),
+    ];
+    for (const read of reads) await expect(read).rejects.toBeInstanceOf(QuickBooksNotConnectedError);
   });
 
   it("maps by-id rows: a Bill's balance and linked BillPayments", async () => {

@@ -1,8 +1,9 @@
 /** Crossing guards and inert adapters — no database. */
 import { describe, it, expect, vi } from "vitest";
+import { isServiceError } from "@checkin/component-kit";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
-import { inertOutbound, inertOwnerDirectory } from "../../contract";
+import { inertOutbound, inertOwnerDirectory, QuickBooksNotConnectedError } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
@@ -29,7 +30,10 @@ describe("runtime", () => {
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
-    expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
+    const notConnected = await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31").catch((err: unknown) => err);
+    expect(notConnected).toBeInstanceOf(QuickBooksNotConnectedError);
+    // Branded, so a route in another chunk still answers 503.
+    expect(isServiceError(notConnected) && notConnected.status).toBe(503);
     await expect(rt.quickbooks.posting()).resolves.toBeNull();
   });
 

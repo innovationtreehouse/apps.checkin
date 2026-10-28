@@ -57,13 +57,13 @@ function toSubmitterView(row: ReceiptRow): SubmitterReceipt {
   return rest;
 }
 
-/** X12 answer; QuickBooks off or any failure reads "not yet paid", never an error on the page. */
-async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidStatus>> {
+/** X12 answer; null when QuickBooks is off or the read fails, never an error on the page. */
+async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidStatus> | null> {
   try {
     return reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed));
   } catch (err) {
     console.warn("[receipt] reimbursement status unavailable", err);
-    return new Map();
+    return null;
   }
 }
 
@@ -1108,8 +1108,9 @@ export const receiptService = {
   },
 
   /**
-   * "My receipts": the caller's own receipts, each owed one with its QuickBooks paid status.
-   * Complete = discarded, rejected, or finalized and either not owed or shown paid.
+   * "My receipts": the caller's own receipts, each owed one with its QuickBooks paid status, or
+   * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected, or
+   * finalized and either not owed or shown paid.
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
@@ -1118,12 +1119,13 @@ export const receiptService = {
     const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
 
     const list = rows.map((r) => {
-      const paidOn = r.needsReimbursement ? (paid.get(r.id)?.paidOn ?? null) : null;
+      const paidOn = r.needsReimbursement ? (paid?.get(r.id)?.paidOn ?? null) : null;
       const complete =
         r.state === "discarded" ||
         r.state === "rejected" ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      return { ...toSubmitterView(r), reimbursement: r.needsReimbursement ? { paidOn } : null, complete };
+      const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
+      return { ...toSubmitterView(r), reimbursement, complete };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
   },

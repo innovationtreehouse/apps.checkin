@@ -3,14 +3,14 @@
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
- * search and create go through checkin's one guarded client (off = no rows, no Vendors).
+ * search and create go through checkin's one guarded client (off = the reader throws, no Vendors).
  * The posting writer resolves per run: the guarded client and the books map's EXPENSE_PAYMENT
  * account, which finance also reads matches against. With either missing, or an account that is
  * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". A daily sweep that
  * could not read every entry emails finance. Whatever the library sends out goes through checkin's outbound gateway, which
  * strips it to the surface's declared tiers.
  */
-import { configureExpense, reimburseeVendorId } from "@checkin/expense";
+import { configureExpense, QuickBooksNotConnectedError, reimburseeVendorId } from "@checkin/expense";
 import type { ExpensePosting, ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
@@ -119,32 +119,31 @@ function qbTxn(t: QboPurchase | QboBill): QbTxn {
   };
 }
 
+async function connectedQb() {
+  const qb = await getQuickBooks();
+  if (!qb) throw new QuickBooksNotConnectedError();
+  return qb;
+}
+
 const qbReader: QbReader = {
   async purchasesBetween(from, to) {
-    const qb = await getQuickBooks();
-    return qb ? (await qb.purchasesBetween(from, to)).map(qbTxn) : [];
+    return (await (await connectedQb()).purchasesBetween(from, to)).map(qbTxn);
   },
   async billsBetween(from, to) {
-    const qb = await getQuickBooks();
-    return qb ? (await qb.billsBetween(from, to)).map(qbTxn) : [];
+    return (await (await connectedQb()).billsBetween(from, to)).map(qbTxn);
   },
   async billPaymentsBetween(from, to) {
-    const qb = await getQuickBooks();
-    if (!qb) return [];
-    return (await qb.billPaymentsBetween(from, to)).map((p) => ({
+    return (await (await connectedQb()).billPaymentsBetween(from, to)).map((p) => ({
       id: p.Id,
       txnDate: p.TxnDate,
       billIds: [...new Set((p.Line ?? []).flatMap((l) => l.LinkedTxn ?? []).filter((t) => t.TxnType === "Bill").map((t) => t.TxnId))],
     }));
   },
   async purchasesByIds(ids) {
-    const qb = await getQuickBooks();
-    return qb ? (await qb.purchasesByIds(ids)).map(qbTxn) : [];
+    return (await (await connectedQb()).purchasesByIds(ids)).map(qbTxn);
   },
   async billsByIds(ids) {
-    const qb = await getQuickBooks();
-    if (!qb) return [];
-    return (await qb.billsByIds(ids)).map((b) => ({
+    return (await (await connectedQb()).billsByIds(ids)).map((b) => ({
       id: b.Id,
       txnDate: b.TxnDate,
       balance: b.Balance ?? null,
@@ -152,8 +151,7 @@ const qbReader: QbReader = {
     }));
   },
   async billPaymentsByIds(ids) {
-    const qb = await getQuickBooks();
-    return qb ? (await qb.billPaymentsByIds(ids)).map((p) => ({ id: p.Id, txnDate: p.TxnDate })) : [];
+    return (await (await connectedQb()).billPaymentsByIds(ids)).map((p) => ({ id: p.Id, txnDate: p.TxnDate }));
   },
 };
 

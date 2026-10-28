@@ -147,11 +147,12 @@ async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): 
   const from = shiftDate(date, -MATCH_WINDOW_DAYS);
   const to = shiftDate(date, MATCH_WINDOW_DAYS);
   const { reader, refs } = getExpenseRuntime().quickbooks;
+  // Read before the refs check, so QuickBooks being off answers 503, never an empty list.
+  const txns = await (entity === "Bill" ? reader.billsBetween(from, to) : reader.purchasesBetween(from, to));
   const personId = expense.reimburseePersonId;
   const expectedRef =
     entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
   if (expectedRef === null) return { entity, txns: [] };
-  const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
   const skip = new Set((await qbMatchInputs(entity)).skipIds);
   const totalCents = postedTotalCents(expense);
   const matches = (t: QbTxn) =>

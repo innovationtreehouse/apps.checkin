@@ -12,6 +12,9 @@ const asksSchema = z.array(
   }),
 );
 
+// No ids, no read: a receipt with no QuickBooks entry is not yet paid, connected or not.
+const byIds = async <T>(ids: string[], read: (ids: string[]) => Promise<T[]>): Promise<T[]> => (ids.length ? read(ids) : []);
+
 const latest = (dates: string[]): string | null => (dates.length ? dates.reduce((a, b) => (b > a ? b : a)) : null);
 
 export const reimbursementStatus: ReimbursementStatus = {
@@ -34,17 +37,17 @@ export const reimbursementStatus: ReimbursementStatus = {
     });
 
     // Any Bill is paid once BillPayments clear it, on the latest payment's date.
-    const bills = await reader.billsByIds([...new Set([...byEntity("Bill"), ...booked.map((e) => e.qbTxnId as string)])]);
+    const bills = await byIds([...new Set([...byEntity("Bill"), ...booked.map((e) => e.qbTxnId as string)])], reader.billsByIds);
     const settled = bills.filter((b) => b.balance === 0 && b.paymentIds.length > 0);
     const paymentDates = new Map(
-      (await reader.billPaymentsByIds([...new Set(settled.flatMap((b) => b.paymentIds))])).map((p) => [p.id, p.txnDate]),
+      (await byIds([...new Set(settled.flatMap((b) => b.paymentIds))], reader.billPaymentsByIds)).map((p) => [p.id, p.txnDate]),
     );
     const billPaidOn = new Map(
       settled.map((b) => [b.id, latest(b.paymentIds.flatMap((id) => paymentDates.get(id) ?? []))]),
     );
 
     // A Purchase is paid at creation, on its own date.
-    const purchasePaidOn = new Map((await reader.purchasesByIds(byEntity("Purchase"))).map((t) => [t.id, t.txnDate]));
+    const purchasePaidOn = new Map((await byIds(byEntity("Purchase"), reader.purchasesByIds)).map((t) => [t.id, t.txnDate]));
     const handPaidOn = (a: (typeof asks)[number]) =>
       (a.qbEntity === "Bill" ? billPaidOn : a.qbEntity === "Purchase" ? purchasePaidOn : undefined)?.get(a.qbTxnId as string) ?? null;
     for (const a of handBooked) paid.set(a.receiptId, { paidOn: handPaidOn(a) });
