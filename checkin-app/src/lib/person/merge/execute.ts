@@ -134,6 +134,7 @@ function emptyTallies() {
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
         bucketTreasurers: { migrated: 0, deduped: 0 },
+        mailAliases: { migrated: [] as number[], deduped: [] as number[] },
     };
 }
 type Tallies = ReturnType<typeof emptyTallies>;
@@ -162,6 +163,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         await moveAttestations(tx, keep, merge, moved);
         await moveCorporations(tx, keep, merge, moved);
         await moveBucketTreasurers(tx, keepId, mergeId, moved);
+        await moveMailAliases(tx, keepId, mergeId, moved);
 
         // 6. The household lead guard ran pre-tx. householdId stays pointing at
         // the old household: every participant must belong to one, and merged-away
@@ -512,6 +514,26 @@ async function moveBucketTreasurers(tx: TxClient, keepId: number, mergeId: numbe
         } else {
             await tx.budgetOwnerTreasurer.update({ where, data: { personId: keepId } });
             moved.bucketTreasurers.migrated++;
+        }
+    }
+}
+
+/**
+ * Receipt mail aliases follow the survivor, as its email does. An alias equal to
+ * the survivor's final sign-in address is deleted: that address already
+ * identifies it. Read after applyKeeperChoices, which may have swapped the email.
+ */
+async function moveMailAliases(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
+    const keeper = await tx.person.findUniqueOrThrow({ where: { id: keepId }, select: { email: true } });
+    const signIn = keeper.email?.trim().toLowerCase();
+    const aliases = await tx.personMailAlias.findMany({ where: { personId: { in: [keepId, mergeId] } }, select: { id: true, personId: true, address: true } });
+    for (const alias of aliases) {
+        if (alias.address === signIn) {
+            await tx.personMailAlias.delete({ where: { id: alias.id } });
+            moved.mailAliases.deduped.push(alias.id);
+        } else if (alias.personId === mergeId) {
+            await tx.personMailAlias.update({ where: { id: alias.id }, data: { personId: keepId } });
+            moved.mailAliases.migrated.push(alias.id);
         }
     }
 }
