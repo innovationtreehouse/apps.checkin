@@ -55,8 +55,7 @@ describe("in-kind queue: finance's QuickBooks actions", () => {
   it("books, skips with a reason, and matches by id", async () => {
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "QuickBooks" }));
-    // The note shows in the row and again in the open panel.
-    expect(screen.getAllByText(/Dated in closed books/)).toHaveLength(2);
+    expect(screen.getByText(/Dated in closed books/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Book" }));
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/in-kind/manual/4/qb-resolve", expect.objectContaining({ method: "POST" })));

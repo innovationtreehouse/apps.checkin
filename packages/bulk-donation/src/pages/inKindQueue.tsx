@@ -183,15 +183,12 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
     <Paper withBorder p="md" radius="md">
       <Stack>
         {item.qbNote && (
-          <>
-            <Alert color="yellow">{item.qbNote}</Alert>
-            <Group align="end">
-              <TextInput label="How it was answered" placeholder="Voided the entry in QuickBooks, …" value={clearReason} onChange={(e) => setClearReason(e.currentTarget.value)} w={320} />
-              <Button variant="light" color="gray" onClick={() => send({ action: "clear", reason: clearReason }, "Note cleared")} disabled={!clearReason.trim()} loading={busy}>
-                Clear note
-              </Button>
-            </Group>
-          </>
+          <Group align="end">
+            <TextInput label="How it was answered" placeholder="Voided the entry in QuickBooks, …" value={clearReason} onChange={(e) => setClearReason(e.currentTarget.value)} w={320} />
+            <Button variant="light" color="gray" onClick={() => send({ action: "clear", reason: clearReason }, "Note cleared")} disabled={!clearReason.trim()} loading={busy}>
+              Clear note
+            </Button>
+          </Group>
         )}
         {isHeld(item) && (
           <>
