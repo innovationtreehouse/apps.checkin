@@ -215,7 +215,7 @@ is the one place every library's views can land in a single write.
 | `id` | row id | internal |
 | `viewedAt` | when the response was built | internal |
 | `actorId` | the viewer's person id | internal |
-| `role` | the role the view was chosen under (`isFinance`, `isBoardMember`, …) | internal |
+| `role` | the role the view was chosen under (`isFinance`, `isBoardMember`, …); null only on rows copied from the donor-read audit, which did not record it | internal |
 | `endpoint` | the registry key, e.g. `GET /api/receipts/[id]` | internal |
 | `params` | the path parameters, e.g. `{"id":"r_123"}` | internal |
 | `recordIds` | the ids of the rows returned, as text | internal |
@@ -348,8 +348,9 @@ alongside. Each PR below is based on `main`, never stacked on the one before
 4. **Viewer and donor-read retirement (app code).** The route and the System
    status tab; removal of the per-route donor-read writes in the bulk-donation
    library and the receipt glue, now that every route they covered is flagged;
-   the `revenue.md` donor line folded into the new one. Old donor-read rows stay
-   in the bulk-donation database (FV-6).
+   the `revenue.md` donor line folded into the new one; a one-time script that
+   copies the existing donor-read rows into the new log (FV-9). The originals
+   stay in the bulk-donation database.
 
 If the owner prefers the donor-read retirement apart from the viewer, step 4
 splits into two app-code PRs with no ordering between them.
@@ -379,14 +380,6 @@ All resolved by the owner. IDs are kept so the body's references stay valid.
   `expenses.md`.**
 - **FV-8. Resolved: no per-record viewer list.** The Board filters the tab by
   record id.
-
-## Open questions
-
-- **FV-9. Do the existing donor-read rows move into the new log?** They stay in
-  the bulk-donation database when the writers are removed (FV-6), where the
-  Board's new tab does not read them and no screen shows them today. A trail
-  nobody can read is not a trail. *Recommendation:* copy them once into the
-  new log in PR 4 (each has a reader, a route, a record id and a time, which
-  map onto the new columns), and keep the originals. The copy is a one-time
-  cutover, so its steps go in a `-migration` file beside this one if the owner
-  agrees.
+- **FV-9. Resolved: the existing donor-read rows are copied once into the new
+  log** in PR 4, and the originals are kept. The cutover steps are in
+  `B11_FINANCE_VIEW_AUDIT-migration.md`.
