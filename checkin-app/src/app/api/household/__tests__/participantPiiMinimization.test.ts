@@ -129,7 +129,7 @@ describe("Participant PII minimization (M1, M2)", () => {
     });
 
     // Household.intakeNotes is the family's free-text note TO the board (tier
-    // 'pii', read by the BG-review queue). Household peers — including youth
+    // 'pii', read by the Board only). Household peers — including youth
     // with their own logins — must not receive a note a parent wrote about
     // them. Only the lead, who authored it and edits it on /my-household, does.
     describe("GET /api/household intakeNotes is lead-only", () => {
