@@ -11,6 +11,7 @@ import type {
   ReceiptReimbursees,
   ReceiptPrincipal,
   ReceiptSink,
+  PurchaseOutcomes,
   ReimbursementStatus,
   SubmitterConfirmations,
 } from "./contract";
@@ -38,6 +39,11 @@ export const inertDonorSink: DonorSink = {
 /** Never claims a payment: every receipt reads "not yet paid" until X12 is bound. */
 export const inertReimbursementStatus: ReimbursementStatus = {
   forReceipts: async (receipts) => new Map(receipts.map((r) => [r.receiptId, { paidOn: null }])),
+};
+
+/** Knows nothing downstream: every finalized receipt reads as not yet received. */
+export const inertPurchaseOutcomes: PurchaseOutcomes = {
+  forReceipts: async () => new Map(),
 };
 
 /** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
@@ -99,6 +105,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     donorSink: r.donorSink ?? inertDonorSink,
     reimbursementStatus: r.reimbursementStatus ?? inertReimbursementStatus,
     submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
+    purchaseOutcomes: r.purchaseOutcomes ?? inertPurchaseOutcomes,
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,

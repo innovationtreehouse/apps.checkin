@@ -5,10 +5,12 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import {
   OcrDataSchema,
+  purchaseOutcomesSchema,
   reimbursementStatusSchema,
   type OcrData,
   type OcrResult,
   type PaidStatus,
+  type PurchaseOutcome,
   type ReceiptPrincipal,
   type ReimbursementAsk,
   type ReimburseeOption,
@@ -65,6 +67,25 @@ async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidSta
     console.warn("[receipt] reimbursement status unavailable", err);
     return null;
   }
+}
+
+/** Downstream outcome of each finalized receipt; null when it cannot be read, never an error on the page. */
+async function purchaseOutcomes(rows: { id: string; state: string }[]): Promise<Map<string, PurchaseOutcome> | null> {
+  const ids = rows.filter((r) => r.state === "receipt_finalized").map((r) => r.id);
+  if (!ids.length) return new Map();
+  try {
+    return purchaseOutcomesSchema.parse(await ports().purchaseOutcomes.forReceipts(ids));
+  } catch (err) {
+    console.warn("[receipt] purchase outcome unavailable", err);
+    return null;
+  }
+}
+
+/** A finalized receipt's outcome as a view field: `{ unavailable: true }` when the read failed. */
+function outcomeOf(r: { id: string; state: string }, outcomes: Map<string, PurchaseOutcome> | null): PurchaseOutcome | { unavailable: true } | null {
+  if (r.state !== "receipt_finalized") return null;
+  if (!outcomes) return { unavailable: true };
+  return outcomes.get(r.id) ?? { receiving: null, money: null, gift: null };
 }
 
 const toCents = (dollars: number | string | undefined): number =>
@@ -1092,7 +1113,8 @@ export const receiptService = {
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const receipt = access === "finance" ? row : toSubmitterView(row);
-    return { ...receipt, lineItems, financialReviewReasons: reasons };
+    const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
+    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome };
   },
 
   /**
@@ -1116,7 +1138,7 @@ export const receiptService = {
     const actor = await requireActor();
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
-    const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
+    const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid?.get(r.id)?.paidOn ?? null) : null;
@@ -1125,9 +1147,39 @@ export const receiptService = {
         r.state === "rejected" ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
       const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
-      return { ...toSubmitterView(r), reimbursement, complete };
+      return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
+  },
+
+  /**
+   * Reimbursements naming the caller that someone else uploaded, once finance has settled the
+   * receipt: finalized with its purchase outcome, or rejected with finance's reason. No uploader,
+   * donor or file field.
+   */
+  async listReimbursedToMe() {
+    const actor = await requireActor();
+    const rows = await receiptRepo.list({
+      orgId: (await getOrg()).id,
+      needsReimbursement: true,
+      reimburseePersonId: actor.id,
+      uploadedByUserId: { not: actor.id },
+      details: { state: { in: ["receipt_finalized", "rejected"] } },
+    });
+    const owed = rows.map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
+    const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
+    return rows.map((r) => ({
+      id: r.id,
+      reimburseePersonId: actor.id,
+      state: r.state,
+      retailer: r.retailer,
+      receiptDate: r.receiptDate,
+      currency: r.currency,
+      receiptTotalCents: r.receiptTotalCents,
+      rejectionReason: r.state === "rejected" ? r.validationNotes : null,
+      reimbursement: paid ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
+      purchaseOutcome: outcomeOf(r, outcomes),
+    }));
   },
 
   async listForOrg() {

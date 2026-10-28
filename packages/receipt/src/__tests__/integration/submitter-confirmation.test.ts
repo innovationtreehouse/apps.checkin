@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import type { AwaitedConfirmation, ReceiptReimbursees, SubmitterConfirmations } from "../../contract";
+import type { AwaitedConfirmation, PurchaseOutcome, PurchaseOutcomes, ReceiptReimbursees, SubmitterConfirmations } from "../../contract";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -309,5 +309,75 @@ describeDb("confirming again once the expense exists", () => {
     awaiting = [];
     actAs(BOB);
     await expect(receiptService.confirmAsReimbursee(id)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describeDb("what became of the purchase", () => {
+  const rejectedLine: PurchaseOutcome = { receiving: "received", money: { status: "line_rejected", notes: ["Not a program cost"] }, gift: null };
+  let asked: string[][];
+  const outcomes = (answer: (ids: string[]) => Map<string, PurchaseOutcome>): PurchaseOutcomes => ({
+    forReceipts: async (ids) => (asked.push(ids), answer(ids)),
+  });
+  const bindOutcomes = (purchaseOutcomes: PurchaseOutcomes) =>
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, submitterConfirmations: confirmations, reimbursees, purchaseOutcomes });
+
+  beforeEach(() => {
+    asked = [];
+  });
+
+  /** A reimbursement Alice uploads for Bob, which Bob confirms into receipt_finalized. */
+  async function finalizedFor(personId: number) {
+    const id = await uploadFor(personId);
+    actAs(BOB);
+    await receiptService.confirmAsReimbursee(id);
+    expect(await stateOf(id)).toBe("receipt_finalized");
+    actAs(ALICE);
+    return id;
+  }
+
+  it("the uploader sees a finalized receipt's outcome in My receipts and on the receipt, asked only about finalized ones", async () => {
+    bindOutcomes(outcomes((ids) => new Map(ids.map((id) => [id, rejectedLine]))));
+    const finalized = await finalizedFor(BOB.id);
+    const open = await uploadFor(BOB.id);
+    const mine = await receiptService.listMine();
+    expect(mine.find((r) => r.id === finalized)?.purchaseOutcome).toEqual(rejectedLine);
+    expect(mine.find((r) => r.id === open)?.purchaseOutcome).toBeNull();
+    expect(asked.at(-1)).toEqual([finalized]);
+    expect((await receiptService.get(finalized, "submitter")).purchaseOutcome).toEqual(rejectedLine);
+  });
+
+  it("a finalized receipt nothing downstream has taken reads as not yet reached, and a failing read as unavailable", async () => {
+    bindOutcomes(outcomes(() => new Map()));
+    const id = await finalizedFor(BOB.id);
+    expect((await receiptService.get(id, "submitter")).purchaseOutcome).toEqual({ receiving: null, money: null, gift: null });
+    bindOutcomes({
+      forReceipts: async () => {
+        throw new Error("expense database unreachable");
+      },
+    });
+    expect((await receiptService.listMine()).find((r) => r.id === id)?.purchaseOutcome).toEqual({ unavailable: true });
+  });
+
+  it("the person reimbursed sees the same outcome for a receipt someone else uploaded; the uploader's own are not listed", async () => {
+    bindOutcomes(outcomes((ids) => new Map(ids.map((id) => [id, rejectedLine]))));
+    const id = await finalizedFor(BOB.id);
+    await uploadFor(BOB.id);
+    actAs(BOB);
+    const rows = await receiptService.listReimbursedToMe();
+    expect(rows).toEqual([expect.objectContaining({ id, reimburseePersonId: BOB.id, state: "receipt_finalized", rejectionReason: null, purchaseOutcome: rejectedLine })]);
+    expect(rows[0]).not.toHaveProperty("uploadedByUserId");
+    actAs(ALICE);
+    expect(await receiptService.listReimbursedToMe()).toEqual([]);
+  });
+
+  it("the person reimbursed sees finance's reason on a rejected receipt", async () => {
+    bindOutcomes(outcomes(() => new Map()));
+    const id = await uploadFor(BOB.id);
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(id, "Duplicate of a card charge");
+    actAs(BOB);
+    expect(await receiptService.listReimbursedToMe()).toEqual([
+      expect.objectContaining({ id, state: "rejected", rejectionReason: "Duplicate of a card charge", purchaseOutcome: null }),
+    ]);
   });
 });

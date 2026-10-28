@@ -88,3 +88,18 @@ export async function recordInKindWithoutReceipt(input: ManualInKindInput): Prom
 export async function loadInKindInventory(id: number): Promise<void> {
   await manualInKindService.loadInventory(await getOrgId(), id);
 }
+
+export type GiftOutcome = "awaiting_decision" | "accepted" | "refused" | "returned";
+
+const GIFT_OUTCOME: Readonly<Record<string, GiftOutcome>> = { ACCEPTED: "accepted", REFUSED: "refused", RETURNED: "returned" };
+
+/** Receipt callee: finance's decision on each named receipt's in-kind gift; a receipt with no gift is left out. */
+export async function giftOutcomes(receiptIds: unknown): Promise<Map<string, GiftOutcome>> {
+  const ids = z.array(receiptIdSchema).parse(receiptIds);
+  if (ids.length === 0) return new Map();
+  const gifts = await db.inKindDonation.findMany({
+    where: { orgId: await getOrgId(), receiptId: { in: ids } },
+    select: { receiptId: true, decisionOutcome: true },
+  });
+  return new Map(gifts.map((g) => [g.receiptId, g.decisionOutcome ? (GIFT_OUTCOME[g.decisionOutcome] ?? "awaiting_decision") : "awaiting_decision"]));
+}

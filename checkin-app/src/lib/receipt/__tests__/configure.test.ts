@@ -1,6 +1,9 @@
 import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
 import prisma from '@/lib/prisma';
 import { notifyFinanceAlert } from '@/lib/emailRecipients';
+import { expenseOutcomes } from '@checkin/expense';
+import { receivingOutcomes } from '@checkin/workflow-mapping';
+import { giftOutcomes } from '@checkin/bulk-donation';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
@@ -10,9 +13,9 @@ jest.mock('@checkin/receipt', () => ({
     createGmailReader: jest.fn(() => ({ listRecent: jest.fn() })),
     fixtureOcr: {},
 }));
-jest.mock('@checkin/expense', () => ({ reimbursementStatus: {} }));
-jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn() }));
-jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ reimbursementStatus: {}, expenseOutcomes: { forReceipts: jest.fn() } }));
+jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receivingOutcomes: jest.fn() }));
+jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 
@@ -211,5 +214,21 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
+    });
+});
+
+describe('receipt runtime: purchase outcome binding', () => {
+    it('joins receiving, the expense and the gift for each receipt asked about', async () => {
+        jest.mocked(receivingOutcomes).mockResolvedValue(new Map([['r-1', 'received'], ['r-2', 'waiting']]));
+        jest.mocked(expenseOutcomes.forReceipts).mockResolvedValue(new Map([['r-1', { status: 'line_rejected', notes: ['Not a program cost'] }]]));
+        jest.mocked(giftOutcomes).mockResolvedValue(new Map());
+        const answer = await boundConfig().purchaseOutcomes?.forReceipts(['r-1', 'r-2', 'r-3']);
+        expect(answer).toEqual(
+            new Map([
+                ['r-1', { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
+                ['r-2', { receiving: 'waiting', money: null, gift: null }],
+                ['r-3', { receiving: null, money: null, gift: null }],
+            ]),
+        );
     });
 });

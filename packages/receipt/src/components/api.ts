@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { notifications } from "@mantine/notifications";
+import type { PurchaseOutcomeView } from "../lib/purchaseOutcome";
 
 /**
  * Client fetch helpers. Every receipt read and write goes through the host's routes under
@@ -117,6 +118,8 @@ export interface ReceiptListRow {
   duplicateFlagClearedAt?: string | null;
   /** The receipt this one was flagged against; finance views only. */
   duplicateSuspectReceiptId?: string | null;
+  /** On a finalized receipt in the uploader's views: where its purchase stands downstream. */
+  purchaseOutcome?: PurchaseOutcomeView;
 }
 
 /** A reimbursement waiting for the caller's confirmation, as the person reimbursed or a Board member on their behalf. */
@@ -137,3 +140,4 @@ export interface ReceiptConfirmation {
 }
 
 export { isDiscardedDuplicate, receiptStateLabel, STATE_LABELS } from "../lib/stateLabels";
+export { latestOutcome, outcomeSteps, type OutcomeStep, type PurchaseOutcomeView } from "../lib/purchaseOutcome";
