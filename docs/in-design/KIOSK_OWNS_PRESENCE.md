@@ -42,6 +42,16 @@ The Board ruled on 2026-10-27 (B7 and B14 together):
    shows as in, even with no keyholder present.
 4. Simplify the kiosk as much as possible.
 
+**How this design reads ruling 2.** "Only two things" is about the website's
+check-in features: of everything the website does with attendance, exactly two
+survive. The 11 PM auto-close, and the reconciliation screen, which is every
+correction of a closed visit: the Board's visit edits and inserts, its
+correction of a close's time, the flagged-scan review, members' and household
+leads' own corrections (decision Q1), and program leaders' roster marks
+(decision Q3). Nothing else in the website's check-in features stays. Person
+merge is not a check-in feature: it is the people-records tool, and it moves
+a merged person's visits along with everything else they own.
+
 Once this is done:
 
 - **Only the kiosk starts or ends a visit while it is happening.** The only
@@ -49,11 +59,8 @@ Once this is done:
 - **Only the kiosk closes the building**, and the 11 PM auto-close is the
   backstop when nobody did.
 - **The website writes no presence.** Of the Board's two keeps, the 11 PM
-  auto-close is the only writer of open visits besides the kiosk; the
-  reconciliation screen covers every correction of a closed record (visit
-  edits and inserts, the Board moving a close's time, roster attendance).
-  Person merge and program attendance stay because they are not signing in
-  or out.
+  auto-close is the only writer of open visits besides the kiosk, and the
+  reconciliation screen writes closed visits only.
 - **The website reads.** It shows the roster the kiosk built, says "can't
   confirm" when it has not heard from the kiosk, and offers one place to fix
   past records after the fact.
@@ -458,11 +465,12 @@ without closing", which the visit record shows anyway. Keep it if the Board
 wants that row; it is not one of the owner's questions because either answer
 is cheap.
 
-**What stays on the website** besides the reads: the 11 PM auto-close and the
-reconciliation screen as above, which includes the close-time correction
-(`correctCloseTime`, the Board moving a close's time moves everyone it closed
-out). Person merge and the event roster's program attendance also stay; they
-are not signing in or out (see Objective).
+**What stays on the website** besides the reads: exactly the Board's two
+things. The 11 PM auto-close, and the reconciliation screen as above, which
+includes the close-time correction (`correctCloseTime`, the Board moving a
+close's time moves everyone it closed out), members' own corrections and
+program leaders' roster marks (see "How this design reads ruling 2"). Person
+merge is outside the check-in features and is untouched.
 
 **Size:** about 300 lines of guard, 250 of route branches, 150 of old-protocol
 handling, 100 of close-hold, and the UI around them; roughly 1,000 production
