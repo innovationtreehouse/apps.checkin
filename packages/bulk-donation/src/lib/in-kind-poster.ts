@@ -15,15 +15,13 @@ import {
   type QuickBooksClient,
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
-import { getInKindCapital, getInKindQbPosting, otherLaneClaimedDepositIds } from "../runtime";
+import { getInKindCapital, getInKindQbPosting } from "../runtime";
 import type { InKindQbPosting } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
 import { QB_MATCH_STATE } from "./qb-match";
-import {
-  MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_RUN, MATCH_WINDOW_DAYS, STALE_CLAIM_MS, SWEEP_DAYS, donationClaimedDepositIds, qbGate, readCloseDate, type CloseRead,
-} from "./qb-poster";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_RUN, MATCH_WINDOW_DAYS, STALE_CLAIM_MS, SWEEP_DAYS, qbGate, readCloseDate, type CloseRead } from "./qb-gate";
 
 /** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. */
 export const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"] as const satisfies readonly BooksMapRole[];
@@ -34,10 +32,10 @@ const SYSTEM = { actorUserId: null, actorUsername: "system:qb-drain", correlatio
 
 type Accounts = Partial<Record<BooksMapRole, string>>;
 
-/** Fails closed: every in-kind role set, and the clearing account no other lane's account, in the books map or the environment. */
-export function inKindAccountsReady(accounts: Accounts, laneBankAccountIds: readonly string[]): boolean {
+/** Fails closed: every in-kind role set, and the clearing account no other lane's account in the books map. */
+export function inKindAccountsReady(accounts: Accounts): boolean {
   const clearing = accounts.INKIND_CLEARING;
-  return IN_KIND_ROLES.every((r) => !!accounts[r]) && LANE_ACCOUNT_ROLES.every((r) => accounts[r] !== clearing) && !laneBankAccountIds.includes(clearing ?? "");
+  return IN_KIND_ROLES.every((r) => !!accounts[r]) && LANE_ACCOUNT_ROLES.every((r) => accounts[r] !== clearing);
 }
 
 export function inKindKey(orgId: string, source: string, giftId: number): string {
@@ -160,10 +158,12 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-/** Deposits held by another gift or lane: in-kind's own, the donation lane's, and income's. */
-export async function claimedDepositIds(orgId: string): Promise<Set<string>> {
-  const [own, donation, other] = await Promise.all([heldIds(orgId, "Deposit"), donationClaimedDepositIds(orgId), otherLaneClaimedDepositIds(orgId)]);
-  return new Set([...own, ...donation, ...other]);
+/**
+ * Deposits held by another gift. No other lane can hold one in the clearing account: income
+ * holds only deposits in its bank roles, which inKindAccountsReady keeps apart from clearing.
+ */
+export function claimedDepositIds(orgId: string): Promise<Set<string>> {
+  return heldIds(orgId, "Deposit");
 }
 
 /**
@@ -447,7 +447,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
   const [accounts, classes] = await Promise.all([posting.booksMap.accounts(), posting.booksMap.classes()]);
-  if (!inKindAccountsReady(accounts, posting.laneBankAccountIds)) return "unconfigured";
+  if (!inKindAccountsReady(accounts)) return "unconfigured";
   const onAt = await switchInKindPostingOn(orgId, now);
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this in-kind run creates nothing: ${close.error}`);

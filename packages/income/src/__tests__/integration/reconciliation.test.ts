@@ -2,7 +2,7 @@ import { it, expect, beforeEach, afterEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome } from "../../runtime";
-import { runReconcile, lockReconciliation, collectPayouts, incomeKey, incomeClaimedDepositIds } from "../../lib/reconcile";
+import { runReconcile, lockReconciliation, collectPayouts, incomeKey } from "../../lib/reconcile";
 import { reconciliationService } from "../../services/reconciliationService";
 import { seedIncomeDev } from "../../seed";
 import type { MirrorBalanceTxn, MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../../contract";
@@ -15,6 +15,7 @@ let deposits: QbDeposit[];
 
 const NOW = new Date("2026-06-30T12:00:00Z");
 const BANK = "35";
+const BANK_MAP = { accounts: async () => ({ SHOPIFY_BANK: BANK }), classes: async () => new Map<number, string>() };
 
 const dep = (id: string, txnDate: string, totalCents: number): QbDeposit => ({
   id, txnDate, totalCents, depositToAccount: BANK,
@@ -42,13 +43,13 @@ const mirror: PayoutMirror = {
 function bind() {
   configureIncome({
     mirror,
-    bankAccountId: BANK,
+    booksMap: BANK_MAP,
     deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
   });
 }
 
 const rowFor = (payoutGid: string, orgId = ORG_A) =>
-  db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId, payoutGid } } });
+  db.payoutReconciliation.findFirstOrThrow({ where: { orgId, payoutGid } });
 
 beforeEach(async () => {
   await clearAll();
@@ -298,7 +299,7 @@ describeDb("runReconcile — drift", () => {
     await matched();
     configureIncome({
       mirror,
-      bankAccountId: BANK,
+      booksMap: BANK_MAP,
       deposits: { depositsBetween: async () => deposits },
       reconcileFrom: new Date("2026-06-15T00:00:00Z"),
     });
@@ -563,46 +564,6 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
   });
 });
 
-describeDb("claims across lanes", () => {
-  function bindOtherLane(held: string[]) {
-    configureIncome({
-      mirror,
-      bankAccountId: BANK,
-      deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
-      otherLaneClaims: { claimedDepositIds: async (orgId) => (orgId === ORG_A ? held : []) },
-    });
-  }
-
-  it("a deposit another lane holds is never auto-matched", async () => {
-    bindOtherLane(["D1"]);
-    payout("P1", "2026-06-01", 97);
-    deposits = [dep("D1", "2026-06-02", 97)];
-    await runReconcile(ORG_A, NOW);
-    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null });
-  });
-
-  it("a deposit another lane holds is not offered or accepted as a manual candidate", async () => {
-    bindOtherLane(["D1"]);
-    payout("P1", "2026-06-01", 97);
-    await runReconcile(ORG_A, NOW);
-    const row = await rowFor("P1");
-    deposits = [dep("D1", "2026-06-02", 97)];
-    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
-    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
-      status: 422,
-    });
-  });
-
-  it("lists the deposits income holds for the other lane, and refuses another org", async () => {
-    payout("P1", "2026-06-01", 97);
-    deposits = [dep("D1", "2026-06-02", 97)];
-    await runReconcile(ORG_A, NOW);
-    configureIncome({ org: async () => ({ id: ORG_A, name: "A" }) });
-    expect(await incomeClaimedDepositIds(ORG_A)).toEqual(["D1"]);
-    await expect(incomeClaimedDepositIds(ORG_B)).rejects.toThrow("is not this org");
-  });
-});
-
 describeDb("matchToDeposit — claims and exclusions are read under the lock", () => {
   it("refuses a deposit excluded after QuickBooks was read but before the match commits", async () => {
     payout("P1", "2026-06-01", 97);
@@ -610,7 +571,7 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
     const row = await rowFor("P1");
     configureIncome({
       mirror,
-      bankAccountId: BANK,
+      booksMap: BANK_MAP,
       deposits: {
         depositsBetween: async () => {
           // A concurrent exclusion lands while the QuickBooks read is in flight.

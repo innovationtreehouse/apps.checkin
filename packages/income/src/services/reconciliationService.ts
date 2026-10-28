@@ -11,7 +11,6 @@ import {
   isClaimed,
   lockReconciliation,
   matchWindow,
-  otherLaneClaims,
   postingOnAt,
   runReconcile,
   stampOf,
@@ -21,7 +20,7 @@ import {
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
 import { closedThroughOf, isPostable, ownEntry, postPayout, type OwnEntry } from "../lib/outbox";
-import { BANK_ROLE, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKeys } from "../lib/sources";
+import { BANK_ROLE, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "../lib/sources";
 import { ServiceError } from "@checkin/component-kit";
 
 export interface Actor {
@@ -135,17 +134,16 @@ async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
   return turn.row;
 }
 
-/** Drop deposits a payout or another lane already holds, or finance excluded. */
+/** Drop deposits a payout already holds, or finance excluded. */
 async function unclaimed(client: TxClient, orgId: string, deposits: QbDeposit[]): Promise<QbDeposit[]> {
-  const [foreign, claimed, excluded] = await Promise.all([
-    otherLaneClaims(orgId),
+  const [claimed, excluded] = await Promise.all([
     client.payoutReconciliation.findMany({
       where: { orgId, depositId: { not: null } },
       select: { depositId: true },
     }),
     client.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
-  const taken = new Set([...foreign, ...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
+  const taken = new Set([...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
   return deposits.filter((d) => !taken.has(d.id));
 }
 
@@ -166,7 +164,7 @@ async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: stri
   if (!d) return false;
   return rows.some((row, i) =>
     d.txnDate >= windows[i].from && d.txnDate <= windows[i].to &&
-    ((d.appKey !== undefined && rowKeys(row).includes(d.appKey)) || (d.depositToAccount === banks[isBenevity(row) ? DEPOSIT_SOURCE.BENEVITY : DEPOSIT_SOURCE.SHOPIFY] && d.totalCents === row.payoutNetCents)));
+    ((d.appKey === rowKey(row)) || (d.depositToAccount === banks[isBenevity(row) ? DEPOSIT_SOURCE.BENEVITY : DEPOSIT_SOURCE.SHOPIFY] && d.totalCents === row.payoutNetCents)));
 }
 
 export const reconciliationService = {
@@ -241,7 +239,7 @@ export const reconciliationService = {
             status: RECON_STATUS.RESOLVED,
             kind: null,
             resolution: RECON_RESOLUTION.MANUAL,
-            origin: deposit.appKey !== undefined && rowKeys(current).includes(deposit.appKey) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
+            origin: deposit.appKey === rowKey(current) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
             qbNote: null,
             postClaimedAt: null,

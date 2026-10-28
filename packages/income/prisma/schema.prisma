@@ -76,7 +76,7 @@ model PayoutReconciliation {
   /// @sensitivity:internal
   expected            Json?     @map("expected")
 
-  @@unique([orgId, payoutGid])
+  @@unique([orgId, source, payoutGid])
   @@unique([orgId, depositId])
   @@index([orgId, status])
   @@map("payout_reconciliations")

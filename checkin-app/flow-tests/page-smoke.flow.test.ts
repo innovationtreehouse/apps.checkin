@@ -168,10 +168,8 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
   "/donations/holds": () => [paged("/api/donations/disbursement-holds")],
   "/donations/in-kind": () => ["/api/donations/in-kind/queue", "/api/budget-owners"],
   "/donations/events": () => [paged("/api/donations/disbursement-events")],
-  "/donations/qb-queue": () => [paged("/api/donations/disbursement-events?qbState=AMBIGUOUS,UNBOOKED,BEFORE_LINE,POST_FAILED,NEEDS_FINANCE,DRIFT&noted=1")],
   "/donations/comment-rules": () => [paged("/api/donations/comment-rules"), "/api/budget-owners"],
   "/donations/account-map": () => [paged("/api/donations/account-map")],
-  "/donations/qb-exclusions": () => [paged("/api/donations/qb-exclusions")],
 };
 
 const navPages = (sections: NavSection[], { user, counts }: Viewer): string[] => viewerPages(sections, user, counts);

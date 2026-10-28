@@ -11,7 +11,6 @@ export * from "./lib/reconcile";
 export * from "./lib/outbox";
 export * from "./lib/sources";
 export * from "./lib/intake";
-export * from "./lib/adopt";
 export * from "./services/reconciliationService";
 export * from "./services/settingsService";
 export * from "./services/itemCategoryService";

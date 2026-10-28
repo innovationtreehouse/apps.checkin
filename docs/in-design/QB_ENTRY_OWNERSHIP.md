@@ -254,21 +254,32 @@ PR 2. With all four, every run passed.
    action on its resolve route. Income's lookup and sweep recognise donation's
    key on Benevity rows. Bulk-donation package, its
    `configure.ts`, and the move script.
-3. **Donation route decommission.** Delete `qb-candidates`, `qb-resolve` and
-   `qb-exclusions` under `api/donations/` with their registry entries and screen,
-   under the decommission exception (whole entries for routes that cease to
-   exist).
-4. **Contract,** a release after 2: the drops in Migration step 4, the
-   cross-lane list, income's environment fallback for map roles, the account
-   names Benevity lines carry as the fallback for their unset map roles, and
-   moving income's row index to organisation, source and key.
+3. **Cleanup (done).** Prod holds no QuickBooks lane data (owner, 2026-10-26),
+   so migration steps 3 and 4 ship together, with no release wait. Deleted:
+   - the `qb-candidates`, `qb-resolve` and `qb-exclusions` route files under
+     `api/donations/`, and the QB Queue and QB Exclusions screens;
+   - donation's QuickBooks posting code and columns, and the one-off move with
+     its marker;
+   - every environment fallback for map roles, and the account names Benevity
+     lines carried;
+   - the cross-lane list, and the recognition of donation's key.
 
-**Security boundary and registry.** PR 3 removes whole registry entries with
-their routes, under the decommission exception. Income's reconciliation routes
+   It also moves income's row index to organisation, source and key. It touches
+   no boundary file: the four registry entries are left with no route, which is
+   the inert register-first state.
+4. **Registry removal.** Remove those four donation registry entries and the
+   donation candidate view's classification. Boundary only. The decommission
+   certifier reads `registry.ts` alone, not `registry/donation.ts`, so this
+   ships on its own, with tests.
+5. **Exclusion table drop,** after 4: the `qb_match_exclusion` table and its
+   model. The registry entries that returned it go in 4.
+
+**Security boundary and registry.** PR 4 removes whole registry entries whose
+routes PR 3 deleted; PR 5 drops the model they returned. Income's reconciliation routes
 return whole rows, so the new columns reach finance and the board as internal
 fields under their existing entries. The resolve roles already match (OWN-3).
 PR 0's finance screen adds routes: their registry entries land
-first, each in its own PR based on `main`. PRs 1, 2 and 4 add no route and
+first, each in its own PR based on `main`. PRs 1, 2, 3 and 5 add no route and
 change no grant. In-kind's posting lane is #2182's own work.
 
 ## Open questions

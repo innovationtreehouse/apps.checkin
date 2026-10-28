@@ -34,7 +34,7 @@ const hrefs = (s: typeof DONATIONS, u: NavUser, c: TodoCounts | null = released)
 
 const DONATION_SCREENS = [
   "/donations/uploads", "/donations/unassigned", "/donations/transactions", "/donations/holds", "/donations/in-kind",
-  "/donations/events", "/donations/qb-queue", "/donations/comment-rules", "/donations/account-map", "/donations/qb-exclusions",
+  "/donations/events", "/donations/comment-rules", "/donations/account-map",
 ];
 
 describe("Settings > Finance", () => {

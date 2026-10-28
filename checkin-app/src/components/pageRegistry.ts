@@ -210,10 +210,8 @@ export const PAGES: PageEntry[] = [
   { href: '/donations/holds', label: 'Disbursement Holds', section: 'Donations', keywords: 'account map no match resubmit', visible: DONATIONS },
   { href: '/donations/in-kind', label: 'In-kind Queue', section: 'Donations', keywords: 'in-kind receipt donor needed withdrawn anomaly', visible: DONATIONS },
   { href: '/donations/events', label: 'Booking Batches', section: 'Donations', keywords: 'disbursement quickbooks deposit', visible: DONATIONS },
-  { href: '/donations/qb-queue', label: 'QuickBooks Queue', section: 'Donations', keywords: 'quickbooks deposit match ambiguous retry held disbursement', visible: DONATIONS },
   { href: '/donations/comment-rules', label: 'Comment Rules', section: 'Donations', keywords: 'donor comment owner rule', visible: DONATIONS },
   { href: '/donations/account-map', label: 'Account Map', section: 'Donations', keywords: 'ledger gl account donation match fees', visible: DONATIONS },
-  { href: '/donations/qb-exclusions', label: 'QuickBooks Exclusions', section: 'Donations', keywords: 'quickbooks match exclude', visible: DONATIONS },
   // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
   { href: '/donations/in-kind-gifts', label: 'In-kind Gifts', section: 'Donations', keywords: 'donation donor gift no receipt', visible: linkGate(DONATIONS_SECTION, '/donations/in-kind-gifts') },
 
