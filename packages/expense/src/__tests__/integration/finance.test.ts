@@ -383,15 +383,15 @@ describeDb("flags", () => {
     const [flag] = await listOpenFlags(FINANCE);
     expect(await listOpenFlags(BOARD)).toEqual([]);
 
-    await expect(checkOffFlag(BOARD, flag.id)).rejects.toMatchObject({ status: 403 });
-    await checkOffFlag(FINANCE, flag.id, "voided Bill 41 on 10/20");
+    await expect(checkOffFlag(BOARD, flag.id, "seen", flag)).rejects.toMatchObject({ status: 403 });
+    await checkOffFlag(FINANCE, flag.id, "voided Bill 41 on 10/20", flag);
 
     expect(await listOpenFlags(FINANCE)).toEqual([]);
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off", userId: 3 } })).toBe(1);
 
     const old = await db.expenseFlag.create({ data: { orgId: ORG, expenseId: id, kind: "THRESHOLD_CROSSED", audience: "BOARD" } });
     expect(await listOpenFlags(BOARD)).toEqual([]);
-    await expect(checkOffFlag(BOARD, old.id, "seen")).rejects.toMatchObject({ status: 409 });
+    await expect(checkOffFlag(BOARD, old.id, "seen", old)).rejects.toMatchObject({ status: 409 });
   });
 });
 
@@ -486,6 +486,13 @@ describeDb("QuickBooks match", () => {
     const id = await qbExpense({ purchases: ["42"] });
     await matchExpenseToQb(FINANCE, id, "42");
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("checks off the expense's open held-post review once it is linked", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId: id, kind: "QB_POST_HELD", audience: "FINANCE", detail: "closed but not posted" } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_POST_HELD" } })).checkedOffAt).not.toBeNull();
   });
 
   it("stores the baseline from the candidate it matched", async () => {

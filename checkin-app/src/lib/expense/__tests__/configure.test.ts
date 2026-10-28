@@ -250,7 +250,7 @@ describe("expense posting binding", () => {
   ])("binds the guarded client and the books map's account; a %s account pays by %s", async (accountType, paymentType) => {
     const client = clientWith("sandbox", accountType);
     getQuickBooks.mockResolvedValue(client);
-    await expect((await ports()).posting()).resolves.toEqual({ client, paymentAccountId: "41", paymentType, prod: false });
+    await expect((await ports()).posting()).resolves.toEqual({ client, paymentAccountId: "41", paymentType, prod: false, sweepIncomplete: expect.any(Function) });
   });
 
   it("takes prod from the client's own environment, not a separate flag", async () => {
@@ -291,6 +291,14 @@ describe("expense posting binding", () => {
     booksMapAccounts.mockResolvedValue({});
     await expect(expensePostingMissing()).resolves.toEqual(["no account picked for: Organisation card"]);
     expect(notifyFinanceAlert).not.toHaveBeenCalled();
+  });
+
+  it("emails finance when the daily sweep reads a full page", async () => {
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
+    const bound = await (await ports()).posting();
+    await bound!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
+    expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
+    expect(notifyFinanceAlert.mock.calls[0][1]).toContain("since 2026-10-01");
   });
 
   it("matches Purchases against the same books-map account", async () => {

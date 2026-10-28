@@ -270,9 +270,12 @@ export const flags: ExpenseRouteHandler = async () => ({ ExpenseFlag: await list
 
 export const checkOff: ExpenseRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { notes } = await parseBody(req, z.object({ notes: z.string().nullish() }));
+  const { notes, shown } = await parseBody(
+    req,
+    z.object({ notes: z.string().nullish(), shown: z.object({ detail: z.string().nullable(), observed: z.string().nullable() }) }),
+  );
   const principal = await getPrincipal();
-  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null));
+  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null, shown));
   return { ExpenseFlag: await db.expenseFlag.findFirst({ where: { id } }) };
 };
 

@@ -6,7 +6,8 @@
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
  * The posting writer resolves per run: the guarded client and the books map's EXPENSE_PAYMENT
  * account, which finance also reads matches against. With either missing, or an account that is
- * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". Whatever the library sends out goes through checkin's outbound gateway, which
+ * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". A daily sweep that
+ * could not read every entry emails finance. Whatever the library sends out goes through checkin's outbound gateway, which
  * strips it to the surface's declared tiers.
  */
 import { configureExpense, reimburseeVendorId } from "@checkin/expense";
@@ -210,6 +211,17 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
   );
 }
 
+/** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
+async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
+  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { config } = await import("@/lib/config");
+  await notifyFinanceAlert(
+    "Expenses: the daily check for stray QuickBooks entries could not see them all",
+    `<p>QuickBooks returned more purchases or bills created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. <a href="${config.baseUrl()}/expense/expenses">Open expenses</a></p>`,
+    "Expense sweep alert failed:",
+  );
+}
+
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
 
 /** Production is the client's own API environment, which the guard admits only on CHECKIN_ENV=prod. */
@@ -224,7 +236,7 @@ async function resolvePosting(): Promise<PostingResolution> {
     const is = accountType ? `a ${accountType} account` : "not in QuickBooks";
     return { missing: `a Bank or Credit Card account for ${BOOKS_MAP_ROLE_LABELS.EXPENSE_PAYMENT} (the one picked is ${is})`, refused: { accountId, accountType } };
   }
-  return { posting: { client, paymentAccountId: accountId, paymentType, prod: client.env === "production" } };
+  return { posting: { client, paymentAccountId: accountId, paymentType, prod: client.env === "production", sweepIncomplete: alertSweepIncomplete } };
 }
 
 async function posting(): Promise<ExpensePosting | null> {

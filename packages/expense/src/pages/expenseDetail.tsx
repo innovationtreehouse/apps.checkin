@@ -308,7 +308,7 @@ function ReviewsPanel({ e, reviews, onDecided }: { e: Expense; reviews: { flag: 
                 size="xs"
                 w="fit-content"
                 disabled={!note.trim()}
-                onClick={async () => { if (await send(`/flags/${flag.id}/check-off`, "POST", { notes: note }, "Review closed")) onDecided(); }}
+                onClick={async () => { if (await send(`/flags/${flag.id}/check-off`, "POST", { notes: note, shown: { detail: flag.detail, observed: flag.observed ?? null } }, "Review closed")) onDecided(); }}
               >{REVIEW_LABEL[kind].act}</Button>
             </Stack>
           );

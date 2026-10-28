@@ -18,7 +18,7 @@ import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
-import { raiseFlag } from "../services/flagService";
+import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
 
 /**
@@ -200,7 +200,7 @@ function withClaim<T>(orgId: string, expenseId: string, claim: Claim, fn: (tx: D
     if (current.qbMatchState !== POSTING || current.qbClaimedAt?.getTime() !== claim.at.getTime()) {
       logWarn("qb_post_claim_lost", { expenseId, orgId });
       if (created && current.qbTxnId !== created.id) {
-        await raiseFlag(expenseId, "QB_DUPLICATE_TO_VOID", `QuickBooks ${created.entity} ${created.id} was created by a post that lost its claim; it ${NEEDS_VOIDING} or linking`, tx);
+        await raiseStray(tx, expenseId, `${created.entity}:${created.id}`, `QuickBooks ${created.entity} ${created.id} was created by a post that lost its claim; it ${NEEDS_VOIDING} or linking`);
       }
       return "waiting" as const;
     }
@@ -238,6 +238,7 @@ type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string
 
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
   await tx.expense.update({ where: { id: before.id }, data: { ...data, qbClaimedAt: null } });
+  if (data.qbTxnId) await checkOffHeldOnPost(tx, before.id);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
   await writeAudit(tx, SYSTEM_ACTOR, {
     expenseId: before.id,
@@ -423,7 +424,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
     if (!(await claimQbTxn(tx, orgId, entity, id))) {
       const note = `QuickBooks ${entity} ${id} is already claimed by another expense or line`;
       // An entry the app posted for this expense is now a duplicate in QuickBooks.
-      await raiseFlag(expenseId, "QB_DUPLICATE_TO_VOID", `${note}; the entry posted for this expense ${NEEDS_VOIDING}`, tx);
+      await raiseStray(tx, expenseId, `${entity}:${id}`, `${note}; the entry posted for this expense ${NEEDS_VOIDING}`);
       return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, note);
     }
     for (const [lineId, accountId] of lineAccounts) {
@@ -521,11 +522,11 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 /**
  * The daily orphan sweep. Reads every Purchase and Bill created since the oldest create attempt in
  * the last SWEEP_DAYS, one page each, and finds the expense each app key belongs to. An app entry
- * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a full page is logged
- * (the alarm hook), and a key with no attempted expense is logged. QuickBooks is only read. An
+ * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a full page alerts finance
+ * once per run, and a key with no attempted expense is logged. QuickBooks is only read. An
  * expense mid-post is skipped; the next sweep sees it.
  */
-export async function sweepExpenseQbStrays(orgId: string, client: QuickBooksClient, now = new Date()): Promise<SweepCounts> {
+export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePosting, now = new Date()): Promise<SweepCounts> {
   const oldest = await db.expense.findFirst({
     where: { orgId, qbCreateAttemptedAt: { gte: new Date(now.getTime() - SWEEP_DAYS * 86_400_000) } },
     orderBy: { qbCreateAttemptedAt: "asc" },
@@ -535,10 +536,17 @@ export async function sweepExpenseQbStrays(orgId: string, client: QuickBooksClie
   const since = oldest.qbCreateAttemptedAt;
   const reads: { entity: QbMatchEntity; entries: QboPurchase[]; full: boolean }[] = [];
   try {
-    for (const entity of ["Purchase", "Bill"] as const) reads.push({ entity, ...(await client.createdSince(entity, since)) });
+    for (const entity of ["Purchase", "Bill"] as const) reads.push({ entity, ...(await posting.client.createdSince(entity, since)) });
   } catch (err) {
     logError("qb_sweep_read_failed", { orgId }, err);
     return { failed: true };
+  }
+  if (reads.some((r) => r.full)) {
+    try {
+      await posting.sweepIncomplete({ orgId, since });
+    } catch (err) {
+      logError("qb_sweep_alert_failed", { orgId }, err);
+    }
   }
   const attempted = await db.expense.findMany({ where: { orgId, qbCreateAttemptedAt: { not: null } }, select: { id: true } });
   const byKey = new Map(attempted.map((e) => [qbKey("expense", e.id), e.id]));
@@ -560,10 +568,7 @@ export async function sweepExpenseQbStrays(orgId: string, client: QuickBooksClie
           const current = await lockedExpense(tx, orgId, expenseId);
           if (current.qbMatchState === POSTING) return false;
           if (current.qbTxnEntity === entity && current.qbTxnId === entry.Id) return false;
-          // Finance answers a stray once; a checked-off flag for the same entry stays answered.
-          if (await tx.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DUPLICATE_TO_VOID", detail }, select: { id: true } })) return false;
-          await raiseFlag(expenseId, "QB_DUPLICATE_TO_VOID", detail, tx);
-          return true;
+          return raiseStray(tx, expenseId, `${entity}:${entry.Id}`, detail);
         });
         if (raised) flagged++;
       }
@@ -630,6 +635,6 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     }
   }
   // After the posts, so an expense this run linked to its own entry is not reported as a stray.
-  counts.sweep = await sweepExpenseQbStrays(orgId, posting.client, now);
+  counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);
   return counts;
 }
