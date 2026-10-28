@@ -142,6 +142,9 @@ model ReceiptDetail {
   /// The Board member's reason for confirming on behalf of a reimbursee with no account; free text.
   /// @sensitivity:personal
   reviewedOnBehalfReason     String?   @map("reviewed_on_behalf_reason")
+  /// When the uploader acknowledged finance's rejection; until then the receipt counts in their pill.
+  /// @sensitivity:internal
+  rejectionAcknowledgedAt    DateTime? @map("rejection_acknowledged_at")
 
   // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
   /// @sensitivity:internal

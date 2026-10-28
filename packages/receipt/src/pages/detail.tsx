@@ -281,7 +281,14 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         </Group>
       </Group>
       {r.state === "rejected" ? (
-        <Alert color="red" title="Rejected by finance">{r.validationNotes ?? "No reason was recorded."}</Alert>
+        <Alert color="red" title="Rejected by finance">
+          <Text size="sm">{r.validationNotes ?? "No reason was recorded."}</Text>
+          {own && r.rejectionUnacknowledged && (
+            <Button size="xs" mt="sm" color="red" variant="light" onClick={() => void act("/acknowledge-rejection", "POST", {}, "Acknowledged", "Couldn't acknowledge this rejection")}>
+              Got it
+            </Button>
+          )}
+        </Alert>
       ) : (
         r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
       )}

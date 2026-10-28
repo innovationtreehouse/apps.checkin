@@ -52,11 +52,16 @@ const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
-export type SubmitterReceipt = Omit<ReceiptRow, "donorFirstName" | "donorLastName" | "donorCompanyName">;
+
+export type SubmitterReceipt = Omit<ReceiptRow, "donorFirstName" | "donorLastName" | "donorCompanyName"> & { rejectionUnacknowledged: boolean };
+
+/** A rejected receipt its uploader has not yet acknowledged; it counts in their pill until they do. */
+const rejectionUnacknowledged = (row: Pick<ReceiptRow, "state" | "rejectionAcknowledgedAt">): boolean =>
+  row.state === "rejected" && row.rejectionAcknowledgedAt === null;
 
 function toSubmitterView(row: ReceiptRow): SubmitterReceipt {
   const { donorFirstName: _f, donorLastName: _l, donorCompanyName: _c, ...rest } = row;
-  return rest;
+  return { ...rest, rejectionUnacknowledged: rejectionUnacknowledged(row) };
 }
 
 /** X12 answer; null when QuickBooks is off or the read fails, never an error on the page. */
@@ -1131,8 +1136,8 @@ export const receiptService = {
 
   /**
    * "My receipts": the caller's own receipts, each owed one with its QuickBooks paid status, or
-   * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected, or
-   * finalized and either not owed or shown paid.
+   * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected and
+   * acknowledged, or finalized and either not owed or shown paid.
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
@@ -1144,7 +1149,7 @@ export const receiptService = {
       const paidOn = r.needsReimbursement ? (paid?.get(r.id)?.paidOn ?? null) : null;
       const complete =
         r.state === "discarded" ||
-        r.state === "rejected" ||
+        (r.state === "rejected" && !rejectionUnacknowledged(r)) ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
       const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
       return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
@@ -1261,15 +1266,33 @@ export const receiptService = {
 
   /**
    * How many of this person's receipts wait on them, for the host's nav pill: those in a state that
-   * waits on the uploader, less a reimbursement for someone else, which its reimbursee confirms.
+   * waits on the uploader, less a reimbursement for someone else, which its reimbursee confirms,
+   * plus each rejected one they have not yet acknowledged.
    */
   async countAwaitingSubmitter(personId: number): Promise<number> {
     return receiptRepo.count({
       orgId: (await getOrg()).id,
       uploadedByUserId: personId,
-      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-      NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+      OR: [
+        {
+          details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+          NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+        },
+        { details: { state: "rejected", rejectionAcknowledgedAt: null } },
+      ],
     });
+  },
+
+  /** The uploader acknowledges finance's rejection of their receipt, which leaves their pill. A repeat does nothing. */
+  async acknowledgeRejection(id: string) {
+    const actor = await requireActor();
+    const row = await load(id, "submitter", actor);
+    if (row.state !== "rejected") throw new ServiceError(400, "Only a rejected receipt is acknowledged");
+    if (row.rejectionAcknowledgedAt === null) {
+      const acknowledged = await db.receiptDetail.updateMany({ where: { id, rejectionAcknowledgedAt: null }, data: { rejectionAcknowledgedAt: new Date() } });
+      if (acknowledged.count > 0) await audit(db, id, actor, { action: "rejection_acknowledged" });
+    }
+    return toSubmitterView(await load(id, "submitter", actor));
   },
 
   /**

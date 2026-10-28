@@ -118,6 +118,8 @@ export interface ReceiptListRow {
   duplicateFlagClearedAt?: string | null;
   /** The receipt this one was flagged against; finance views only. */
   duplicateSuspectReceiptId?: string | null;
+  /** In the uploader's views: a rejected receipt they have not yet acknowledged. */
+  rejectionUnacknowledged?: boolean;
   /** On a finalized receipt in the uploader's views: where its purchase stands downstream. */
   purchaseOutcome?: PurchaseOutcomeView;
 }

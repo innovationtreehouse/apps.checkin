@@ -52,7 +52,7 @@ export default function ReceiptTable({
                 {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
                   <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
                 )}
-                {flagMine && SUBMITTER_ACTION_STATES.includes(r.state) && !(r.state === "submitter_review" && confirmedByReimbursee(r)) && (
+                {flagMine && waitsOnUploader(r) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}
                 {flagMine && <MineDetail row={r} />}
@@ -80,6 +80,12 @@ export default function ReceiptTable({
       </Table>
     </Table.ScrollContainer>
   );
+}
+
+/** A row its uploader must act on: fix, confirm or re-read it, or acknowledge finance's rejection. */
+function waitsOnUploader(r: ReceiptListRow): boolean {
+  if (r.rejectionUnacknowledged) return true;
+  return SUBMITTER_ACTION_STATES.includes(r.state) && !(r.state === "submitter_review" && confirmedByReimbursee(r));
 }
 
 const TONE_COLOR = { done: "green", refused: "red", waiting: "dimmed" } as const;

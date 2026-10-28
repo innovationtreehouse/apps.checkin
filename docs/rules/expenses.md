@@ -56,6 +56,16 @@ Income and donation rules are in `revenue.md`.
   or rejected receipt's file to the mailbox ignore list.
   [Decision — owner]
 
+- A receipt finance rejected counts in its uploader's My receipts pill, with
+  finance's reason, until the uploader acknowledges it on the receipt.
+  [Decision — owner]
+
+- Once a receipt is finalized, its uploader sees in the receipt pages what
+  became of the purchase: receiving, the expense's approval and booking, with
+  the reason on a rejected line, and an in-kind gift's decision. The person
+  reimbursed sees the same for a receipt someone else uploaded for them.
+  [Decision — owner]
+
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
   conflicted when they, or someone in their household, uploaded the receipt or
