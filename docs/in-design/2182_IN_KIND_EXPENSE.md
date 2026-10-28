@@ -334,9 +334,9 @@ candidates, or two gifts that could each own the pair. A journal entry finance
 booked by hand is never matched on its amount; finance matches it to the gift by
 its id, and only when it is for the gift's value with every line on an in-kind
 account. The pair's accounts are the clearing account, which no other lane books
-to, so income and expense can never see these entries; a Deposit the donation
-or income lane holds is never matched, and the clearing account can be neither
-lane's bank account, in the books map or the environment.
+to, so income and expense can never see these entries. The clearing account
+can be no other lane's account in the books map, so no other lane holds a
+Deposit in it.
 
 **Finance's actions.** A gift the drain hands over (unbooked, needs finance, or
 failed) offers three actions, each audited with who did it. *Book* creates the

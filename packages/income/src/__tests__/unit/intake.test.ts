@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { qbKey } from "@checkin/quickbooks";
 import { parseExpected, statusOf, type ExpectedDeposit } from "../../lib/intake";
-import { closedNote, CLOSED_NOTE, rowKeys } from "../../lib/sources";
+import { closedNote, CLOSED_NOTE, rowKey } from "../../lib/sources";
 import { matchWindow } from "../../lib/reconcile";
 import type { PayoutReconciliation } from "../../generated/prisma/client";
 
@@ -49,8 +49,8 @@ describe("statusOf", () => {
 
 describe("per-source rules", () => {
   it("keys a Benevity row apart from a Shopify payout of the same key", () => {
-    expect(rowKeys({ orgId: "org", source: "shopify", payoutGid: "P1" })).toEqual([qbKey("income", "P1")]);
-    expect(rowKeys({ orgId: "org", source: "benevity", payoutGid: "P1" })).toEqual([qbKey("income", "benevity:P1"), qbKey("donation", "org:P1")]);
+    expect(rowKey({ source: "shopify", payoutGid: "P1" })).toBe(qbKey("income", "P1"));
+    expect(rowKey({ source: "benevity", payoutGid: "P1" })).toBe(qbKey("income", "benevity:P1"));
   });
 
   it("gives a Benevity deposit donation's ±7-day window", () => {

@@ -7,9 +7,7 @@
  * inventory load (X11) to local-inventory's apply. The in-kind receipt callees
  * X9 and X13 are bound by their callers (workflow-mapping and receipt). Income
  * books and matches every Benevity deposit: where QBO_REALM_ID is set, donation
- * hands each completed disbursement to income's intake ports. Its own QuickBooks
- * posting stays unbound. A stop in the one-off move of donation's holdings alerts
- * finance. The in-kind drain books through checkin's one guarded client and reads
+ * hands each completed disbursement to income's intake ports. The in-kind drain books through checkin's one guarded client and reads
  * its accounts and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
@@ -26,7 +24,6 @@ import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-import { escapeHtml } from "@/lib/email-templates/base";
 
 async function listOwners(): Promise<OwnerInfo[]> {
   const { default: prisma } = await import("@/lib/prisma");
@@ -50,22 +47,7 @@ const incomeDeposits: IncomeDeposits = {
   async depositStatus(orgId, disbursementIds) {
     return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
   },
-  async adoptHoldings(orgId, move) {
-    return (await import("@checkin/income")).adoptBenevityDeposits(orgId, move);
-  },
-  async moveStopped({ cause }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(
-      "Donations: Benevity deposits could not be handed to income",
-      `<p>Donation's QuickBooks holdings could not move to income, so no Benevity deposit is being matched or booked. The app retries daily. What stopped it: ${escapeHtml(cause)}</p><p><a href="${config.baseUrl()}/income/reconciliation">Open income's reconciliation queue</a></p>`,
-      "Donation hand-over alert failed:",
-    );
-  },
 };
-
-/** The bank accounts income and donations book through outside the books map; the in-kind clearing account may be neither. */
-const laneBankAccountIds = (): string[] =>
-  [process.env.QBO_INCOME_BANK_ACCOUNT_ID, process.env.QBO_DONATION_BANK_ACCOUNT_ID].filter((id): id is string => !!id);
 
 /** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
 export async function inKindPostingMissing(): Promise<string[]> {
@@ -74,7 +56,7 @@ export async function inKindPostingMissing(): Promise<string[]> {
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
-    ...(unpicked.length === 0 && !inKindAccountsReady(accounts, laneBankAccountIds()) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
+    ...(unpicked.length === 0 && !inKindAccountsReady(accounts) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
   ];
 }
 
@@ -87,7 +69,6 @@ function inKindQbPosting(): InKindQbPosting | undefined {
       accounts: async () => (await import("@/lib/finance/booksMap")).booksMap.accounts(),
       classes: async () => (await import("@/lib/finance/booksMap")).booksMap.classes(),
     },
-    laneBankAccountIds: laneBankAccountIds(),
     async sweepIncomplete({ since }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert(
@@ -97,10 +78,6 @@ function inKindQbPosting(): InKindQbPosting | undefined {
       );
     },
   };
-}
-
-async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
-  return (await import("@checkin/income")).incomeClaimedDepositIds(orgId);
 }
 
 const inKind: InKindDirectory = {
@@ -142,7 +119,6 @@ export function configureRuntime(): void {
     inventory: createLocalInventoryApply(getOrg),
     inKindQb: inKindQbPosting(),
     deposits: donationPostingMissing().length ? undefined : incomeDeposits,
-    otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
     inKind,
     capital,
   });

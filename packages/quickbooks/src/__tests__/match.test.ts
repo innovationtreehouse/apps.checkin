@@ -69,12 +69,6 @@ describe("findMatch", () => {
     expect(run([own, hand])).toEqual({ kind: "found", id: "20", via: "key" });
   });
 
-  it("finds the app's own creation under an older key the caller names, and never by amount", () => {
-    const legacy = deposit("22", "2025-03-04", 123.45, { PrivateNote: "app:donation:org:d1" });
-    expect(run([legacy], { alsoKeys: ["donation:org:d1"] })).toEqual({ kind: "found", id: "22", via: "key" });
-    expect(run([legacy])).toEqual({ kind: "ambiguous", ids: ["22"] });
-  });
-
   it("finds a key hit dated a day or two off, as long as it is inside the window", () => {
     const own = deposit("20", "2025-03-01", 123.45, { PrivateNote: "app:gid://shopify/Payout/1" });
     expect(run([own], { date: "2025-03-03", window: { from: "2025-03-01", to: "2025-03-10" } })).toEqual({

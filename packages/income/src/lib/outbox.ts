@@ -17,7 +17,7 @@ import {
   closedNote,
   isBenevity,
   roleAccounts,
-  rowKeys,
+  rowKey,
   type RoleAccounts,
 } from "./sources";
 import {
@@ -31,9 +31,7 @@ import {
   isClaimed,
   lockReconciliation,
   nextNote,
-  matchKeys,
   matchWindow,
-  otherLaneClaims,
   postingOnAt,
   runReconcile,
   stampOf,
@@ -124,15 +122,11 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
   return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
 }
 
-/**
- * The books-map roles a row's deposit needs that neither the map, the environment, nor a line's
- * account name sets. A Benevity row with no deposit yet needs only its bank: every line donation
- * hands over carries the account map's name.
- */
+/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row with no deposit yet needs only its bank. */
 export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
   const expected = isBenevity(row) ? expectedOf(row) : null;
   const roles = isBenevity(row)
-    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).filter((l) => !l.accountName).map((l) => l.role)]
+    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).map((l) => l.role)]
     : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }
@@ -188,11 +182,11 @@ type DepositBasis = { payout: MirrorPayout; sales: PayoutSales } | { expected: E
  * map. A payout's lines split by bucket; an expected deposit's lines are the lane's own. Both sum
  * to the row's net.
  */
-async function depositWrite(client: QuickBooksClient, payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
+async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
   const lines =
     "expected" in basis
-      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description, accountName: l.accountName }))
-      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined, accountName: undefined }));
+      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
+      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined }));
   const bankRole = "expected" in basis ? basis.expected.bankRole : BANK_ROLE.shopify;
 
   const bucketed = lines.some((l) => l.budgetOwnerId !== null);
@@ -203,14 +197,6 @@ async function depositWrite(client: QuickBooksClient, payoutDate: string, basis:
     if (!id) throw new Error(`the books-map role ${role} has no QuickBooks account`);
     return id;
   };
-  // ponytail: the account-name fallback goes with the environment fallback (QB_ENTRY_OWNERSHIP PR 4).
-  const named = new Map<string, string>();
-  for (const name of new Set(lines.flatMap((l) => (l.accountName && !accounts[l.role as keyof RoleAccounts] ? [l.accountName] : [])))) {
-    const found = await client.accountNamed(name);
-    if (!found) throw new Error(`QuickBooks has no account named "${name}"`);
-    named.set(name, found.Id);
-  }
-  const lineAccount = (l: { role: string; accountName?: string }) => accounts[l.role as keyof RoleAccounts] ?? named.get(l.accountName ?? "") ?? account(l.role);
   return {
     entity: "Deposit",
     fields: {
@@ -218,7 +204,7 @@ async function depositWrite(client: QuickBooksClient, payoutDate: string, basis:
       depositToAccountId: account(bankRole),
       memo: "expected" in basis ? (basis.expected.memo ?? "Benevity disbursement") : "Shopify payout",
       lines: lines.map((l): WriteLine => {
-        const base = { amountCents: l.amountCents, accountId: lineAccount(l), ...(l.description ? { description: l.description } : {}) };
+        const base = { amountCents: l.amountCents, accountId: account(l.role), ...(l.description ? { description: l.description } : {}) };
         if (l.budgetOwnerId === null) return base;
         const bucket = buckets.get(l.budgetOwnerId);
         if (!bucket) throw new Error(`bucket ${l.budgetOwnerId} is not in the owner directory`);
@@ -263,8 +249,8 @@ export async function ownEntry(
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
-  const keys = rowKeys(row);
-  const keyed = entries.filter((e) => appKeysOf(e).some((k) => keys.includes(k)));
+  const key = rowKey(row);
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
   const shared = keyed.find((e) => appKeysOf(e).length > 1);
   if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };
@@ -348,7 +334,7 @@ export async function postPayout(
   let write: TxnWrite | null = null;
   let buildError = "";
   try {
-    write = await depositWrite(posting.client, row.payoutDate, basis, accounts);
+    write = await depositWrite(row.payoutDate, basis, accounts);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
   }
@@ -387,18 +373,17 @@ export async function postPayout(
     } else if (own.kind !== "none") {
       result = { kind: "conflict", note: own.note };
     } else {
-      const [foreign, held, excluded] = await Promise.all([
-        otherLaneClaims(orgId),
+      const [held, excluded] = await Promise.all([
         db.payoutReconciliation.findMany({ where: { orgId, depositId: { not: null } }, select: { depositId: true } }),
         db.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
       ]);
       result = await findOrCreate(posting.client, {
         write,
-        ...matchKeys(claimed),
+        key: rowKey(claimed),
         window,
         closedThrough: gate.closedThrough,
         mayCreate: gate.mayCreate,
-        claimedIds: new Set([...foreign, ...held.flatMap((h) => (h.depositId ? [h.depositId] : []))]),
+        claimedIds: new Set(held.flatMap((h) => (h.depositId ? [h.depositId] : []))),
         excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
       });
     }
@@ -665,7 +650,7 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
   if (full) await alerts.sweepIncomplete({ orgId, since: oldest.qbCreateAttemptedAt });
 
   const rows = await db.payoutReconciliation.findMany({ where: { orgId }, select: { id: true, orgId: true, source: true, payoutGid: true } });
-  const byKey = new Map(rows.flatMap((r) => rowKeys(r).map((k) => [k, r.id] as const)));
+  const byKey = new Map(rows.map((r) => [rowKey(r), r.id] as const));
   let flagged = 0;
   const note = (e: { Id: string }) => `app entry ${e.Id} is not linked; void or link it`;
   for (const e of entries) {

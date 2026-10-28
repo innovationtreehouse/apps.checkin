@@ -6,7 +6,7 @@ import type { BooksMapRole } from "./booksMap";
 import { TEST_VENDOR_PREFIX } from "./guard";
 
 /** One lane record to find in QuickBooks, or create when the closed-books gate allows it. */
-export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "claimedIds" | "excludedIds" | "alsoKeys"> {
+export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "claimedIds" | "excludedIds"> {
   /** What to create if nothing matches. Its TxnDate is the record's date and must sit inside `window`. */
   write: TxnWrite;
   /** The lane's idempotency key for this record. */
@@ -53,7 +53,7 @@ function matchRef(write: TxnWrite): string {
   }
 }
 
-type MatchThenCreate = Pick<MatchRequest, "date" | "amountCents" | "ref" | "key" | "alsoKeys" | "window" | "claimedIds" | "excludedIds"> & {
+type MatchThenCreate = Pick<MatchRequest, "date" | "amountCents" | "ref" | "key" | "window" | "claimedIds" | "excludedIds"> & {
   closedThrough: string;
   mayCreate: boolean;
 };

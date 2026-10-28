@@ -1,7 +1,4 @@
-// Match state and match events for the QuickBooks drain (design §7); the drain is lib/qb-poster.ts.
-import type { DbOrTx } from "../db";
-import { recordEvent } from "../repositories/audit";
-import type { AuditContext } from "../workflows/disbursement.actor";
+// The QuickBooks match state the in-kind drain keeps on each record.
 
 export const QB_MATCH_STATE = {
   UNMATCHED: "UNMATCHED",
@@ -29,25 +26,3 @@ export const QB_MATCH_STATE = {
 } as const;
 export type QbMatchState = (typeof QB_MATCH_STATE)[keyof typeof QB_MATCH_STATE];
 
-/** The append-only workflow event the drain writes whenever a record is matched to a QuickBooks entry. */
-export const QB_MATCHED_EVENT = "QB_MATCHED";
-
-/** Record a Benevity disbursement matched to a hand-booked QuickBooks entry, in the caller's transaction. */
-export async function recordQbMatched(
-  handle: DbOrTx,
-  orgId: string,
-  match: { disbursementId: string; disbursementDate: string | null; qbTxnId: string },
-  audit: AuditContext,
-): Promise<void> {
-  await recordEvent(handle, {
-    orgId,
-    disbursementId: match.disbursementId,
-    entityType: "disbursement",
-    entityId: match.disbursementId,
-    eventType: QB_MATCHED_EVENT,
-    actorUserId: audit.actorUserId,
-    actorUsername: audit.actorUsername,
-    correlationId: audit.correlationId,
-    payload: { qbTxnId: match.qbTxnId, disbursementDate: match.disbursementDate },
-  });
-}
