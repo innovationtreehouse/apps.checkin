@@ -90,10 +90,6 @@ GET /api/donations/disbursement-holds
 POST /api/donations/disbursement-holds/[disbursementId]/resubmit
 GET /api/donations/disbursement-events
 GET /api/donations/nav-counts
-GET /api/donations/disbursement-events/[disbursementId]/qb-candidates
-POST /api/donations/disbursement-events/[disbursementId]/qb-resolve
-GET /api/donations/qb-exclusions
-POST /api/donations/qb-exclusions
 GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual

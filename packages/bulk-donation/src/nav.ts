@@ -20,10 +20,8 @@ export const DONATION_NAV_LINKS: readonly DonationNavLink[] = [
   { name: "Holds", href: "/donations/holds", icon: "⛔", badge: "disbursementHolds" },
   { name: "In-kind Queue", href: "/donations/in-kind", icon: "📦" },
   { name: "Booking Batches", href: "/donations/events", icon: "📒" },
-  { name: "QB Queue", href: "/donations/qb-queue", icon: "🧾" },
   { name: "Comment Rules", href: "/donations/comment-rules", icon: "💬" },
   { name: "Account Map", href: "/donations/account-map", icon: "🗺️" },
-  { name: "QB Exclusions", href: "/donations/qb-exclusions", icon: "🚫" },
 ];
 
 /** The host-level section that holds the donation screens. */

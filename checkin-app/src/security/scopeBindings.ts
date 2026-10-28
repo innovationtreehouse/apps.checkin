@@ -254,6 +254,9 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // Its `personId` makes it scopable, but the only route is FINANCE with everyones
     // grants, and the reimbursee never reads their own Vendor link.
     'ExpenseReimburseeView',
+    // The finance view log (B11). Its `actorId` makes it scopable, but it is
+    // Board-only with everyones grants; nobody reads their own view rows.
+    'FinanceViewLog',
 ]);
 
 /**

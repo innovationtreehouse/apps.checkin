@@ -2,10 +2,10 @@ import { findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
-import { assertOrg, getIncomeConfig, isoDay } from "../runtime";
+import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
-import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey, rowKeys } from "./sources";
+import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "./sources";
 
 export const RECON_STATUS = {
   WAITING: "WAITING",
@@ -123,12 +123,6 @@ export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.
   return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source)) };
 }
 
-/** A row's keys as findMatch takes them: the one income creates under, and every other its own deposit may carry. */
-export function matchKeys(row: Pick<PayoutReconciliation, "orgId" | "source" | "payoutGid">): { key: string; alsoKeys: string[] } {
-  const [, ...alsoKeys] = rowKeys(row);
-  return { key: rowKey(row), alsoKeys };
-}
-
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
   return { id: d.id, date: d.txnDate, amountCents: d.totalCents, ref: d.depositToAccount ?? undefined, appKey: d.appKey };
 }
@@ -145,23 +139,6 @@ export async function lockReconciliation(tx: TxClient, orgId: string, wait: bool
   const [{ locked }] = await tx.$queryRaw<{ locked: boolean }[]>`
     SELECT pg_try_advisory_xact_lock(hashtext('income.reconcile'), hashtext(${orgId})) AS locked`;
   return locked;
-}
-
-/** Deposits another lane holds; empty while that port is unbound. */
-// ponytail: read-then-claim across two databases, so two lanes running at the same instant can
-// still race; a shared claim table in one database closes it if the lanes ever run concurrently.
-export async function otherLaneClaims(orgId: string): Promise<string[]> {
-  return (await getIncomeConfig().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
-}
-
-/** Deposits income holds, for another lane to keep out of its own matching. */
-export async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
-  await assertOrg(orgId);
-  const rows = await db.payoutReconciliation.findMany({
-    where: { orgId, depositId: { not: null } },
-    select: { depositId: true },
-  });
-  return rows.flatMap((r) => (r.depositId ? [r.depositId] : []));
 }
 
 export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
@@ -249,7 +226,6 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
   ];
   const deposits = await depositsIn(depositSource, ranges);
-  const foreign = await otherLaneClaims(orgId);
   const switchedOn = await postingOnAt(orgId);
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
@@ -260,7 +236,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
       const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
-      const claimed = new Set([...foreign, ...rows.flatMap((r) => (r.depositId ? [r.depositId] : []))]);
+      const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
       const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
       const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 
@@ -306,7 +282,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               date: fact.payoutDate,
               amountCents: fact.netCents,
               ref: bankOf(fact.depositSource),
-              ...matchKeys({ orgId, source: fact.depositSource, payoutGid: fact.payoutGid }),
+              key: rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid }),
               window: matchWindow(fact.payoutDate, fact.depositSource),
               claimedIds: claimed,
               excludedIds: excluded,

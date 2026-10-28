@@ -319,6 +319,41 @@ model ReceiptMailItem {
   @@map("receipt_mail_items")
 }
 
+// One acknowledgement owed per mailed message: to its sender, and to the person
+// its receipt is credited to when that is someone else. Sent once the message has a receipt.
+model ReceiptMailReply {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @unique @map("gmail_message_id")
+  /// @sensitivity:pii
+  senderAddress  String    @map("sender_address")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  // False for a sender that failed DMARC or an automated message: only the credited person is told.
+  /// @sensitivity:internal
+  replyToSender  Boolean   @map("reply_to_sender")
+  // Set before sending, so a send is never repeated; cleared only after a send that reported failure.
+  /// @sensitivity:internal
+  claimedAt      DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  senderSentAt   DateTime? @map("sender_sent_at")
+  /// @sensitivity:internal
+  creditedSentAt DateTime? @map("credited_sent_at")
+  // Set once sent, given up after REPLY_ATTEMPTS, or the message can no longer become a receipt.
+  /// @sensitivity:internal
+  doneAt         DateTime? @map("done_at")
+  /// @sensitivity:internal
+  attempts       Int       @default(0)
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orgId, doneAt])
+  @@map("receipt_mail_replies")
+}
+
 // Files the organization has said are never receipts (#1265 §2a). Mail intake skips a
 // candidate whose SHA-256 is listed; manual upload never consults it.
 model ReceiptIgnoredFile {

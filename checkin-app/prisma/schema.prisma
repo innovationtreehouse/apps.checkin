@@ -218,6 +218,7 @@ model Person {
   programVolunteers   ProgramVolunteer[]
   budgetOwnersOwned   BudgetOwner[]        @relation("BudgetOwnerOwner")
   budgetOwnerTreasurerships BudgetOwnerTreasurer[]
+  mailAliases         PersonMailAlias[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
   instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
@@ -242,6 +243,37 @@ model Person {
   // Person had no householdId index — the old HouseholdLead composite PK provided
   // one; this restores it, extended with isHouseholdLead so lead scans stay index-only.
   @@index([householdId, isHouseholdLead])
+}
+
+/// An extra address a person's receipt mail may come from, recorded by finance
+/// or the Board. It counts only once approved. Nothing but receipt mail intake
+/// reads it; sign-in and contact read Person.email only.
+model PersonMailAlias {
+  /// @sensitivity:internal
+  id           Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  personId     Int
+  /// Lowercased and trimmed; resolution matches it exactly.
+  /// @sensitivity:pii
+  address      String    @unique
+  /// canonicalizeEmail(address): checked across people for uniqueness, never used to resolve.
+  /// @sensitivity:pii
+  canonicalKey String
+  /// The actor who added it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  addedById    Int
+  /// @sensitivity:internal
+  createdAt    DateTime  @default(now())
+  /// @sensitivity:internal
+  approvedAt   DateTime?
+  /// The actor who approved it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  approvedById Int?
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([canonicalKey])
+  @@index([personId])
 }
 
 enum PersonRoleKind {

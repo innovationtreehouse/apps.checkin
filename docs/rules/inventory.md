@@ -89,6 +89,10 @@ How the pieces are built is described in
   fulfilled at most once, and its stock is added together with the
   fulfilment. `[Decision]`
 
+- A backorder is cancelled only with a reason. The reason is kept on the
+  cancelled line and written to the inventory-log entry; a blank reason is
+  refused. `[Decision — owner]`
+
 - Receipts, fulfilments, merges and conflict resolutions that hit one GTIN at
   the same time must never lose an add. `[Decision]`
 
@@ -120,6 +124,13 @@ How the pieces are built is described in
   sent to apply, its lines can't be edited, even when the apply fails: a
   failed part is retried with the same lines, and a mistake is corrected by
   hand outside receiving (issue #2267). `[Decision — owner]`
+
+- The person who uploaded a receipt, or anyone in their household, may map its
+  lines in Part mapping (link, propose or mark not inventory) and send it to
+  apply. There is no conflict-of-interest check on mapping: it decides what the
+  goods are, not what is paid. Finance and the expense sign-off seats decide
+  the money side, under the conflict rules in `expenses.md`.
+  `[Decision — owner]`
 
 ### Access
 

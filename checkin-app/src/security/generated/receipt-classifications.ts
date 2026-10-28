@@ -114,6 +114,20 @@ export const classifications = {
         receiptId: 'internal',
         createdAt: 'internal',
     },
+    ReceiptMailReply: {
+        id: 'internal',
+        orgId: 'internal',
+        gmailMessageId: 'internal',
+        senderAddress: 'pii',
+        receivedAt: 'internal',
+        replyToSender: 'internal',
+        claimedAt: 'internal',
+        senderSentAt: 'internal',
+        creditedSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
+        createdAt: 'internal',
+    },
     ReceiptIgnoredFile: {
         id: 'internal',
         orgId: 'internal',
@@ -154,6 +168,8 @@ export const relations = {
         otherReceipt: { model: 'Receipt', isList: false },
     },
     ReceiptMailItem: {
+    },
+    ReceiptMailReply: {
     },
     ReceiptIgnoredFile: {
     },

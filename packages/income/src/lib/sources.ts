@@ -30,24 +30,11 @@ export const BENEVITY_MATCH_WINDOW_DAYS = 7;
 
 export type RoleAccounts = Partial<Record<BooksMapRole, string>>;
 
-/**
- * QuickBooks account id per role: the books map's, else the host's environment setting for the
- * roles that had one before the map (Shopify's five, Benevity's bank). A role neither sets is absent.
- */
+/** QuickBooks account id per role, from the books map. A role the map leaves unset is absent. */
 export async function roleAccounts(): Promise<RoleAccounts> {
-  const { booksMap, bankAccountId, benevityBankAccountId, posting } = getIncomeConfig();
-  // ponytail: the environment fallback goes once finance has filled the map (QB_ENTRY_OWNERSHIP PR 4).
-  const fallback: RoleAccounts = {
-    SHOPIFY_BANK: bankAccountId,
-    SHOPIFY_SALES: posting?.accounts?.income,
-    SHOPIFY_CHARGE_REMAINDER: posting?.accounts?.charge_remainder,
-    SHOPIFY_FEES: posting?.accounts?.fees,
-    SHOPIFY_ADJUSTMENTS: posting?.accounts?.adjustments,
-    BENEVITY_BANK: benevityBankAccountId,
-  };
-  const mapped: RoleAccounts = booksMap ? await booksMap.accounts() : {};
+  const { booksMap } = getIncomeConfig();
   const out: RoleAccounts = {};
-  for (const [role, id] of Object.entries({ ...fallback, ...mapped }) as [BooksMapRole, string | undefined][]) {
+  for (const [role, id] of Object.entries(booksMap ? await booksMap.accounts() : {}) as [BooksMapRole, string | undefined][]) {
     if (id) out[role] = id;
   }
   return out;
@@ -63,14 +50,6 @@ export async function bucketClasses(): Promise<ReadonlyMap<number, string>> {
 /** The key income creates a row's deposit under. */
 export function rowKey(row: Pick<PayoutReconciliation, "source" | "payoutGid">): string {
   return isBenevity(row) ? qbKey("income", `benevity:${row.payoutGid}`) : qbKey("income", row.payoutGid);
-}
-
-/**
- * Every key a deposit the app created for this row may carry: income's own, and on a Benevity
- * row the key donation created it under before income owned Benevity deposits.
- */
-export function rowKeys(row: Pick<PayoutReconciliation, "orgId" | "source" | "payoutGid">): string[] {
-  return isBenevity(row) ? [rowKey(row), qbKey("donation", `${row.orgId}:${row.payoutGid}`)] : [rowKey(row)];
 }
 
 /** The queue note on a payout whose deposit would land in closed books. */

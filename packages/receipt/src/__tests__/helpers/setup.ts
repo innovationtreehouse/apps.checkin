@@ -65,6 +65,7 @@ export async function clearAll(): Promise<void> {
   await db.receiptOrgSettings.deleteMany();
   await db.receiptMailItem.deleteMany();
   await db.receiptIgnoredFile.deleteMany();
+  await db.receiptMailReply.deleteMany();
 }
 
 let seq = 0;

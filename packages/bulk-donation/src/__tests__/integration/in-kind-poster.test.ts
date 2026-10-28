@@ -88,8 +88,6 @@ let accounts: Partial<Record<BooksMapRole, string>>;
 let awaiting: { giftSource: string; giftId: number }[];
 let assets: number[];
 let alerts: number;
-let laneBanks: string[];
-let otherLaneDeposits: string[];
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
@@ -110,10 +108,8 @@ function configure() {
     inKindQb: {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
-      laneBankAccountIds: laneBanks,
       sweepIncomplete: async () => void alerts++,
     },
-    otherLaneClaims: { claimedDepositIds: async () => otherLaneDeposits },
   });
 }
 
@@ -173,8 +169,6 @@ beforeEach(async () => {
   awaiting = [];
   assets = [];
   alerts = 0;
-  laneBanks = [];
-  otherLaneDeposits = [];
   configure();
 });
 
@@ -183,10 +177,6 @@ describeDb("in-kind drain", () => {
     delete accounts.FIXED_ASSETS;
     await expect(runInKindQbPosting(orgId)).resolves.toBe("unconfigured");
     accounts = { ...ACCOUNTS, INKIND_CLEARING: "35" };
-    await expect(runInKindQbPosting(orgId)).resolves.toBe("unconfigured");
-    accounts = { ...ACCOUNTS };
-    laneBanks = ["290"];
-    configure();
     await expect(runInKindQbPosting(orgId)).resolves.toBe("unconfigured");
     expect(await inKindPostingOnAt(orgId)).toBeNull();
   });
@@ -276,15 +266,6 @@ describeDb("in-kind drain", () => {
       { side: "revenue", qbEntity: "Deposit", qbTxnId: "51", matchState: "MATCHED" },
     ]);
     expect(await posting(id)).toMatchObject({ matchState: "MATCHED", bookedTotalCents: 3300 });
-  });
-
-  it("never matches a Deposit another lane holds", async () => {
-    const id = await acceptedGift();
-    qbo.deposits.push({ Id: "51", TxnDate: "2026-10-21", TotalAmt: 33, DepositToAccountRef: { value: "290" } });
-    qbo.purchases.push({ Id: "52", TxnDate: "2026-10-21", TotalAmt: 33, AccountRef: { value: "290" } });
-    otherLaneDeposits = ["51"];
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 1 });
-    expect(await bookings(id)).toEqual([]);
   });
 
   it("two gifts of the same value and date are finance's to match, never first-come", async () => {
@@ -449,14 +430,11 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect((await posting(b)).matchState).toBe("UNBOOKED");
   });
 
-  it("a pair match is refused off the clearing account or on a Deposit another lane holds", async () => {
+  it("a pair match is refused off the clearing account", async () => {
     const id = await unbookedGift();
     qbo.deposits.push({ Id: "51", TxnDate: "2026-10-20", TotalAmt: 33, DepositToAccountRef: { value: "35" } });
-    qbo.deposits.push({ Id: "53", TxnDate: "2026-10-20", TotalAmt: 33, DepositToAccountRef: { value: "290" } });
     qbo.purchases.push({ Id: "52", TxnDate: "2026-10-20", TotalAmt: 33, AccountRef: { value: "290" } });
     await expect(resolve(id, { action: "match", depositId: "51", purchaseId: "52" })).rejects.toMatchObject({ status: 422 });
-    otherLaneDeposits = ["53"];
-    await expect(resolve(id, { action: "match", depositId: "53", purchaseId: "52" })).rejects.toMatchObject({ status: 409 });
     expect(await bookings(id)).toEqual([]);
   });
 

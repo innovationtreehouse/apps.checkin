@@ -15,7 +15,7 @@ import {
   lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
-import { readCloseDate } from "./qb-poster";
+import { readCloseDate } from "./qb-gate";
 
 const qbId = z.string().trim().min(1).max(64);
 
@@ -56,7 +56,7 @@ async function openRun(orgId: string, actor: Actor): Promise<Run> {
   const client = await binding?.client();
   if (!binding || !client) throw new ServiceError(503, "QuickBooks is not connected");
   const [accounts, classes] = await Promise.all([binding.booksMap.accounts(), binding.booksMap.classes()]);
-  if (!inKindAccountsReady(accounts, binding.laneBankAccountIds)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
+  if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
   const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
   return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open };

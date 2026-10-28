@@ -554,6 +554,20 @@ describe("Merge Participants API", () => {
         expect(newData.moved.bucketTreasurers).toEqual({ migrated: 1, deduped: 1 });
     });
 
+    it("moves receipt mail aliases to the keeper and deletes one equal to the keeper's sign-in address", async () => {
+        const work = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "merge-work@example.com", canonicalKey: "merge-work@example.com", addedById: actorId } });
+        const sameAsKeeper = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.findMany({ where: { id: { in: [work.id, sameAsKeeper.id] } }, select: { id: true, personId: true } }))
+            .toEqual([{ id: work.id, personId: pKeepId }]);
+        const log = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+        const newData = log?.newData as { moved: { mailAliases: { migrated: number[]; deduped: number[] } } };
+        expect(newData.moved.mailAliases).toEqual({ migrated: [work.id], deduped: [sameAsKeeper.id] });
+    });
+
     // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.
     it("auto-dedupes past RSVP collisions, refuses future RSVP collisions", async () => {
         const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });

@@ -3,7 +3,6 @@ import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
   CatalogLookup,
-  DonationQbPosting,
   IncomeDeposits,
   InKindCapital,
   InKindDirectory,
@@ -73,11 +72,6 @@ export function getInventoryApply(): InventoryApply {
   return requireRuntime().inventory ?? INERT_INVENTORY;
 }
 
-/** The QuickBooks posting binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
-export function getQbPosting(): DonationQbPosting | undefined {
-  return requireRuntime().qb;
-}
-
 /** The in-kind drain's QuickBooks binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
 export function getInKindQbPosting(): InKindQbPosting | undefined {
   return requireRuntime().inKindQb;
@@ -86,9 +80,4 @@ export function getInKindQbPosting(): InKindQbPosting | undefined {
 /** Income's deposit ports; undefined until the host binds them, and nothing is handed over. */
 export function getIncomeDeposits(): IncomeDeposits | undefined {
   return requireRuntime().deposits;
-}
-
-/** Deposits another lane holds; empty while that port is unbound. */
-export async function otherLaneClaimedDepositIds(orgId: string): Promise<string[]> {
-  return (await requireRuntime().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
 }
