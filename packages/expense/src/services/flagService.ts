@@ -94,25 +94,26 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   if (flag.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
   // A review is a finance to-do; the note says what finance did.
   if (!notes?.trim()) throw new ServiceError(400, "Say what finance did");
-  const expense = (await db.expense.findFirst({ where: { id: flag.expenseId } }))!;
-  // A control flag is checked off by someone independent of the expense, never by its submitter,
-  // its reimbursee, or anyone in their households.
-  if ((await conflictedParties(expense)).includes(actor.userId)) {
-    throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
-  }
 
   await db.$transaction(async (tx) => {
-    // Raisers write under the expense lock, so the row read here is the one the check-off answers.
+    // The reimbursee is set under the expense lock, so the parties read after it are current.
     await lockExpense(tx, flag.expenseId);
-    const current = await tx.expenseFlag.findUniqueOrThrow({ where: { id: flagId } });
-    if (current.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
-    if (current.detail !== shown.detail || current.observed !== shown.observed) {
-      throw new ServiceError(409, "This review changed since it was shown; reload it and check it again");
+    const expense = await tx.expense.findUniqueOrThrow({ where: { id: flag.expenseId } });
+    // A control flag is checked off by someone independent of the expense, never by its submitter,
+    // its reimbursee, or anyone in their households.
+    if ((await conflictedParties(expense)).includes(actor.userId)) {
+      throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
     }
-    await tx.expenseFlag.update({
-      where: { id: flagId },
+    // The match and the check-off are one statement: the drift check rewrites an open flag without the expense lock.
+    const { count } = await tx.expenseFlag.updateMany({
+      where: { id: flagId, checkedOffAt: null, detail: shown.detail, observed: shown.observed },
       data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes },
     });
+    if (count === 0) {
+      const current = await tx.expenseFlag.findUniqueOrThrow({ where: { id: flagId } });
+      if (current.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
+      throw new ServiceError(409, "This review changed since it was shown; reload it and check it again");
+    }
     await writeAudit(tx, actor, { expenseId: flag.expenseId, action: "flag_checked_off", valueAfter: flag.kind, notes });
   });
 }

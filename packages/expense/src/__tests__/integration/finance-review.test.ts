@@ -49,6 +49,17 @@ describeDb("a check-off answers the review as shown", () => {
     await checkOffFlag(FINANCE, current.id, "voided Purchase 5001 and Bill 6002", current);
     expect((await openFlag(id, "QB_DUPLICATE_TO_VOID"))!.checkedOffAt).not.toBeNull();
   });
+
+  it("refuses a drift review the drift check rewrote after it was shown", async () => {
+    bind();
+    const id = await seedExpense({ state: "qb_complete" });
+    await raiseFlag(id, "QB_DRIFT", "amount", db, JSON.stringify({ amount: 1500 }));
+    const shown = (await openFlag(id, "QB_DRIFT"))!;
+    await db.expenseFlag.update({ where: { id: shown.id }, data: { detail: "amount, date", observed: JSON.stringify({ amount: 1500, date: "2026-10-02" }) } });
+
+    await expect(checkOffFlag(FINANCE, shown.id, "corrected the amount", shown)).rejects.toMatchObject({ status: 409 });
+    expect((await openFlag(id, "QB_DRIFT"))!.checkedOffAt).toBeNull();
+  });
 });
 
 describeDb("Approve tax", () => {
