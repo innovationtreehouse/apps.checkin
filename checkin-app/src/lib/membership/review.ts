@@ -33,7 +33,9 @@ import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRA
  *                  applicant to pay.
  *   - any REJECT -> BLOCKED (membership never activates without a valid check).
  *                  If the household already paid, the board is notified so a
- *                  refund can be handled manually.
+ *                  refund can be handled manually. A blocked review moves on only
+ *                  by a board reset or by the rejector changing their answer to
+ *                  approve; either way it then needs two approvals again.
  *
  * The system never sees the check itself — only the attestations.
  */
@@ -247,6 +249,17 @@ export async function attestedUnclearedProcessIds(reviewerId: number): Promise<n
     return rows.map((r) => r.id);
 }
 
+/** IDs of blocked applications whose rejection is this reviewer's — the ones they may change to an approval. */
+export async function ownRejectedProcessIds(reviewerId: number): Promise<number[]> {
+    const reviewer = await loadReviewer(reviewerId);
+    if (!reviewer || !canReviewBackgroundChecks(reviewer)) return [];
+    const rows = await prisma.orgMembershipProcess.findMany({
+        where: { status: "BLOCKED", attestations: { some: { reviewerId, result: "REJECT" } } },
+        select: { id: true },
+    });
+    return rows.map((r) => r.id);
+}
+
 /**
  * Reviewer-scoped badge counts for the Review tab / nav:
  *   - canActOn: applications this reviewer may attest right now (green).
@@ -294,7 +307,7 @@ export async function attest(
     type AttestOutcome =
         | { status: "BLOCKED"; notifyPaidReject: boolean }
         | ClearanceOutcome
-        | { status: OrgMembershipProcessStatus; approvals: number };
+        | { status: OrgMembershipProcessStatus; approvals: number; reopened?: true };
     const result = await reviewTransaction<AttestOutcome>(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
 
@@ -303,6 +316,9 @@ export async function attest(
             include: { attestations: { include: { reviewer: { select: { householdId: true } } } } },
         });
         if (!process) throw new ReviewError("not_found", "Application not found.");
+        if (input.result === "APPROVE" && process.status === "BLOCKED" && process.attestations.some((a) => a.reviewerId === reviewerId && a.result === "REJECT")) {
+            return switchRejectionToApprove(tx, reviewerId, process, input);
+        }
         if (!awaitingBgReview.has({ status: process.status, bgConsentAt: !!process.bgConsentAt, bgClearedAt: !!process.bgClearedAt })) throw new ReviewError("wrong_phase", "This application is not awaiting background-check review.");
         const applicantHouseholdId = await applicantHousehold(tx, process);
         const applicant: GrantSubject | null = process.subjectPersonId
@@ -319,20 +335,7 @@ export async function attest(
         const isHousehold = !process.subjectPersonId;
         let subjectPersonId: number | null = null;
         if (isHousehold && input.result === "APPROVE") {
-            const requested = [...new Set(input.subjectPersonIds ?? [])];
-            if (requested.length !== 1) throw new ReviewError("invalid_subject", "Name the one adult whose background check you reviewed.");
-            // Whoever approved first fixed who this review is about; the second reviewer
-            // confirms that person's report rather than choosing again. Without this two
-            // reviewers can name different adults, leaving both at one approval and the
-            // review waiting on a third.
-            const settled = establishedSubject(process.attestations);
-            if (settled !== null && requested[0] !== settled) {
-                throw new ReviewError("invalid_subject", "This review is already about a different adult. Reject it if that subject is wrong.");
-            }
-            // Re-checked on every approval: the subject may have left the household or been merged since the first.
-            const candidates = new Set(await liveHouseholdLeadIds(tx, applicantHouseholdId));
-            if (!candidates.has(requested[0])) throw new ReviewError("invalid_subject", "That person is not a household lead on this application.");
-            subjectPersonId = requested[0];
+            subjectPersonId = await namedSubject(tx, applicantHouseholdId, input.subjectPersonIds, establishedSubject(process.attestations));
         }
 
         await tx.backgroundCheckAttestation.create({
@@ -371,9 +374,67 @@ export async function attest(
     // Side effects outside the transaction (a slow/failed send must not roll it back).
     if ("activated" in result) await notifyClearanceOutcome(result);
     if ("notifyPaidReject" in result && result.notifyPaidReject) await notifyBoardPaidReject(processId);
+    if ("reopened" in result) await notifyReviewers();
 
     if ("approvals" in result) return { status: result.status, approvals: result.approvals };
     return { status: result.status };
+}
+
+/**
+ * The one adult a household approval covers, validated against the applicant
+ * household's live leads. Whoever approved first fixed who the review is about
+ * (`settled`); a later reviewer confirms that person rather than choosing again,
+ * so two reviewers can never split across different adults.
+ */
+async function namedSubject(tx: TxClient, applicantHouseholdId: number | null, subjectPersonIds: number[] | undefined, settled: number | null): Promise<number> {
+    const requested = [...new Set(subjectPersonIds ?? [])];
+    if (requested.length !== 1) throw new ReviewError("invalid_subject", "Name the one adult whose background check you reviewed.");
+    if (settled !== null && requested[0] !== settled) {
+        throw new ReviewError("invalid_subject", "This review is already about a different adult. Reject it if that subject is wrong.");
+    }
+    // Re-checked on every approval: the subject may have left the household or been merged since the first.
+    const candidates = new Set(await liveHouseholdLeadIds(tx, applicantHouseholdId));
+    if (!candidates.has(requested[0])) throw new ReviewError("invalid_subject", "That person is not a household lead on this application.");
+    return requested[0];
+}
+
+/**
+ * The rejector of a BLOCKED review changes their answer to approve. Every
+ * attestation goes — their rejection and anyone else's earlier decision, kept only
+ * in the audit row — the review returns to the step a board reset would send it
+ * to, and this approval stands as the first of the two it now needs. Refused on a
+ * denied household, as the board reset is. Runs under attest()'s process lock.
+ */
+async function switchRejectionToApprove(
+    tx: TxClient,
+    reviewerId: number,
+    process: { id: number; kind: string; orgMembershipId: number | null; subjectPersonId: number | null; paidAt: Date | null; bgConsentAt: Date | null },
+    input: { isMarkedVolunteerFamily?: boolean; note?: string; subjectPersonIds?: number[] },
+) {
+    const processId = process.id;
+    const applicantHouseholdId = await applicantHousehold(tx, process);
+    const applicant: GrantSubject | null = process.subjectPersonId
+        ? { personId: process.subjectPersonId, householdId: applicantHouseholdId }
+        : applicantHouseholdId === null ? null : { householdId: applicantHouseholdId };
+    if (applicant) await throwIfOwnHousehold(tx, reviewerId, applicant, { attestation: "APPROVE" }, "You cannot review an applicant in your own household.");
+    if (applicantHouseholdId !== null && await lockAndFindDeniedHousehold(tx, [applicantHouseholdId]) !== null) {
+        throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reopened.");
+    }
+    const subjectPersonId = process.subjectPersonId ? null : await namedSubject(tx, applicantHouseholdId, input.subjectPersonIds, null);
+    const reviewStatus = blockedResetStatus(process);
+
+    const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
+    await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
+    const { count } = await tx.orgMembershipProcess.updateMany({
+        where: { id: processId, ...fromWhere("BLOCKED") },
+        data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
+    });
+    if (!count) throw movedOn();
+    await tx.backgroundCheckAttestation.create({
+        data: { processId, reviewerId, subjectPersonId, result: "APPROVE", isMarkedVolunteerFamily: !!input.isMarkedVolunteerFamily, note: input.note ?? null },
+    });
+    await audit(tx, personActor(reviewerId), processId, { status: "BLOCKED", attestations }, { status: reviewStatus, action: "rejector changed to approve" });
+    return { status: reviewStatus, approvals: 1, reopened: true as const };
 }
 
 /**
@@ -419,8 +480,8 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
 }
 
 /**
- * The background check is satisfied (2 approvals on some subject, or a board
- * override). Stamp the named subjects' lastBackgroundCheck + sticky volunteer
+ * The background check is satisfied (2 approvals on some subject, or a merge
+ * carrying a check forward). Stamp the named subjects' lastBackgroundCheck + sticky volunteer
  * status + bgClearedAt, then converge on the two-track gate:
  *   - already paid -> ACTIVE (payment finished first)
  *   - paid on a refunded order -> held at PENDING_BG_CLEARANCE; the outcome
@@ -430,17 +491,13 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
  * carries `denied` so the caller raises it to the board after commit.
  * Must run inside a tx holding a FOR UPDATE lock on the process row; `expected` is the
  * state the caller expects the process to still be in, re-checked here.
- *
- * `subjectOverride` is the board force-approve, which asserts its subjects rather
- * than counting attestations — a BLOCKED process carries at most one APPROVE per
- * subject, so counting there always yields nobody.
  */
 export async function clearBackgroundCheck(
     tx: TxClient,
     processId: number,
     actorId: number,
     expected: { where: Prisma.OrgMembershipProcessWhereInput },
-    opts: { subjectOverride?: number[]; provenance?: ClearanceProvenance } = {},
+    opts: { provenance?: ClearanceProvenance } = {},
 ): Promise<ClearanceOutcome> {
     const process = await tx.orgMembershipProcess.findFirst({
         where: { id: processId, ...expected.where },
@@ -489,7 +546,7 @@ export async function clearBackgroundCheck(
     // better a household that reads stale than another unchecked adult marked cleared.
     // Expiry is derived from this plus BoardSettings.bgRecheckMonths at read time (see
     // householdBgIsFresh) — not stored.
-    const cleared = opts.subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
+    const cleared = subjectsWithTwoApprovals(process.attestations);
     await throwIfOwnHousehold(tx, actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
@@ -601,91 +658,56 @@ export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: 
 }
 
 /**
- * Board action on a background-check review: `reset` returns it to neutral (zero
- * attestations, ready for re-review), `approve` force-clears a BLOCKED one.
- *
- * `reset` reaches a review that is BLOCKED **or** still in progress — an
- * accidental first approval is the same "restart this review" as a board reset,
- * so both share one definition. A review that has already CLEARED is out of
- * reach: its side effects (the guardians' lastBackgroundCheck stamp, activation,
- * the opened PERSON_BG rows, the sent mail) have already fanned out, and
- * deleting the attestations would leave a cleared row with nothing behind it.
- * `approve` stays BLOCKED-only — force-clearing a review still open to its
- * second reviewer is what the two-reviewer rule forbids.
- *
- * A household `approve` must name its subjects. A BLOCKED process carries at most
- * one APPROVE per subject — a second would already have cleared it — so counting
- * attestations here can never reach two, and an unnamed override would set
- * bgClearedAt with no adult behind it.
+ * Board reset of a background-check review: zero attestations, ready for two new
+ * approvals. It reaches a review that is BLOCKED **or** still in progress — an
+ * accidental first approval is the same "restart this review". A review that has
+ * already CLEARED is out of reach: its side effects (the guardians'
+ * lastBackgroundCheck stamp, activation, the opened PERSON_BG rows, the sent mail)
+ * have already fanned out, and deleting the attestations would leave a cleared row
+ * with nothing behind it. The board never clears a check itself.
  */
-export async function overrideBlocked(processId: number, actorId: number, action: "reset" | "approve", subjectPersonIds?: number[]) {
+export async function boardResetReview(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
-    // A fast refusal only; the authoritative BLOCKED check is the one under the lock.
-    if (action === "approve" && process.status !== "BLOCKED") throw new ReviewError("wrong_phase", "This application is not blocked.");
 
-    // Conflict of interest: no actor may override their OWN household's blocked
-    // application — else they could force-clear their family's failed background check, the
-    // very thing attest()'s same-household gate forbids. No role bypasses this.
+    // Conflict of interest: no actor may reset their OWN household's review — else
+    // they could wipe their family's failed background check, the very thing
+    // attest()'s same-household gate forbids. No role bypasses this.
     const applicantHouseholdId = await applicantHousehold(prisma, process);
-    if (applicantHouseholdId !== null && await refuseSelfGrant(prisma, actorId, { householdId: applicantHouseholdId }, { table: "Person", attempted: { override: action } })) {
-        throw new ReviewError("same_household_applicant", "You cannot override your own household's application — someone outside your household must.");
+    if (applicantHouseholdId !== null && await refuseSelfGrant(prisma, actorId, { householdId: applicantHouseholdId }, { table: "Person", attempted: { override: "reset" } })) {
+        throw new ReviewError("same_household_applicant", "You cannot reset your own household's review — someone outside your household must.");
     }
 
-    if (action === "reset") {
-        const status = await prisma.$transaction(async (tx) => {
-            // FOR UPDATE per attest()'s contract: without it a concurrent second
-            // attestation could clear the check between the phase test and the delete,
-            // leaving a cleared process with no attestations behind it.
-            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-            const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true } });
-            if (!fresh) throw new ReviewError("not_found", "Application not found.");
-            if (applicantHouseholdId !== null && await lockAndFindDeniedHousehold(tx, [applicantHouseholdId]) !== null) {
-                throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reset.");
-            }
-            const blocked = fresh.status === "BLOCKED";
-            if (!blocked && !awaitingBgReview.has({ status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
-                throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
-            }
-            // A blocked application resumes at the review status its cycle calls for; one
-            // still in review already sits there, so only its attestations go.
-            const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
-            // The deleted attestations, a rejection and its note included, live on only in the audit row.
-            const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
-            await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
-            const { count } = await tx.orgMembershipProcess.updateMany({
-                where: { id: processId, ...(blocked ? fromWhere("BLOCKED") : awaitingBgReview.where) },
-                data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
-            });
-            if (!count) throw movedOn();
-            await audit(tx, personActor(actorId), processId, { status: fresh.status, attestations }, { status: reviewStatus, action: "board reset" });
-            return reviewStatus;
-        });
-        await notifyReviewers();
-        return { status };
-    }
-
-    let subjectOverride: number[] | undefined;
-    if (!process.subjectPersonId) {
-        const requested = [...new Set(subjectPersonIds ?? [])];
-        if (requested.length !== 1) throw new ReviewError("invalid_subject", "Name the one adult whose background check this override covers.");
-        // The board is the escape hatch, so it may name any live lead — including one
-        // different from whatever a partial review settled on.
-        const candidates = new Set(await liveHouseholdLeadIds(prisma, applicantHouseholdId));
-        if (!candidates.has(requested[0])) throw new ReviewError("invalid_subject", "That person is not a household lead on this application.");
-        subjectOverride = requested;
-    }
-
-    // FOR UPDATE per clearBackgroundCheck's contract: serializes a board approve
-    // against a late payment webhook (activate also locks), a second approve, an
-    // archive or a reset, so the override converges only a row still BLOCKED, with a
-    // fresh paidAt.
-    const cleared = await reviewTransaction(async (tx) => {
+    const status = await prisma.$transaction(async (tx) => {
+        // FOR UPDATE per attest()'s contract: without it a concurrent second
+        // attestation could clear the check between the phase test and the delete,
+        // leaving a cleared process with no attestations behind it.
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        return clearBackgroundCheck(tx, processId, actorId, { where: fromWhere("BLOCKED") }, { subjectOverride });
+        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true } });
+        if (!fresh) throw new ReviewError("not_found", "Application not found.");
+        if (applicantHouseholdId !== null && await lockAndFindDeniedHousehold(tx, [applicantHouseholdId]) !== null) {
+            throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reset.");
+        }
+        const blocked = fresh.status === "BLOCKED";
+        if (!blocked && !awaitingBgReview.has({ status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
+            throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
+        }
+        // A blocked application resumes at the review status its cycle calls for; one
+        // still in review already sits there, so only its attestations go.
+        const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
+        // The deleted attestations, a rejection and its note included, live on only in the audit row.
+        const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
+        await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, ...(blocked ? fromWhere("BLOCKED") : awaitingBgReview.where) },
+            data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
+        });
+        if (!count) throw movedOn();
+        await audit(tx, personActor(actorId), processId, { status: fresh.status, attestations }, { status: reviewStatus, action: "board reset" });
+        return reviewStatus;
     });
-    await notifyClearanceOutcome(cleared);
-    return { status: cleared.status };
+    await notifyReviewers();
+    return { status };
 }
 
 type BlockedResetRow = {
@@ -695,7 +717,7 @@ type BlockedResetRow = {
 };
 
 /**
- * The review status a BLOCKED application resumes at when the board resets it.
+ * The review status a BLOCKED application resumes at when the board resets it, or its rejector changes to approve.
  * The check runs in parallel, so a household process returns to
  * PENDING_BG_CLEARANCE if it had already paid, else PENDING_PAYMENT. Renewals
  * follow the same household path, except one blocked BEFORE consent was

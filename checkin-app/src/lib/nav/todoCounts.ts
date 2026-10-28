@@ -35,8 +35,8 @@ import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts
 const MEMBER_ACTIONABLE_MEMBERSHIP: OrgMembershipProcessStatus[] = ["INTAKE", "PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT", "PENDING_RENEWAL"];
 
 // Membership statuses the board itself can act on. The board's only
-// membership-queue action is overriding/resetting a BLOCKED application
-// (governance escape hatch — see overrideBlocked in src/lib/membership/review.ts).
+// membership-queue action is resetting a BLOCKED application
+// (see boardResetReview in src/lib/membership/review.ts).
 // PENDING_BG_REVIEW / RENEWAL_PENDING_BG are background-check-reviewer (RBAC,
 // role isBackgroundCheckReviewer) work, surfaced by the reviewer notifications
 // badge (src/lib/membership/notifications.ts) — NOT the board. The board can

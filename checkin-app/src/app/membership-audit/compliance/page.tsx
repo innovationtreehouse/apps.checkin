@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, type ReactNode } from "react";
 import Link from "next/link";
 import { Alert, Anchor, Badge, Button, Card, Center, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { modals } from "@mantine/modals";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -112,7 +111,6 @@ export default function CompliancePage() {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [submittedIds, setSubmittedIds] = useState<Set<number>>(new Set());
-  const [clearedStampIds, setClearedStampIds] = useState<Set<number>>(new Set());
 
   // Record that an external background check exists for a program person and submit
   // it for two-reviewer approval. Board/lead-initiated — the subject may have no login.
@@ -162,49 +160,6 @@ export default function CompliancePage() {
       setBusyId(null);
     }
   };
-
-  // Remove one person's background-check date. Not a new capability: the same
-  // board-gated PUT the participants edit modal already uses, one person at a time,
-  // audited with the acting board member as the actor. It never touches a process or
-  // its bgClearedAt, and it can never cost a household its membership — one checked
-  // adult is all membership requires, so the worst case is a redundant re-check.
-  const removeStamp = async (personId: number) => {
-    setBusyId(personId);
-    try {
-      const res = await fetch(`/api/membership-ops/participants/${personId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lastBackgroundCheck: null }),
-      });
-      if (res.ok) {
-        setClearedStampIds((s) => new Set(s).add(personId));
-        notifications.show({ message: "Date removed — they will show up as needing a check." });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not remove the date." });
-      }
-    } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error." });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const confirmRemoveStamp = (row: BlanketStampedRow, lead: BlanketStampedRow["leads"][number]) =>
-    modals.openConfirmModal({
-      title: "Remove this background-check date?",
-      children: (
-        <Text size="sm">
-          This removes <strong>{lead.name}</strong>&apos;s background-check date, so they will be
-          asked to complete one. It does not affect{" "}
-          <strong>{row.householdName}</strong>&apos;s membership — that only ever needed one checked
-          adult. Do this when their report is not the one that was reviewed.
-        </Text>
-      ),
-      labels: { confirm: "Remove the date", cancel: "Cancel" },
-      confirmProps: { color: "orange" },
-      onConfirm: () => removeStamp(lead.personId),
-    });
 
   const load = useCallback((since: string) => fetch(
     `/api/membership-audit/compliance${since ? `?bgClearedSince=${encodeURIComponent(since)}` : ""}`,
@@ -318,16 +273,14 @@ export default function CompliancePage() {
         }
       />
 
-      {/* One-time cleanup (#1260): households cleared before a check recorded WHOSE it
-          was, where every lead got stamped. Only a person holding the reports can say
-          which one is real, so the list labels the evidence and a board member decides
-          — nothing is pre-selected and nothing is bulk. */}
+      {/* Households cleared before a check recorded WHOSE it was, where every lead got
+          stamped. Only a person holding the reports can say which one is real, so the
+          list labels the evidence; correcting a date is done by hand in the database. */}
       <Stack gap="sm">
         <Title order={4}>Background-check dates to confirm</Title>
         <Text c="dimmed" size="sm">
-          These households had one check approved, but every lead was marked checked. Confirm who
-          actually had the check and remove the others. Removing the wrong one costs a redundant
-          re-check, never a membership.
+          These households had one check approved, but every lead was marked checked. Background-check
+          dates cannot be changed in the app; a wrong one is corrected by hand in the database.
         </Text>
         <TextInput
           type="date"
@@ -363,20 +316,6 @@ export default function CompliancePage() {
                             : "No evidence either way — check the report"}
                         </Text>
                       </div>
-                      {clearedStampIds.has(lead.personId) ? (
-                        <Badge variant="light">Date cleared</Badge>
-                      ) : (
-                        <Button
-                          size="xs"
-                          variant="light"
-                          color="orange"
-                          loading={busyId === lead.personId}
-                          disabled={busyId === lead.personId}
-                          onClick={() => confirmRemoveStamp(row, lead)}
-                        >
-                          Remove this date
-                        </Button>
-                      )}
                     </Group>
                   </Paper>
                 ))}

@@ -4,25 +4,11 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
-import { apiError, apiJson } from "@/lib/api-response";
+import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
-import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
-import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
-
-/**
- * Whether a check dated `date` covers the coming membership year — the per-lead
- * form of householdBgIsFresh's rule. Unset policy means nothing is fresh.
- */
-async function bgCoversComingYear(date: Date | null): Promise<{ fresh: boolean; boundary: Date | null }> {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
-    const recheckMonths = settings?.bgRecheckMonths;
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    if (!date || !boundary || !isRecheckPolicySet(recheckMonths)) return { fresh: false, boundary };
-    return { fresh: date.getTime() >= monthsBefore(boundary, recheckMonths).getTime(), boundary };
-}
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -64,76 +50,21 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.phone = body.phone === "" || body.phone === null ? null : formatPhone(body.phone);
         }
         if (body.isDeclaredAdult !== undefined) updateData.isDeclaredAdult = Boolean(body.isDeclaredAdult);
-        let lastBackgroundCheck: Date | null | undefined;
-        if (body.lastBackgroundCheck !== undefined) {
-            // "" or null clears the date; otherwise expect a YYYY-MM-DD string
-            const raw = body.lastBackgroundCheck;
-            if (raw === "" || raw === null) {
-                lastBackgroundCheck = null;
-            } else {
-                lastBackgroundCheck = new Date(raw);
-                if (isNaN(lastBackgroundCheck.getTime())) {
-                    return apiError("Invalid background check review date", 400);
-                }
-            }
-            updateData.lastBackgroundCheck = lastBackgroundCheck;
-        }
 
         if (Object.keys(updateData).length === 0) {
             return apiError("No fields to update provided", 400);
         }
 
-        // dateOfBirth, householdId and isHouseholdLead are read for the guards below but deliberately
+        // dateOfBirth and householdId are read for the guards below but deliberately
         // kept out of the audit payload — this route neither ships nor writes them.
         const existing = await prisma.person.findUnique({
             where: { id },
-            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true, isHouseholdLead: true },
+            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!existing) {
             return apiError("Participant not found", 404);
         }
-        const { dateOfBirth: priorDob, householdId, isHouseholdLead, ...prior } = existing;
-
-        // A background-check date clears a person, so no actor may change it for
-        // themselves or their own household. Compared by value because the edit form
-        // resubmits the unchanged date with every save.
-        let bgStaleWarning: string | undefined;
-        let bgAssertedReason: string | undefined;
-        if (lastBackgroundCheck !== undefined) {
-            const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
-            if (changed && await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
-                table: "Person",
-                attempted: { lastBackgroundCheck },
-            })) {
-                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
-            }
-
-            // A later date extends the check's validity, which clears the person with no
-            // reviewer, so only the Board may assert it and must say why.
-            const extendsValidity = lastBackgroundCheck !== null
-                && (!prior.lastBackgroundCheck || lastBackgroundCheck.getTime() > prior.lastBackgroundCheck.getTime());
-            if (extendsValidity) {
-                if (!auth.user.isBoardMember) {
-                    return apiError("Only a Board member can set a later background check date", 403);
-                }
-                bgAssertedReason = typeof body.bgCheckReason === "string" ? body.bgCheckReason.trim() : "";
-                if (!bgAssertedReason) {
-                    return apiError("Setting a later background check date needs a reason stating the check happened", 400);
-                }
-            }
-
-            // A lead's check going from covering the coming year to not covering it can
-            // affect the household's membership, so the board confirms before it saves.
-            if (changed && isHouseholdLead) {
-                const before = await bgCoversComingYear(prior.lastBackgroundCheck);
-                if (before.fresh && !(await bgCoversComingYear(lastBackgroundCheck)).fresh) {
-                    bgStaleWarning = `${prior.name}'s background check covers the membership year starting ${before.boundary?.toISOString().slice(0, 10)}, and will not after this change. This could affect their household's membership.`;
-                    if (body.confirmBgStale !== true) {
-                        return apiJson({ error: bgStaleWarning, warning: bgStaleWarning, requiresConfirmation: true }, 409);
-                    }
-                }
-            }
-        }
+        const { dateOfBirth: priorDob, householdId, ...prior } = existing;
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row
@@ -187,8 +118,6 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                     oldData: prior,
                     newData: {
                         ...updateData,
-                        ...(bgStaleWarning && { bgStaleWarning }),
-                        ...(bgAssertedReason && { bgAssertedReason }),
                         ...(emailChangeReason && { emailChangeReason }),
                     },
                 },

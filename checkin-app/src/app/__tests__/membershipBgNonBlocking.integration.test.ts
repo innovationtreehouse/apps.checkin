@@ -13,7 +13,7 @@
 
 import { markContractSigned, markBgConsent } from '@/lib/membership/external';
 import { normalizeAuditData } from '@/lib/auditPayload';
-import { attest, overrideBlocked } from '@/lib/membership/review';
+import { attest, boardResetReview } from '@/lib/membership/review';
 import { certifyPaymentPlan, activate } from '@/lib/membership/payment';
 import { submitIntake } from '@/lib/membership/intake';
 import { beginRenewal } from '@/lib/membership/renewal';
@@ -363,23 +363,18 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });
 
-    it('conflict of interest: overrideBlocked by the applicant household is blocked, sysadmin flag or not', async () => {
+    it('conflict of interest: a board reset by the applicant household is refused, sysadmin flag or not', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markBgConsent(processId, revA);
-        await attest(revA, processId, { result: 'REJECT' }); // one reject → BLOCKED
+        await attest(revA, processId, { result: 'REJECT', note: 'concern' }); // one reject → BLOCKED
         expect(await statusOf(processId)).toBe('BLOCKED');
 
-        // A household lead force-clearing their OWN blocked check = self-approval → forbidden.
-        await expect(overrideBlocked(processId, leadId, 'approve')).rejects.toMatchObject({ code: 'same_household_applicant' });
-        expect(await statusOf(processId)).toBe('BLOCKED'); // unchanged
-
-        // A sysadmin is still the applicant's own household → still refused. This is the
-        // asymmetry that mattered: attest() never let them vote on their own family's
-        // check, so the stronger force-clear must not either.
-        await prisma.person.update({ where: { id: leadId }, data: { isSysadmin: true } });
-        await expect(overrideBlocked(processId, leadId, 'approve')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        // A household lead wiping their OWN blocked check = self-dealing → forbidden.
+        await prisma.person.update({ where: { id: leadId }, data: { isSysadmin: true, isBoardMember: true } });
+        await expect(boardResetReview(processId, leadId)).rejects.toMatchObject({ code: 'same_household_applicant' });
         expect(await statusOf(processId)).toBe('BLOCKED');
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
     });
 
     it('a check that clears on a DENIED household converges nothing and raises a board item', async () => {
@@ -418,7 +413,7 @@ describe('background check is non-blocking', () => {
         await attest(revA, processId, { result: 'REJECT' });
         await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
 
-        await expect(overrideBlocked(processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
+        await expect(boardResetReview(processId, revB)).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
         expect(await statusOf(processId)).toBe('BLOCKED');
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
 
@@ -428,21 +423,76 @@ describe('background check is non-blocking', () => {
         await markBgConsent(open.processId, revA);
         await attest(revA, open.processId, { result: 'APPROVE', subjectPersonIds: [open.leadId] });
         await prisma.orgMembership.update({ where: { id: open.orgMembershipId }, data: { status: 'DENIED' } });
-        await expect(overrideBlocked(open.processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
+        await expect(boardResetReview(open.processId, revB)).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: open.processId } })).toBe(1);
     });
 
-    it('override approve re-checks BLOCKED under the lock: a second approve is refused', async () => {
-        const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
-        await markContractSigned(processId);
-        await markBgConsent(processId, revA);
-        await attest(revA, processId, { result: 'REJECT' });
-        const [first, second] = await Promise.allSettled([
-            overrideBlocked(processId, revB, 'approve', [leadId]),
-            overrideBlocked(processId, revB, 'approve', [leadId]),
-        ]);
-        expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
-        expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
+    // Board ruling B5/B25, 2026-10-27: the rejector may change their answer to approve,
+    // which resets the check and ignores their earlier decisions.
+    describe('the rejector changes their answer to approve', () => {
+        it('wipes every attestation, returns the review to its step, and counts as approval 1 of 2', async () => {
+            const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+            await markContractSigned(processId);
+            await markBgConsent(processId, revA);
+            const earlier = await makeReviewer('RevEarlier');
+            await attest(earlier, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+            await attest(revA, processId, { result: 'REJECT', note: 'concern' });
+            expect(await statusOf(processId)).toBe('BLOCKED');
+
+            const out = await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+            expect(out).toEqual({ status: 'PENDING_PAYMENT', approvals: 1 });
+            const rows = await prisma.backgroundCheckAttestation.findMany({ where: { processId } });
+            expect(rows).toEqual([expect.objectContaining({ reviewerId: revA, result: 'APPROVE', subjectPersonId: leadId })]);
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+            expect(proc?.bgClearedAt).toBeNull();
+            expect((await prisma.person.findUnique({ where: { id: leadId } }))?.lastBackgroundCheck).toBeNull();
+
+            // The discarded decisions live on only in the audit row.
+            const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId }, orderBy: { id: 'desc' } });
+            expect(normalizeAuditData(audit?.newData)).toEqual(expect.objectContaining({ action: 'rejector changed to approve', status: 'PENDING_PAYMENT' }));
+            expect((normalizeAuditData(audit?.oldData) as { attestations: unknown[] }).attestations).toHaveLength(2);
+
+            // The earlier approval no longer counts: its reviewer approves afresh, and that second person clears it.
+            await attest(earlier, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+            expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.bgClearedAt).not.toBeNull();
+        });
+
+        it('never lets the rejector clear the check alone', async () => {
+            const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+            await markContractSigned(processId);
+            await markBgConsent(processId, revA);
+            await attest(revA, processId, { result: 'REJECT', note: 'concern' });
+            await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+            await expect(attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'already_attested' });
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+            expect(proc?.status).toBe('PENDING_PAYMENT');
+            expect(proc?.bgClearedAt).toBeNull();
+        });
+
+        it('is the rejector\'s alone: anyone else approving a blocked review is refused', async () => {
+            const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+            await markContractSigned(processId);
+            await markBgConsent(processId, revA);
+            await attest(revA, processId, { result: 'REJECT', note: 'concern' });
+
+            await expect(attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
+            expect(await statusOf(processId)).toBe('BLOCKED');
+            expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
+        });
+
+        it('must name the adult, and is refused on a denied household', async () => {
+            const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+            await markContractSigned(processId);
+            await markBgConsent(processId, revA);
+            await attest(revA, processId, { result: 'REJECT', note: 'concern' });
+
+            await expect(attest(revA, processId, { result: 'APPROVE' })).rejects.toMatchObject({ code: 'invalid_subject' });
+            await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
+            await expect(attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
+            expect(await statusOf(processId)).toBe('BLOCKED');
+            expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
+        });
     });
 
     it('reset returns a still-open review to neutral (the misclicked approval), but not a cleared one', async () => {
@@ -453,7 +503,7 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         // The review never left its phase, so the reset only drops the attestations.
-        await overrideBlocked(processId, revB, 'reset');
+        await boardResetReview(processId, revB);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(0);
         const audits = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId } });
@@ -468,7 +518,7 @@ describe('background check is non-blocking', () => {
         expect(cleared?.bgClearedAt).not.toBeNull();
 
         // Past clearance the side effects have already fanned out — reset is refused.
-        await expect(overrideBlocked(processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase' });
+        await expect(boardResetReview(processId, revB)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(2);
     });
 

@@ -6,7 +6,6 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
-import { ModalsProvider } from "@mantine/modals";
 
 beforeEach(() => {
     resetRtl();
@@ -86,33 +85,7 @@ describe("AdminParticipantsIndex", () => {
         expect(screen.getByText("Only a board member can change a person's email.")).toBeInTheDocument();
     });
 
-    it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {
-        const warning = "Alice A's background check covers the membership year starting 2027-08-01, and will not after this change.";
-        const puts: unknown[] = [];
-        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
-            const body = JSON.parse(String(init?.body));
-            puts.push(body);
-            return body.confirmBgStale
-                ? { ok: true, status: 200, json: async () => ({ participant: alice }) } as Response
-                : { ok: false, status: 409, json: async () => ({ error: warning, warning, requiresConfirmation: true }) } as Response;
-        }) as unknown as typeof fetch;
-        renderWithProviders(<ModalsProvider><AdminParticipantsIndex /></ModalsProvider>);
-
-        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
-        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
-        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
-        fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
-
-        expect(await screen.findByText(warning)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
-
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
-        expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
-    });
-
-    it("asks a board member why a later check date is current and sends the reason", async () => {
+    it("offers no background-check date field and never sends a date", async () => {
         const fetchMock = mockFetchJson({
             "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] },
             "/api/membership-ops/participants/1": { participant: alice },
@@ -122,40 +95,13 @@ describe("AdminParticipantsIndex", () => {
         fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
         const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
         fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
-        const dateInput = await screen.findByLabelText("Last Background Check Review");
+        expect(await screen.findByText("Edit Person")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Last Background Check Review")).not.toBeInTheDocument();
 
-        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
-        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
-
-        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
-        fireEvent.change(screen.getByLabelText(/Why is this check current/), { target: { value: "Vendor report reviewed" } });
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
-
-        await waitFor(() =>
-            expect(fetchMock).toHaveBeenCalledWith(
-                "/api/membership-ops/participants/1",
-                expect.objectContaining({ method: "PUT", body: expect.stringContaining('"bgCheckReason":"Vendor report reviewed"') }),
-            ),
-        );
-    });
-
-    it("tells a sysadmin off the board that only the board sets a later check date, and blocks the save", async () => {
-        setSession({ id: 999, isSysadmin: true });
-        mockFetchJson({ "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] } });
-        renderWithProviders(<AdminParticipantsIndex />);
-
-        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
-        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
-        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
-        const dateInput = await screen.findByLabelText("Last Background Check Review");
-
-        fireEvent.change(dateInput, { target: { value: "2026-02-01" } });
-        expect(screen.getByText("Only a Board member can set a later background check date.")).toBeInTheDocument();
-        expect(screen.queryByLabelText(/Why is this check current/)).not.toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Save Details" })).toBeDisabled();
-
-        fireEvent.change(dateInput, { target: { value: "2024-12-01" } });
-        expect(screen.getByRole("button", { name: "Save Details" })).toBeEnabled();
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
+        const put = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/membership-ops/participants/1"));
+        expect(JSON.parse(String(put?.[1]?.body))).not.toHaveProperty("lastBackgroundCheck");
     });
 
     it("assigns a new household to a participant with none", async () => {

@@ -6,7 +6,7 @@
  * behind, including when the refusal is raised inside a transaction that rolls back.
  */
 
-import { attest, clearBackgroundCheck, overrideBlocked, reviewTransaction, SelfGrantRefusedError } from '@/lib/membership/review';
+import { attest, boardResetReview, clearBackgroundCheck, reviewTransaction, SelfGrantRefusedError } from '@/lib/membership/review';
 import { awaitingBgReview } from '@/lib/membership/lifecycle';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import prisma from '@/lib/prisma';
@@ -67,10 +67,10 @@ describe('self-grant refusal audit rows', () => {
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(0);
     });
 
-    it('records a refused board override on the actor\'s own household', async () => {
+    it('records a refused board reset on the actor\'s own household', async () => {
         const { processId, leadId } = await makeOwnHouseholdReview('BLOCKED');
 
-        await expect(overrideBlocked(processId, leadId, 'reset')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        await expect(boardResetReview(processId, leadId)).rejects.toMatchObject({ code: 'same_household_applicant' });
 
         expect(await refusalRows(leadId)).toHaveLength(1);
     });

@@ -164,10 +164,7 @@ Procedure below is built on them.
 
 - A background check is cleared within days of being performed, so dating the
   clearance rather than the check itself is immaterial against a window measured
-  in months. Board and sysadmin can move the date earlier or remove it on the
-  rare occasion it is wrong. Only the Board can move it later, with a written
-  reason asserting the check happened, because a later date clears the person
-  with no reviewer.
+  in months.
 
 - The background-check vendor has no API. A check is started through a hosted
   consent link and its result comes back by hand. That is the arrangement, not a
@@ -207,10 +204,22 @@ Procedure below is built on them.
   active household only renews; a revoked one continues the renewal it already
   has open, or else starts a new joining application.  [Decision]
 
-- A household with a blocked application cannot start another one. Only the
-  board moves the application on: "Reset for re-review" sends it back for two
-  new approvals, or a board override clears it. Denying the household is a
-  household action and leaves the application blocked.  [Decision — *Principle: people decide about people*]
+- A household with a blocked application cannot start another one. The board's
+  "Reset for re-review" sends it back for two new approvals. Denying the
+  household is a household action and leaves the application blocked; neither a
+  reset nor the rejector's change to approve, below, reopens it then.  [Decision — *Principle: people decide about people*]
+
+- Nobody clears a blocked application on their own. After a rejection the check
+  needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25, 2026-10-27]
+
+- The reviewer who rejected may change their answer to approve. That starts the
+  review over: every earlier decision on it, theirs and anyone else's, is
+  discarded, and their approval is the first of the two it needs. They name the
+  adult whose report they read, as any first approver does.  [Decision — Board ruling B5/B25, 2026-10-27]
+
+- A background-check date comes only from a clearance, or from a person merge
+  carrying one forward. Nobody can change it in the app, earlier, later or by
+  removing it; a wrong date is corrected by hand in the database.  [Decision — Board ruling B5/B25, 2026-10-27]
 
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to
@@ -234,12 +243,8 @@ Procedure below is built on them.
   still waits on its second reviewer. The review returns to waiting for two
   approvals, and the adult that approval named is no longer settled. Once the
   check has cleared, or the application is blocked or closed, the approval
-  stands. A rejection cannot be undone by its reviewer; moving a blocked
-  application on is the board's reset.  [Decision]
-
-- A board override names the adult it covers. It cannot infer one: a blocked
-  application never holds the second approval that would identify a subject, so
-  an override naming nobody would date a clearance against no one.  [Decision]
+  stands. A rejection is not undone; its reviewer may only change it to an
+  approval, as above.  [Decision]
 
 - The duplicate-attestation cleanup is the Board's alone. When a person merge
   finds the same review recorded under two identities, only a board member may
