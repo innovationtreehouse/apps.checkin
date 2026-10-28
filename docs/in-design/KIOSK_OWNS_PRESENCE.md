@@ -16,8 +16,9 @@ the kiosk's screen and the server's records drift apart. Most of the hard
 check-in code exists to cope with that drift:
 
 - The kiosk sends the time of the roster it last saw with every close, so the
-  server can refuse a one-badge close when the website checked someone in that
-  the kiosk never showed.
+  server can hold a one-badge close when the website checked someone in that
+  the kiosk never showed: the keyholder is checked out, the building stays
+  open, and the same badge again closes it.
 - Every website path that ends a visit runs a "last keyholder" guard: a
   close / leave / cancel dialog with a five-minute single-use token, a choice
   of keyholder to hand the building over to, and an email to that keyholder.
@@ -47,6 +48,12 @@ Once this is done:
   other thing that ends visits is the 11 PM auto-close.
 - **Only the kiosk closes the building**, and the 11 PM auto-close is the
   backstop when nobody did.
+- **The website writes no presence.** Of the Board's two keeps, the 11 PM
+  auto-close is the only writer of open visits besides the kiosk; the
+  reconciliation screen covers every correction of a closed record (visit
+  edits and inserts, the Board moving a close's time, roster attendance).
+  Person merge and program attendance stay because they are not signing in
+  or out.
 - **The website reads.** It shows the roster the kiosk built, says "can't
   confirm" when it has not heard from the kiosk, and offers one place to fix
   past records after the fact.
@@ -285,6 +292,8 @@ badge can make the building read as open.
 
 ## Removed from the website
 
+This is the delete list for the implementation PRs (see Rollout); this
+design PR changes no code, so everything below still exists on `main` today.
 Paths are under `checkin-app/src/`. "Ambiguity removed" is the question the
 code no longer has to answer.
 
@@ -300,7 +309,7 @@ code no longer has to answer.
 | Removing an open visit | `app/api/attendance/manual/[id]/route.ts` DELETE and `app/api/facility/visits/route.ts` DELETE on an open visit; conflict resolve (`app/api/my-programs/conflicts/resolve/route.ts`) on an open visit | Erasing a person from the live roster that a kiosk scan put there |
 | Roster mark "Present, still here" | `lib/programs/events.ts` `manualEditAttendance`: a departure is required; an open kiosk visit covering the session is linked, never departed; otherwise a closed visit is created (decision Q3) | A leader opening the building from the web (the B14 gap) |
 | Review panel "leave open" | `app/api/system-status/unsynced-scans/[id]/route.ts`: departure required | Whether a set-aside scan may reopen the building |
-| The web close machinery | `lib/attendance/keyholderGuard.ts` whole file (`lastKeyholderGuard`, `recordWebClose`, `finishCloseGuard`, handover candidates and email, token compare); `withCloseGuard` wrapper in `manual/[id]/route.ts`; `isCloseChoiceWarning` / `askCloseChoice` dialog in the UI; the `close_choice` wire shape in `app/api/scan/scanResponse.ts` | The five-minute token, who gets which of close / leave / cancel, naming a handover, emailing it |
+| The web close machinery | `lib/attendance/keyholderGuard.ts` whole file (`lastKeyholderGuard`, `recordWebClose`, `finishCloseGuard`, handover candidates and email, token compare); `withCloseGuard` wrapper in `manual/[id]/route.ts`; `components/CloseChoiceDialog.tsx` (`isCloseChoiceWarning`, `askCloseChoice`) and its four callers (`app/page.tsx`, `app/attendance/current`, `my-visits`, `household`); the `close_choice` body (`CloseChoiceWarning`, defined in `keyholderGuard.ts`) and the `close_guard` case that renders it in `app/api/scan/scanResponse.ts` | The five-minute token, who gets which of close / leave / cancel, naming a handover, emailing it |
 | "Unseen check-in" hold on a kiosk close | `lib/attendance/close.ts` `processCloseRequest` (`rosterAsOf`, `unseen_checkins` offer and review flag) | Whether a one-badge close should wait for a check-in the kiosk did not show |
 | Kiosk leave audit | `lib/attendance/close.ts` `auditKioskLeave` (the "leave" twin of the web handover) | None the visit record does not already show; optional, see below |
 | Old-protocol paths | `app/api/scan/route.ts`: `legacyKiosk` (below 6), the toggle path (below 5), the server debounce (below 3), the untrusted-replay parking (below 5); constants in `lib/scanProtocol.ts` | Two ways to decide a direction and a close |
@@ -316,10 +325,11 @@ without closing", which the visit record shows anyway. Keep it if the Board
 wants that row; it is not one of the owner's questions because either answer
 is cheap.
 
-**What stays on the website** besides the reads: the reconciliation screen as
-above, the close-time correction (`correctCloseTime`, the Board moving a
-close's time moves everyone it closed out), person merge, and the event
-roster's program attendance.
+**What stays on the website** besides the reads: the 11 PM auto-close and the
+reconciliation screen as above, which includes the close-time correction
+(`correctCloseTime`, the Board moving a close's time moves everyone it closed
+out). Person merge and the event roster's program attendance also stay; they
+are not signing in or out (see Objective).
 
 **Size:** about 300 lines of guard, 250 of route branches, 150 of old-protocol
 handling, 100 of close-hold, and the UI around them; roughly 1,000 production
