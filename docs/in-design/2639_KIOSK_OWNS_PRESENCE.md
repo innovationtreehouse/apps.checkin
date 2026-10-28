@@ -57,15 +57,17 @@ Once this is done:
 
 **Members and household leads** lose the Check In / Check Out button on the
 home page and on the "Who's here" page. They check in by badging at the door.
-What they can still do on the website depends on open question Q1 (correcting
-their own past visits).
+They keep inserting, correcting and removing their own past visits (and a
+lead, their household's), on closed visits only (decision Q1).
 
 **Keyholders and the Board** lose website check-in, check-out, "force
 checkout" and "close the building" from the website. A keyholder closes the
 building at the kiosk, as today. If nobody closes, the 11 PM auto-close does.
 
 **Program leaders** can no longer mark someone as in the building right now.
-What a roster mark does instead is open question Q3.
+A "Present" mark records attendance at the session: it links to the kiosk
+visit that covers the session, or else creates a closed visit for the
+session's time (decision Q3).
 
 **The kiosk** keeps doing what it does well: it saves every badge before
 sending it, shows who it thinks is inside even offline, and decides the close
@@ -215,10 +217,10 @@ One place for fixing what happened, all of it on **closed** records:
   sees who was forcefully exited by which close and fixes the times. This is
   the only new UI; it is a query over columns that already exist.
 
-Whether members' and household leads' own correction pages
+Members' and household leads' own correction pages
 (`app/attendance/my-visits`, `app/attendance/household`, `app/attendance/manual`)
-and the leaders' roster marks belong to "the reconciliation screen" is Q1 and
-Q3. The design works either way; only the delete list changes.
+and the leaders' roster marks are part of reconciliation too (decisions Q1 and
+Q3), on the same terms: closed visits only.
 
 ## Never lose a scan
 
@@ -256,8 +258,8 @@ is what the out-of-order hold ("a departure against one a person recorded
 after it … is held for the reviewer") mostly guards. With the website no
 longer writing open visits, the remaining collisions come from the kiosk's own
 queue and the 11 PM close, both of which the fence and pull-back rules already
-handle. The hold stays for closed records a person inserted (Q1), and gets
-rarer.
+handle. The hold stays for closed records a member inserted (they still may,
+decision Q1), and gets rarer.
 
 **Duplicate badge reads** are one scan by the kiosk's 3-second filter; the
 server keeps only exact-duplicate dedup by scan id.
@@ -296,7 +298,7 @@ code no longer has to answer.
 | Open "still here" self entry | `app/api/attendance/manual/route.ts`: entries without a departure are refused; the facility-open guard goes | Self-reported presence with no proof of being inside |
 | Closing an open visit by editing it | `app/api/attendance/manual/[id]/route.ts` PATCH (`closingOpenVisit` branch); `app/api/facility/visits/route.ts` PATCH on an open visit | An edit that is really a check-out, and whether it closes the building |
 | Removing an open visit | `app/api/attendance/manual/[id]/route.ts` DELETE and `app/api/facility/visits/route.ts` DELETE on an open visit; conflict resolve (`app/api/my-programs/conflicts/resolve/route.ts`) on an open visit | Erasing a person from the live roster that a kiosk scan put there |
-| Roster mark "Present, still here" | `lib/programs/events.ts` `manualEditAttendance`: no open visit created, no departure set on an open visit (shape per Q3) | A leader opening the building from the web (the B14 gap) |
+| Roster mark "Present, still here" | `lib/programs/events.ts` `manualEditAttendance`: a departure is required; an open kiosk visit covering the session is linked, never departed; otherwise a closed visit is created (decision Q3) | A leader opening the building from the web (the B14 gap) |
 | Review panel "leave open" | `app/api/system-status/unsynced-scans/[id]/route.ts`: departure required | Whether a set-aside scan may reopen the building |
 | The web close machinery | `lib/attendance/keyholderGuard.ts` whole file (`lastKeyholderGuard`, `recordWebClose`, `finishCloseGuard`, handover candidates and email, token compare); `withCloseGuard` wrapper in `manual/[id]/route.ts`; `isCloseChoiceWarning` / `askCloseChoice` dialog in the UI; the `close_choice` wire shape in `app/api/scan/scanResponse.ts` | The five-minute token, who gets which of close / leave / cancel, naming a handover, emailing it |
 | "Unseen check-in" hold on a kiosk close | `lib/attendance/close.ts` `processCloseRequest` (`rosterAsOf`, `unseen_checkins` offer and review flag) | Whether a one-badge close should wait for a check-in the kiosk did not show |
@@ -386,8 +388,8 @@ kiosk no longer has to cope with them): the held-close reply, the
 
 The Board's "the kiosk manages the building" does not move the two-deep math
 or the safety display to the kiosk: they stay server-side and fail closed, as
-the register requires. The kiosk does not get a check-in-by-name screen unless
-the owner picks that in Q2.
+the register requires. The kiosk does not get a check-in-by-name screen
+(decision Q2).
 
 ## Rollout
 
@@ -441,65 +443,36 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 - **A browser tab left open on the old home page** posts to the scan route with
   a session and is refused ("check in at the kiosk").
 
-## Open questions for the owner
+## Owner decisions (2026-10-27)
 
-Each has a recommended default in **bold**; the design works with any choice.
+Asked of the owner after the first draft. Q1–Q3 are settled; Q4 is settled for
+now and goes to the Board.
 
-**Q1. Does "the reconciliation screen" include members' and household leads'
-own corrections?** Today members insert their own past visits, correct their
-times and remove them; household leads do the same for their household. All of
-those are closed records.
+**Q1. Members' and household leads' own corrections stay**, on closed visits
+only. Members insert their own past visits, correct their times and remove
+them; a household lead does the same for their household. They fix the
+placeholder departure the 11 PM close stamps. The three member pages stay;
+they refuse an open visit like every other reconciliation path.
 
-- **(a) Yes, keep them, closed records only.** Members fix their own hours
-  (the 11 PM close stamps a placeholder departure they are meant to fix).
-  Self-reported hours stay in the trends, as today. The website keeps three
-  member pages.
-- (b) No, Board and sysadmins only. Hours can only be fixed by asking the
-  Board; every 11 PM forced exit becomes Board work. Removes three pages, two
-  routes, and the self-correction board-email flag.
-- (c) Keep corrections of existing visits, drop inserting new past visits.
-  Members fix times on visits the kiosk recorded, but cannot add a visit the
-  kiosk never saw.
+**Q2. Nobody checks in without a badge.** No check-in-by-name screen on the
+kiosk, no website check-in. The organisation already has ways to get someone a
+badge read at the door, which the kiosk treats as an ordinary badge. A visit
+nobody badged is recorded afterwards on the reconciliation screen, closed.
 
-**Q2. Someone without their badge.** Today a keyholder inside checks them in
-from the website. After this, nobody can.
+**Q3. A roster "Present" mark records attendance at the session.** If a kiosk
+visit covers the session, the mark links to it and never departs it. If not,
+the mark creates a closed visit for the session's time, so the hours count.
+The leader enters a departure; a mark never creates an open visit or ends one.
 
-- **(a) Nobody checks in without a badge.** The Board records the visit
-  afterwards on the reconciliation screen, closed. The kiosk roster (the
-  evacuation list) misses that person while they are inside. No new code.
-- (b) Spare badges kept at the door, assigned to a "visitor" record or to the
-  person on the reconciliation screen afterwards. Keeps the roster complete
-  with no new kiosk code; needs a physical process and a few seeded badge
-  records.
-- (c) A check-in-by-name screen on the kiosk, sent through the same queue as a
-  badge. Keeps the roster complete; adds a touch UI, a name search and a new
-  scan source to the kiosk, which this ruling asked to shrink.
-
-**Q3. What a program leader's "Present" mark does.** Today it can put someone
-in the building now (and could open the building, the B14 gap).
-
-- **(a) A mark records attendance at the session.** If a kiosk visit covers
-  the session it is linked to it, as today. If not, the mark creates a
-  **closed** visit for the session's time, so the hours count; it never
-  creates an open one or ends one. The leader can mark only after the session
-  starts and enters a departure.
-- (b) A mark links to kiosk visits only and never creates one. Hours come
-  only from badges; a child who forgot to badge has session attendance but no
-  facility hours unless the Board adds a visit.
-
-**Q4. The kiosk offline across 11 PM.** The server closes everyone out at
-23:00, but a kiosk that cannot reach the server keeps showing them inside.
-Next morning, one of them badging in sees "Goodbye" (the kiosk thinks they are
-in), and the server records that out-of-turn scan as flagged, changing
-nothing; they badge again and are checked in.
-
-- **(a) Accept it.** The person sees the wrong word once and badges again;
-  the reconciliation screen shows the flagged scan. No new code.
-- (b) The kiosk applies the 23:00 close to its own view by its own clock when
-  it has not heard from the server since. Morning arrivals see "Welcome".
-  About 15 lines on the kiosk, and it brings back a clock-driven roster rule
-  of the kind removed in #2039 (a wrong Pi clock or timezone then empties the
-  door screen while people are inside).
+**Q4. The kiosk offline across 11 PM: accepted, for now.** The kiosk keeps
+showing people the server closed out until it reconnects. Next morning one of
+them may see "Goodbye" on arrival; the server records that scan as flagged and
+changes nothing, and they badge again. No new code. The owner is raising this
+with the Board, so it is not fully closed. The alternative on the table is the
+kiosk applying the 23:00 close to its own view by its own clock when it has not
+heard from the server: about 15 lines on the kiosk, at the cost of a
+clock-driven roster rule like the one removed in #2039 (a wrong Pi clock or
+timezone would empty the door screen while people are inside).
 
 ## Appendix: sources
 
