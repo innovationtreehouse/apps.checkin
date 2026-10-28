@@ -783,7 +783,7 @@ All PRs are based on `main`; none stacks.
 | **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
-| **F** files to S3 | four PRs (infra, library behind a flag, backfill, removal of `bytea` reads); `1265_RECEIPT_FILES_S3.md` §8. After G's mail queue (#2239). |
+| **F** files to S3 | five PRs (infra, library behind a flag, backfill, removal of `bytea` reads, retention and held-mail auto-discard); `1265_RECEIPT_FILES_S3.md` §9. After G's mail queue (#2239). |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
 | **X7** | promote `receipt-types`, delete temporary shims. After X6. |

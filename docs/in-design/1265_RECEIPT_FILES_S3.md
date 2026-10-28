@@ -217,7 +217,8 @@ intake refuse there with 503, as any deployed instance without a bucket does
 **Bucket.**
 - S3 Block Public Access: all four settings on.
 - Object Ownership: bucket owner enforced (ACLs disabled).
-- Default encryption: SSE-S3, matching the agreement bucket (Board B17).
+- Default encryption: SSE-S3, matching the agreement bucket. Proposed, pending
+  Board B17; if the Board chooses its own key, this becomes SSE-KMS (§10).
 - Versioning: on.
 - Bucket policy: deny any request without TLS (`aws:SecureTransport` false);
   deny object reads, writes and deletes to every principal except that
@@ -359,7 +360,7 @@ Each PR is based on `main`; none stacks.
 | - | flag on, dev then staging then prod | env change only | PR 2 rolled out there |
 | 3 | **Backfill** | the copy and `--verify` script, its one-off task command, a runbook entry in `docs/ops/` | flag on in that environment |
 | 4 | **Remove `bytea` reads** | read `file_key` only, drop the flag, stop selecting `file_blob` | verify clean in prod, in a release after PR 3's run |
-| 5 | **Retention** | the daily retention step (§7), its audit row, tests | PR 4 rolled out |
+| 5 | **Retention** | the daily retention step (§7) and the 90-day held-mail auto-discard (§2), each with its audit row, tests | PR 4 rolled out |
 
 The bulk-donation library also stores its uploaded CSVs as `bytea`
 (`UploadedFile.fileBlob`). They stay in its database (decided, §10).
