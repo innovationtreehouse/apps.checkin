@@ -145,6 +145,18 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         logged.mockRestore();
     });
 
+    it('a throwing stuck-upload sweep still answers 200 with every other step', async () => {
+        jest.mocked(sweepStuckUploaded).mockRejectedValue(new Error('receipt db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
+        expect(logged).toHaveBeenCalledWith('[reconcile] receipt stuck-upload sweep failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
     it('a throwing receipt re-push still answers 200 with every other step', async () => {
         jest.mocked(repushUnpushed).mockRejectedValue(new Error('receipt db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
