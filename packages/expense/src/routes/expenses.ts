@@ -23,7 +23,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { recordBoardAuthorization, setReimbursee, signLine, signLines, signoffStatusFor } from "../services/signoffService";
+import { recordBoardAuthorization, reimburseeOptions, setReimbursee, signLine, signLines, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import { expensesAwaitingMyApproval } from "../services/badgeCounts";
 import { EXPENSE_LIST_VIEWS, expenseViewsFor, type ExpenseListView, type ExpenseViewer } from "../nav";
@@ -303,12 +303,28 @@ export const depreciationCycle: ExpenseRouteHandler = async ({ req, params }) =>
   return { Expense: await expenseWithLines(params.id) };
 };
 
+// A new person is added only with the adder's word that they are an adult.
+const reimburseeChoiceSchema = z.union([
+  z.object({ personId: z.number().int().positive() }).strict(),
+  z.object({ newPerson: z.object({ name: z.string().trim().min(1).max(200), isAdult: z.literal(true) }).strict() }).strict(),
+]);
+
 export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
-  const { personId } = await parseBody(req, z.object({ personId: z.number().int().positive() }));
+  const choice = await parseBody(req, reimburseeChoiceSchema);
   const principal = await getPrincipal();
   const orgId = await getOrgId();
-  await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
+  await mapServiceErrors(() => setReimbursee(orgId, params.id, choice, principal));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+};
+
+export const reimburseePeople: ExpenseRouteHandler = async ({ req, params }) => {
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  const people = await mapServiceErrors(async () => {
+    const text = z.string().max(100).parse(query(req).get("q") ?? "");
+    return reimburseeOptions(orgId, params.id, text, principal);
+  });
+  return { ExpenseReimburseeView: people };
 };
 
 const vendorChoiceSchema = z.union([

@@ -363,6 +363,14 @@ Things the app takes as true because they are handled outside it.
   card charge is not a reimbursement.
   [Decision — *Policy: Financial Policy, Art. IX §IX.2*]
 
+- Whoever names the person reimbursed picks an adult on file, or adds someone
+  who is not on file as a non-member adult (see
+  [people-households.md](people-households.md)). Finance does this on the
+  expense. On upload, only an uploader who holds finance, operations or the
+  board may add someone. Any other uploader picks someone on file or
+  themself.
+  [Decision — owner]
+
 - Whoever named the person reimbursed does not sign as Treasurer on that
   expense. The policy does not ask for this.
   [Decision — deliberate limit]

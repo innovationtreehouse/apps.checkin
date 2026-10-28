@@ -49,7 +49,11 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;
-  return { ...toPrincipal(user.id, person.name, isKnownAdult(person)), isBoardMember: user.isBoardMember === true };
+  return {
+    ...toPrincipal(user.id, person.name, isKnownAdult(person)),
+    isBoardMember: user.isBoardMember === true,
+    addsPeople: user.isFinance === true || user.isOperations === true || user.isBoardMember === true,
+  };
 }
 
 function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincipal {
@@ -127,6 +131,11 @@ async function reimburseeById(personId: number): Promise<(ReimburseeOption & { i
 async function reimburseeHasAccount(personId: number): Promise<boolean> {
   const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
   return (await prisma.person.count({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+}
+
+async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+  const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
+  return addNonMemberAdult(prisma, name);
 }
 
 /** Re-ask the refresher this long before the token it handed out expires. */
@@ -231,7 +240,7 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
-    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
     replies,

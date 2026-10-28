@@ -78,7 +78,7 @@ describeDb("seats follow the payee", () => {
     await seedSubmitterSeat(li, 7);
     await signLine(FINANCE, li, "TREASURER");
 
-    await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ status: 409 });
+    await expect(setReimbursee(ORG, id, { personId: 9 }, principal(4, { isFinance: true }))).rejects.toMatchObject({ status: 409 });
 
     expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
     expect(await seatsOf(li)).toEqual([["SUBMITTER", 7], ["TREASURER", 3]]);
@@ -89,7 +89,7 @@ describeDb("seats follow the payee", () => {
     bindPorts({ signoff: directory({ finance: [3, 4] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
 
-    const results = await Promise.allSettled([setReimbursee(ORG, id, 1, FINANCE), setReimbursee(ORG, id, 1, principal(4, { isFinance: true }))]);
+    const results = await Promise.allSettled([setReimbursee(ORG, id, { personId: 1 }, FINANCE), setReimbursee(ORG, id, { personId: 1 }, principal(4, { isFinance: true }))]);
 
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { status: 409 } });
@@ -103,7 +103,7 @@ describeDb("seats follow the payee", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
 
-    await setReimbursee(ORG, id, 1, FINANCE);
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
     expect((await db.expense.findFirst({ where: { id } }))!.reimbursementFor).toBe("Pat");
     await seedSubmitterSeat(li, 1);
 
@@ -130,7 +130,7 @@ describeDb("seats follow the payee", () => {
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
 
-    await setReimbursee(ORG, id, 1, FINANCE);
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
 
     await expect(signLine(principal(3, { isFinance: true, isBoard: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await signLine(BOARD, li, "TREASURER");

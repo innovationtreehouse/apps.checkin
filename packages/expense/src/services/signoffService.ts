@@ -127,16 +127,41 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
 
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
 
+/** At most this many people answer one reimbursee search. */
+const REIMBURSEE_SEARCH_LIMIT = 20;
+
 /**
- * Names a live adult as the one owed a reimbursement whose reimbursee is unknown. A confirmation
- * already given is cleared with every step after it, so the named person confirms; otherwise any
- * seat signed while the payee was unknown is signed again. A known reimbursee is never changed.
+ * Live adults whose name contains `query`, for FINANCE to name as reimbursee, leaving out
+ * everyone `setReimbursee` would refuse for a conflict. Under two characters matches nobody.
  */
-export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
+export async function reimburseeOptions(orgId: string, expenseId: string, query: string, principal: ExpensePrincipal): Promise<Array<{ personId: number; name: string }>> {
   await assertOrg(orgId);
   const actor = actorOf(principal);
   if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
-  if (!Number.isInteger(personId) || personId <= 0) throw new ServiceError(400, "personId must be a positive integer");
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { submitterId: true } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  const text = query.trim();
+  if (text.length < 2) return [];
+  if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: null })).includes(actor.userId)) return [];
+  const dir = getExpenseRuntime().signoff;
+  const ownHousehold = new Set([actor.userId, ...(await dir.householdOf([actor.userId]))]);
+  return (await dir.searchAdults(text, REIMBURSEE_SEARCH_LIMIT + ownHousehold.size)).filter((p) => !ownHousehold.has(p.personId)).slice(0, REIMBURSEE_SEARCH_LIMIT);
+}
+
+/**
+ * Names a live adult as the one owed a reimbursement whose reimbursee is unknown, or adds a
+ * non-member adult by name and names them. A confirmation already given is cleared with every
+ * step after it, so the named person confirms; otherwise any seat signed while the payee was
+ * unknown is signed again. A known reimbursee is never changed.
+ */
+export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, principal) => {
+  await assertOrg(orgId);
+  const actor = actorOf(principal);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
+  if ("personId" in choice && (!Number.isInteger(choice.personId) || choice.personId <= 0)) {
+    throw new ServiceError(400, "personId must be a positive integer");
+  }
+  if ("newPerson" in choice && !choice.newPerson.name.trim()) throw new ServiceError(400, "The new person needs a name");
 
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
   if (!expense) throw new ServiceError(404, "Expense not found");
@@ -145,10 +170,16 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
   if (!reimburseeUnknown(expense)) throw new ServiceError(409, REIMBURSEE_KNOWN);
   const dir = getExpenseRuntime().signoff;
+  const conflicted = "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for";
+  // A new person's household holds only them, so only the submitter's side can conflict; checked before anyone is added.
+  if ("newPerson" in choice && (await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: null })).includes(actor.userId)) {
+    throw new ServiceError(403, conflicted);
+  }
+  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim());
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
   if (!(await dir.isAdult(personId))) throw new ServiceError(400, "Only an adult can be named as reimbursee");
   if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId })).includes(actor.userId)) {
-    throw new ServiceError(403, "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for");
+    throw new ServiceError(403, conflicted);
   }
 
   const state = await db.$transaction(async (tx) => {

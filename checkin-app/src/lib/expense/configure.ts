@@ -107,6 +107,21 @@ export const signoff: SignoffDirectory = {
     const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { dateOfBirth: true, isDeclaredAdult: true } });
     return person !== null && isKnownAdult(person);
   },
+
+  async searchAdults(query, limit) {
+    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
+    const matches = await (await db()).person.findMany({
+      where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+      select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    });
+    return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
+  },
+
+  async addNonMemberAdult(name) {
+    const { addNonMemberAdult } = await import("@/lib/person/ownHousehold");
+    return (await addNonMemberAdult(await db(), name)).id;
+  },
 };
 
 function qbTxn(t: QboPurchase | QboBill): QbTxn {

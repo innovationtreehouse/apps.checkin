@@ -356,8 +356,18 @@ export async function discardBodyCopy(id: string, siblingIds: string[]): Promise
   });
 }
 
-/** The person the uploader names as reimbursee: themselves unless they picked a live adult. */
-async function namedReimbursee(actor: ReceiptPrincipal, personId: number | undefined): Promise<ReimburseeOption> {
+/**
+ * The person the uploader names as reimbursee: themselves unless they picked a live adult, or
+ * added a non-member, which only finance, operations or the board may do.
+ */
+async function namedReimbursee(
+  actor: ReceiptPrincipal,
+  { reimburseePersonId: personId, newReimbursee }: Pick<z.output<typeof UploadInputSchema>, "reimburseePersonId" | "newReimbursee">,
+): Promise<ReimburseeOption> {
+  if (newReimbursee) {
+    if (!actor.addsPeople) throw new ServiceError(403, "Only finance, operations or the board may add someone who is not on file");
+    return ports().reimbursees.addNonMemberAdult(newReimbursee.name);
+  }
   if (personId === undefined || personId === actor.id) {
     return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
   }
@@ -582,7 +592,7 @@ export const receiptService = {
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
 
-    const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input.reimburseePersonId) : null;
+    const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input) : null;
     const reimbursement = reimbursee
       ? { needsReimbursement: true, reimbursementFor: reimbursee.name, reimburseePersonId: reimbursee.id }
       : {};
