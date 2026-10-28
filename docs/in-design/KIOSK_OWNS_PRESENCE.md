@@ -90,7 +90,11 @@ however late.
 
 **Cost:** roughly 1,000 lines of server code and 150–250 lines of kiosk code
 deleted, one small database migration (three columns dropped), one kiosk
-release. Nothing new is built except one filter on the reconciliation screen.
+release. Small additions, all from the model check: the nightly close is
+always recorded, kiosk scan times are rebased on the server's clock, web edits
+that overlap an open visit are refused, the web says "syncing N scans" while
+the kiosk has a backlog, and the kiosk sends live only behind an empty queue.
+One new filter on the reconciliation screen.
 
 **Supersedes:** the owner's 2026-10-11 ruling that a keyholder can close the
 building from the web, and Board B7 (who may close from the web for someone
@@ -142,6 +146,31 @@ kiosk's minimal names.
 - A visit that is still open is changed only by the kiosk or the auto-close.
   The reconciliation screen corrects visits once they are closed.
 
+**New (from the model check of this design; the app's own choices):**
+
+- The nightly auto-close is recorded every night, even when it ends no visit,
+  so a scan from before it that arrives late is always fenced by it.
+- A kiosk scan's time is the server's clock as the kiosk last measured it, plus
+  the time elapsed since. A scan whose time is too uncertain to place on one
+  side of a close is applied and flagged.
+- A web insert or edit whose times overlap an open visit of the same person is
+  refused; one that overlaps a closed visit is applied and flagged.
+- While the kiosk reports scans waiting to send, the web says it is syncing
+  them instead of stating who is in or whether the building is open.
+- The kiosk sends a scan live only when nothing is waiting in its queue;
+  otherwise the scan queues behind the others, so scans reach the server in
+  the order they were made.
+- Which close ended a visit is the visit's own link to that close. The close
+  log is the history of every change and is never edited; a pull-back's own
+  log row names the close it replaced.
+
+**Changed:** "Every facility close is recorded" now covers an empty nightly
+close too. "The web states the building's state … as fact only while the
+server has heard from the kiosk within the last five minutes" gains "and the
+kiosk has no scans waiting to send". "The kiosk's clock is trusted to within
+the same two minutes a late close allows" becomes the rebased-time rule above;
+the two-minute allowance stays as a backstop.
+
 **Unchanged but worth restating:** the auto-close records who it checked out,
 linked to that close, as forced exits.
 
@@ -155,7 +184,7 @@ step 2), not before.
 | Writer | Writes | When |
 | --- | --- | --- |
 | Kiosk badge (live or queued) | Starts a visit, ends a visit, closes the building | Any time |
-| 11 PM auto-close | Ends every open visit, as one recorded close with no person behind it | Nightly |
+| 11 PM auto-close | Records one close with no person behind it, every night, and ends every open visit at it | Nightly |
 | Reconciliation screen | Edits, inserts or removes **closed** visits; resolves flagged scans | After the fact |
 | Person merge | Moves visits to the surviving person | Late-night cleanup, building closed |
 
@@ -179,27 +208,51 @@ Since nothing but the kiosk writes open visits, the server's open visits
 **are** the kiosk's view, delayed by whatever is still queued on the kiosk.
 That is the whole of "the website mirrors it".
 
+**Syncing.** A fresh heartbeat alone does not make that delayed view current:
+a keyholder's close still in the kiosk's queue leaves the web showing the
+building open. So the heartbeat carries the queue depth. Every signed kiosk
+request (the proxy's roster reads and the drain's scans) adds a
+`X-Kiosk-Queue-Depth` header; `stampKioskSeen` stores it beside the stamp, and
+`BuildingLink` gains `queued`. While `queued > 0` the web shows "Syncing N
+scans from the kiosk" in place of open/closed, occupancy and supervision, and
+lists the visit record labelled as such, the same way it treats a stale
+heartbeat. A kiosk that is resting has an empty queue by definition, so
+resting never reads as syncing. With the queue empty the web is still up to
+one roster poll behind; that lag is inherent and accepted.
+
 ### The 11 PM auto-close
 
 `/api/cron/nightly` keeps its current behaviour:
 
 1. Carry out any recorded close whose departures were cut off
    (`executePendingCloses`), at the keyholder's time.
-2. If anyone is still open, record one `FacilityClose` with
-   `via: NIGHTLY_SWEEP` and no closer, depart each open visit at run time as
-   `AUTO_CLOSE`, and log each departure against that close
-   (`logCloseDepartures`). These are the forced exits, listed and linked.
+2. Record one `FacilityClose` with `via: NIGHTLY_SWEEP` and no closer, then
+   depart each open visit at run time as `AUTO_CLOSE` and log each departure
+   against that close (`logCloseDepartures`). These are the forced exits,
+   listed and linked.
 
-Two changes:
+Three changes:
+
+- **The close is recorded every night, even when nobody is open.** Today it is
+  recorded only when someone is (`abandonedVisits.length > 0`). The fence that
+  catches a late scan needs a close row to fence against: without one, a
+  keyholder's 22:59 badge-in that reaches the server after an empty 23:00 run
+  opens a visit, and the web shows the building open all the next day. An
+  empty close sweeps nobody and shows nothing on the "closed out by a close"
+  filter; it costs one row a night. (The alternative, fencing at the day
+  boundary instead, puts a second notion of "close" into the fence; not
+  chosen.)
 
 - **Schedule.** The cron's schedule lives in the infrastructure repository,
   not here. The rollout sets (or confirms) it to fire at 23:00 in the
   organisation's display timezone, timezone-aware so daylight saving does not
   move it. Today the route is time-agnostic, so nothing in this repo changes.
-- **A queued kiosk scan from before 23:00 that arrives after it** already
+- **A queued kiosk scan from before 23:00 that arrives after it** then
   behaves correctly: a queued IN scanned before the close is recorded from its
   scan time and departed at the close (the close fence), and a queued close
-  pulls the auto-close's later stamps back to the keyholder's time. No change.
+  pulls the auto-close's later stamps back to the keyholder's time. This holds
+  only because the close is now always recorded (above), and only when the
+  scan's time is right to within the fence's allowance (see "Scan times").
 
 The "board alert" wording around `boardNotified` (an audit row and a log line,
 no email) is untouched by this design; it is the separate decision 4 in the
@@ -229,6 +282,36 @@ Members' and household leads' own correction pages
 and the leaders' roster marks are part of reconciliation too (decisions Q1 and
 Q3), on the same terms: closed visits only.
 
+**Overlaps.** Every reconciliation write that inserts a visit or moves its
+times checks it against the same person's other live visits, under the
+person lock it already takes:
+
+- overlapping an **open** visit: refused ("you are checked in from HH:MM;
+  badge out at the kiosk first, or wait for tonight's close"). An open visit
+  counts as running until now.
+- overlapping a **closed** visit: applied and flagged, naming the other visit,
+  so the hours are not counted twice unseen. The flag lists on the
+  reconciliation screen with the other correction flags.
+
+This covers the member insert and edit (`app/api/attendance/manual`,
+`manual/[id]`), the Board's edit and insert (`app/api/facility/visits`,
+`visits/insert`), and roster marks (`lib/programs/events.ts`): a mark whose
+closed visit would overlap an open kiosk visit links to that visit instead,
+as decision Q3 already says. The review panel's record of a parked scan
+already refuses an overlap. One helper, the interval test the duplicate-visit
+resolver uses (`intervalsOverlap` in `app/api/my-programs/conflicts/resolve`),
+serves all of them.
+
+**Which close ended a visit.** A kiosk close that arrives late pulls the 23:00
+run's departures back to the keyholder's time and moves the visit's
+`facilityCloseId` to the kiosk close. The 23:00 run's log rows still list
+those visits. The visit's `facilityCloseId` is authoritative for "who did this
+close end", and the filter reads it. The log is history and is never edited
+(audit rows are never deleted or rewritten); the pull-back writes its own log
+row against the kiosk close, and that row gains `supersededCloseId`, naming
+the close whose departure it replaced, so a reader of either close's log can
+see the visit moved.
+
 ## Never lose a scan
 
 The mechanism exists and stays. It is named here so nothing in the cleanup
@@ -246,7 +329,16 @@ cuts it.
    so the drain never sends it twice concurrently.
 3. **Ordered drain.** The drain sends the oldest row first, one at a time, with
    backoff and jitter, honouring `Retry-After`, and waits until the server
-   speaks the kiosk's protocol version.
+   speaks the kiosk's protocol version. **A new scan goes live only when the
+   queue is empty**; otherwise it is written and queued behind the rest. Today
+   `handle_scan` in `client/client.py` checks only the same person's queued
+   rows (`queue_only = outbox.has_pending_for_participant(...)`), so a
+   keyholder's live close can overtake another person's queued arrival, and the
+   kiosk then shows that person inside after the close. The change is one line:
+   `queue_only = outbox.pending_count() > 0 or ...`. While a backlog drains, a
+   new scan gets the kiosk's offline behaviour (the kiosk decides the close
+   itself, as it always does; no live two-deep interrupt), for as long as the
+   backlog takes to send.
 4. **Idempotent apply.** The server dedups on `clientEventId` under the
    person's advisory lock: a resend after a lost acknowledgement is answered as
    already applied and changes nothing. The server never discards a kiosk
@@ -255,7 +347,8 @@ cuts it.
 5. **Order and time.** Each scan applies at its own scan time, in the order the
    kiosk sent it. A scan more than 10 minutes late, behind later activity, or
    from a clock that stepped is applied and flagged. A scan ahead of server time
-   applies at server time, flagged.
+   applies at server time, flagged. Scan times come from the server's clock, as
+   the next section describes.
 6. **Restarts.** Self-update and the Chromium watchdog can restart the kiosk at
    any hour; a row written before the restart is sent after it.
 
@@ -270,6 +363,40 @@ decision Q1), and gets rarer.
 
 **Duplicate badge reads** are one scan by the kiosk's 3-second filter; the
 server keeps only exact-duplicate dedup by scan id.
+
+### Scan times
+
+With the website gone, the 23:00 run is the only writer that is not the kiosk,
+so the only ordering left to get wrong is a kiosk scan against that close. A
+Pi without a battery clock drifts steadily; none of the flags above catch
+steady drift, and a fast clock can stamp a 22:59 badge-in after 23:00, past
+the fence.
+
+- **Measure.** On every successful exchange with the server (roster read, scan
+  acknowledgement, version check) the kiosk takes a sample: the server's
+  `Date` header, and the kiosk's monotonic clock at send and at receipt. The
+  server time at the midpoint is the `Date` value; its uncertainty is half the
+  round trip plus one second (`Date` has whole-second resolution). The kiosk
+  keeps the latest sample (on disk, so a restart keeps it).
+- **Stamp.** A scan's time is the sample's server time plus the monotonic time
+  elapsed since the sample. Its uncertainty is the sample's plus one second per
+  hour since it (well above a Pi oscillator's drift). Both go in the queue row
+  (`scanned_at` as now, plus a new `time_uncertainty_ms`) and are sent
+  (`scanTimeUncertaintyMs`). With no sample since the queue file was created,
+  the kiosk falls back to its wall clock and marks the scan clock-suspect, as
+  today.
+- **Flag.** The server applies the scan at its time, as today, and flags it for
+  review when a close's time falls within its uncertainty
+  (`|closedAt − scannedAt| ≤ uncertainty`): which side of the close it belongs
+  on cannot be known. The two-minute allowance the fence already gives a
+  server-stamped close stays as a backstop.
+- **Contract.** A new body field, so the kiosk speaks protocol 8, and the server
+  accepts it before the kiosk sends it. The clock-step watch (`ClockWatch`)
+  stays; it is cheap and still catches the fallback case.
+
+Online, a sample is at most a minute old and the uncertainty is about a
+second. Offline for a night, it grows to about eight seconds by morning, which
+is still far inside the two-minute allowance.
 
 ## Scans with no keyholder present
 
@@ -314,6 +441,12 @@ code no longer has to answer.
 | Kiosk leave audit | `lib/attendance/close.ts` `auditKioskLeave` (the "leave" twin of the web handover) | None the visit record does not already show; optional, see below |
 | Old-protocol paths | `app/api/scan/route.ts`: `legacyKiosk` (below 6), the toggle path (below 5), the server debounce (below 3), the untrusted-replay parking (below 5); constants in `lib/scanProtocol.ts` | Two ways to decide a direction and a close |
 | Visit columns for the web dialog | `Visit.forceCloseWarnedAt`, `forceCloseToken`, `forceCloseActorId` (`prisma/schema.prisma`) | State only the web dialog read |
+
+**What the remaining write paths gain** rather than lose: the overlap check
+(refuse against an open visit, flag against a closed one) on the member,
+household-lead, Board and roster-mark paths, as "Overlaps" describes. The
+"refuse an open visit as a target" rule and the overlap check are the whole
+of what replaces the facility-open guard on those paths.
 
 `FacilityCloseVia` keeps `WEB_CHECKOUT`, `WEB_DASHBOARD`, `WEB_CORRECTION` and
 `WEB_REMOVAL`: past closes carry them and audit rows are never deleted. New
@@ -390,6 +523,18 @@ leaving while the screen sits idle and decides when the kiosk may rest. Remove
 it only with a test showing the screen poll alone keeps "known empty"
 correct; not part of this design.
 
+### What it adds
+
+Small, and each closes a gap the model found:
+
+- **Live only behind an empty queue** (`handle_scan`, one line; see "Never
+  lose a scan" point 3).
+- **Server-time stamps**: the clock sample on each exchange, the rebased scan
+  time and its uncertainty, one new queue column and one new body field
+  (protocol 8); see "Scan times". About 40 lines.
+- **Queue depth on every signed request**: an `X-Kiosk-Queue-Depth` header from
+  the proxy and the drain. About 5 lines.
+
 **Server-only items that shrink the kiosk's contract** (no kiosk code, but the
 kiosk no longer has to cope with them): the held-close reply, the
 `close_choice` reply, and the old-protocol branches above.
@@ -410,29 +555,37 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
    protocol 7 (v1.2.7 or later). If not, the old-protocol deletions (part of
    step 3) wait for the next kiosk release.
 1. **Infrastructure:** set the nightly cron to 23:00 in the organisation's
-   timezone. Independent of the code; can go first.
+   timezone. Independent of the code; can go first. The nightly route's
+   always-record change (a few lines) ships with it or in PR 1, whichever is
+   first.
 2. **PR 1 — website stops writing presence.** Remove the UI controls and refuse
    the open-visit paths in the table above (home toggle, dashboard check-in and
    checkout, scan route session branch, open self entry, closing or removing an
    open visit, open roster marks, review "leave open"). Add the "closed out by a
-   close" filter. Update the rules register and `docs/ops/checkin-state-machine.md`
+   close" filter, the overlap check, the server half of "syncing" (read the
+   queue-depth header; show "Syncing N scans"), and accept and flag the
+   protocol-8 time uncertainty (the server must speak 8 before the kiosk does). Update the rules register and `docs/ops/checkin-state-machine.md`
    in the same PR. Keep `keyholderGuard.ts` compiled but unreferenced so the
    diff stays reviewable.
 3. **PR 2 — server cleanup** (after PR 1 is in production): delete
    `keyholderGuard.ts`, the close hold in `processCloseRequest`, the
    old-protocol paths, the server debounce, and stop writing the web
-   `FacilityCloseVia` values. No schema change.
+   `FacilityCloseVia` values. Add `supersededCloseId` to the pull-back's log
+   row. No schema change (it is a field in the log row's data).
 4. **PR 3 — drop the three `Visit.forceClose*` columns** (a release after PR 2,
    so no running code reads them). A contract-phase migration; live data in the
    columns is transient dialog state, so nothing to preserve.
-5. **PR 4 — kiosk client** (K1–K8), shipped as the next kiosk release. It can
+5. **PR 4 — kiosk client** (K1–K8, plus the three additions: live only behind
+   an empty queue, server-time stamps at protocol 8, the queue-depth header),
+   shipped as the next kiosk release. It can
    merge any time after PR 1; until PR 1 is live, K1 would only make the
    kiosk's own screen buttons fail, which no one uses at the door. K2 needs the
    server to have stopped holding closes (PR 2) only in the sense that a held
    reply would show as an ordinary checkout, which is harmless.
-6. **Model.** The check-in TLA+ Base and Impl drop the web actions (web
-   check-in, web checkout, web close, web removal, open roster mark); re-run
-   the close and replay properties on PR 2's head. The coordinator owns this.
+6. **Model.** Re-run the design model with these fixes (see "Checked by
+   model"), then the check-in Base and Impl without the web actions (web
+   check-in, web checkout, web close, web removal, open roster mark) on PR 2's
+   head. The coordinator owns this.
 
 ### What happens at cutover
 
@@ -456,7 +609,7 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 ## Owner decisions (2026-10-27)
 
 Asked of the owner after the first draft. Q1–Q3 are settled. Q4 (a) is
-**interim, pending the Board**.
+**interim, pending the Board**. Q5 is **open, pending the owner**.
 
 **Q1. Members' and household leads' own corrections stay**, on closed visits
 only. Members insert their own past visits, correct their times and remove
@@ -475,15 +628,72 @@ the mark creates a closed visit for the session's time, so the hours count.
 The leader enters a departure; a mark never creates an open visit or ends one.
 
 **Q4. The kiosk offline across 11 PM: (a) accepted as an interim answer,
-pending the Board.** The kiosk keeps
-showing people the server closed out until it reconnects. Next morning one of
-them may see "Goodbye" on arrival; the server records that scan as flagged and
-changes nothing, and they badge again. No new code. The owner is raising this
-with the Board; until it rules, the design builds (a). The alternative on the table is the
+pending the Board.** The kiosk keeps showing people the server closed out
+until it reconnects. Next morning one of them may see "Goodbye" on arrival.
+For a member, the server records that scan as flagged and changes nothing,
+and they badge again. **For a keyholder it is not harmless**: see Q5. No new
+code. The owner is raising this with the Board; until it rules, the design
+builds (a). The alternative on the table is the
 kiosk applying the 23:00 close to its own view by its own clock when it has not
 heard from the server: about 15 lines on the kiosk, at the cost of a
 clock-driven roster rule like the one removed in #2039 (a wrong Pi clock or
-timezone would empty the door screen while people are inside).
+timezone would empty the door screen while people are inside). The model
+confirms that risk: with a fast Pi clock, (b) shows a "Welcome" to someone
+still inside.
+
+**Q5. A wrong "Goodbye" for a keyholder records a building close. Open,
+pending the owner.** The kiosk was offline across 23:00, so it still shows
+keyholder K inside after the server closed K out. Next morning K arrives
+first. The kiosk shows K inside and nobody else, so K's badge is a one-badge
+close: the door says "You are closing the building", and the kiosk queues a
+close. The server applies it, never held, like every kiosk close. Nobody else
+is swept (nobody else is in yet), but the result is a recorded close nobody
+meant, K's visit linked as its closer, and a wrong message at the door; K
+badges again and is checked in.
+
+The same thing already happens on the same day, under any Q4 answer, when a
+keyholder who forgot to badge out comes back while the kiosk still shows them
+inside. That is existing forgotten-badge-out behaviour; this design does not
+change it, and did not mention it before.
+
+This design does not decide it. The choices on the table, without a
+recommendation:
+
+- Accept it: the false close sweeps nobody, and the close log shows it.
+- Flag it: the server applies the close and flags it for review when the
+  closer had no open visit on the server at the scan time.
+- Treat it as an ordinary scan: the server records a one-badge close from a
+  keyholder with no open visit as a flagged check-in, not a close. This is the
+  server second-guessing a kiosk close, which the register forbids today.
+- Q4 (b) removes the overnight case only, not the same-day one.
+
+## Checked by model
+
+The design was model-checked in TLA+ on 2026-10-27. The model and its runs are
+in the coordinator's analysis folder, outside this repo
+(`checkin-analysis/kiosk-design/spec/KioskDesign.tla`; findings in
+`checkin-analysis/kiosk-design/findings-2026-10-27.md`).
+
+Found and fixed in this revision: the empty nightly run leaves no close to
+fence against (F1); clock drift moves a scan past the nightly close (F2);
+member inserts can overlap an open visit (F4); the web shows building state
+while scans are queued (F5); a live scan overtakes another person's queued
+scan (F6); the close log and the visit's close link disagree after a
+pull-back. F3 is Q5 above.
+
+Held in the model, before these fixes:
+
+- Liveness: the queue drains when the network returns, and every scan is
+  eventually applied (full run).
+- A roster mark racing a queued kiosk arrival never leaves an unflagged
+  overlap (full run).
+- In every state explored (partial: the safety runs stopped on F1): every
+  badge is applied or still queued; every scan is applied exactly once; every
+  machine departure links to the close whose time it carries; only the kiosk
+  creates open visits, and no web step changes who is in.
+- "Can't confirm" without a fresh heartbeat holds by construction.
+
+The fixes here have not been re-run in the model yet (rollout step 6).
 
 ## Appendix: sources
 
