@@ -1,7 +1,6 @@
 /**
- * Who may read a household's intake note on a household-management route: a
- * lead of that household, or the Board. The sysadmin role never qualifies on
- * its own (docs/rules/membership.md); reviewers read it through their queue.
+ * Who may read a household's intake note: the Board, or a lead of that household
+ * who wrote it. No other role qualifies (docs/rules/membership.md).
  */
 export function canSeeIntakeNotes(
     user: { isBoardMember?: boolean | null; householdId?: number | null; householdLead?: boolean | null },

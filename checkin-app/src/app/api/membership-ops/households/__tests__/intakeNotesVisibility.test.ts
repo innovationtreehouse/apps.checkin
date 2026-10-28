@@ -1,10 +1,10 @@
 /**
  * @jest-environment node
  *
- * The sysadmin role alone never shows a household's intake note
- * (docs/rules/membership.md); the Board, or a lead of that household, still sees it.
- * The full role matrix runs on the households GET; each other admin route that
- * returns a Household row is pinned to the same rule with a sysadmin-only caller.
+ * A household's intake note is read by the Board, and by a lead of that household
+ * who wrote it (docs/rules/membership.md). The full role matrix runs on the
+ * households GET; each other route that returns the note is pinned to the same
+ * rule with a non-Board caller.
  */
 
 import type { NextRequest } from "next/server";
@@ -15,6 +15,7 @@ import { PATCH as settingsPATCH } from "@/app/api/household/settings/route";
 import { PATCH as householdPATCH } from "@/app/api/membership-ops/households/[id]/route";
 import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id]/route";
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
+import { GET as reviewsGET } from "@/app/api/membership/reviews/route";
 import { canSeeIntakeNotes, withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
@@ -31,6 +32,10 @@ jest.mock("@/lib/emergencyContacts/service", () => ({
     ...jest.requireActual("@/lib/emergencyContacts/service"),
     getPrimaryValidContact: jest.fn().mockResolvedValue(null),
 }));
+jest.mock("@/lib/membership/review", () => ({
+    ...jest.requireActual("@/lib/membership/review"),
+    eligibleReviewProcessIds: jest.fn().mockResolvedValue([1]),
+}));
 jest.mock("@/lib/prisma", () => {
     const tx = {
         person: { update: jest.fn(), updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
@@ -43,6 +48,7 @@ jest.mock("@/lib/prisma", () => {
             household: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
+            orgMembershipProcess: { findMany: jest.fn() },
             auditLog: { create: jest.fn() },
             $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
             tx,
@@ -57,6 +63,7 @@ const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
     household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
+    orgMembershipProcess: { findMany: jest.Mock };
     tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUniqueOrThrow: jest.Mock } };
 };
 
@@ -164,6 +171,43 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
         expect(participant.household.intakeNotes).toBeNull();
+    });
+});
+
+describe("GET /api/membership/reviews intake note", () => {
+    type QueueArgs = { select: { orgMembership: { select: { household: { select: { intakeNotes: boolean } } } } } };
+    const queue = async (user: Record<string, unknown>) => {
+        signIn(user);
+        db.orgMembershipProcess.findMany.mockImplementation(({ select }: QueueArgs) => Promise.resolve([{
+            id: 1,
+            subjectPerson: null,
+            orgMembership: { household: { name: "H", ...(select.orgMembership.select.household.select.intakeNotes && { intakeNotes: NOTE }), householdMembers: [] } },
+            attestations: [],
+            _count: { attestations: 0 },
+        }]));
+        const res = await reviewsGET(request("http://localhost/api/membership/reviews"));
+        return { status: res.status, body: res.status === 200 ? await res.json() : null };
+    };
+
+    it("is not sent to a background-check reviewer who is not on the Board", async () => {
+        const { status, body } = await queue({ isBackgroundCheckReviewer: true });
+        expect(status).toBe(200);
+        expect(body.queue[0].orgMembership.household.name).toBe("H");
+        expect(body.queue[0].orgMembership.household.intakeNotes).toBeUndefined();
+    });
+
+    it("is not sent to a sysadmin reviewer who is not on the Board", async () => {
+        const { body } = await queue({ isSysadmin: true, isBackgroundCheckReviewer: true });
+        expect(body.queue[0].orgMembership.household.intakeNotes).toBeUndefined();
+    });
+
+    it("refuses a sysadmin who is neither reviewer nor Board", async () => {
+        expect((await queue(SYSADMIN_ONLY)).status).toBe(403);
+    });
+
+    it("is shown to a Board member", async () => {
+        const { body } = await queue({ isBoardMember: true });
+        expect(body.queue[0].orgMembership.household.intakeNotes).toBe(NOTE);
     });
 });
 

@@ -3,11 +3,10 @@
  */
 /**
  * Flow test: the intake "Anything else we should know?" note reaches the
- * background-check reviewer's queue.
+ * Board's review queue.
  *
- * This is the whole point of the field — a would-be volunteer-only household
- * types the note during intake, and the reviewer (who also sets the volunteer
- * bit) must actually see it. Drives the real journey over HTTP against a running
+ * A would-be volunteer-only household types the note during intake, and the
+ * Board (the only role that reads it) must actually see it. Drives the real journey over HTTP against a running
  * seeded dev server: applicant fills intake WITH the note, board records the two
  * external actions (which puts the application into the parallel BG-review
  * track), then GET /api/membership/reviews returns the note on that row.

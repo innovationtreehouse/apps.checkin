@@ -68,10 +68,10 @@ export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) 
                     household: {
                         select: {
                             name: true,
-                            // The applicant's "anything else we should know?" note — the
-                            // signal a volunteer-only household uses to ask the reviewer to
-                            // mark them volunteer. Classified pii; reviewers hold that band.
-                            intakeNotes: true,
+                            // The applicant's "anything else we should know?" note is read by
+                            // the Board only (docs/rules/membership.md); a reviewer who is not
+                            // on the Board never receives it.
+                            intakeNotes: auth.user.isBoardMember === true,
                             // Live leads only: these are the selectable check subjects, and
                             // the service rejects a tombstone the card offered.
                             householdMembers: { where: { isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true, name: true, email: true } },

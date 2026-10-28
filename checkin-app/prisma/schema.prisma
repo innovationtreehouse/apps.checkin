@@ -323,11 +323,10 @@ model Household {
   /// @sensitivity:internal
   postalCode String?
 
-  /// Freeform "Anything else we should know?" captured at intake. Where a
-  /// volunteer-only household types the note that tells a background-check
-  /// reviewer to mark them volunteer. Stays 'pii' (NOT internal like the other
-  /// narrative fields) because reviewers hold exactly everyones:pii on
-  /// GET /api/membership/reviews and must read it. GUARD: what keeps it away
+  /// Freeform "Anything else we should know?" captured at intake. Read by the
+  /// Board and the household's own leads only (docs/rules/membership.md); routes
+  /// that admit other roles at pii leave it out of their select or null it.
+  /// GUARD: what keeps it away
   /// from leads/keyholders is that Household binds NO scope but their_households
   /// (scopeBindings.ts) — a household-scoped token like
   /// their_program_households:pii resolves to nothing on a Household row, which
