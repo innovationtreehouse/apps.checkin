@@ -127,15 +127,17 @@ function submitterConfirmation(row: ReceiptRow) {
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
  * null with an audit row, for the catch-up step or the manual button to resend. A receipt whose
  * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
- * any older call still in flight) before the money side reaches it.
+ * any older call still in flight) before the money side reaches it. A receipt that is not
+ * finalized is refused before anything is sent or written.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
     const orgId = (await getOrg()).id;
+    const detail = await db.receiptDetail.findFirst({ where: { id: receiptId, orgId }, select: { state: true } });
+    if (detail?.state !== "receipt_finalized") return false;
     await sendDonorSync(receiptId, actor);
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
-    if (row.state !== "receipt_finalized") throw new Error(`receipt is ${row.state}, not finalized`);
     if (row.donorSync === "pending") {
       await audit(db, receiptId, actor, { action: "push_deferred", valueAfter: "donor sync pending" });
       return false;

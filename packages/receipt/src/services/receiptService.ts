@@ -276,10 +276,11 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
 async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Promise<void> {
   assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
   await db.$transaction(async (tx) => {
-    await tx.receiptDetail.updateMany({
+    const moved = await tx.receiptDetail.updateMany({
       where: { id, state: "auto_upload" },
       data: { state: "ocr_failed", validationNotes: `OCR failed: ${error}` },
     });
+    if (moved.count === 0) return;
     await audit(tx, id, actor, { action: "ocr_failed", valueAfter: error });
   });
 }
@@ -689,24 +690,24 @@ export const receiptService = {
     const stateMessage = "Line items can only be edited in validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
-    const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
-    if (!li) throw new ServiceError(404, "Line item not found");
-
-    const quantity = edit.quantity ?? li.quantity;
-    const unitPriceCents = edit.unitPrice === undefined ? li.unitPriceCents : toCents(edit.unitPrice);
-    const fields = [
-      { field: "description", before: li.description, after: edit.description },
-      { field: "partNumber", before: li.partNumber, after: edit.partNumber },
-      { field: "manufacturer", before: li.manufacturer, after: edit.manufacturer },
-      { field: "quantity", before: li.quantity, after: edit.quantity },
-      { field: "unitPrice", before: li.unitPriceCents / 100, after: edit.unitPrice },
-      { field: "isDelayed", before: li.isDelayed, after: edit.isDelayed },
-    ];
-
-    const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
 
     return db.$transaction(async (tx) => {
       await lockForEdit(tx, id, EDITABLE, stateMessage);
+      const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
+      if (!li) throw new ServiceError(404, "Line item not found");
+
+      const quantity = edit.quantity ?? li.quantity;
+      const unitPriceCents = edit.unitPrice === undefined ? li.unitPriceCents : toCents(edit.unitPrice);
+      const fields = [
+        { field: "description", before: li.description, after: edit.description },
+        { field: "partNumber", before: li.partNumber, after: edit.partNumber },
+        { field: "manufacturer", before: li.manufacturer, after: edit.manufacturer },
+        { field: "quantity", before: li.quantity, after: edit.quantity },
+        { field: "unitPrice", before: li.unitPriceCents / 100, after: edit.unitPrice },
+        { field: "isDelayed", before: li.isDelayed, after: edit.isDelayed },
+      ];
+
+      const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
       const updated = await tx.receiptLineItem.update({
         where: { id: lineItemId },
         data: {
@@ -739,10 +740,10 @@ export const receiptService = {
     const stateMessage = "Can only delete lines in validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
-    const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
-    if (!li) throw new ServiceError(404, "Line item not found");
     await db.$transaction(async (tx) => {
       await lockForEdit(tx, id, EDITABLE, stateMessage);
+      const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
+      if (!li) throw new ServiceError(404, "Line item not found");
       await audit(tx, id, actor, { action: "line_deleted", lineItemId });
       await tx.receiptLineItem.delete({ where: { id: lineItemId } });
       await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
