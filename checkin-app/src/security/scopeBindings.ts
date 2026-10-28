@@ -208,6 +208,8 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // A bucket's treasurer rows. `personId` makes it scopable; read only through
     // BudgetOwnerApprover by finance or board.
     'BudgetOwnerTreasurer',
+    // finance-or-board everyones:pii only; nobody reads their own row.
+    'PersonMailAlias',
     // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never
     // earns a `their_own` binding; the internal attribution fields stay with the
