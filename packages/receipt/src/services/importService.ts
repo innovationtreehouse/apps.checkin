@@ -25,7 +25,8 @@ const IMPORT_TRANSACTION_MS = 120_000;
  * cannot roll back; a row whose pipeline fails stays imported in flow_error. Its QB linkage waives
  * only the submitter step and the age gate. Records purchases only, never a reimbursement claim.
  * Idempotent per (org, importSourceId): a re-run skips rows already loaded, and runs the pipeline
- * of any it finds still in "uploaded".
+ * of any it finds still in "uploaded". A row the daily sweep has moved to flow_error is finance's
+ * to restart from its queue, like any other flow_error receipt.
  */
 export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
