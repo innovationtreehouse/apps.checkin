@@ -445,8 +445,8 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 
 ## Owner decisions (2026-10-27)
 
-Asked of the owner after the first draft. Q1–Q3 are settled; Q4 is settled for
-now and goes to the Board.
+Asked of the owner after the first draft. Q1–Q3 are settled. Q4 (a) is
+**interim, pending the Board**.
 
 **Q1. Members' and household leads' own corrections stay**, on closed visits
 only. Members insert their own past visits, correct their times and remove
@@ -464,11 +464,12 @@ visit covers the session, the mark links to it and never departs it. If not,
 the mark creates a closed visit for the session's time, so the hours count.
 The leader enters a departure; a mark never creates an open visit or ends one.
 
-**Q4. The kiosk offline across 11 PM: accepted, for now.** The kiosk keeps
+**Q4. The kiosk offline across 11 PM: (a) accepted as an interim answer,
+pending the Board.** The kiosk keeps
 showing people the server closed out until it reconnects. Next morning one of
 them may see "Goodbye" on arrival; the server records that scan as flagged and
 changes nothing, and they badge again. No new code. The owner is raising this
-with the Board, so it is not fully closed. The alternative on the table is the
+with the Board; until it rules, the design builds (a). The alternative on the table is the
 kiosk applying the 23:00 close to its own view by its own clock when it has not
 heard from the server: about 15 lines on the kiosk, at the cost of a
 clock-driven roster rule like the one removed in #2039 (a wrong Pi clock or
