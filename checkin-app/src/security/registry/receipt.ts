@@ -82,6 +82,19 @@ defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', en
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
+// Mail aliases (1265_RECEIPT_MAIL_ALIASES.md): the extra addresses a person's
+// receipt mail may come from. FINANCE and the BOARD list, add, remove and
+// approve them, and nobody else reads them, so no `their_own` view. The address
+// is `pii`, like Person.email.
+const ALIAS_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', ['everyones:pii', 'everyones:internal', 'public']],
+    ['isBoardMember', ['everyones:pii', 'everyones:internal', 'public']],
+];
+defineRoute({ endpoint: 'GET /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'DELETE /api/finance/mail-aliases/[id]', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+
 // Mailbox ignore list: FINANCE only, kept beside the mail queue. A held mail
 // item joins it through the discard route above (`ignoreFile: true`).
 defineRoute({ endpoint: 'POST /api/receipts/[id]/ignore-file', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
