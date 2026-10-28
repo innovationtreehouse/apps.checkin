@@ -969,6 +969,17 @@ describe("program order entitlement (same check as the webhook)", () => {
         }
     });
 
+    it("judges seats by the current quantity: a seat an edit removed pays for nobody", async () => {
+        const oid = `${TAG}-618`;
+        const email = `ent-spent-current-${TAG}@ex.com`;
+        const { householdId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
+        const sibId = await addSibling(householdId, programId, email);
+
+        const judged = await orderEntitlesEnrollment(paidOrder(oid, [{ variantId, quantity: 2, currentQuantity: 1 }]), programId, [sibId]);
+        expect(judged).toEqual({ ok: false, kind: null, spent: true });
+        expect(await statusOf(programId, sibId)).toBe("PENDING");
+    });
+
     it("waits on an order not yet paid: no activation, no exception", async () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });

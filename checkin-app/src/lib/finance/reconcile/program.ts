@@ -97,7 +97,7 @@ async function seatsSpentBy(order: EntitlementOrder, programId: number): Promise
     if (!order.legacyId) return 0;
     // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
     const holders = await prisma.programParticipant.findMany({
-        where: { programId, status: { in: ["ACTIVE", "WITHDRAWN"] }, shopifyOrderId: order.legacyId },
+        where: { programId, shopifyOrderId: order.legacyId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
         select: { personId: true },
     });
     const left = await prisma.auditLog.findMany({
