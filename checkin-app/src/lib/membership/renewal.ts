@@ -202,7 +202,7 @@ export async function renewalSeasonWindow(now: Date): Promise<{ boundary: Date; 
 /**
  * Open renewal processes for every ACTIVE membership, inside the lead window only,
  * unless the household was already handled this cycle. Backs the board's
- * "Open renewals" button (and the unscheduled cron endpoint). Returns a summary.
+ * "Open renewals" button, the only way renewals start. Returns a summary.
  */
 export async function runRenewalSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });

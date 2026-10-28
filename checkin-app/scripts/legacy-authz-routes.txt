@@ -28,7 +28,6 @@ POST /api/auth/[...nextauth]
 GET /api/auth/dev-personas
 POST /api/auth/dev-personas
 GET /api/cron/lifecycle-reconcile
-GET /api/cron/membership-renewals
 GET /api/cron/nightly
 GET /api/cron/pending-participants
 GET /api/cron/person-bg-annual
