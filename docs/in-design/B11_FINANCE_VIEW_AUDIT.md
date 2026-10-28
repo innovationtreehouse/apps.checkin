@@ -325,8 +325,8 @@ with the nav and are out of scope.
 **Repeats.** A Board member flicking between two tabs reloads the same list
 many times. Each load is the same person, the same endpoint and the same
 records. The row's `window` is its view time rounded down to fifteen minutes,
-and the insert is `ON CONFLICT DO NOTHING` against the unique index on person,
-`viewKey` and window. One statement, no
+and the insert is `ON CONFLICT DO NOTHING` against the unique index on
+`(actorId, viewKey, window)` from §2. One statement, no
 read before the write. The first view in each window is recorded with its exact
 time; repeats within the window add nothing. A different page of a list returns
 different ids and is recorded.
