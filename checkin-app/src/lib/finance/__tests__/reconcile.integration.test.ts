@@ -980,6 +980,31 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await statusOf(programId, sibId)).toBe("PENDING");
     });
 
+    it("counts a child a restocking refund removed as spent once: the replayed payment-time order still pays for the free seat, and the refunded order pays for nobody", async () => {
+        const oid = `${TAG}-619`;
+        const email = `ent-spent-refunded-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
+        const refunded = await prisma.person.create({ data: { email: `refunded-${email}`, name: `Refunded ${email}`, householdId } });
+        const enrollment = await prisma.programParticipant.create({ data: { programId, personId: refunded.id, status: "ACTIVE", shopifyOrderId: oid } });
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId: refunded.id } } });
+        const audit = await prisma.auditLog.create({
+            data: { ...systemActor("webhook:shopify-refund"), action: "DELETE", tableName: "ProgramParticipant", affectedEntityId: refunded.id, secondaryAffectedEntity: programId, oldData: enrollment },
+        });
+        const sibId = await addSibling(householdId, programId, email);
+
+        try {
+            // A redelivered orders/paid carries the order as it was paid: three seats, nothing refunded.
+            const replay = await orderEntitlesEnrollment(paidOrder(oid, [{ variantId, quantity: 3, currentQuantity: 3 }]), programId, [sibId]);
+            expect(replay).toEqual({ ok: true, surplus: undefined });
+            // The mirror sees the refund, and a refunded order activates nobody.
+            const mirrored = { ...paidOrder(oid, [{ variantId, quantity: 3, currentQuantity: 2 }]), financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 5000 };
+            expect(await orderEntitlesEnrollment(mirrored, programId, [sibId])).toEqual({ ok: false, kind: "REVERSED_BEFORE_ACTIVATION" });
+            expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        } finally {
+            await prisma.auditLog.delete({ where: { id: audit.id } });
+        }
+    });
+
     it("waits on an order not yet paid: no activation, no exception", async () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
