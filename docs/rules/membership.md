@@ -393,8 +393,8 @@ Procedure below is built on them.
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
-- Who starts renewals each year.  [Unsettled — open: Board B6; today the board's
-  "open renewals" button, and a scheduled run exists but is not run]
+- Renewals start only when the board presses its "open renewals" button; no
+  scheduled run opens them.  [Decision — *Board ruling B6, 2026-10-27*]
 
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
