@@ -372,6 +372,18 @@ export const classifications = {
         oldData: 'internal',
         newData: 'internal',
     },
+    FinanceViewLog: {
+        id: 'internal',
+        viewedAt: 'internal',
+        actorId: 'internal',
+        role: 'internal',
+        endpoint: 'internal',
+        params: 'internal',
+        recordIds: 'internal',
+        rowCount: 'internal',
+        window: 'internal',
+        viewKey: 'internal',
+    },
     Account: {
         id: 'internal',
         userId: 'internal',
@@ -656,6 +668,8 @@ export const relations = {
         visits: { model: 'Visit', isList: true },
     },
     AuditLog: {
+    },
+    FinanceViewLog: {
     },
     Account: {
         user: { model: 'Person', isList: false },

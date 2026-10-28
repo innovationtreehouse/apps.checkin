@@ -1518,6 +1518,45 @@ model AuditLog {
   @@index([tableName, timestamp])
 }
 
+/// One view of finance records other than the viewer's own (Board ruling B11).
+/// Records who looked at which records through which endpoint, never what the
+/// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
+/// read only by the Board. Kept indefinitely.
+model FinanceViewLog {
+  /// @sensitivity:internal
+  id        Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  viewedAt  DateTime
+  /// The viewer's person id. No FK, as on AuditLog: the row outlives the person.
+  /// @sensitivity:internal
+  actorId   Int
+  /// The role the view was chosen under; null only on rows copied from the
+  /// bulk-donation donor-read audit, which did not record it.
+  /// @sensitivity:internal
+  role      String?
+  /// The registry key, e.g. `GET /api/receipts/[id]`.
+  /// @sensitivity:internal
+  endpoint  String
+  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string.
+  /// @sensitivity:internal
+  params    Json
+  /// @sensitivity:internal
+  recordIds String[]
+  /// @sensitivity:internal
+  rowCount  Int
+  /// `viewedAt` rounded down to fifteen minutes (UTC); repeats within it collapse.
+  /// @sensitivity:internal
+  window    DateTime
+  /// Hex SHA-256 of the endpoint, the params with keys sorted, and the sorted record ids.
+  /// @sensitivity:internal
+  viewKey   String
+
+  @@unique([actorId, viewKey, window])
+  @@index([viewedAt])
+  @@index([actorId, viewedAt])
+  @@index([recordIds], type: Gin)
+}
+
 model Account {
   /// @sensitivity:internal
   id                String  @id @default(cuid())
