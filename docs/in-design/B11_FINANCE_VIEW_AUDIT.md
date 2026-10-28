@@ -325,36 +325,23 @@ standing rule.
 
 ---
 
-## Open questions
+## Decisions
 
-- **FV-1. Are the set-up screens finance information?** The books map, account
-  lists, bucket approvers and settings show how the books are arranged, not
-  money. *Recommendation:* leave them out. They change rarely, every change is
-  already audited, and logging every load of a dropdown list adds rows that
-  answer no question. Add one later by setting the flag; no other change.
-- **FV-2. Do membership and program payments and payment plans count?** They
-  are money, and `revenue.md` already limits them to the Board and finance.
-  *Recommendation:* yes, include them. B11 says finance information, and these
-  are the household-level money records most likely to be asked about.
-- **FV-3. Resolved: no retention limit.** Owner: rows are kept indefinitely;
-  log retention is undecided app-wide, and this log follows that decision.
-- **FV-4. Who reads the log?** *Recommendation:* the Board only, as in §4. The
-  alternative, Board and sysadmin as on the Audit Log tab, gives an operator a
-  map of which records finance has been working on without a Board reason to
-  have it.
-- **FV-5. Fail closed or fail open on a write error?** *Recommendation:* fail
-  closed, as the donor-read audit does today. Failing open would let the log go
-  silent exactly when something is wrong with it, and nobody would know which
-  views were missed.
-- **FV-6. Retire the per-route donor-read writes?** Once every route they cover
-  is flagged, they duplicate the new log in a second database.
-  *Recommendation:* retire the writers in PR 4 and keep their existing rows.
-  Nothing is dropped; only the duplicate writer stops.
-- **FV-7. Which register file holds the rule?** *Recommendation:* `revenue.md`,
-  next to the donor line it replaces, with a one-line pointer from
-  `expenses.md`. The alternative is `principles.md`, but the rule bites only in
-  finance, and §3.3 of the documentation standard keeps a one-domain rule in its
-  domain.
-- **FV-8. Per-record "who viewed this" on the record itself?** A receipt's page
-  could list its viewers. *Recommendation:* no. That shows the watch to finance
-  (FV-4), and the Board can already filter the tab by record id.
+All resolved by the owner. IDs are kept so the body's references stay valid.
+
+- **FV-1. Resolved: set-up screens are left out.** The books map, account
+  lists, bucket approvers and settings are set-up, not sensitive.
+- **FV-2. Resolved: membership and program payments and payment plans are
+  included.**
+- **FV-3. Resolved: no retention limit.** Rows are kept indefinitely; log
+  retention is undecided app-wide, and this log follows that decision.
+- **FV-4. Resolved: the Board only reads the log.**
+- **FV-5. Resolved: fail closed.** A view whose row cannot be written is
+  refused.
+- **FV-6. Resolved: the per-route donor-read writes are removed** in PR 4, as
+  duplicates of the new log. Their existing rows stay in the bulk-donation
+  database.
+- **FV-7. Resolved: the rule goes in `revenue.md`, with a pointer from
+  `expenses.md`.**
+- **FV-8. Resolved: no per-record viewer list.** The Board filters the tab by
+  record id.
