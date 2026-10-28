@@ -41,6 +41,15 @@ describe("dmarcAligned", () => {
     expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.s=s1; ${dmarcPass}`)).toBe(true);
   });
 
+  it("fails a DKIM result whose signer properties disagree or are malformed", () => {
+    const dmarcPass = "dmarc=pass header.from=example.org";
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.i=@sub.example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@evil.net header.i=@example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.s=s1; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.i=alice@example.org; ${dmarcPass}`)).toBe(true);
+  });
+
   it("reads only the topmost header, and only Google's", () => {
     expect(aligned(GMAIL.replace("mx.google.com", "mx.example.net"), GMAIL)).toBe(false);
     expect(aligned(GMAIL.replace("dmarc=pass (p", "dmarc=none (p"), GMAIL)).toBe(false);

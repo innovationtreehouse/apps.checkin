@@ -189,12 +189,24 @@ export function dmarcAligned(headers: Headers | undefined, address: string): boo
   const domain = address.split("@")[1];
   const from = dmarc[0].props.filter(([key]) => key.toLowerCase() === "header.from");
   if (from.length !== 1 || from[0][1].toLowerCase() !== domain) return false;
+  return parsed.results.some((r) => r.method.toLowerCase() === "dkim" && r.result.toLowerCase() === "pass" && signedBy(r, domain));
+}
+
+/**
+ * True when a DKIM result names its signer and every signer property names exactly this domain:
+ * `header.d` as the domain, `header.i` as an address or `@domain`. Any other value fails closed.
+ */
+function signedBy(result: ResInfo, domain: string): boolean {
   // ponytail: exact signing domain; accept a parent domain (relaxed alignment) if a real sender needs it.
-  return parsed.results.some(
-    (r) =>
-      r.method.toLowerCase() === "dkim" &&
-      r.result.toLowerCase() === "pass" &&
-      r.props.some(([key, value]) => ["header.d", "header.i"].includes(key.toLowerCase()) && value.toLowerCase().split("@").pop() === domain),
+  const signer = result.props.filter(([key]) => ["header.d", "header.i"].includes(key.toLowerCase()));
+  return (
+    signer.length > 0 &&
+    signer.every(([key, value]) => {
+      const v = value.toLowerCase();
+      if (key.toLowerCase() === "header.d") return v === domain;
+      const at = v.lastIndexOf("@");
+      return at >= 0 && v.slice(at + 1) === domain;
+    })
   );
 }
 
@@ -461,19 +473,21 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   // Mail received before this is out of the window by the next daily run.
   const lastChance = started - (MAIL_WINDOW_DAYS - 1) * DAY_MS;
-  const agingOut: number[] = [];
-  let unreadAging = 0;
+  let agingOut = 0;
+  const agingDates: number[] = [];
+  /** Counts messages left unread as ageing out when they arrived before lastChance, or when their arrival is unknown. */
+  const leftUnread = (receivedAt: number | null, messages = 1) => {
+    if (receivedAt !== null && receivedAt >= lastChance) return;
+    agingOut += messages;
+    if (receivedAt !== null) agingDates.push(receivedAt);
+  };
 
   const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   for (const [i, id] of ids.entries()) {
     if ((capped() && holdsSpent()) || outOfTime()) {
       counts.unread = ids.length - i;
-      // Oldest first, so the first unread message is the oldest; one that cannot be dated counts as old.
-      const oldest = await reader.getMessage(id).then((m) => Number(m.internalDate), () => 0);
-      if (oldest < lastChance) {
-        unreadAging = counts.unread;
-        agingOut.push(oldest);
-      }
+      // Oldest first, so the first unread message dates them all.
+      leftUnread(await reader.getMessage(id).then((m) => Number(m.internalDate), () => null), counts.unread);
       break;
     }
     counts.messages++;
@@ -485,20 +499,19 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     } catch (err) {
       counts.failed++;
       console.error("[receipt] mail intake failed for one message:", err);
-      if (msg && Number(msg.internalDate) < lastChance) agingOut.push(Number(msg.internalDate));
+      leftUnread(msg && Number(msg.internalDate));
       continue;
     }
-    if (counts.deferred > deferredBefore && Number(msg.internalDate) < lastChance) agingOut.push(Number(msg.internalDate));
+    if (counts.deferred > deferredBefore) leftUnread(Number(msg.internalDate));
   }
 
   // ponytail: one alert per run; a message sits in the last day of the window for one daily run, so it alerts once. A same-day rerun alerts again.
-  if (agingOut.length > 0) {
+  if (agingOut > 0) {
     try {
-      const oldest = Math.min(...agingOut);
       await ports().alerts.mailAgingOut({
         orgId,
-        messages: agingOut.length - (unreadAging > 0 ? 1 : 0) + unreadAging,
-        oldestReceivedAt: oldest > 0 ? new Date(oldest) : null,
+        messages: agingOut,
+        oldestReceivedAt: agingDates.length > 0 ? new Date(Math.min(...agingDates)) : null,
       });
     } catch (err) {
       console.error("[receipt] mail ageing alert failed:", err);

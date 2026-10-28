@@ -358,6 +358,19 @@ describeDb("mail intake ageing alert", () => {
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
   });
 
+  it("alerts for a message that cannot be fetched, since its age is unknown, keeping the known oldest date", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });
+    const { getMessage } = mail.reader;
+    const listRecent = mail.reader.listRecent;
+    mail.reader.listRecent = async (days) => [...(await listRecent(days)), "gone"];
+    mail.reader.getMessage = async (id) => (id === "gone" ? Promise.reject(new Error("Gmail request failed: 500")) : getMessage(id));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ failed: 1 });
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
   it("alerts for an old message whose reading failed", async () => {
     send("m1", { ageMs: old });
     configure({
