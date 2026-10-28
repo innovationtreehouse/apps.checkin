@@ -11,8 +11,14 @@ interface MailItem {
   receivedAt: string;
   senderAddress: string;
   status: string;
+  holdReason: string | null;
   mimeType: string;
 }
+
+const HOLD_REASONS: Record<string, string> = {
+  unverified_sender: "Sender could not be verified: the mail may not be from this address",
+  not_a_submitter: "Verified sender, but no one who may submit receipts uses this address",
+};
 
 interface IgnoredFile {
   id: number;
@@ -80,6 +86,7 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
           <Text fw={500}>{item.senderAddress || "Unknown sender"}</Text>
           <Text c="dimmed">{new Date(item.receivedAt).toLocaleString()}</Text>
         </Group>
+        {item.status === "held" && <Text size="sm">{HOLD_REASONS[item.holdReason ?? ""] ?? "Reason not recorded"}</Text>}
         <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
         {item.status === "deferred" && (
           <Group>

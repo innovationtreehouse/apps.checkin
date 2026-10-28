@@ -83,6 +83,7 @@ describe('receipt runtime: mail intake bindings', () => {
 
     it('leaves the mailbox unbound unless both the refresher and the address are set off-local', () => {
         process.env.CHECKIN_ENV = 'dev';
+        process.env.RECEIPT_PROD_MAILBOX_ADDRESS = 'real@example.org';
         delete process.env.GMAIL_REFRESHER_FN;
         process.env.RECEIPT_MAILBOX_ADDRESS = 'receipts@example.org';
         expect(boundConfig().mailbox).toBeUndefined();
@@ -92,6 +93,45 @@ describe('receipt runtime: mail intake bindings', () => {
 
         process.env.CHECKIN_ENV = 'local';
         expect(boundConfig().mailbox).toBeUndefined();
+    });
+
+    it.each([['dev'], ['stg']])('on %s, refuses the real mailbox and binds only a different one', (env) => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        process.env.CHECKIN_ENV = env;
+        process.env.GMAIL_REFRESHER_FN = 'gmail-refresher';
+        process.env.RECEIPT_MAILBOX_ADDRESS = 'receipts@example.org';
+        delete process.env.RECEIPT_PROD_MAILBOX_ADDRESS;
+        expect(boundConfig().mailbox).toBeUndefined();
+
+        process.env.RECEIPT_PROD_MAILBOX_ADDRESS = ' Receipts@Example.org ';
+        expect(boundConfig().mailbox).toBeUndefined();
+
+        process.env.RECEIPT_PROD_MAILBOX_ADDRESS = 'real@example.org';
+        expect(boundConfig().mailbox).toBeDefined();
+    });
+
+    it('binds the real mailbox on prod without the prod-mailbox setting', () => {
+        process.env.CHECKIN_ENV = 'prod';
+        process.env.GMAIL_REFRESHER_FN = 'gmail-refresher';
+        process.env.RECEIPT_MAILBOX_ADDRESS = 'receipts@example.org';
+        delete process.env.RECEIPT_PROD_MAILBOX_ADDRESS;
+        expect(boundConfig().mailbox).toBeDefined();
+    });
+
+    it('attributes mail only to the exact sign-in email, never a pattern-like near match', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([person({ email: 'pat_x@example.org' })]);
+        expect(await boundConfig().people?.submitterByEmail('patax@example.org')).toBeNull();
+        prisma.person.findMany = jest.fn().mockResolvedValue([person({ email: 'Pat@Example.org' })]);
+        expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toMatchObject({ id: 7 });
+    });
+
+    it('alerts finance when mail is about to leave the window unread', async () => {
+        await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
+        const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(subject).toMatch(/about to be missed/);
+        expect(html).toContain('4 message(s)');
+        expect(html).toContain('25 Oct 2026');
+        expect(html).toContain('/receipts/mail');
     });
 
     it('alerts finance when mail intake stops holding mail', async () => {

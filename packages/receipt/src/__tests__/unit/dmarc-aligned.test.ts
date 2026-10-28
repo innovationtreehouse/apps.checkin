@@ -18,7 +18,7 @@ describe("dmarcAligned", () => {
   it("accepts Google's real header shape", () => {
     expect(aligned(GMAIL)).toBe(true);
     expect(aligned("mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org")).toBe(true);
-    expect(aligned("MX.Google.com 1; DMARC/1=PASS header.from=Example.ORG")).toBe(true);
+    expect(aligned("MX.Google.com 1; DKIM/1=PASS header.d=Example.ORG; DMARC/1=PASS header.from=Example.ORG")).toBe(true);
   });
 
   it("rejects a failed, misaligned, or missing DMARC result", () => {
@@ -27,6 +27,18 @@ describe("dmarcAligned", () => {
     expect(aligned("mx.google.com; spf=pass smtp.mailfrom=alice@example.org")).toBe(false);
     expect(aligned("mx.google.com; none")).toBe(false);
     expect(aligned()).toBe(false);
+  });
+
+  it("requires a passing DKIM signature by the From domain itself", () => {
+    const dmarcPass = "dmarc=pass (p=NONE) header.from=example.org";
+    expect(aligned(`mx.google.com; spf=pass smtp.mailfrom=alice@example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=fail header.i=@example.org; spf=pass; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@mailer.example.net; spf=pass; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@sub.example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@example.org.evil.net; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass (header.i=@example.org) header.s=s1; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@mailer.example.net; dkim=pass header.i=alice@example.org; ${dmarcPass}`)).toBe(true);
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.s=s1; ${dmarcPass}`)).toBe(true);
   });
 
   it("reads only the topmost header, and only Google's", () => {

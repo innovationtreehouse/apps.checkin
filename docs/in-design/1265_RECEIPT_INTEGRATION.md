@@ -140,6 +140,16 @@ credentials are Infra env for the refresher and consent tool, not the app. The
 step is bound only on a deployed instance with both `GMAIL_REFRESHER_FN` and
 `RECEIPT_MAILBOX_ADDRESS` set; otherwise it reports "unbound" and does nothing.
 
+**Test and staging instances read a test mailbox** (owner ruling). The owner
+creates a separate test mailbox in Google Workspace, and Infra points the dev
+instance at it: `RECEIPT_MAILBOX_ADDRESS` names the test mailbox,
+`GMAIL_REFRESHER_FN` names a refresher holding that mailbox's grant, and
+`RECEIPT_PROD_MAILBOX_ADDRESS` names the real mailbox. On any instance other
+than prod (dev, and ops-stg, which otherwise reads as prod) the step stays
+unbound unless `RECEIPT_PROD_MAILBOX_ADDRESS` is set and differs from
+`RECEIPT_MAILBOX_ADDRESS`, so a missing or copied setting fails closed and
+mailed receipts from real people never reach a test instance or its OCR.
+
 **Trigger: a step inside the existing daily `/api/cron/reconcile-shopify`
 handler, not Pub/Sub push.**
 
@@ -174,6 +184,12 @@ case of a body receipt:
   marked `inline`) **and** every inline part of an accepted non-text type (§2:
   JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
   forwarded message are still never read.
+- **A message forwarded as an attachment is not opened** (`[Decision —
+  deliberate limit]`). Gmail's "Forward as attachment" attaches the whole
+  original message; the step reads neither its headers nor its files nor its
+  body, and counts it under `ignored`, so the run shows it arrived. A member
+  forwards a receipt the ordinary way (inline), which is Gmail's default.
+  Opening attached messages is the upgrade if members are found doing this.
 - **The body is a receipt unless it is trivial or proven to repeat an
   attachment** (owner ruling 2026-10-16). Dropping a body unread is how a
   receipt gets lost without anyone noticing, so the step reads every body and
@@ -289,7 +305,18 @@ messages than a run can fetch in its time budget can (the `ponytail:` note on
 - Each run starts no new message after 2 minutes; the rest wait for the next run.
 - A file over 10 MB, the manual upload limit, is refused before download.
 
-Mail the mailbox sent itself is not read.
+Mail the mailbox sent itself is not read. **Spam is not read either**
+(`[Decision — deliberate limit]`): the list uses Gmail's default search, which
+skips Spam and Trash. Google's spam filter is the first defence against a flood
+of held mail; a member's own signed mail rarely lands there, and finance can
+check the folder in Gmail itself.
+
+**Mail about to leave the window** (`[Decision]`). The run reads mail oldest
+first, so mail it puts off (a cap or budget spent, the time budget reached, or
+a message whose reading failed) is read next run. Mail received more than two
+days ago will be out of the 3-day window by then, so the run sends finance one
+alert naming how many such messages there are and when the oldest arrived.
+With a daily run each message is in that last day once, so it is alerted once.
 `ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
 receipts in one window; widen the window or the cap if either happens.
 
@@ -304,14 +331,17 @@ receipts in one window; widen the window or the cap if either happens.
     header's authserv-id is `mx.google.com`; every other `Authentication-Results`
     header (lower in the message, or from any other server) is ignored, since a
     sender can write those;
-  - that header carries `dmarc=pass`, so SPF or DKIM passed **aligned** with the
-    `From` domain;
+  - that header carries `dmarc=pass` for the `From` domain **and** a
+    `dkim=pass` whose signing domain is exactly the `From` domain (owner
+    ruling). A DMARC pass on SPF alone is not enough: SPF vouches for the
+    server that sent the mail, not for the address in `From`;
   - the message has exactly one `From` header containing exactly one addr-spec;
     that address is matched, never the display name;
   - headers inside a forwarded or attached message (`message/rfc822` parts, quoted
     "From:" lines in the body) are never read for identity.
-- **Sender to person:** the authenticated `From` address must match a `Person`
-  email, and that person must be in the submitter audience (§6). Then the
+- **Sender to person:** the authenticated `From` address must equal a `Person`'s
+  sign-in email exactly (lowercased), and that person must be in the submitter
+  audience (§6). The Treehouse-account claim is granted only on that match. Then the
   attachment enters the **same upload pipeline** in auto mode (the daily upload
   limits, OCR on the sender's daily allowance, the duplicate check including the
   §2 lock) with that person as uploader. One over the OCR allowance lands in
@@ -349,6 +379,11 @@ receipts in one window; widen the window or the cap if either happens.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
+  Each held item records why it was held, shown on the mail queue: the sender
+  could not be verified (no single `From` address, or the check above failed),
+  or the verified address belongs to nobody who may submit receipts (including
+  a deferred sender who is no longer a submitter). Items held before the reason
+  was recorded show "reason not recorded".
 - **Fields email cannot carry:** reimbursement, in-kind mark, donor. A mailed
   receipt therefore always stops at `submitter_review` (guard extended from
   "needs reimbursement and not reviewed" to "came by email or needs reimbursement,

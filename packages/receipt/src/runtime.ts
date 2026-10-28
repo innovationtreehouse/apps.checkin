@@ -69,6 +69,9 @@ export const inertAlerts: ReceiptAlerts = {
   mailHoldCeilingReached: async (event) => {
     console.warn("[receipt] mail hold ceiling reached; finance alerts are not bound:", event);
   },
+  mailAgingOut: async (event) => {
+    console.warn("[receipt] mail is leaving the window unread; finance alerts are not bound:", event);
+  },
 };
 
 export const inertOcr: OcrProvider = {

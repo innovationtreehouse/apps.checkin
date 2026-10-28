@@ -27,6 +27,7 @@ export const MAIL_HELD_CEILING = 500;
 // budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
 /** Wall time per run; messages not reached wait for the next run. */
 export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 
 export type MailIntakeResult =
   | { status: "unbound" }
@@ -171,7 +172,8 @@ const envelopeSafe = (headers: Headers | undefined, authResults: string): boolea
   [...authResults.matchAll(/smtp\.mailfrom=([^\s;]*)/gi)].every((m) => !UNSAFE_ENVELOPE.test(m[1]));
 
 /**
- * True when Google's own verdict says the `From` domain passed DMARC. Only the topmost
+ * True when Google's own verdict says the `From` domain passed DMARC and a DKIM signature by
+ * that exact domain passed: an SPF pass alone is not enough. Only the topmost
  * `Authentication-Results` header counts, and only when Google wrote it: a sender can write
  * any header below it. Gmail echoes the envelope sender into the header, so a sender that could
  * break its syntax fails before parsing; anything ambiguous after (unparseable, two dmarc
@@ -184,15 +186,28 @@ export function dmarcAligned(headers: Headers | undefined, address: string): boo
   if (!parsed || parsed.authservId.toLowerCase() !== "mx.google.com") return false;
   const dmarc = parsed.results.filter((r) => r.method.toLowerCase() === "dmarc");
   if (dmarc.length !== 1 || dmarc[0].result.toLowerCase() !== "pass") return false;
+  const domain = address.split("@")[1];
   const from = dmarc[0].props.filter(([key]) => key.toLowerCase() === "header.from");
-  return from.length === 1 && from[0][1].toLowerCase() === address.split("@")[1];
+  if (from.length !== 1 || from[0][1].toLowerCase() !== domain) return false;
+  // ponytail: exact signing domain; accept a parent domain (relaxed alignment) if a real sender needs it.
+  return parsed.results.some(
+    (r) =>
+      r.method.toLowerCase() === "dkim" &&
+      r.result.toLowerCase() === "pass" &&
+      r.props.some(([key, value]) => ["header.d", "header.i"].includes(key.toLowerCase()) && value.toLowerCase().split("@").pop() === domain),
+  );
 }
+
+const isForwarded = (part: MailPart) => part.mimeType.toLowerCase() === "message/rfc822";
 
 /** Every part outside a forwarded message: an attached message's headers and parts are never read. */
 function ownParts(part: MailPart): MailPart[] {
-  if (part.mimeType.toLowerCase() === "message/rfc822") return [];
+  if (isForwarded(part)) return [];
   return [part, ...(part.parts ?? []).flatMap(ownParts)];
 }
+
+/** Messages attached whole (forwarded as attachment): never opened, only counted. */
+const forwardedCount = (part: MailPart): number => (isForwarded(part) ? 1 : (part.parts ?? []).reduce((n, p) => n + forwardedCount(p), 0));
 
 const isAttachment = (p: MailPart) =>
   !!p.filename && !/^\s*inline/i.test(headerValues(p.headers, "Content-Disposition")[0] ?? "");
@@ -210,7 +225,8 @@ const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
- * holds no money amount. `ignored` counts the inline parts under the floor and a trivial body.
+ * holds no money amount. `ignored` counts the inline parts under the floor, a trivial body and
+ * each message attached whole.
  */
 export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number } {
   const parts = ownParts(msg.payload);
@@ -226,7 +242,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const attachments = parts.filter((p) => isAttachment(p) && ACCEPTED_TYPES.has(typeOf(p)));
   const inline = parts.filter((p) => !isAttachment(p) && typeOf(p) !== "text/plain" && ACCEPTED_TYPES.has(typeOf(p)));
   const sized = inline.filter((p) => (p.body?.size ?? 0) >= INLINE_FLOOR_BYTES);
-  let ignored = inline.length - sized.length;
+  let ignored = inline.length - sized.length + forwardedCount(msg.payload);
 
   const bodyPart = (type: string) => parts.find((p) => !isAttachment(p) && typeOf(p) === type && p.body?.data);
   // HTML is stored as its source text: a receipt file is never served as a page.
@@ -240,6 +256,9 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
 }
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
+
+/** Why a file was held for finance: no sender passed the sender check, or the verified sender may not submit receipts. */
+export type HoldReason = "unverified_sender" | "not_a_submitter";
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
@@ -338,8 +357,9 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     counts.ignored += ignored;
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
-    const sender: ReceiptPrincipal | null =
-      address && dmarcAligned(headers, address) ? await ports().people.submitterByEmail(address) : null;
+    const aligned = !!address && dmarcAligned(headers, address);
+    const sender: ReceiptPrincipal | null = aligned ? await ports().people.submitterByEmail(address) : null;
+    const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
 
     for (const file of files) {
       if (sender && capped()) {
@@ -387,7 +407,9 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        await db.receiptMailItem.create({ data: { ...item, status, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType } });
+        await db.receiptMailItem.create({
+          data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType },
+        });
         counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
@@ -416,7 +438,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       try {
         const sender = await ports().people.submitterByEmail(row.senderAddress);
         if (!sender) {
-          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held" } });
+          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
         const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, mimeType: true } });
@@ -437,18 +459,49 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   await retryDeferred();
 
+  // Mail received before this is out of the window by the next daily run.
+  const lastChance = started - (MAIL_WINDOW_DAYS - 1) * DAY_MS;
+  const agingOut: number[] = [];
+  let unreadAging = 0;
+
   const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   for (const [i, id] of ids.entries()) {
     if ((capped() && holdsSpent()) || outOfTime()) {
       counts.unread = ids.length - i;
+      // Oldest first, so the first unread message is the oldest; one that cannot be dated counts as old.
+      const oldest = await reader.getMessage(id).then((m) => Number(m.internalDate), () => 0);
+      if (oldest < lastChance) {
+        unreadAging = counts.unread;
+        agingOut.push(oldest);
+      }
       break;
     }
     counts.messages++;
+    const deferredBefore = counts.deferred;
+    let msg: MailMessage | null = null;
     try {
-      await readMessage(await reader.getMessage(id), reader);
+      msg = await reader.getMessage(id);
+      await readMessage(msg, reader);
     } catch (err) {
       counts.failed++;
       console.error("[receipt] mail intake failed for one message:", err);
+      if (msg && Number(msg.internalDate) < lastChance) agingOut.push(Number(msg.internalDate));
+      continue;
+    }
+    if (counts.deferred > deferredBefore && Number(msg.internalDate) < lastChance) agingOut.push(Number(msg.internalDate));
+  }
+
+  // ponytail: one alert per run; a message sits in the last day of the window for one daily run, so it alerts once. A same-day rerun alerts again.
+  if (agingOut.length > 0) {
+    try {
+      const oldest = Math.min(...agingOut);
+      await ports().alerts.mailAgingOut({
+        orgId,
+        messages: agingOut.length - (unreadAging > 0 ? 1 : 0) + unreadAging,
+        oldestReceivedAt: oldest > 0 ? new Date(oldest) : null,
+      });
+    } catch (err) {
+      console.error("[receipt] mail ageing alert failed:", err);
     }
   }
 
