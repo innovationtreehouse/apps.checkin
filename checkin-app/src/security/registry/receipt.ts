@@ -26,6 +26,7 @@ const FINANCE_READ_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], 
 defineRoute({ endpoint: 'POST /api/receipts/upload', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/acknowledge-rejection', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 // Only the uploader discards; finance rejects instead, and the Board does neither (expenses.md).
 defineRoute({ endpoint: 'POST /api/receipts/[id]/discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });

@@ -13,7 +13,9 @@
  * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
  * expense's status with each rejected line's note, and an in-kind gift's
  * decision. The line notes are approvers' free text, so the field is `personal`,
- * like `validationNotes`. Tiers match the generated
+ * like `validationNotes`. A rejected receipt says whether its uploader has yet
+ * to acknowledge the rejection (`rejectionUnacknowledged`), which keeps it in
+ * their My receipts pill until they do. Tiers match the generated
  * models field for field. No file column is listed, so the stripper drops one if
  * a projection ever passes it through: the file leaves only through the file
  * route (plan rule 7).
@@ -119,6 +121,7 @@ export const classifications = {
     lastPushFailedAt: "internal",
     lastPushFailure: "personal",
     purchaseOutcome: "personal",
+    rejectionUnacknowledged: "internal",
   },
   ReceiptLineView: {
     id: "internal",

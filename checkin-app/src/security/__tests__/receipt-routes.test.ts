@@ -239,6 +239,7 @@ describe('receipt submitter admission', () => {
         'PATCH /api/receipts/[id]/line-items/[lineItemId]',
         'DELETE /api/receipts/[id]/line-items/[lineItemId]',
         'POST /api/receipts/[id]/retry-ocr',
+        'POST /api/receipts/[id]/acknowledge-rejection',
         'POST /api/receipts/[id]/discard',
         'POST /api/receipts/[id]/resubmit',
     ];
