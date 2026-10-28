@@ -93,7 +93,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/
 // Finance approves the tax on an expense that no receipt approval covered; the note is optional.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/tax-approval', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
-// The people finance may name as reimbursee: the uploader's live record, or none.
+// Live adults matching ?q=, for finance to name as reimbursee. It leaves out finance's own
+// household, and lists nobody when finance shares the submitter's household.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee/options', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor', 'ExpenseReimburseeView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
