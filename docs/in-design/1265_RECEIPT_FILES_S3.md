@@ -304,13 +304,18 @@ year ends; a return filed early counts as filed on that day. The Board chose the
 **Computing "delete after" for an approved receipt.**
 
 1. Take the receipt's date. If it has none, take the day it was approved.
-2. Find the fiscal year containing that date, and that year's last day.
-3. The 990 deadline is the 15th day of the 5th month after that last day.
+2. Find the fiscal year containing that date. The fiscal year runs July 1 to
+   June 30.
+3. The 990 deadline is the 15th day of the 5th month after June 30: November 15.
 4. Delete after = the deadline plus 7 years.
 
-For a fiscal year ending December 31: a receipt dated March 3, 2026 belongs to
-fiscal 2026, whose 990 is due May 15, 2027, so its file is deleted after May 15,
-2034. Every approved receipt in one fiscal year shares one date.
+A receipt dated anywhere from July 1, 2025 to June 30, 2026 belongs to that
+fiscal year, whose 990 is due November 15, 2026, so its file is deleted after
+November 15, 2033. Every approved receipt in one fiscal year shares one date.
+
+The fiscal year end is a constant in the code, with a comment naming it, not a
+setting: it changes only if the organization changes its fiscal year, which is a
+code change anyway.
 
 The deadline is the unextended one, as the ruling states. A 6-month extension
 moves the IRS limit 6 months later, which the extra year still covers.
@@ -373,12 +378,6 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
   Recommendation: A, unless the Board wants personal data held to the stricter
   standard.
 
-**For the owner.**
-
-- **Q-S3-8. The fiscal year end.** §7 needs the organization's fiscal year end,
-  and the receipt app doesn't record one. Proposed: an org setting, December 31
-  unless the owner says otherwise. What is it?
-
 **Decided.**
 
 - **Network-only reads** (Board B18, 2026-10-27; was Q-S3-6): receipt files are
@@ -387,6 +386,8 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
   was Q-S3-7): approved receipts are kept until 6 years after their fiscal
   year's Form 990 deadline, plus 1 year; rejected and discarded receipts are
   deleted after 1 year. Designed in §7.
+- **The fiscal year end** (was Q-S3-8): the fiscal year runs July 1 to June 30,
+  so the Form 990 is due November 15 (§7).
 - **Mail nobody acts on** (owner, 2026-10-17; was Q-S3-2): a held item nobody
   assigns or discards is discarded automatically at 90 days (§2). A discarded
   item's file stays restorable by an admin for 30 days, then is gone (§6).
