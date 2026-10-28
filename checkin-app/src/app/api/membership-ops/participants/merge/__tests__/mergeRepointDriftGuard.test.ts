@@ -111,6 +111,7 @@ const DISPOSITIONS: Record<string, string> = {
     'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Each tombstone role, read in the transaction, moves through setRoleFlag: granted to the survivor (a no-op when it already holds it), then revoked from the tombstone, so the role guards run and every change writes an audit row. Never left on the tombstone, because CASCADE would later destroy a security grant. Person\'s legacy role mirrors are then rewritten from an in-transaction read of the survivor\'s final rows.',
     'BudgetOwnerTreasurer.personId': 'deduped (RESTRICT) — bare join on (budgetOwnerId, personId); moved, or deleted when the survivor already treasures that bucket.',
     'ProgramVolunteer.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
+    'PersonMailAlias.personId': 'deduped (CASCADE) — moved with the email, which it extends for receipt mail; an alias equal to the survivor\'s final sign-in address is deleted. Moved and deleted ids are in the audit tally.',
     'RSVP.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a past-event duplicate is deleted; a FUTURE-event duplicate is pre-refused, because which answer is real is a human call.',
 
     // ── pre-refused: a collision here is a decision the merge must not make ───
