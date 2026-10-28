@@ -416,6 +416,12 @@ Things the app takes as true because they are handled outside it.
 - The people running a program reach a family through its household leads and
   emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
 
+- A participant's own email is hidden from the program's leader and core
+  volunteers while the participant is under 13 on the day they look; from 13 it
+  is shown. Age comes from the date of birth, and a participant with no date of
+  birth on file is treated as under 13. The board and sysadmins see it at every
+  age, and a family's household leads stay reachable either way.  [Decision — Board ruling B15, 2026-10-27; *Principle: fail closed*]
+
 - The search a program leader uses to add volunteers and participants returns
   names only, and matches a name or an id, never an email. Contact details and
   dates of birth of people outside the program, youth above all, are not theirs.
