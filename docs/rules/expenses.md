@@ -143,6 +143,22 @@ Income and donation rules are in `revenue.md`.
   charge. The app records no payment method.
   [Decision — owner]
 
+### Finance review
+
+- Finance works from one queue. Each reason for finance or the Board to act is
+  shown on the record it is about, with the action that answers it, and taking
+  that action clears the reason; no separate check-off follows. Setting the
+  reimbursee, recording the Board's authorization and a successful QuickBooks
+  retry each close the question they answer.
+  [Decision — owner]
+
+- Three questions are recorded as reviews, because no fix records their
+  answer: a duplicate QuickBooks entry to void, an entry changed in QuickBooks
+  after posting, and a closed expense that never posted. Finance closes each
+  with a note saying what it did, and a blank note is refused. A closed
+  expense's review closes on its own once the expense posts.
+  [Decision — owner]
+
 ### Spending sign-off
 
 - A reimbursement reaches the books only once each of its lines is signed by
@@ -161,14 +177,16 @@ Income and donation rules are in `revenue.md`.
 
 - The submitter signs a reimbursement by confirming its receipt as read, its
   lines and amounts, before the receipt goes to finance, whatever the intake
-  path. Submitting the receipt is not the signature. Finance may correct a card
-  charge's receipt without the submitter.
+  path. Submitting the receipt is not the signature, and nothing else gives it.
+  Finance may correct a card charge's receipt without the submitter.
   [Decision — owner]
 
 - The person reimbursed gives the submitter's signature on a reimbursement, by
-  confirming its receipt, whoever uploaded it. When they have no account in the
-  app, a Board member without a conflict confirms on their behalf, giving the
-  reason, and the record names both and keeps the reason.
+  confirming its receipt, whoever uploaded it. Any named reimbursee may confirm,
+  whatever their membership or role; only an adult is named as reimbursee.
+  When they have no account in the app, a Board member without a conflict
+  confirms on their behalf, giving the reason, and the record names both and
+  keeps the reason.
   [Decision — owner]
 
 - Once the submitter has confirmed a reimbursement, a change finance makes to
@@ -245,7 +263,10 @@ Income and donation rules are in `revenue.md`.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
 
 - A Board member without a conflict may approve any line in place of its
-  bucket approvers, giving the reason.
+  bucket approvers, giving the reason. On a line in a program bucket, holding
+  the finance role does not bar them; a conflict does. A Board member approving
+  a line in an org-level bucket, which has no bucket approvers, gives no
+  reason.
   [Decision — owner]
 
 - Reimbursing someone who is not a Treehouse Member takes the program approver
