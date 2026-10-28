@@ -182,3 +182,20 @@ describe('receipt runtime: reimbursee bindings', () => {
         expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null } });
     });
 });
+
+describe('receipt runtime: mailed receipt acknowledgements', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it("gives a live person's sign-in email and name", async () => {
+        prisma.person.findFirst = jest.fn().mockResolvedValue({ email: 'pat@example.org', name: 'Pat Example' });
+        expect(await boundConfig().replies?.contactOf(7)).toEqual({ email: 'pat@example.org', name: 'Pat Example' });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null, accounts: { some: {} } } });
+    });
+
+    it('gives nobody for a person without an email, without a sign-in, or merged away', async () => {
+        prisma.person.findFirst = jest.fn().mockResolvedValue({ email: null, name: 'Kid' });
+        expect(await boundConfig().replies?.contactOf(7)).toBeNull();
+        prisma.person.findFirst = jest.fn().mockResolvedValue(null);
+        expect(await boundConfig().replies?.contactOf(7)).toBeNull();
+    });
+});

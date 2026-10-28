@@ -7,6 +7,7 @@ import type {
   ReceiptHouseholds,
   ReceiptAlerts,
   ReceiptPeople,
+  ReceiptReplies,
   ReceiptReimbursees,
   ReceiptPrincipal,
   ReceiptSink,
@@ -91,7 +92,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -109,6 +110,11 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
 /** The receipt mailbox, or null when mail intake is unbound. */
 export function mailbox(): MailboxReader | null {
   return requireRuntime().mailbox ?? null;
+}
+
+/** The host's mail out for acknowledgements, or null when unbound. */
+export function replies(): ReceiptReplies | null {
+  return requireRuntime().replies ?? null;
 }
 
 export { callerId };

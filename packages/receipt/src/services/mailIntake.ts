@@ -11,6 +11,7 @@ import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-ty
 import { getOrg, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
+import { isAutomated, sendMailReplies } from "./mailReplies";
 
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
 // window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
@@ -49,6 +50,9 @@ export type MailIntakeResult =
       unread: number;
       /** Files never receipts: inline images under the floor, trivial bodies, and files on the ignore list. */
       ignored: number;
+      /** Acknowledgements sent, and sends that reported failure. */
+      replied: number;
+      replyFailed: number;
     };
 
 type Headers = { name: string; value: string }[];
@@ -372,6 +376,9 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     const aligned = !!address && dmarcAligned(headers, address);
     const sender: ReceiptPrincipal | null = aligned ? await ports().people.submitterByEmail(address) : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
+    // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
+    const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
+    const oweReply = (tx: Prisma.TransactionClient | typeof db) => tx.receiptMailReply.createMany({ data: [reply], skipDuplicates: true });
 
     for (const file of files) {
       if (sender && capped()) {
@@ -405,9 +412,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         }
         if (sender) {
           try {
-            const receiptId = await intakeMailedReceipt(sender, bytes, check.mimeType, (tx, newId) =>
-              tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId: newId } }),
-            );
+            const receiptId = await intakeMailedReceipt(sender, bytes, check.mimeType, async (tx, newId) => {
+              await tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId: newId } });
+              await oweReply(tx);
+            });
             counts.receipts++;
             if (file.body) await discardIfCopy(msg.id, receiptId);
             continue;
@@ -419,9 +427,12 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        await db.receiptMailItem.create({
-          data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType },
-        });
+        await db.$transaction([
+          db.receiptMailItem.create({
+            data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType },
+          }),
+          oweReply(db),
+        ]);
         counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
@@ -518,6 +529,13 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     }
   }
 
+  let replies = { sent: 0, failed: 0 };
+  try {
+    replies = await sendMailReplies();
+  } catch (err) {
+    console.error("[receipt] mail acknowledgements failed:", err);
+  }
+
   if (counts.overCeiling > 0) {
     try {
       await ports().alerts.mailHoldCeilingReached({ orgId, unresolved: stored(), refused: counts.overCeiling });
@@ -525,5 +543,5 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       console.error("[receipt] mail hold ceiling alert failed:", err);
     }
   }
-  return { status: "ok", ...counts };
+  return { status: "ok", ...counts, replied: replies.sent, replyFailed: replies.failed };
 }

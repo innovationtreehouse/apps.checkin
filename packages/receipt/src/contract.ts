@@ -219,6 +219,26 @@ export interface MailAgingOutEvent {
   oldestReceivedAt: Date | null;
 }
 
+/** One acknowledgement of a mailed receipt, to one recipient. */
+export interface MailAcknowledgement {
+  to: string;
+  /** True when the recipient is the person the receipt is credited to. */
+  mine: boolean;
+  /** The credited person's name; null on a sender's copy when the receipt went to someone else. */
+  creditedName: string | null;
+  senderAddress: string;
+  receiptId: string;
+  receivedAt: Date;
+}
+
+/** The host's mail out, for acknowledging mailed receipts. */
+export interface ReceiptReplies {
+  /** The live, sign-in-verified person's email and name, else null. */
+  contactOf(personId: number): Promise<{ email: string; name: string } | null>;
+  /** Sends one acknowledgement; false when it was not delivered. */
+  send(ack: MailAcknowledgement): Promise<boolean>;
+}
+
 /** Finance alerts the host binds. */
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
@@ -240,6 +260,8 @@ export interface ReceiptConfig {
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
+  /** Unset means acknowledgements wait unsent. */
+  replies?: ReceiptReplies;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
 }

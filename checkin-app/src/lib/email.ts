@@ -32,8 +32,9 @@ const UNCONFIGURED_FROM = '(no From configured)';
  *
  * The From (and optional Reply-To) come from getEmailSenderIdentity(): the board
  * can override the EMAIL_FROM env value and set a Reply-To in Settings → Email.
+ * `headers` go on the message as given, e.g. Auto-Submitted on an automatic reply.
  */
-export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+export async function sendEmail(to: string, subject: string, html: string, headers?: Record<string, string>): Promise<boolean> {
     const { from, replyTo } = await getEmailSenderIdentity();
 
     // Nothing can be delivered without a key, and nothing may be sent without a
@@ -66,6 +67,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
             subject,
             html,
             ...(replyTo ? { replyTo } : {}),
+            ...(headers ? { headers } : {}),
         });
 
         if (error) {

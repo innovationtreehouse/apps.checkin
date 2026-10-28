@@ -10,6 +10,7 @@ import type { ReceiptPrincipal } from "../contract";
 import { getOrg, ports, requireActor } from "../runtime";
 import { intakeDeferred, STORED_STATUSES } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
+import { closeUnreplyable } from "./mailReplies";
 import { ServiceError } from "@checkin/component-kit";
 
 const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, mimeType: true, receiptId: true } as const;
@@ -146,16 +147,22 @@ export const mailQueueService = {
       const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded", fileBlob: null } });
       if (done.count !== 1) throw new ServiceError(404, "Mail item not found");
       await auditItem(tx, actor, id, "mail_discarded", reason);
-      const { attachmentHash, ...item } = await tx.receiptMailItem.findUniqueOrThrow({ where: { id }, select: { ...ITEM_FIELDS, attachmentHash: true } });
+      const { attachmentHash, gmailMessageId, ...item } = await tx.receiptMailItem.findUniqueOrThrow({
+        where: { id },
+        select: { ...ITEM_FIELDS, attachmentHash: true, gmailMessageId: true },
+      });
+      const messages = [gmailMessageId];
       if (ignoreFile) {
         await addIgnored(tx, actor, attachmentHash, reason, "mail_item", String(id));
         const copies = await tx.receiptMailItem.updateManyAndReturn({
           where: { orgId, attachmentHash, status: { in: STORED_STATUSES } },
           data: { status: "discarded", fileBlob: null },
-          select: { id: true },
+          select: { id: true, gmailMessageId: true },
         });
         for (const copy of copies) await auditItem(tx, actor, copy.id, "mail_discarded", reason);
+        messages.push(...copies.map((c) => c.gmailMessageId));
       }
+      await closeUnreplyable(tx, messages);
       return item;
     });
   },
