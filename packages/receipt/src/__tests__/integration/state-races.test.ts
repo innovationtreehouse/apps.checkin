@@ -4,7 +4,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { pushReceipt, runFullFlow } from "../../lib/receipt-flow";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -91,6 +91,7 @@ describeDb("a state change racing the receipt flow", () => {
     const id = await receiptIn("rejected");
     expect(await pushReceipt(id, null)).toBe(false);
     expect(ports.calls.pushes).toHaveLength(0);
+    expect(await actions(id)).not.toContain("push_failed");
   });
 });
 
@@ -108,6 +109,21 @@ describeDb("two transitions from one state", () => {
     const result = await racing([setState(id, "uploaded")], () => receiptService.discard(id, "submitter"));
     expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
     expect(await stateOf(id)).toBe("uploaded");
+  });
+});
+
+describeDb("two edits of one line", () => {
+  it("the second reads the line after the first commits, so neither change is lost", async () => {
+    const id = await receiptIn("validation_failed");
+    const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: id } });
+    await racing(
+      [
+        Prisma.sql`UPDATE receipt_details SET state = state WHERE id = ${id}`,
+        Prisma.sql`UPDATE receipt_line_items SET description = 'Hex bolt' WHERE id = ${line.id}`,
+      ],
+      () => receiptService.editLine(id, "submitter", line.id, { quantity: 3 }),
+    );
+    expect(await db.receiptLineItem.findUniqueOrThrow({ where: { id: line.id } })).toMatchObject({ description: "Hex bolt", quantity: 3 });
   });
 });
 
