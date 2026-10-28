@@ -96,7 +96,7 @@ none of it.
 
 | Audience | Screens | Sees | Does not see |
 |---|---|---|---|
-| Finance, the Board | Every in-scope route | Everything the route returns, including donors, submitters and the person reimbursed | — |
+| Finance, the Board | Every in-scope route | Everything the route returns, including donors, submitters and the person reimbursed | Nothing |
 | Operations, inventory managers | Gifts of goods recorded without a receipt, list | The goods (description, quantity, barcode), their value, the donation date, who recorded it | The donor's name or company |
 | Inventory managers | Receipt-to-books mapping, list and detail | Vendor, totals, tax and shipping, each line with its price, mapping status | Who submitted the receipt or is reimbursed |
 | Bucket approvers | Expenses in their buckets, list and detail, with approvals and sign-offs | Vendor, amounts, lines, approval and sign-off state | The submitter, the person reimbursed, who recorded Board authorization |
