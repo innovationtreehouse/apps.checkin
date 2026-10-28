@@ -110,6 +110,20 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(boundConfig().mailbox).toBeDefined();
     });
 
+    it.each([['unset', undefined], ['blank', ''], ['misspelled', 'production'], ['wrong case', 'Prod']])(
+        'binds no mailbox when CHECKIN_ENV is %s, though it reads as prod',
+        (_label, value) => {
+            const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+            if (value === undefined) delete process.env.CHECKIN_ENV;
+            else process.env.CHECKIN_ENV = value;
+            process.env.GMAIL_REFRESHER_FN = 'gmail-refresher';
+            process.env.RECEIPT_MAILBOX_ADDRESS = 'receipts@example.org';
+            delete process.env.RECEIPT_PROD_MAILBOX_ADDRESS;
+            expect(boundConfig().mailbox).toBeUndefined();
+            expect(error).toHaveBeenCalledWith(expect.stringContaining('CHECKIN_ENV must be prod, dev or stg'));
+        },
+    );
+
     it('binds the real mailbox on prod without the prod-mailbox setting', () => {
         process.env.CHECKIN_ENV = 'prod';
         process.env.GMAIL_REFRESHER_FN = 'gmail-refresher';
