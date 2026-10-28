@@ -85,6 +85,16 @@ Income and donation rules are in `revenue.md`.
   exclusion records who made it and why, so it stays visible.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- Every mailed message that becomes a receipt gets one email acknowledgement,
+  sent once the receipt exists. It goes to the sender, and separately to the
+  person the receipt is credited to when that is someone else, so a person
+  whose name someone else used hears about it and can discard it. A sender
+  copy for someone else's receipt does not name that person. The sender gets
+  no copy when the sender check failed or the message was automatic (an
+  auto-reply, a bounce, list mail). Mail that never becomes a receipt gets no
+  acknowledgement, and no acknowledgement is sent twice.
+  [Decision]
+
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
   fraction of a cent. Then the total may differ by up to one cent for each

@@ -225,7 +225,7 @@ describe('sendEmail send-failure contract (Resend configured)', () => {
         }));
     });
 
-    it('omits Reply-To entirely when the identity has none', async () => {
+    it('omits Reply-To and headers unless they are set', async () => {
         doMockIdentity = { from: 'test@test.com' };
         sendMock.mockResolvedValue({ data: { id: '1' }, error: null });
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -234,6 +234,10 @@ describe('sendEmail send-failure contract (Resend configured)', () => {
         await send('to@test.com', 'Subject', '<p>hi</p>');
         expect(sendMock).toHaveBeenCalledTimes(1);
         expect(sendMock.mock.calls[0][0]).not.toHaveProperty('replyTo');
+        expect(sendMock.mock.calls[0][0]).not.toHaveProperty('headers');
+
+        await send('to@test.com', 'Subject', '<p>hi</p>', { 'Auto-Submitted': 'auto-replied' });
+        expect(sendMock.mock.calls[1][0]).toMatchObject({ headers: { 'Auto-Submitted': 'auto-replied' } });
     });
 
     it('refuses to call Resend and returns false when neither source configures a From', async () => {

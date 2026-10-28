@@ -1,0 +1,139 @@
+// Acknowledgements of mailed receipts: one per message, sent once the message has a receipt, to
+// its sender and to the person the receipt is credited to when that is someone else, so a person
+// whose name someone else mailed a receipt under hears about it.
+import { db } from "../db";
+import type { MailAcknowledgement, MailPart, ReceiptReplies } from "../contract";
+import type { Prisma } from "../generated/prisma/client";
+import { getOrg, replies } from "../runtime";
+
+/** Messages acknowledged per run; the rest wait for the next run. */
+export const REPLY_CAP = 50;
+/** Sends that report failure before a reply is given up. */
+export const REPLY_ATTEMPTS = 3;
+
+type Headers = { name: string; value: string }[];
+
+const first = (headers: Headers | undefined, name: string): string | undefined =>
+  (headers ?? []).find((h) => h.name.toLowerCase() === name.toLowerCase())?.value.trim().toLowerCase();
+
+/**
+ * True for mail no person wrote, which is never answered: an auto-reply, a bounce, list or bulk
+ * mail, or a message asking not to be auto-answered (RFC 3834 and the common vendor headers).
+ */
+export function isAutomated(payload: MailPart, address: string | null): boolean {
+  const h = payload.headers;
+  const autoSubmitted = first(h, "Auto-Submitted");
+  if (autoSubmitted !== undefined && autoSubmitted.split(";")[0].trim() !== "no") return true;
+  if (["bulk", "junk", "list"].includes(first(h, "Precedence") ?? "")) return true;
+  if (["X-Autoreply", "X-Autorespond", "X-Auto-Response-Suppress"].some((n) => first(h, n) !== undefined)) return true;
+  if (first(h, "Return-Path")?.replace(/\s/g, "") === "<>") return true;
+  if (payload.mimeType.toLowerCase() === "multipart/report") return true;
+  return address !== null && /^(mailer-daemon|postmaster)@/.test(address);
+}
+
+/**
+ * Close the owed reply of each message left with no stored or assigned file, which can no longer
+ * become a receipt, so the sweep never scans it again.
+ */
+export async function closeUnreplyable(tx: Prisma.TransactionClient, gmailMessageIds: string[]): Promise<void> {
+  const live = await tx.receiptMailItem.findMany({
+    where: { gmailMessageId: { in: gmailMessageIds }, status: { in: ["held", "deferred", "assigned"] } },
+    select: { gmailMessageId: true },
+  });
+  const liveIds = new Set(live.map((l) => l.gmailMessageId));
+  const dead = gmailMessageIds.filter((id) => !liveIds.has(id));
+  if (dead.length > 0) await tx.receiptMailReply.updateMany({ where: { gmailMessageId: { in: dead }, doneAt: null }, data: { doneAt: new Date() } });
+}
+
+type Send = { field: "senderSentAt" | "creditedSentAt"; ack: MailAcknowledgement };
+
+/**
+ * The copies still owed on a claimed row. The sender's copy counts as the credited person's only
+ * when it is actually sent, so a forged From credited to the person it names still reaches them.
+ */
+async function owedSends(out: ReceiptReplies, id: number, receiptId: string): Promise<Send[]> {
+  const row = await db.receiptMailReply.findUniqueOrThrow({ where: { id } });
+  // ponytail: a message whose files finance credits to different people acknowledges only the first; add a reply per receipt if that happens.
+  const receipt = await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } });
+  const credited = await out.contactOf(receipt.uploadedByUserId);
+  const sameAsSender = row.replyToSender && credited !== null && credited.email.toLowerCase() === row.senderAddress;
+  const ack = { senderAddress: row.senderAddress, receiptId, receivedAt: row.receivedAt };
+
+  const sends: Send[] = [];
+  if (row.replyToSender && !row.senderSentAt) {
+    sends.push({ field: "senderSentAt", ack: { ...ack, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null } });
+  }
+  if (credited && !sameAsSender && !row.creditedSentAt) {
+    sends.push({ field: "creditedSentAt", ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name } });
+  }
+  return sends;
+}
+
+/** Finish a claimed row, or release it for a later run and count the attempt, giving up after REPLY_ATTEMPTS. */
+async function settle(id: number, allSent: boolean): Promise<void> {
+  if (allSent) {
+    await db.receiptMailReply.update({ where: { id }, data: { doneAt: new Date() } });
+    return;
+  }
+  const { attempts } = await db.receiptMailReply.update({ where: { id }, data: { claimedAt: null, attempts: { increment: 1 } }, select: { attempts: true } });
+  if (attempts >= REPLY_ATTEMPTS) await db.receiptMailReply.update({ where: { id }, data: { doneAt: new Date() } });
+}
+
+/**
+ * Send each owed acknowledgement whose message now has a receipt. A row is claimed before any
+ * send and stays claimed once a send succeeds, so nothing is sent twice; a send that reports
+ * failure releases the claim for a later run. Does nothing while the host's mail out is unbound.
+ */
+export async function sendMailReplies(): Promise<{ sent: number; failed: number }> {
+  const out = replies();
+  const counts = { sent: 0, failed: 0 };
+  if (!out) return counts;
+  const orgId = (await getOrg()).id;
+  // The first receipt made from each waiting message, by ledger order.
+  const owed = await db.$queryRaw<{ id: number; receiptId: string }[]>`
+    SELECT r.id, (
+      SELECT i.receipt_id FROM receipt_mail_items i
+      WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL
+      ORDER BY i.id LIMIT 1
+    ) AS "receiptId"
+    FROM receipt_mail_replies r
+    WHERE r.org_id = ${orgId} AND r.done_at IS NULL AND r.claimed_at IS NULL AND r.attempts < ${REPLY_ATTEMPTS}
+      AND EXISTS (SELECT 1 FROM receipt_mail_items i WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL)
+    ORDER BY r.id
+    LIMIT ${REPLY_CAP}`;
+
+  for (const { id, receiptId } of owed) {
+    const claimed = await db.receiptMailReply.updateMany({ where: { id, claimedAt: null, doneAt: null }, data: { claimedAt: new Date() } });
+    if (claimed.count !== 1) continue;
+    let sends: Send[];
+    try {
+      sends = await owedSends(out, id, receiptId);
+    } catch (err) {
+      // Nothing was sent, so the claim is released and the attempt counts.
+      console.error("[receipt] mail acknowledgement could not be prepared for one message:", err);
+      counts.failed++;
+      await settle(id, false).catch((e: unknown) => console.error("[receipt] mail acknowledgement claim not released:", e));
+      continue;
+    }
+
+    let allSent = true;
+    for (const { field, ack } of sends) {
+      let ok = false;
+      try {
+        ok = await out.send(ack);
+      } catch (err) {
+        console.error("[receipt] mail acknowledgement failed for one message:", err);
+      }
+      if (ok) {
+        await db.receiptMailReply.update({ where: { id }, data: { [field]: new Date() } });
+        counts.sent++;
+      } else {
+        allSent = false;
+        counts.failed++;
+      }
+    }
+    // ponytail: a crash between a send and its stamp leaves the row claimed and never retried; that is the at-most-once side.
+    await settle(id, allSent);
+  }
+  return counts;
+}

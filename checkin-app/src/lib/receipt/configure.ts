@@ -5,7 +5,8 @@
  * workflow-mapping's intake, which dedupes on `receiptId`), X12 (reimbursement status, read
  * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable") and X13
  * (the donor sink, bound to donations in-process). Mail intake (§2a) is bound only on a deployed
- * instance with both the token refresher and the mailbox configured.
+ * instance with both the token refresher and the mailbox configured; each mailed receipt is
+ * acknowledged by email (mailReply.ts).
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
@@ -18,6 +19,7 @@ import {
   fixtureOcr,
   type MailboxReader,
   type ReceiptAlerts,
+  type ReceiptReplies,
   type ReceiptPrincipal,
   type ReimburseeOption,
 } from "@checkin/receipt";
@@ -191,6 +193,21 @@ const alerts: ReceiptAlerts = {
   },
 };
 
+/** A live, sign-in-verified person's email and name, for a mailed receipt's acknowledgement. */
+async function contactOf(personId: number): Promise<{ email: string; name: string } | null> {
+  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true, name: true } });
+  return person?.email ? { email: person.email, name: person.name } : null;
+}
+
+const replies: ReceiptReplies = {
+  contactOf,
+  async send(ack) {
+    const { sendMailReply } = await import("@/lib/receipt/mailReply");
+    return sendMailReply(ack, process.env.RECEIPT_MAILBOX_ADDRESS);
+  },
+};
+
 /** Live members of every household holding one of these people; a merged-away person's household still counts. */
 async function householdOf(personIds: number[]): Promise<number[]> {
   if (personIds.length === 0) return [];
@@ -211,6 +228,7 @@ export function configureRuntime(): void {
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount },
     alerts,
     mailbox: receiptMailbox(),
+    replies,
     reimbursementStatus,
     submitterConfirmations,
     receiptSink: { ingestReceipt },
