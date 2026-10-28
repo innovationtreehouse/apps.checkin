@@ -148,8 +148,10 @@ describe("bulk-donation wiring", () => {
     ]);
     process.env.QBO_REALM_ID = "123";
     booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
     inKindAccountsReady.mockReturnValue(false);
     await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
+    expect(inKindAccountsReady).toHaveBeenLastCalledWith(expect.objectContaining({ INKIND_CLEARING: "35" }), ["35"]);
     inKindAccountsReady.mockReturnValue(true);
     await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
