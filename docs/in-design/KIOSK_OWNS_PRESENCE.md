@@ -590,10 +590,10 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
    kiosk's own screen buttons fail, which no one uses at the door. K2 needs the
    server to have stopped holding closes (PR 2) only in the sense that a held
    reply would show as an ordinary checkout, which is harmless.
-6. **Model.** Re-run the design model with these fixes (see "Checked by
-   model"), then the check-in Base and Impl without the web actions (web
-   check-in, web checkout, web close, web removal, open roster mark) on PR 2's
-   head. The coordinator owns this.
+6. **Model.** The design model is re-checked (see "Checked by model"). Still
+   to do: the check-in Base and Impl without the web actions (web check-in,
+   web checkout, web close, web removal, open roster mark) on PR 2's head. The
+   coordinator owns this.
 
 ### What happens at cutover
 
@@ -669,31 +669,39 @@ second-guess the close.
 
 ## Checked by model
 
-The design was model-checked in TLA+ on 2026-10-27. The model and its runs are
-in the coordinator's analysis folder, outside this repo
-(`checkin-analysis/kiosk-design/spec/KioskDesign.tla`; findings in
-`checkin-analysis/kiosk-design/findings-2026-10-27.md`).
+The design was model-checked in TLA+ on 2026-10-27 and re-checked on the
+revised design on 2026-10-28. The model and its runs are in the coordinator's
+analysis folder, outside this repo
+(`checkin-analysis/kiosk-design/spec/KioskDesign.tla`; findings and the
+re-check in `checkin-analysis/kiosk-design/findings-2026-10-27.md`; runs in
+`spec/README.md`, Round R2). The re-check found no new gaps.
 
-Found and fixed in this revision: the empty nightly run leaves no close to
-fence against (F1); clock drift moves a scan past the nightly close (F2);
-member inserts can overlap an open visit (F4); the web shows building state
-while scans are queued (F5); a live scan overtakes another person's queued
-scan (F6); the close log and the visit's close link disagree after a
-pull-back. F3 is Q5 above, accepted by the owner.
+| Finding | Design change | Result on the revised design |
+| --- | --- | --- |
+| F1: an empty 23:00 run leaves no close to fence against | The close is recorded every night | Fixed; holds |
+| F2: clock drift moves a scan past the 23:00 close | Server-time stamps; flag a scan whose uncertainty spans a close | Fixed as designed: such a scan is applied and flagged. The residual case (flagged but still open the next day) only affects scans within seconds of 23:00, by this design's own uncertainty figures |
+| F3: a keyholder's wrong "Goodbye" records a close | None: accepted (Q5) | Accepted as decided; still occurs, by design |
+| F4: an insert or edit overlaps an open visit | Refuse against an open visit, flag against a closed one | Fixed; holds |
+| F5: the web states building state while scans are queued | Queue depth on the heartbeat; "Syncing N scans" | Fixed; holds. The web never shows a false open. The one-poll lag remains, as accepted above |
+| F6: a live scan overtakes another person's queued scan | Live only behind an empty queue | Fixed; scans reach the server in order, and the queue still drains |
 
-Held in the model, before these fixes:
+Held throughout:
 
 - Liveness: the queue drains when the network returns, and every scan is
-  eventually applied (full run).
+  eventually applied.
 - A roster mark racing a queued kiosk arrival never leaves an unflagged
-  overlap (full run).
-- In every state explored (partial: the safety runs stopped on F1): every
-  badge is applied or still queued; every scan is applied exactly once; every
-  machine departure links to the close whose time it carries; only the kiosk
-  creates open visits, and no web step changes who is in.
+  overlap.
+- Every badge is applied or still queued; every scan is applied exactly once;
+  every machine departure links to the close whose time it carries.
+- Reconciliation (only the kiosk opens visits, no web step changes who is in,
+  no false open, overlaps flagged): no violation in 75 million states. This
+  run is partial; it stopped at its time limit.
 - "Can't confirm" without a fresh heartbeat holds by construction.
 
-The fixes here have not been re-run in the model yet (rollout step 6).
+Not modelled: the close-log wording (`facilityCloseId` authoritative,
+`supersededCloseId` on the pull-back's log row), which is text only, and a
+kiosk-owned 23:00 close (Q4 (b)), left for a separate variant if the Board
+picks it.
 
 ## Appendix: sources
 
