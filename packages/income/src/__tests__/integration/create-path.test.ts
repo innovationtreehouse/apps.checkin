@@ -145,7 +145,7 @@ function bind(over: Partial<IncomeConfig> = {}) {
   });
 }
 
-const rowFor = (g: string) => db.payoutReconciliation.findFirstOrThrow({ where: { orgId: ORG_A, payoutGid: g } });
+const rowFor = (g: string) => db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } } });
 const drain = (now = NOW) => drainIncomeOutbox(ORG_A, now);
 const finance = { userId: 9 };
 const resolve = (g: string, req: Parameters<typeof reconciliationService.resolve>[2]) =>
@@ -354,7 +354,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
   beforeEach(switchOn);
 
   const claimAt = (g: string, at: Date) =>
-    db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } }, data: { postClaimedAt: at } });
+    db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } }, data: { postClaimedAt: at } });
 
   it("a fresh claim keeps the drain and reconcile off the payout; a stale one is taken over", async () => {
     const p = payout(2, "2026-06-28", 500);
@@ -507,7 +507,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     const warning = "app entry 999 is not linked; void or link it";
-    await db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } }, data: { qbNote: warning } });
+    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { qbNote: warning } });
 
     await resolve(p, { action: "retry" });
     expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED", qbNote: warning });
@@ -563,7 +563,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
   it("dismiss on a payout never attempted needs no lookup", async () => {
     const p = payout(2, "2026-06-10", 500);
     await runReconcile(ORG_A, NOW);
-    await db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } }, data: { status: "OPEN", kind: "NO_DEPOSIT" } });
+    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { status: "OPEN", kind: "NO_DEPOSIT" } });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })));
     expect(await resolve(p, { action: "dismiss", reason: "refunded" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
   });
@@ -579,7 +579,7 @@ describeDb("runIncomeOrphanSweep", () => {
     expect(await rowFor(linked)).toMatchObject({ status: "POSTED" });
     const strayEntry = (await rowFor(stray)).depositId;
     await db.payoutReconciliation.update({
-      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: stray } },
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: stray } },
       data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
     });
 
@@ -597,7 +597,7 @@ describeDb("runIncomeOrphanSweep", () => {
     const entry = (await rowFor(g)).depositId;
     if (!entry) throw new Error("not posted");
     await db.payoutReconciliation.update({
-      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
       data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
     });
     return { g, entry };
@@ -626,7 +626,7 @@ describeDb("runIncomeOrphanSweep", () => {
   it("does not note an entry whose lost-claim warning finance cleared", async () => {
     const { g, entry } = await unlinked();
     await db.payoutReconciliation.update({
-      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
       data: { qbNote: `app entry ${entry} may need voiding: its post lost the payout to another` },
     });
     await resolve(g, { action: "clear_note", reason: "voided" });
@@ -665,7 +665,7 @@ describeDb("runIncomeOrphanSweep", () => {
         locked();
         await released;
         await tx.payoutReconciliation.update({
-          where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
+          where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
           data: { status: "RESOLVED", kind: null, depositId: entry },
         });
       },
@@ -877,7 +877,7 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
     await drain();
     const created = (await rowFor(p)).depositId;
     await db.payoutReconciliation.update({
-      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
+      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } },
       data: { status: "WAITING", origin: null, depositId: null, depositTxnDate: null, depositTotalCents: null },
     });
 
@@ -889,7 +889,7 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
   it("the app's own deposit is never hand-matched to another payout of the same amount", async () => {
     const p2 = payout(2, "2026-06-28", 500);
     await drain();
-    await db.payoutReconciliation.delete({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p2 } } });
+    await db.payoutReconciliation.delete({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p2 } } });
     setPayout(p2, { status: "in_transit" });
     const p3 = payout(3, "2026-06-28", 500);
 

@@ -197,6 +197,8 @@ model DisbursementHold {
   @@map("disbursement_holds")
 }
 
+// The qb* columns are neither read nor written: income owns every deposit. They stay mapped
+// until no deployed release reads them (QB_ENTRY_OWNERSHIP, the exclusion-table PR drops them).
 model DisbursementEvent {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -208,8 +210,26 @@ model DisbursementEvent {
   payload        String
   /// @sensitivity:internal
   createdAt      DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
+  qbMatchState   String   @default("UNMATCHED") @map("qb_match_state")
+  /// @sensitivity:internal
+  qbTxnId        String?  @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbDepositTotalCents Int?    @map("qb_deposit_total_cents")
+  /// @sensitivity:internal
+  qbDepositTxnDate    String? @map("qb_deposit_txn_date")
+  /// @sensitivity:internal
+  qbDriftedTxnId      String? @map("qb_drifted_txn_id")
+  /// @sensitivity:internal
+  qbDriftCause        String? @map("qb_drift_cause")
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// @sensitivity:internal
+  qbNote              String? @map("qb_note")
 
   @@unique([orgId, disbursementId])
+  @@unique([orgId, qbTxnId])
+  @@index([orgId, qbMatchState])
   @@map("disbursement_events")
 }
 
@@ -279,13 +299,18 @@ model DonationQbMatchExclusion {
   @@map("qb_match_exclusion")
 }
 
-// The in-kind lane's QuickBooks settings, one row per org.
+// The in-kind lane's QuickBooks settings, one row per org. qbPostingOnAt and
+// depositsHandedOverAt are neither read nor written, and are dropped with the qb* event columns.
 model DonationOrgSettings {
   /// @sensitivity:internal
   orgId         String    @id @map("org_id")
+  /// @sensitivity:internal
+  qbPostingOnAt DateTime? @map("qb_posting_on_at")
   // When the in-kind lane's posting switched on; set once, by its first run with QuickBooks and every in-kind books-map role.
   /// @sensitivity:internal
   inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
+  /// @sensitivity:internal
+  depositsHandedOverAt DateTime? @map("deposits_handed_over_at")
 
   @@map("donation_org_settings")
 }

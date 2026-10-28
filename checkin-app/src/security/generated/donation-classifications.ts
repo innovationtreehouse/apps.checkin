@@ -91,6 +91,14 @@ export const classifications = {
         disbursementId: 'internal',
         payload: 'internal',
         createdAt: 'internal',
+        qbMatchState: 'internal',
+        qbTxnId: 'internal',
+        qbDepositTotalCents: 'internal',
+        qbDepositTxnDate: 'internal',
+        qbDriftedTxnId: 'internal',
+        qbDriftCause: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
     },
     DisbursementSnapshot: {
         orgId: 'internal',
@@ -123,7 +131,9 @@ export const classifications = {
     },
     DonationOrgSettings: {
         orgId: 'internal',
+        qbPostingOnAt: 'internal',
         inKindQbPostingOnAt: 'internal',
+        depositsHandedOverAt: 'internal',
     },
     InKindDonation: {
         id: 'internal',

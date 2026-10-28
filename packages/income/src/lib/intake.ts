@@ -90,7 +90,7 @@ export async function expectDeposit(orgId: string, source: typeof DEPOSIT_SOURCE
   const expected = parseExpected(raw);
   return db.$transaction(async (tx) => {
     await lockReconciliation(tx, orgId, true);
-    const current = await tx.payoutReconciliation.findUnique({ where: { orgId_source_payoutGid: { orgId, source, payoutGid: key } } });
+    const current = await tx.payoutReconciliation.findUnique({ where: { orgId_payoutGid: { orgId, payoutGid: key } } });
     if (!current) {
       const saved = await tx.payoutReconciliation.create({
         data: { orgId, source, payoutGid: key, payoutDate: expected.txnDate, payoutNetCents: expected.netCents, status: RECON_STATUS.WAITING, expected: { ...expected } },
@@ -98,6 +98,7 @@ export async function expectDeposit(orgId: string, source: typeof DEPOSIT_SOURCE
       await audit(tx, orgId, "reconciliation.expected", null, saved);
       return "recorded";
     }
+    if (current.source !== source) throw new ServiceError(409, `key "${key}" belongs to another source`);
     if (JSON.stringify(expectedOf(current)) === JSON.stringify(expected)) return "unchanged";
     if (!unposted(current)) return "frozen";
     const saved = await tx.payoutReconciliation.update({

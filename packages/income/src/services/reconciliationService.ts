@@ -43,7 +43,7 @@ async function openRow(orgId: string, id: number) {
   return row;
 }
 
-/** The bank account a row's deposits land in: the books map's, else the environment's. */
+/** The bank account a row's deposits land in, from the books map. */
 async function bankOf(row: { source: string }): Promise<string | undefined> {
   return (await roleAccounts())[isBenevity(row) ? BANK_ROLE.benevity : BANK_ROLE.shopify];
 }

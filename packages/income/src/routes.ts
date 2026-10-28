@@ -9,7 +9,6 @@ import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
 import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
 import { runReconcile } from "./lib/reconcile";
-import { DEPOSIT_SOURCE } from "./lib/sources";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
 
@@ -66,7 +65,7 @@ export const getPayout: IncomeRouteHandler = async ({ params }) => {
   const orgId = await getOrgId();
   const [transactions, reconciliation] = await Promise.all([
     mirror.transactions(gid),
-    db.payoutReconciliation.findUnique({ where: { orgId_source_payoutGid: { orgId, source: DEPOSIT_SOURCE.SHOPIFY, payoutGid: gid } } }),
+    db.payoutReconciliation.findUnique({ where: { orgId_payoutGid: { orgId, payoutGid: gid } } }),
   ]);
   return { IncomePayoutView: payout, IncomeBalanceTxnView: transactions, PayoutReconciliation: reconciliation };
 };

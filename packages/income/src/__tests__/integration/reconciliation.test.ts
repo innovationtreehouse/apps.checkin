@@ -49,7 +49,7 @@ function bind() {
 }
 
 const rowFor = (payoutGid: string, orgId = ORG_A) =>
-  db.payoutReconciliation.findFirstOrThrow({ where: { orgId, payoutGid } });
+  db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId, payoutGid } } });
 
 beforeEach(async () => {
   await clearAll();
