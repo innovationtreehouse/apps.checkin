@@ -301,6 +301,9 @@ model ReceiptMailItem {
   // held | deferred | assigned | discarded
   /// @sensitivity:internal
   status         String    @default("held")
+  // Why a held item was held: unverified_sender | not_a_submitter. Null on items held before it was recorded.
+  /// @sensitivity:internal
+  holdReason     String?   @map("hold_reason")
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")

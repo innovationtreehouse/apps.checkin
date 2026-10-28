@@ -12,7 +12,7 @@ import { intakeDeferred, STORED_STATUSES } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { ServiceError } from "@checkin/component-kit";
 
-const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, mimeType: true, receiptId: true } as const;
+const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, mimeType: true, receiptId: true } as const;
 
 const AssignSchema = z.union([
   z.object({ email: z.string().trim().min(1).max(320) }).strict(),

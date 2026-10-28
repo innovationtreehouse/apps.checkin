@@ -82,8 +82,10 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
     },
     take: 2,
   });
-  if (matches.length !== 1) return null;
-  const [person] = matches;
+  // Only the person's own sign-in email vouches for them, and only it carries the org-account claim.
+  const exact = matches.filter((p) => p.email?.toLowerCase() === address);
+  if (matches.length !== 1 || exact.length !== 1) return null;
+  const [person] = exact;
   const claims: JWT = { id: person.id, email: person.email, hd: address.split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
   if (claims.denied || !canSubmitReceipts(claims)) return null;
@@ -149,11 +151,23 @@ function refresherAccessToken(functionName: string, mailboxAddress: string): () 
   };
 }
 
-/** Bound only off-local with both values set; otherwise mail intake reports "unbound". */
+/**
+ * Bound only off-local with both values set; otherwise mail intake reports "unbound". Off prod
+ * (dev, and ops-stg, which reads as prod) it
+ * also needs RECEIPT_PROD_MAILBOX_ADDRESS, naming the real mailbox, and refuses that mailbox: a
+ * non-prod instance reads only its own test mailbox.
+ */
 function receiptMailbox(): MailboxReader | undefined {
   const functionName = process.env.GMAIL_REFRESHER_FN;
   const mailboxAddress = process.env.RECEIPT_MAILBOX_ADDRESS;
   if (config.checkinEnv() === "local" || !functionName || !mailboxAddress) return undefined;
+  if (config.checkinEnv() !== "prod" || config.isStaging()) {
+    const prodMailbox = process.env.RECEIPT_PROD_MAILBOX_ADDRESS?.trim().toLowerCase();
+    if (!prodMailbox || prodMailbox === mailboxAddress.trim().toLowerCase()) {
+      console.error("[receipt] mail intake unbound: off prod, RECEIPT_PROD_MAILBOX_ADDRESS must be set and name a different mailbox");
+      return undefined;
+    }
+  }
   return createGmailReader(mailboxAddress, refresherAccessToken(functionName, mailboxAddress));
 }
 
@@ -164,6 +178,15 @@ const alerts: ReceiptAlerts = {
       "Receipts: mail intake stopped holding mail",
       `<p>${unresolved} mailed item(s) are held or deferred in the incoming receipt queue, the most the receipt mailbox holds. Today's mail run did not store ${refused} more file(s) from unknown or unverified senders, or from members over their daily upload limit; they stay in the mailbox only. Receipts from members within their limit are still read. Resolve or release queued items to resume holding. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
       "Receipt mail ceiling alert failed:",
+    );
+  },
+  async mailAgingOut({ messages, oldestReceivedAt }) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    const since = oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "";
+    await notifyFinanceAlert(
+      "Receipts: mailed receipts are about to be missed",
+      `<p>Today's mail run did not finish reading ${messages} message(s) in the receipt mailbox${since}. They leave the 3-day reading window before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
+      "Receipt mail ageing alert failed:",
     );
   },
 };

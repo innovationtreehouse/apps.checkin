@@ -92,6 +92,22 @@ Income and donation rules are in `revenue.md`.
   receipt as balanced exactly when the check passes.
   [Decision]
 
+- Mail to the receipt mailbox counts as from a person only when Google's own
+  check shows the sender's domain signed it (DKIM) and passed DMARC, and the
+  sender is that person's sign-in email. A pass on SPF alone is not enough.
+  Anything else waits for finance, which sees why it was held: the sender
+  could not be verified, or nobody who may submit receipts uses that address.
+  [Decision — owner]
+
+- A test or staging instance reads only its own test mailbox, never the real
+  one. It refuses to read mail unless it is told which mailbox is the real one
+  and is pointed at a different one.
+  [Decision — owner]
+
+- The daily mailed-receipt limit is 25 for a program lead or Board member and
+  5 for everyone else.
+  [Decision — owner]
+
 ### Budget buckets
 
 - A budget bucket is an accounting bucket, not a person. Finance creates,

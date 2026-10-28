@@ -108,6 +108,7 @@ export const classifications = {
         receivedAt: 'internal',
         senderAddress: 'pii',
         status: 'internal',
+        holdReason: 'internal',
         fileBlob: 'pii',
         mimeType: 'internal',
         receiptId: 'internal',

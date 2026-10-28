@@ -210,9 +210,19 @@ export interface MailHoldCeilingEvent {
   refused: number;
 }
 
+/** Mail the run did not fully read that will be out of the window by the next daily run. */
+export interface MailAgingOutEvent {
+  orgId: string;
+  /** Messages at risk: partly read or failed ones, and every message the run did not reach. One that cannot be fetched counts, since its age is unknown. */
+  messages: number;
+  /** When the oldest dated at-risk message arrived; null when none could be dated. */
+  oldestReceivedAt: Date | null;
+}
+
 /** Finance alerts the host binds. */
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
+  mailAgingOut(event: MailAgingOutEvent): Promise<void>;
 }
 
 export interface ReceiptConfig {

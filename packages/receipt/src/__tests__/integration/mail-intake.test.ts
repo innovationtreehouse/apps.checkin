@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import type { MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
+import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
   MAIL_CAP,
@@ -9,6 +9,7 @@ import {
   MAIL_HELD_CAP,
   MAIL_HELD_CEILING,
   MAIL_TIME_BUDGET_MS,
+  MAIL_WINDOW_DAYS,
   INLINE_FLOOR_BYTES,
   readMailbox,
 } from "../../services/mailIntake";
@@ -39,20 +40,27 @@ function fakeMailbox() {
 
 let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
+let agingAlerts: MailAgingOutEvent[];
+const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
   mail.attachments.set(id, content);
   return { mimeType: "application/pdf", filename: `${id}.pdf`, body: { attachmentId: id, size: content.length }, ...over };
 };
 
-/** A message; `auth` lists its Authentication-Results headers top first, `from` its From headers. */
+/** A message; `auth` lists its Authentication-Results headers top first, `from` its From headers, `ageMs` how long ago it arrived. */
 function send(
   id: string,
-  { from = ["Alice <alice@example.org>"], auth = [GOOGLE_PASS], parts }: { from?: string[]; auth?: string[]; parts?: MailPart[] } = {},
+  {
+    from = ["Alice <alice@example.org>"],
+    auth = [GOOGLE_PASS],
+    parts,
+    ageMs = 0,
+  }: { from?: string[]; auth?: string[]; parts?: MailPart[]; ageMs?: number } = {},
 ): void {
   mail.messages.set(id, {
     id,
-    internalDate: String(Date.now()),
+    internalDate: String(Date.now() - ageMs),
     payload: {
       mimeType: "multipart/mixed",
       headers: [
@@ -64,14 +72,20 @@ function send(
   });
 }
 
+const testAlerts = () => ({
+  mailHoldCeilingReached: async (event: MailHoldCeilingEvent) => void alerts.push(event),
+  mailAgingOut: async (event: MailAgingOutEvent) => void agingAlerts.push(event),
+});
+
 beforeEach(async () => {
   await clearAll();
   mail = fakeMailbox();
   alerts = [];
+  agingAlerts = [];
   configure({
     ocr: okOcr(),
     mailbox: mail.reader,
-    alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
+    alerts: testAlerts(),
     people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
   });
 });
@@ -102,7 +116,7 @@ describeDb("mail intake", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
     expect(await db.receipt.count()).toBe(0);
     const [item] = await db.receiptMailItem.findMany();
-    expect(item).toMatchObject({ status: "held", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
+    expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
     expect(Buffer.from(item.fileBlob ?? []).toString()).toBe(pdf("m1"));
   });
 
@@ -299,6 +313,79 @@ describeDb("mail intake flood limits", () => {
       return getMessage(id);
     };
     expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
+    expect(agingAlerts).toEqual([]);
+  });
+});
+
+describeDb("mail intake ageing alert", () => {
+  const old = (MAIL_WINDOW_DAYS - 1) * DAY_MS + 60_000;
+  const raised = () =>
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("alerts finance once when mail older than two days is put off by the cap", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    expect(agingAlerts[0]).toMatchObject({ orgId: TEST_ORG_ID, messages: 1 });
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("stays quiet when the mail put off is recent enough for the next run", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+  });
+
+  it("alerts for old mail the run never reached, counting every unread message", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1", { ageMs: old + 2_000 });
+    send("m2", { ageMs: old + 1_000 });
+    send("m3", { ageMs: old });
+    const { getMessage } = mail.reader;
+    let first = true;
+    mail.reader.getMessage = async (id) => {
+      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+      first = false;
+      return getMessage(id);
+    };
+    expect(await readMailbox()).toMatchObject({ messages: 1, unread: 2 });
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+  });
+
+  it("alerts for a message that cannot be fetched, since its age is unknown, keeping the known oldest date", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });
+    const { getMessage } = mail.reader;
+    const listRecent = mail.reader.listRecent;
+    mail.reader.listRecent = async (days) => [...(await listRecent(days)), "gone"];
+    mail.reader.getMessage = async (id) => (id === "gone" ? Promise.reject(new Error("Gmail request failed: 500")) : getMessage(id));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ failed: 1 });
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("alerts for an old message whose reading failed", async () => {
+    send("m1", { ageMs: old });
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: {
+        submitterByEmail: async () => {
+          throw new Error("people lookup down");
+        },
+      },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ failed: 1 });
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
   });
 });
 
@@ -308,9 +395,17 @@ describeDb("mail intake sender authentication", () => {
     expect((await db.receiptMailItem.findFirstOrThrow()).senderAddress).toBe(address);
   };
 
-  it("holds a message whose DMARC did not pass", async () => {
+  it("holds a message whose DMARC did not pass, recording that the sender is unverified", async () => {
     send("m1", { auth: [GOOGLE_PASS.replace("dmarc=pass", "dmarc=fail")] });
     await heldAs("alice@example.org");
+    expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
+  });
+
+  it("holds a member's message that passed DMARC on SPF alone, with no aligned DKIM signature", async () => {
+    send("m1", { auth: ["mx.google.com; dkim=pass header.i=@mailer.example.net; spf=pass; dmarc=pass header.from=example.org"] });
+    send("m2", { auth: ["mx.google.com; spf=pass; dmarc=pass header.from=example.org"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 2 });
+    expect((await db.receiptMailItem.findMany()).map((i) => i.holdReason)).toEqual(["unverified_sender", "unverified_sender"]);
   });
 
   it("reads only the topmost Authentication-Results header, and only Google's", async () => {
@@ -349,6 +444,17 @@ describeDb("mail intake sender authentication", () => {
     await heldAs("stranger@example.org");
     expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd total 9.99");
   });
+
+  it("never opens a message forwarded as an attachment, and counts it ignored", async () => {
+    send("m1", {
+      parts: [
+        { mimeType: "text/plain", body: { data: b64("see attached") } },
+        { mimeType: "message/rfc822", filename: "receipt.eml", parts: [{ mimeType: "text/plain", body: { data: b64("Order total 12.00") } }] },
+      ],
+    });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, ignored: 2 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
 });
 
 describeDb("mail intake over a sender's daily upload limit", () => {
@@ -360,7 +466,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     configure({
       ocr: okOcr(),
       mailbox: mail.reader,
-      alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
+      alerts: testAlerts(),
       limits,
       people: {
         submitterByEmail: async (address) => {
@@ -449,7 +555,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     const id = await deferredFor("alice@example.org");
     withLimits({}, {});
     expect(await readMailbox()).toMatchObject({ receipts: 0 });
-    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held", holdReason: "not_a_submitter" });
   });
 
   it("counts deferred files toward the held ceiling", async () => {
