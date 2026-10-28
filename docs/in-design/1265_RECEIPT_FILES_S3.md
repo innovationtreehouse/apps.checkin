@@ -1,7 +1,7 @@
 # Receipt files: moving from the receipt database to a private S3 bucket
 
-**Status: PROPOSED, for owner ruling. No code until ruled.** Amends #1265 §3
-("File storage").
+**Status: rulings recorded 2026-10-27; Board B17 (who holds the encryption key)
+is still open.** Amends #1265 §3 ("File storage").
 
 Receipt files and held mail-item files move out of the receipt database, where
 they sit as `bytea` on the Postgres server checkin shares, into one private S3
@@ -97,16 +97,16 @@ nothing in the common case.
 runs the normal receipt insert, which puts `receipts/<newId>` from the same
 bytes, and clears the item's `file_key` in the claim. Discarding clears it too.
 After either commits, the app deletes the `mail-items/` object. Versioning keeps
-the deleted object for the lifecycle window (§6), which is the recovery window
-for a mistaken discard.
+the deleted object for 30 days (§6), which is the window in which an admin can
+restore a mistaken discard.
 
 **Cleaning up spam.** Mail from a sender the app can't attribute never becomes a
 receipt; it's held in `mail-items/` until finance acts, so spam stays in the one
 prefix the app already deletes from. Three things clear it:
 
 - Finance discards an item on the mail-queue page, which deletes its file.
-- Held items nobody acts on are discarded by the daily mail step after a set age
-  (Q-S3-2), with an audit row, exactly as a finance discard is. So a flood clears
+- Held items nobody acts on are discarded by the daily mail step 90 days after
+  they were held, with an audit row, exactly as a finance discard is. So a flood clears
   itself without anyone working the queue. This is app code, not an S3 lifecycle
   rule: a rule would delete the file and leave its row held in the queue.
 - An account admin can delete objects directly in the AWS console or CLI (§6).
@@ -207,8 +207,10 @@ disposable environment, and the migration staging exists to test never reads a
 file. So from then on a copied receipt's file route answers 404 in staging, and
 files uploaded in staging still work normally.
 
-**Self-hosted compose stack** (`deploy/docker-compose.prod.yml`) has no task
-role. See Q-S3-4.
+**Self-hosted compose stack** (`deploy/docker-compose.prod.yml`) is not a target
+for receipts. It has no task role and no bucket, so receipt uploads and mail
+intake refuse there with 503, as any deployed instance without a bucket does
+(§2). No stored-AWS-key path and no on-disk store is built for it.
 
 ## 6. Infra, per environment (infra repo)
 
@@ -222,9 +224,21 @@ role. See Q-S3-4.
   environment's app task role and the account's admin role. The admin exception
   is the cleanup path for people: an admin can list, delete or restore objects in
   the console or CLI, as for any other bucket in the account.
+- **Reads only from inside the organization's network** (Board B18). The app's
+  private AWS network reaches S3 through a gateway endpoint (a free, direct route
+  from that network to S3). The bucket policy denies `s3:GetObject` to every
+  principal, the admin role included, unless the request arrives through that
+  endpoint (`aws:SourceVpce`). A stolen credential, or the admin console from a
+  laptop, can't read a file. The admin role can still list, delete and restore
+  objects from outside, because none of those returns a file's contents; to see a
+  file, a person opens it in the app. The backfill and `--verify` run as ECS tasks
+  inside the network (§4), so they read through the endpoint too. Infra adds the
+  endpoint where it doesn't exist yet; the deny goes on only once it does, or
+  every read fails.
 
 **Who can touch the files.** The files are private to the organization's AWS
-account; nothing outside it can read or list them. No access key is stored
+account; nothing outside it can list them, and nothing outside its network can
+read them. No access key is stored
 anywhere. The app writes and reads with its ECS task role, whose credentials AWS
 issues to the running container and rotates on its own; that role is the writer
 of every object. People reach the bucket only through the account's admin role.
@@ -233,7 +247,7 @@ of every object. People reach the bucket only through the account's admin role.
 
 | Rule | dev, staging | prod |
 |---|---|---|
-| Current objects | expire 30 days after written | `receipts/`: move to Glacier Instant Retrieval 2 years after written. `mail-items/`: kept while held; Q-S3-2 decides expiry |
+| Current objects | expire 30 days after written | `receipts/`: move to Glacier Instant Retrieval 2 years after written; never expired by a rule, the app deletes them (§7). `mail-items/`: no rule; the app deletes on assign or discard, and held items auto-discard at 90 days (§2) |
 | Deleted objects (noncurrent versions) | expire after 1 day | expire after 30 days, the recovery window |
 | Expired delete markers | removed | removed |
 | Incomplete multipart uploads | abort after 1 day | abort after 1 day |
@@ -251,9 +265,7 @@ it doesn't have. At hundreds of receipts a year the bucket holds well under a
 gigabyte a year, so archiving saves cents; its value is a clean retention
 policy, not cost. AWS doesn't transition objects under 128 KB by default, so
 small text receipts stay in the standard class, which costs nothing that
-matters. When files are finally deleted is a retention decision (Board B19).
-- Incomplete multipart uploads abort after 1 day. The app never starts one (a
-  10 MB put is single-part); this only stops stray uploads from billing.
+matters. When files are finally deleted is §7.
 
 **Task role** (the app's, per environment):
 
@@ -266,13 +278,59 @@ No `DeleteObjectVersion` and no bucket configuration rights. With versioning on,
 an app delete only hides the object; the hidden copy stays for the recovery
 window, and only the lifecycle rule or an admin removes it for good. So a
 compromised app, or a bug, can't destroy a file outright. The app deletes
-`mail-items/` objects on assign and discard, and a `receipts/` object only when
-its own insert fails (§2); it never deletes a stored receipt's file.
+`mail-items/` objects on assign and discard, a `receipts/` object when its own
+insert fails (§2), and a stored receipt's file only when its retention date has
+passed (§7).
 
 **App env:** `RECEIPT_FILES_S3_BUCKET` and, until step 5, `RECEIPT_FILES_S3`.
 `AWS_REGION` is already set.
 
-## 7. Size limits
+## 7. Retention
+
+The Board set how long receipt files are kept (B19):
+
+| Receipt | File deleted |
+|---|---|
+| Approved | 6 years after that fiscal year's Form 990 deadline, plus 1 year |
+| Rejected or discarded | 1 year after it was rejected or discarded |
+| Not yet decided | never, while it waits |
+
+**Why those numbers.** The IRS can generally assess tax for 3 years after a
+return is filed, and for 6 years if gross income is substantially understated.
+The Form 990 for a fiscal year is due on the 15th day of the 5th month after the
+year ends; a return filed early counts as filed on that day. The Board chose the
+6-year limit and added a year.
+
+**Computing "delete after" for an approved receipt.**
+
+1. Take the receipt's date. If it has none, take the day it was approved.
+2. Find the fiscal year containing that date, and that year's last day.
+3. The 990 deadline is the 15th day of the 5th month after that last day.
+4. Delete after = the deadline plus 7 years.
+
+For a fiscal year ending December 31: a receipt dated March 3, 2026 belongs to
+fiscal 2026, whose 990 is due May 15, 2027, so its file is deleted after May 15,
+2034. Every approved receipt in one fiscal year shares one date.
+
+The deadline is the unextended one, as the ruling states. A 6-month extension
+moves the IRS limit 6 months later, which the extra year still covers.
+
+**Who deletes.** A daily retention step in the app, not an S3 lifecycle rule: the
+deletion depends on the receipt's state and dates, which live in the database and
+not on the object. For each receipt past its date, the step deletes the
+`receipts/` object, clears `file_key`, and writes an audit row. The receipt row
+itself stays: it is part of the books. The file route then answers 404, as for
+any missing file (§3). The step computes the date from the receipt's current
+state each run, so a receipt that is reopened stops counting down.
+
+S3 keeps the deleted version for 30 days (§6), then removes it. Until the
+`file_blob` column is dropped (§4), the step also nulls that row's `file_blob`;
+this is the one place the plan removes bytes from the database, because the rule
+requires the file gone.
+
+The step ships after the bytes have moved (§9, PR 5).
+
+## 8. Size limits
 
 Unchanged, and still enforced by the app before any put; S3 has no per-object
 cap that applies to a server-side put.
@@ -283,76 +341,61 @@ cap that applies to a server-side put.
 | One upload request | 11 MB | `MAX_UPLOAD_BODY_BYTES` |
 | Per person per day | 30 uploads, 100 MB | `enforceUploadLimits`, now summing `file_size` (with `octet_length(file_blob)` as fallback until the backfill) |
 | Whole org per day | 500 MB | same |
-| Held mail items | per-run held cap, per-run byte budget, global held ceiling | the mailbox-flooding hardening; unchanged by this move (Q-S3-3) |
+| Held mail items | per-run held cap, per-run byte budget, global held ceiling of 500 | the mailbox-flooding hardening; unchanged by this move, the 500 ceiling included |
 
-## 8. PR split
+## 9. PR split
 
 Each PR is based on `main`; none stacks.
 
 | # | PR | Contents | After |
 |---|---|---|---|
-| 1 | **Infra** (infra repo) | three buckets, policies, lifecycle, task-role grants, the two env vars set with the flag off | owner ruling |
+| 1 | **Infra** (infra repo) | three buckets, policies, lifecycle, task-role grants, the S3 gateway endpoint where missing and the network-only read rule (§6), the two env vars set with the flag off | Board B17 |
 | 2 | **Library** | the migration (§4 step 1, with `@sensitivity` tags and regenerated classifications), the file-store port, the S3, temp-directory and fake adapters, the flagged write path, the falling-back read path, limits on `file_size`, the mail-item deletes, the config-health row, tests. No boundary file changes. | PR 1 applied in dev |
 | - | flag on, dev then staging then prod | env change only | PR 2 rolled out there |
 | 3 | **Backfill** | the copy and `--verify` script, its one-off task command, a runbook entry in `docs/ops/` | flag on in that environment |
 | 4 | **Remove `bytea` reads** | read `file_key` only, drop the flag, stop selecting `file_blob` | verify clean in prod, in a release after PR 3's run |
+| 5 | **Retention** | the daily retention step (§7), its audit row, tests | PR 4 rolled out |
 
 The bulk-donation library also stores its uploaded CSVs as `bytea`
-(`UploadedFile.fileBlob`). They stay in its database (decided, §9).
+(`UploadedFile.fileBlob`). They stay in its database (decided, §10).
 
-## 9. Questions
+## 10. Questions
 
-**For the Board.** On the Board questions page as B17, B18 and B19.
+**For the Board.**
 
-- **Q-S3-1 (Board B17). How the stored receipt files are encrypted.** Every file is
-  encrypted on disk either way. The choice is who holds the key. Option A: AWS
-  manages it invisibly; this is what the membership-agreement file uses, and it
-  costs nothing. Option B: the organization has its own key in AWS, with its own
-  access list; anyone reading a file then needs permission on both the files and
-  the key, and every use of the key is logged. It costs about a dollar a month
-  per environment. Recommendation: A, unless the Board wants personal data held
-  to the stricter standard.
-- **Q-S3-6 (Board B18). Whether the files can be read only from inside the organization's
-  private network.** The app runs inside a private AWS network. If that network
-  has a direct connection to the file store, the store can refuse every request
-  that doesn't come through it, so a stolen credential is useless from anywhere
-  else. Recommendation: yes, if the connection exists or can be added (it's free).
-  Infra needs to say whether it exists today.
-- **Q-S3-7 (Board B19). How long receipt files are kept.** Proposed: files move to cheaper
-  archive storage after 2 years and remain viewable. Open: after how many years,
-  if ever, are they deleted? Is a discarded receipt's file kept for the same
-  period, or deleted sooner?
+- **Q-S3-1 (Board B17). How the stored receipt files are encrypted.** Under
+  technical review. Every file is encrypted on disk either way. The choice is who
+  holds the key. Option A: AWS manages it invisibly; this is what the
+  membership-agreement file uses, and it costs nothing. Option B: the
+  organization has its own key in AWS, with its own access list; anyone reading a
+  file then needs permission on both the files and the key, and every use of the
+  key is logged. It costs about a dollar a month per environment.
+  Recommendation: A, unless the Board wants personal data held to the stricter
+  standard.
 
 **For the owner.**
 
-- **Q-S3-2. Mail nobody acts on.** "Held" means an emailed file from a sender the
-  app can't match to a person: an unknown address, or one that fails the sender
-  check. It waits on finance's mail-queue page until finance assigns it to a person
-  or discards it. A known submitter who is over their daily limit is not held; that
-  mail is deferred to a later day (see "Decided" below). Two questions:
-  - Should a held item finance never assigns or discards be discarded
-    automatically after some age? Proposed: 30 days. That's what clears a spam
-    flood with no one working the queue. Today it would wait forever.
-  - After a discard, the file stays hidden but restorable by an admin in the AWS
-    console, for a window, then is gone for good. Nothing in the app shows or
-    restores it. Proposed window: 30 days.
-- **Q-S3-3. Global held ceiling after the move.** Waits on the intake caps, which
-  are being redesigned (see "Decided" below). Once those are set: should the
-  ceiling on held mail rise now that held files live in S3 and no longer grow
-  checkin's database?
-- **Q-S3-4. The single-server setup.** Besides AWS, the repo has a second way to
-  run checkin: everything on one server under Docker
-  (`deploy/docker-compose.prod.yml`), with its own Postgres. It's kept working
-  (it gained its database roles recently), but I don't know whether anything
-  real runs on it. On AWS the app gets bucket access from AWS itself, with no
-  stored key; a single server has no such identity. So if receipts must work
-  there, it needs either a stored AWS key limited to that server's bucket, or
-  files kept on the server's own disk. If nothing real will run receipts on it,
-  the answer is "not a target" and receipt uploads simply refuse there. Which is
-  it? Asked on #2257.
+- **Q-S3-8. The fiscal year end.** §7 needs the organization's fiscal year end,
+  and the receipt app doesn't record one. Proposed: an org setting, December 31
+  unless the owner says otherwise. What is it?
 
 **Decided.**
 
+- **Network-only reads** (Board B18, 2026-10-27; was Q-S3-6): receipt files are
+  readable only from inside the organization's network. Designed in §6.
+- **Retention** (Board B19, 2026-10-27, with the owner choosing the 6-year limit;
+  was Q-S3-7): approved receipts are kept until 6 years after their fiscal
+  year's Form 990 deadline, plus 1 year; rejected and discarded receipts are
+  deleted after 1 year. Designed in §7.
+- **Mail nobody acts on** (owner, 2026-10-17; was Q-S3-2): a held item nobody
+  assigns or discards is discarded automatically at 90 days (§2). A discarded
+  item's file stays restorable by an admin for 30 days, then is gone (§6).
+  "Held" means an emailed file from a sender the app can't match to a person; a
+  known submitter over their daily limit is deferred, not held (below).
+- **Global held ceiling** (owner, 2026-10-17; was Q-S3-3): stays at 500 after the
+  move (§8).
+- **The single-server setup** (owner, 2026-10-17; was Q-S3-4): not a target for
+  receipts. Receipts refuse to store outside AWS (§5).
 - **Bulk-donation uploads stay in their database** (was Q-S3-5): the files are
   small.
 - **Owner rulings on mail intake, recorded here because they change what "held"
