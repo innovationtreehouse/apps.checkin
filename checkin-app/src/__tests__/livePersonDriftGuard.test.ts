@@ -144,7 +144,6 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/cron/nightly/route.ts': 'Nightly force-checkout sweep: must see every open visit, including a merge-orphaned tombstone\'s, or a stranded open visit is never released (same rationale as lifecycleDrift.ts\'s I1 heal).',
 
     // ── structural mass writes (the write rule\'s second exception) ────────────
-    'app/api/membership-ops/participants/import/route.ts': 'Household merge, structural write: `tx.person.updateMany({ where: { householdId: source } })` reparents EVERY row in the source household so the following `household.delete` can run. A tombstone skipped here keeps pointing at the source household, the RESTRICT FK rejects the delete, and the whole merge rolls back. The two lead-cap reads and the cap re-check in the same file DO filter LIVE_PERSON — only the reparent is unfiltered, and deliberately.',
 
     // ── id-scoped findFirst (one-row shape, same boundary as findUnique-by-id) ─
     'lib/orgMembership.ts': 'isActiveOrgMember ANDs an explicit `id: personId` into the where — at most one row, same shape as findUnique-by-id.',

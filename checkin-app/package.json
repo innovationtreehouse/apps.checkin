@@ -68,8 +68,7 @@
     "react-dom": "^19.2.3",
     "react-qr-code": "^2.0.18",
     "resend": "^6.9.3",
-    "svix": "^1.84.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "svix": "^1.84.1"
   },
   "devDependencies": {
     "@jest/test-sequencer": "^30.3.0",

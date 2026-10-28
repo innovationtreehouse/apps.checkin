@@ -83,8 +83,6 @@ GET /api/membership-ops/households
 POST /api/membership-ops/households
 POST /api/membership-ops/participants/[id]/household
 PUT /api/membership-ops/participants/[id]
-POST /api/membership-ops/participants/import/preview
-POST /api/membership-ops/participants/import
 GET /api/membership-ops/participants/merge/analyze
 POST /api/membership-ops/participants/merge
 POST /api/membership-ops/participants

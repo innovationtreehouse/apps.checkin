@@ -12,7 +12,6 @@ import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdMo
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { useCsvImportEnabled } from "@/components/EnvProvider";
 
 type HouseholdRef = {
   id: number;
@@ -48,12 +47,11 @@ export default function AdminParticipantsIndex() {
   const router = useRouter();
   // Client-side mirror of the write-verb matrix (UX only — the endpoints are the
   // real guard). isStaff = full read/write access (household assign, edit-details,
-  // bulk import, new person, roles). Operations gets the read-only directory
+  // new person, roles). Operations gets the read-only directory
   // plus add-contact (canAddContact mirrors POST /api/membership-ops/contacts'
   // role gate: board + operations, sysadmin deliberately excluded there).
   const { user: me } = useRequireRole([]);
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
-  const csvImportEnabled = useCsvImportEnabled();
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
   // The email decides who signs in as a person, so only the board changes it (with a reason).
   const canEditEmail = !!me?.isBoardMember;
@@ -274,7 +272,6 @@ export default function AdminParticipantsIndex() {
           <Text c="dimmed">Search and manage system people and households.</Text>
         </div>
         <Group>
-          {isStaff && csvImportEnabled && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
           {isStaff && <Button onClick={() => router.push('/membership-ops/participants/new')}>+ New Person</Button>}
           {canAddContact && <Button variant="outline" onClick={() => setAddContactOpen(true)}>+ Add contact</Button>}
         </Group>
