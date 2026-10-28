@@ -139,11 +139,17 @@ describeDb("an edit racing the freeze", () => {
     ],
   ];
 
-  it.each(cases)("%s read before a confirm commits is refused and changes nothing", async (_name, locks, action) => {
+  const freezes = [
+    ["confirm", "uploaded"],
+    ["finalize", "receipt_finalized"],
+  ] as const;
+  const raced = cases.flatMap(([name, locks, action]) => freezes.map(([freeze, state]) => [name, freeze, state, locks, action] as const));
+
+  it.each(raced)("%s read before a %s commits is refused and changes nothing", async (_name, _freeze, frozen, locks, action) => {
     const id = await receiptIn("submitter_review");
     await lineOf(id);
     const before = await snapshot(id);
-    const result = await racing([setState(id, "uploaded"), ...locks(id)], () => action(id));
+    const result = await racing([setState(id, frozen), ...locks(id)], () => action(id));
     expect(result).toMatchObject({ status: "rejected", reason: { status: 400 } });
     const after = await snapshot(id);
     expect(after.lines).toEqual(before.lines);
