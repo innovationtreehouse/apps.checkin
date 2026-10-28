@@ -204,6 +204,10 @@ export function directory(d: {
   unknownPeople?: number[];
   /** Merged-away person id → the survivor it resolves to. */
   merged?: Record<number, number>;
+  /** Collects the names of non-members added; each gets the id 900 + its index. */
+  added?: string[];
+  /** Adults the name search finds, whatever the query. */
+  adults?: Array<{ personId: number; name: string }>;
 }): SignoffDirectory {
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [], owner: d.owners?.[b] ?? null }),
@@ -215,6 +219,11 @@ export function directory(d: {
     livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
     isAdult: async (id) => !(d.minors ?? []).includes(id),
+    searchAdults: async (_query, limit) => (d.adults ?? []).slice(0, limit),
+    addNonMemberAdult: async (name) => {
+      if (!d.added) throw new Error("this directory adds nobody");
+      return 900 + d.added.push(name) - 1;
+    },
   };
 }
 

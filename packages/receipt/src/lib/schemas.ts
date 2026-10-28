@@ -70,6 +70,8 @@ export const UploadInputSchema = z
     needsReimbursement: z.boolean().default(false),
     // The person reimbursed; unset means the uploader.
     reimburseePersonId: z.number().int().positive().optional(),
+    // A non-member adult to add and reimburse, declared an adult by the uploader.
+    newReimbursee: z.object({ name: z.string().trim().min(1).max(200), isAdult: z.literal(true) }).strict().optional(),
     isInKind: z.boolean().default(false),
     donor: DonorInputSchema.optional(),
   })
@@ -78,6 +80,12 @@ export const UploadInputSchema = z
   .superRefine((input, ctx) => {
     if (input.reimburseePersonId !== undefined && !input.needsReimbursement) {
       ctx.addIssue({ code: "custom", path: ["reimburseePersonId"], message: "A reimbursee needs needsReimbursement" });
+    }
+    if (input.newReimbursee !== undefined && !input.needsReimbursement) {
+      ctx.addIssue({ code: "custom", path: ["newReimbursee"], message: "A reimbursee needs needsReimbursement" });
+    }
+    if (input.newReimbursee !== undefined && input.reimburseePersonId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["newReimbursee"], message: "Name one reimbursee: someone on file or a new person, not both" });
     }
   });
 export type UploadInput = z.input<typeof UploadInputSchema>;

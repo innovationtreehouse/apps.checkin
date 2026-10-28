@@ -68,7 +68,7 @@ describeDb("the reimbursee is known before the approval", () => {
     await expect(approveLine(BOARD, id, approvalId, "leader away")).rejects.toMatchObject({ status: 409 });
     expect(await approval(approvalId)).toMatchObject({ status: "pending" });
 
-    await setReimbursee(ORG, id, 1, FINANCE);
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
     await expect(approveLine(LEADER, id, approvalId)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/not confirmed/) });
     await seedSubmitterSeat(li, 1);
     await approveLine(LEADER, id, approvalId);
@@ -209,7 +209,7 @@ describeDb("approveLines (Approve All)", () => {
     const [a, b] = [await seedLineItem(id), await seedLineItem(id)];
     await db.expenseLineItem.update({ where: { id: b }, data: { lineNumber: 2 } });
     const approvalIds = [await seedApproval(id, a, { ownerId: 100 }), await seedApproval(id, b, { ownerId: 100 })];
-    await setReimbursee(ORG, id, 1, FINANCE);
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
     await seedSubmitterSeat(a, 1);
 
     await expect(approveLines(LEADER, id, approvalIds)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/^Line 2: .*not confirmed/) });

@@ -61,13 +61,15 @@ const SELF = "self";
 /**
  * /receipts/upload — a photo, PDF or text file, with the details typed or read automatically.
  * Asking for a reimbursement is offered to adults only; the service enforces the same rule. The
- * uploader names who is reimbursed, themselves unless they pick someone else.
+ * uploader names who is reimbursed, themselves unless they pick someone else. Finance, operations
+ * or the board may instead add someone who is not on file, as a non-member adult.
  */
 export default function UploadPage() {
   const router = useRouter();
   const { data: session } = useSession();
-  const user = session?.user as { id?: number; ageBand?: string } | undefined;
+  const user = session?.user as { id?: number; ageBand?: string; isFinance?: boolean; isOperations?: boolean; isBoardMember?: boolean } | undefined;
   const isAdult = user?.ageBand === "adult";
+  const addsPeople = !!(user?.isFinance || user?.isOperations || user?.isBoardMember);
 
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<"auto" | "manual">("auto");
@@ -83,11 +85,14 @@ export default function UploadPage() {
   const [reimbursee, setReimbursee] = useState<Person | null>(null);
   const [reimburseeSearch, setReimburseeSearch] = useState("");
   const found = useReimburseeSearch(reimburseeSearch);
+  const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
   const [isInKind, setIsInKind] = useState(false);
   const [selfDonor, setSelfDonor] = useState(true);
   const [donor, setDonor] = useState({ firstName: "", lastName: "", companyName: "" });
   const [busy, setBusy] = useState(false);
 
+  const reimbursing = isAdult && !isInKind && needsReimbursement;
+  const newPersonIncomplete = reimbursing && newPerson !== null && (!newPerson.name.trim() || !newPerson.isAdult);
   const currencyCode = currency.trim().toUpperCase() || "USD";
   const currencyError = mode === "manual" && !CURRENCY_CODE.test(currencyCode) ? "Use a 3-letter currency code, like USD" : null;
 
@@ -102,7 +107,8 @@ export default function UploadPage() {
     }
     const data = {
       needsReimbursement: !isInKind && needsReimbursement,
-      ...(!isInKind && needsReimbursement && reimbursee ? { reimburseePersonId: reimbursee.id } : {}),
+      ...(reimbursing && newPerson ? { newReimbursee: { name: newPerson.name.trim(), isAdult: true } } : {}),
+      ...(reimbursing && !newPerson && reimbursee ? { reimburseePersonId: reimbursee.id } : {}),
       isInKind,
       ...(isInKind ? { donor: selfDonor ? { self: true } : { ...donor, companyName: donor.companyName || null } } : {}),
       ...(mode === "manual"
@@ -204,7 +210,7 @@ export default function UploadPage() {
           {isAdult && !isInKind && (
             <Checkbox label="Someone needs to be reimbursed" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
           )}
-          {isAdult && !isInKind && needsReimbursement && (
+          {reimbursing && !newPerson && (
             <Select
               label="Reimburse"
               description="Search by name if someone else paid"
@@ -225,7 +231,27 @@ export default function UploadPage() {
               nothingFoundMessage="No matching people"
             />
           )}
-          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError}>Upload</Button>
+          {reimbursing && addsPeople && (
+            <Checkbox
+              label="Not a member / not in the list"
+              checked={newPerson !== null}
+              onChange={(e) => setNewPerson(e.currentTarget.checked ? { name: "", isAdult: false } : null)}
+            />
+          )}
+          {reimbursing && addsPeople && newPerson && (
+            <>
+              <TextInput
+                label="Their full name"
+                description="Adds them as a non-member, who is reimbursed"
+                maxLength={200}
+                value={newPerson.name}
+                onChange={(e) => setNewPerson({ ...newPerson, name: e.currentTarget.value })}
+                required
+              />
+              <Checkbox label="They are an adult (18 or over)" checked={newPerson.isAdult} onChange={(e) => setNewPerson({ ...newPerson, isAdult: e.currentTarget.checked })} />
+            </>
+          )}
+          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError || newPersonIncomplete}>Upload</Button>
         </Stack>
       </Paper>
     </>
