@@ -87,6 +87,25 @@ Board, and also the narrower audiences some routes admit: operations and
 inventory managers on gifts of goods and the receipt-to-books mapping, and
 bucket approvers on the lines they approve.
 
+All of these views are logged, including the ones that show no person. Gift
+values, vendors and prices are finance information without the names
+attached. Outside finance and the Board, each audience already gets the goods
+and amounts with the people removed: the stripper drops every `pii` field
+(donor, submitter, person reimbursed) from these views. This design changes
+none of it.
+
+| Audience | Screens | Sees | Does not see |
+|---|---|---|---|
+| Finance, the Board | Every in-scope route | Everything the route returns, including donors, submitters and the person reimbursed | — |
+| Operations, inventory managers | Gifts of goods recorded without a receipt, list | The goods (description, quantity, barcode), their value, the donation date, who recorded it | The donor's name or company |
+| Inventory managers | Receipt-to-books mapping, list and detail | Vendor, totals, tax and shipping, each line with its price, mapping status | Who submitted the receipt or is reimbursed |
+| Bucket approvers | Expenses in their buckets, list and detail, with approvals and sign-offs | Vendor, amounts, lines, approval and sign-off state | The submitter, the person reimbursed, who recorded Board authorization |
+| Bucket approvers | Gifts of goods in their buckets | The goods, their value, the date | The donor; the screen carries no donor field |
+
+A change that adds a `pii` grant to one of these audiences widens access and
+goes through the boundary rule on its own; the log records the wider view
+without further change.
+
 ### In scope
 
 Every route below is registered and runs through `handler()` or
