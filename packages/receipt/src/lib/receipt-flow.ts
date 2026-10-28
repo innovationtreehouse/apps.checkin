@@ -2,7 +2,7 @@ import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/rec
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
@@ -135,6 +135,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     await sendDonorSync(receiptId, actor);
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
+    if (row.state !== "receipt_finalized") throw new Error(`receipt is ${row.state}, not finalized`);
     if (row.donorSync === "pending") {
       await audit(db, receiptId, actor, { action: "push_deferred", valueAfter: "donor sync pending" });
       return false;
@@ -207,7 +208,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
 
 async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<void> {
   await db.$transaction(async (tx) => {
-    await tx.receiptDetail.update({ where: { id: row.id }, data: { state: "receipt_finalized", validationNotes: null } });
+    await receiptRepo.update(row.id, { detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
     await audit(tx, row.id, actor, {
       action: "finalized",
       fieldChanged: "state",
@@ -221,14 +222,21 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
 /**
  * Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. A
  * receipt missing its retailer, date or total goes to its submitter before any other check.
+ * Every write is conditional on the state read here: when another step moved the receipt first,
+ * that step stands and the flow writes nothing.
  */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
   const orgId = (await getOrg()).id;
   const row = await receiptRepo.find(receiptId, orgId);
-  if (!row) return;
+  if (!row || (row.state !== "uploaded" && row.state !== "flow_error")) return;
 
   const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
-    await receiptRepo.update(receiptId, { detail }, row.state);
+    try {
+      await receiptRepo.update(receiptId, { detail }, row.state);
+    } catch (err) {
+      if (err instanceof ReceiptStateConflictError) return;
+      throw err;
+    }
     await audit(db, receiptId, actor, {
       action: "pipeline_transition",
       fieldChanged: "state",
@@ -307,7 +315,12 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         throw new Error(`Unexpected next state '${nextState}' from '${row.state}'`);
     }
   } catch (err) {
-    await receiptRepo.update(receiptId, { detail: { state: "flow_error" } });
+    if (err instanceof ReceiptStateConflictError) return;
+    try {
+      await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state);
+    } catch (conflict) {
+      throw conflict instanceof ReceiptStateConflictError ? err : conflict;
+    }
     await audit(db, receiptId, actor, {
       action: "pipeline_failed",
       fieldChanged: "state",
