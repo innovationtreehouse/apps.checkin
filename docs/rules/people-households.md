@@ -122,7 +122,7 @@ Things the app takes as true because they are handled outside it.
   sysadmin path for adding someone to any household is unaffected.  [Decision]
 
 - Nobody is moved into or out of a denied household, by the board's household
-  move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+  move. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
 - The board and sysadmin path adds nobody to a denied household, and nobody,
   a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
@@ -217,9 +217,7 @@ Things the app takes as true because they are handled outside it.
 
 - A merge moves the merged-away record's roles under the same checks as a hand
   grant. It is refused when either record is in the actor's household, or when
-  the merged-away record holds the board role and the actor is not on the board.
-  An import that updates an existing person is refused for the actor's own
-  household in the same way.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+  the merged-away record holds the board role and the actor is not on the board.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Only a board member removes someone's board role, and the last board member
   cannot be removed. A sysadmin may add a board member but not remove one.  [Decision]

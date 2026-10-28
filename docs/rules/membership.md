@@ -304,7 +304,7 @@ Procedure below is built on them.
 
 - Anything that reaches a denied household after the denial — a family's
   payment, an approval that would clear its check, a start or renewal, a board
-  grant, an import or a household move — changes nothing and goes to the board's
+  grant or a household move — changes nothing and goes to the board's
   payment-problems queue with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
 
