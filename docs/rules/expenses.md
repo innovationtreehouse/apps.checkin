@@ -1,6 +1,20 @@
 # Expenses
 
+Rules for money the Treehouse spends: receipts, expenses, budget buckets, who
+signs off on spending, and how expenses reach the books.
+
 Income and donation rules are in `revenue.md`.
+
+Goods received into stock are covered in `inventory.md`.
+
+A few terms used throughout:
+
+- **Finance** means anyone holding the finance role in the app.
+- **Household** means the person's household as the app records it.
+- An **expense** is the app's record of one receipt's spending, split into
+  **lines**, one per item.
+- A **budget bucket** is the accounting category a line is charged to, such as a
+  program's budget or an org-level one like Facility.
 
 ---
 
@@ -12,6 +26,14 @@ Income and donation rules are in `revenue.md`.
 ---
 
 ## Assumptions
+
+Things the app takes as true because they are handled outside it.
+
+- Finance pays reimbursements in the accounting system. The app records what is
+  owed and reads the payment back; it never pays anyone.
+
+- The Board appoints only adults as program treasurers, as corporate policy
+  requires.
 
 - The Treasurer enforces the limits on a signed note in place of a receipt
   outside the app. The app does not model notes in lieu of receipts.
@@ -46,6 +68,18 @@ Income and donation rules are in `revenue.md`.
   is a decision on the record.
   [Decision — owner]
 
+- Only the person who paid is reimbursed: the adult who uploaded the receipt
+  and said they paid for it themselves.
+  [Decision]
+
+- Only finance approves and rejects receipts, imports old ones, and changes
+  receipt settings.
+  [Decision — *Principle: least privilege*]
+
+- Only finance and the Board see every expense. A program's leader and
+  treasurers see only the lines in their program's bucket.
+  [Decision — *Principle: least privilege*]
+
 ### Receipts
 
 - Only a receipt's uploader discards it, withdrawing their own receipt in any
@@ -74,6 +108,10 @@ Income and donation rules are in `revenue.md`.
   entered, where the field was blank, or changed, with the earlier value and
   the new one. A tax of $0 is a value, so a tax raised from $0 is changed.
   [Decision]
+
+- A conflicted person also may not reject a receipt, change its tax or date as
+  finance, name the person reimbursed, or close its reviews.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
@@ -118,6 +156,25 @@ Income and donation rules are in `revenue.md`.
   5 for everyone else.
   [Decision — owner]
 
+- Finance approves a receipt held for review without writing a note. A reason
+  for rejecting one is required and has its own field.
+  [Decision]
+
+- A receipt that looks like a duplicate goes to finance to decide; it is never
+  refused automatically.
+  [Decision — deliberate limit]
+
+- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
+  needs no spending sign-off.
+  [Decision]
+
+- Finance may record old receipts for purchases already in the books. Doing so
+  never reimburses anyone and never books anything a second time.
+  [Decision]
+
+- A finalized receipt is read-only.
+  [Decision]
+
 ### Budget buckets
 
 - A budget bucket is an accounting bucket, not a person. Finance creates,
@@ -137,11 +194,29 @@ Income and donation rules are in `revenue.md`.
   and the app does not check that.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- Finance decides which bucket each line is charged to, before the program
+  approver signs it.
+  [Decision]
+
 ### Expenses
+
+- Every expense starts from a receipt. Past spending with no receipt stays in
+  the accounting system only; the app never imports it.
+  [Decision — deliberate limit]
 
 - Every expense that is not a reimbursement is treated as a Treehouse Card
   charge. The app records no payment method.
   [Decision — owner]
+
+- Tax is decided in the receipt's finance review, and an expense respects that
+  decision. A receipt is held for tax review only when the org is tax-exempt,
+  its setting to hold taxed receipts for finance review is on, the receipt
+  carries tax, and it is not a gift of goods. An expense's tax waits on finance
+  only under the same conditions, and never for tax finance already approved at
+  that amount; with the setting off, no expense's tax waits on finance. An
+  expense whose tax changes after finance approved it waits again, because
+  finance never approved the new amount.
+  [Decision]
 
 ### Finance review
 
@@ -248,6 +323,17 @@ Income and donation rules are in `revenue.md`.
   recorded.
   [Decision — owner]
 
+- A sign-off is judged when it is signed; a later change to the signer's
+  household or role does not undo it.
+  [Decision]
+
+- If someone who has already signed an expense joins the submitter's household
+  before the expense reaches the books, the expense can stay waiting to be
+  booked, with nothing telling finance and no way to give that seat to someone
+  else. This is an accepted risk: it is unlikely ever to happen, and no fix is
+  planned.
+  [Decision — deliberate limit]
+
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
   [Decision — owner]
@@ -314,3 +400,22 @@ Income and donation rules are in `revenue.md`.
   amount is a setting: finance may lower it, and only the Board raises it above
   $2,000.
   [Decision — *Policy: Procurement Policy, Art. III*; *Principle: fail closed*]
+
+- When nobody eligible can sign a seat, a Board member without a conflict may
+  sign in their place. On any one line that happens at most twice for a
+  reimbursement and once for a card charge. A line that would need more is held
+  for the Board to resolve.
+  [Decision]
+
+### Sending expenses to the books
+
+The rules in *Principle: The books are finance's* apply throughout. These are
+the parts specific to expenses.
+
+- Every expense reaches the books charged to the budget it was spent from, so
+  each program's spending can be read against its budget.
+  [Decision]
+
+- A reimbursement counts as paid only when the accounting system shows it fully
+  paid, on the date of the last payment.
+  [Decision]
