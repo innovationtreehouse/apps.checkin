@@ -18,8 +18,7 @@ answer it.
 Every time a finance or Board view returns finance records, the app writes one
 row saying who looked, at which records, through which screen, and when. The row
 never holds what they saw. The Board can read these rows on the System status
-page. Rows are kept as long as the approved receipts they could be asked about,
-and then deleted.
+page. Rows are kept with no time limit; nothing deletes them.
 
 ## Executive summary
 
@@ -38,12 +37,12 @@ and then deleted.
   fifteen-minute window, which collapse to one row.
 - **Who reads it.** The Board, on a new "Finance views" tab on System status.
   Finance does not read it: the people being watched do not read the watch.
-- **Retention.** Each row is kept until seven years after the Form 990 filing
-  deadline for the fiscal year the view happened in, the same clock as an
-  approved receipt (B19), then deleted by the nightly job.
+- **Retention.** No limit. Rows are never deleted. Log retention has not been
+  decided for any of the app's logs, and this one follows that decision when
+  it is made.
 - **Cost.** About a dozen people hold a finance or Board view. Finance screens
-  do not poll on a timer. A busy day is a few hundred rows; the whole retained
-  log is under a million small rows.
+  do not poll on a timer. A busy day is a few hundred rows, about a hundred
+  thousand small rows a year.
 - **What does not change.** Who may see what. This design adds a record of
   access; it widens and narrows nothing.
 - **PRs.** Four, each based on `main`: the table and writer; the handler and
@@ -64,9 +63,6 @@ and then deleted.
   row holds.
 - `principles.md`, Fail closed: a view whose audit row cannot be written is
   refused (see "Failure").
-- B19 (Board): approved receipts are kept six years after the year's Form 990
-  filing deadline, plus one year; discarded and rejected receipts are deleted
-  after one year.
 
 Proposed register line, to land with the handler PR (wording for review):
 
@@ -196,7 +192,7 @@ is the one place every library's views can land in a single write.
 | `rowCount` | how many rows were returned | internal |
 | `window` | the fifteen-minute window the view fell in (§5) | internal |
 
-Indexes: `(viewedAt)` for the purge and the default listing, `(actorId,
+Indexes: `(viewedAt)` for the default listing, `(actorId,
 viewedAt)` for "what did this person look at", and a GIN index on `recordIds`
 for "who looked at this record". A unique index on `(actorId, endpoint, params,
 recordIdsHash, window)` collapses repeats (§5).
@@ -222,29 +218,17 @@ point (FV-5).
 
 ## 3. Retention
 
-Each row is kept until seven years after the Form 990 filing deadline for the
-fiscal year the view happened in, then deleted.
+No limit. Rows are kept indefinitely and nothing in this design deletes them.
 
-That is the B19 clock for approved receipts: six years after the year's Form
-990 deadline, plus one. The reasoning for using the same clock is that the
-question a view row answers ("who saw this record?") can be asked as long as the
-record itself can be examined. The longest-kept finance record is an approved
-receipt, so the view log matches it. A shorter period would leave an approved
-receipt still inside its audit window with nobody able to say who looked at it.
+The app has not decided how long any of its logs are kept, and this log waits
+for that decision rather than setting its own. The receipt-file ruling (B19)
+governs the files, not the logs, so it does not apply here. When a log
+retention period is decided, adding a purge is a small app-code change: the
+`(viewedAt)` index already serves it.
 
-Rows for records with a shorter life (a discarded or rejected receipt, deleted
-after one year) are kept on the same clock, not deleted with the record. Once
-the record is gone, the view row is the only evidence it was looked at, and it
-holds nothing but an id. This keeps one rule for the whole table and needs no
-join to the libraries' databases at purge time.
-
-**Mechanism.** The nightly cron deletes rows whose purge date has passed, in
-batches, and writes one system audit row saying how many it removed. The purge
-date is computed from `viewedAt` and the organisation's fiscal year end, which
-the app does not record today (FV-3).
-
-For a calendar fiscal year the Form 990 deadline is 15 May of the following
-year, so a view on any day of 2027 is deleted on 16 May 2035.
+A view row outlives the record it names. When a discarded or rejected receipt
+is deleted, the view row stays: it holds only an id, and it is then the only
+evidence the receipt was looked at.
 
 ## 4. Who may read the log, and where
 
@@ -298,9 +282,10 @@ This keeps "when" accurate to fifteen minutes, which is enough for every
 question the log answers ("did this person see this record, and roughly when").
 
 **Size.** A generous day is a few hundred rows. A list page carries at most 200
-ids, typically 50. At 300 rows a day for eight years the table holds under a
-million rows and a few hundred megabytes at the outside, with the purge holding
-it there.
+ids, typically 50. At 300 rows a day the table grows by about 110,000 rows and
+at most a few tens of megabytes a year. With no retention limit it grows
+without bound, but at this rate a decade of rows is well within what one
+indexed Postgres table serves.
 
 **Latency.** One indexed insert per audited request, in the same database the
 request already uses for its session. A list route that previously made one
@@ -315,7 +300,7 @@ alongside. Each PR below is based on `main`, never stacked on the one before
 
 1. **Table and writer (app code, not boundary).** The `FinanceViewLog` model
    with `@sensitivity:internal` on every field, its additive migration, the
-   writer function (`recordFinanceView`), and the nightly purge. Nothing calls
+   writer function (`recordFinanceView`). Nothing calls
    the writer yet. Additive and safe against old code during the deploy drain.
 2. **Handler and registry (boundary, alone).** The `auditedRead` field and its
    registration checks in `core.ts`; the write call in `handler()` and
@@ -330,7 +315,7 @@ alongside. Each PR below is based on `main`, never stacked on the one before
    status tab; removal of the per-route donor-read writes in the bulk-donation
    library and the receipt glue, now that every route they covered is flagged;
    the `revenue.md` donor line folded into the new one. Old donor-read rows stay
-   in the bulk-donation database until their own retention ends (FV-6).
+   in the bulk-donation database (FV-6).
 
 If the owner prefers the donor-read retirement apart from the viewer, step 4
 splits into two app-code PRs with no ordering between them.
@@ -351,12 +336,8 @@ standing rule.
   are money, and `revenue.md` already limits them to the Board and finance.
   *Recommendation:* yes, include them. B11 says finance information, and these
   are the household-level money records most likely to be asked about.
-- **FV-3. Where does the fiscal year end come from?** The app records none.
-  *Recommendation:* a Board setting, defaulting to 31 December, read by the
-  purge only. Nothing is purged for eight years, so the setting only has to be
-  right before the first purge. With a fiscal year that ends mid-year, the
-  calendar default would delete some rows up to six months early, which is why
-  it should be confirmed rather than assumed.
+- **FV-3. Resolved: no retention limit.** Owner: rows are kept indefinitely;
+  log retention is undecided app-wide, and this log follows that decision.
 - **FV-4. Who reads the log?** *Recommendation:* the Board only, as in §4. The
   alternative, Board and sysadmin as on the Audit Log tab, gives an operator a
   map of which records finance has been working on without a Board reason to
@@ -367,9 +348,8 @@ standing rule.
   views were missed.
 - **FV-6. Retire the per-route donor-read writes?** Once every route they cover
   is flagged, they duplicate the new log in a second database.
-  *Recommendation:* retire the writers in PR 4 and keep their existing rows
-  until the same retention clock removes them. Nothing is dropped; only the
-  duplicate writer stops.
+  *Recommendation:* retire the writers in PR 4 and keep their existing rows.
+  Nothing is dropped; only the duplicate writer stops.
 - **FV-7. Which register file holds the rule?** *Recommendation:* `revenue.md`,
   next to the donor line it replaces, with a one-line pointer from
   `expenses.md`. The alternative is `principles.md`, but the rule bites only in
