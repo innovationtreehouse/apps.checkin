@@ -135,7 +135,11 @@ Things the app takes as true because they are handled outside it.
   or cancelled, is for that program (reserved seats count), and buys a seat for
   every person it would enroll. The same test applies however the payment
   arrives. An order that falls short enrolls nobody, because it cannot say who
-  it was for, and is raised for the board.  [Decision]
+  it was for, and is raised for the board. A seat an order paid for an earlier
+  enrollment is spent, whether that person is still enrolled or has since left,
+  so a later enrollment needs its own payment. An order seen again with every
+  seat spent enrolls nobody and is not raised, because it carries no new
+  money.  [Decision]
 
 - A program order edited at the store, after it enrolled people, to pay for
   fewer seats than the people still enrolled on it is raised for the board. The

@@ -183,6 +183,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 if (!entitlement.ok && entitlement.kind === "REVERSED_BEFORE_ACTIVATION" && orderId) {
                     await refuseReversedActivation(programId, participantIds, orderId);
                     outcome = `program ${programId}: order reversed before activation — raised, not activated`;
+                } else if (!entitlement.ok && entitlement.spent) {
+                    logger.info(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} already spent on earlier enrollments in program ${programId} — NOT activated`);
+                    outcome = `program ${programId}: order already spent on earlier enrollments — not activated`;
                 } else if (!entitlement.ok) {
                     logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
                     if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: entitlement.personId ?? participantIds[0] ?? null });
