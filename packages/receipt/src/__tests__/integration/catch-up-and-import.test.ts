@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import { MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
+import { MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
 import { insertReceiptsTogether } from "../../lib/insert";
 import { importReceipts } from "../../services/importService";
 import { receiptService } from "../../services/receiptService";
@@ -113,6 +113,23 @@ describeDb("catch-up steps", () => {
     expect(await sweepInterruptedOcr()).toEqual({ swept: 1 });
     expect(await stateOf(stuck.id)).toBe("ocr_failed");
     expect(await stateOf(fresh.id)).toBe("auto_upload");
+  });
+
+  it("moves a receipt resting in uploaded for over an hour to flow_error, once", async () => {
+    const stuck = await receiptService.upload(textFile(), "text/plain", {});
+    await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "uploaded" } });
+    const fresh = await receiptService.upload(textFile(), "text/plain", {});
+    await db.receiptDetail.update({ where: { id: fresh.id }, data: { state: "uploaded" } });
+    const ocr = await receiptService.upload(textFile(), "text/plain", {});
+    await db.receiptDetail.update({ where: { id: ocr.id }, data: { state: "auto_upload", ocrStartedAt: new Date() } });
+    const later = new Date(Date.now() + 61 * 60_000);
+    await db.receiptAuditLog.create({ data: { receiptId: fresh.id, action: "submitter_confirmed", changedAt: new Date(Date.now() + 30 * 60_000) } });
+
+    expect(await sweepStuckUploaded(later)).toEqual({ swept: 1 });
+    expect(await stateOf(stuck.id)).toBe("flow_error");
+    expect(await stateOf(fresh.id)).toBe("uploaded");
+    expect(await stateOf(ocr.id)).toBe("auto_upload");
+    expect(await sweepStuckUploaded(later)).toEqual({ swept: 0 });
   });
 });
 
