@@ -1,6 +1,7 @@
 /** In-kind gifts: the finance queue and its accept step, gifts recorded without a receipt, and the approvers' view. */
 import { mapServiceErrors, parseId } from "@checkin/component-kit";
 import { z } from "zod";
+import { InKindQbResolveInputSchema, resolveInKindQb } from "../lib/in-kind-resolve";
 import { inKindService } from "../services/inKindService";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindSource } from "../services/inKindAcceptService";
 import { manualInKindService, ManualInKindInputSchema } from "../services/manualInKindService";
@@ -19,6 +20,17 @@ export function decide(source: InKindSource): DonationRouteHandler {
     const input = await parseBodyCapped(req, InKindDecisionInputSchema);
     const audit = await auditContext(req);
     return { InKindDecisionView: await mapServiceErrors(() => inKindAcceptService.decide(source, id, input, audit)) };
+  };
+}
+
+/** Finance books, skips (with a reason) or matches by id a gift the QuickBooks drain handed over; replies with its queue row. */
+export function qbResolve(source: InKindSource): DonationRouteHandler {
+  return async ({ req, params }) => {
+    const id = parseId(params.id);
+    const input = await parseBodyCapped(req, InKindQbResolveInputSchema);
+    const orgId = await getOrgId();
+    const audit = await auditContext(req);
+    return { InKindQueueItemView: await mapServiceErrors(() => resolveInKindQb(orgId, source, id, input, audit)) };
   };
 }
 

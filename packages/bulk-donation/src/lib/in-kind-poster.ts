@@ -15,12 +15,15 @@ import {
   type QuickBooksClient,
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
-import { getInKindCapital, getInKindQbPosting } from "../runtime";
+import { getInKindCapital, getInKindQbPosting, otherLaneClaimedDepositIds } from "../runtime";
 import type { InKindQbPosting } from "../contract";
 import { recordEvent } from "../repositories/audit";
+import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
 import { QB_MATCH_STATE } from "./qb-match";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_RUN, MATCH_WINDOW_DAYS, STALE_CLAIM_MS, SWEEP_DAYS, qbGate, readCloseDate, type CloseRead } from "./qb-poster";
+import {
+  MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_RUN, MATCH_WINDOW_DAYS, STALE_CLAIM_MS, SWEEP_DAYS, donationClaimedDepositIds, qbGate, readCloseDate, type CloseRead,
+} from "./qb-poster";
 
 /** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. */
 export const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"] as const satisfies readonly BooksMapRole[];
@@ -31,10 +34,10 @@ const SYSTEM = { actorUserId: null, actorUsername: "system:qb-drain", correlatio
 
 type Accounts = Partial<Record<BooksMapRole, string>>;
 
-/** Fails closed: every in-kind role set, and the clearing account no other lane's account. */
-export function inKindAccountsReady(accounts: Accounts): boolean {
+/** Fails closed: every in-kind role set, and the clearing account no other lane's account, in the books map or the environment. */
+export function inKindAccountsReady(accounts: Accounts, laneBankAccountIds: readonly string[]): boolean {
   const clearing = accounts.INKIND_CLEARING;
-  return IN_KIND_ROLES.every((r) => !!accounts[r]) && LANE_ACCOUNT_ROLES.every((r) => accounts[r] !== clearing);
+  return IN_KIND_ROLES.every((r) => !!accounts[r]) && LANE_ACCOUNT_ROLES.every((r) => accounts[r] !== clearing) && !laneBankAccountIds.includes(clearing ?? "");
 }
 
 export function inKindKey(orgId: string, source: string, giftId: number): string {
@@ -66,14 +69,14 @@ function shiftDate(isoDate: string, days: number): string {
 const windowOf = (date: string) => ({ from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) });
 
 /** One QuickBooks entry a settle claims for the gift. */
-interface Entry {
+export interface Entry {
   side: "journal" | "revenue" | "expense";
   entity: "JournalEntry" | "Deposit" | "Purchase";
   id: string;
 }
 
 /** What a post settles to. */
-interface Settlement {
+export interface Settlement {
   state: string;
   note: string | null;
   entries: Entry[];
@@ -81,13 +84,18 @@ interface Settlement {
 }
 
 /** Everything one run reads once. */
-interface Run {
+export interface Run {
   orgId: string;
+  /** Finance's "book it": the gift may be created before switch-on, and from any state finance resolves. */
+  book: boolean;
   client: QuickBooksClient;
   accounts: Accounts;
   classes: ReadonlyMap<number, string>;
   close: CloseRead;
-  onAt: Date;
+  /** Null only for finance's "book it" before the lane is switched on. */
+  onAt: Date | null;
+  /** Who the settle is audited as: the drain, or the finance holder who asked to book. */
+  actor: AuditContext;
   ctx: ReadinessContext;
   /** Every gift still to book, so a hand booking two gifts could own goes to finance. */
   open: GiftToBook[];
@@ -96,8 +104,10 @@ interface Run {
 export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "failed" | "waiting";
 
 const POSTABLE: readonly string[] = [QB_MATCH_STATE.POST_FAILED];
+/** The states finance resolves: book it, skip it, or match it by id. */
+export const IN_KIND_HELD_STATES: readonly string[] = [QB_MATCH_STATE.UNBOOKED, QB_MATCH_STATE.NEEDS_FINANCE, QB_MATCH_STATE.POST_FAILED];
 
-async function lockPosting(tx: DbOrTx, orgId: string, source: string, giftId: number) {
+export async function lockPosting(tx: DbOrTx, orgId: string, source: string, giftId: number) {
   await tx.$queryRaw`SELECT id FROM in_kind_postings WHERE org_id = ${orgId} AND source = ${source} AND gift_id = ${giftId} FOR UPDATE`;
   return tx.inKindPosting.findUnique({ where: { orgId_source_giftId: { orgId, source, giftId } } });
 }
@@ -105,16 +115,17 @@ async function lockPosting(tx: DbOrTx, orgId: string, source: string, giftId: nu
 /**
  * Locks the gift, checks it still waits on nothing but booking, and claims it. The first create
  * attempt is stamped only when the gate lets this post create. Returns the gift with the attempt
- * stamp as it stood before this claim, or null when there is nothing to post.
+ * stamp as it stood before this claim, or why there is nothing to post.
  */
 async function claim(run: Run, source: GiftToBook["source"], id: number, now: Date) {
   return db.$transaction(async (tx) => {
     const gift = await inKindReadiness.lockReadyGift(tx, run.orgId, source, id, run.ctx);
-    if (!gift || !gift.txnDate) return null;
+    if (!gift || !gift.txnDate) return "not_ready" as const;
     const posting = await lockPosting(tx, run.orgId, source, id);
     const stale = posting?.matchState === QB_MATCH_STATE.POSTING && (posting.claimedAt?.getTime() ?? 0) < now.getTime() - STALE_CLAIM_MS;
-    if (posting && !POSTABLE.includes(posting.matchState) && !stale) return null;
-    const gate = qbGate(gift.txnDate, run.close, run.onAt, gift.createdAt, false);
+    const postable = run.book ? IN_KIND_HELD_STATES : POSTABLE;
+    if (posting && !postable.includes(posting.matchState) && !stale) return "busy" as const;
+    const gate = qbGate(gift.txnDate, run.close, run.onAt, gift.createdAt, run.book);
     const attempt = gate.mayCreate && gift.txnDate > gate.closedThrough ? now : null;
     const data = { matchState: QB_MATCH_STATE.POSTING, claimedAt: now, qbCreateAttemptedAt: posting?.qbCreateAttemptedAt ?? attempt };
     await tx.inKindPosting.upsert({ where: { orgId_source_giftId: { orgId: run.orgId, source, giftId: id } }, create: { orgId: run.orgId, source, giftId: id, ...data }, update: data });
@@ -129,7 +140,7 @@ async function heldIds(orgId: string, entity: Entry["entity"]): Promise<Set<stri
 }
 
 /** The app's own JournalEntry for an attempted gift, found by key among those created since the attempt. */
-async function lookupOwnJournal(run: Run, gift: GiftToBook, since: Date): Promise<Settlement | null> {
+export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift: Pick<GiftToBook, "source" | "id">, since: Date): Promise<Settlement | null> {
   let read: { entries: QboJournalEntry[]; full: boolean };
   try {
     read = await run.client.createdSince("JournalEntry", since);
@@ -149,10 +160,16 @@ async function lookupOwnJournal(run: Run, gift: GiftToBook, since: Date): Promis
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** Deposits held by another gift or lane: in-kind's own, the donation lane's, and income's. */
+export async function claimedDepositIds(orgId: string): Promise<Set<string>> {
+  const [own, donation, other] = await Promise.all([heldIds(orgId, "Deposit"), donationClaimedDepositIds(orgId), otherLaneClaimedDepositIds(orgId)]);
+  return new Set([...own, ...donation, ...other]);
+}
+
 /**
  * Finance's hand booking: a Deposit into the clearing account and a Purchase out of it, each for
- * the gift's total, inside its window, held by no other gift and carrying no app key. Both found
- * once, and no other open gift could own them, is a match; anything else is finance's to decide.
+ * the gift's total, inside its window, held by no other gift or lane and carrying no app key. Both
+ * found once, and no other open gift could own them, is a match; anything else is finance's to decide.
  */
 async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): Promise<Settlement | null> {
   const clearing = run.accounts.INKIND_CLEARING;
@@ -160,7 +177,7 @@ async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): P
   const [deposits, purchases, heldDeposits, heldPurchases] = await Promise.all([
     run.client.depositsBetween(w.from, w.to),
     run.client.purchasesBetween(w.from, w.to),
-    heldIds(run.orgId, "Deposit"),
+    claimedDepositIds(run.orgId),
     heldIds(run.orgId, "Purchase"),
   ]);
   const fits = (e: QboDeposit | QboPurchase, account: string | undefined, held: Set<string>) =>
@@ -262,29 +279,45 @@ async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement
       }
       return false;
     }
-    for (const e of s.entries) {
-      await tx.inKindBooking.create({ data: { orgId: run.orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id } });
-    }
-    await tx.inKindPosting.update({
-      where: { id: posting.id },
-      data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null },
-    });
-    await recordEvent(tx, {
-      orgId: run.orgId,
-      entityType: gift.entityType,
-      entityId: gift.entityId,
-      eventType: "IN_KIND_QB_SETTLED",
-      ...SYSTEM,
-      payload: { to: s.state, entries: s.entries, note: s.note },
-    });
+    await writeSettlement(tx, run.orgId, gift, posting.id, s, run.actor, { from: QB_MATCH_STATE.POSTING });
     return true;
   });
 }
 
-/** One gift: claim, call, settle. Another gift holding an entry this post found sends it to finance, never to a second claim. */
-async function postGift(run: Run, source: GiftToBook["source"], id: number, now = new Date()): Promise<InKindPostOutcome> {
+/** Claims the settlement's entries for the gift (the unique index refuses one another gift holds), saves its state and audits it. */
+export async function writeSettlement(
+  tx: DbOrTx,
+  orgId: string,
+  gift: Pick<GiftToBook, "source" | "id" | "entityType" | "entityId">,
+  postingId: number,
+  s: Settlement,
+  actor: AuditContext,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  for (const e of s.entries) {
+    await tx.inKindBooking.create({ data: { orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id } });
+  }
+  await tx.inKindPosting.update({
+    where: { id: postingId },
+    data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null },
+  });
+  await recordEvent(tx, {
+    orgId,
+    entityType: gift.entityType,
+    entityId: gift.entityId,
+    eventType: "IN_KIND_QB_SETTLED",
+    ...actor,
+    payload: { ...payload, to: s.state, entries: s.entries, note: s.note },
+  });
+}
+
+/**
+ * One gift: claim, call, settle. Another gift holding an entry this post found sends it to finance,
+ * never to a second claim. `not_ready` and `busy` (another post holds it) are the drain's "waiting".
+ */
+export async function postGift(run: Run, source: GiftToBook["source"], id: number, now = new Date()): Promise<InKindPostOutcome | "not_ready" | "busy"> {
   const claimed = await claim(run, source, id, now);
-  if (!claimed) return "waiting";
+  if (typeof claimed === "string") return claimed;
   let s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
   try {
     if (!(await settle(run, claimed.gift, now, s))) return "waiting";
@@ -309,12 +342,32 @@ async function postGift(run: Run, source: GiftToBook["source"], id: number, now 
   }
 }
 
+/** The audit event of finance clearing a gift's note; its `answeredEntries` name the stray entries it answered. */
+export const IN_KIND_NOTE_CLEARED = "IN_KIND_QB_NOTE_CLEARED";
+/** How a cleared note's audit names a stray app entry it answered. */
+export const answeredEntryRef = (entryId: string) => `JournalEntry:${entryId}`;
+
+/** Every stray app JournalEntry a note names: one the sweep found unlinked, or one a post created after losing its claim. */
+export function strayEntriesOf(note: string | null): string[] {
+  return [...(note ?? "").matchAll(/QuickBooks JournalEntry (\S+) (?:carries this gift's key|was created by a post that lost its claim)/g)].map((m) => m[1]);
+}
+
+/** Whether finance already answered this stray entry by clearing a note that named it. */
+async function answeredStray(orgId: string, entryId: string): Promise<boolean> {
+  const answer = await db.workflowEvent.findFirst({
+    where: { orgId, eventType: IN_KIND_NOTE_CLEARED, actorUserId: { not: null }, payload: { contains: JSON.stringify(answeredEntryRef(entryId)) } },
+    select: { id: true },
+  });
+  return answer !== null;
+}
+
 export type InKindSweepCounts = { entries: number; flagged: number; full: boolean } | { failed: true };
 
 /**
  * The daily orphan sweep: every JournalEntry created since the oldest attempt in the last
  * SWEEP_DAYS days, one page. An entry carrying a gift's key that the gift does not hold gets a
- * note for finance to void or link it; a full page alerts finance. QuickBooks is only read.
+ * note for finance to void or link it, unless finance already answered it; a full page alerts
+ * finance. QuickBooks is only read.
  */
 export async function sweepInKindQbStrays(
   orgId: string,
@@ -353,6 +406,7 @@ export async function sweepInKindQbStrays(
         console.warn(`[bulk-donation] QuickBooks JournalEntry ${entry.Id} carries an in-kind key no attempted gift has`);
         continue;
       }
+      if (await answeredStray(orgId, entry.Id)) continue;
       const noted = await db.$transaction(async (tx) => {
         const posting = await lockPosting(tx, orgId, gift.source, gift.giftId);
         if (!posting || posting.matchState === QB_MATCH_STATE.POSTING) return false;
@@ -393,13 +447,13 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
   const [accounts, classes] = await Promise.all([posting.booksMap.accounts(), posting.booksMap.classes()]);
-  if (!inKindAccountsReady(accounts)) return "unconfigured";
+  if (!inKindAccountsReady(accounts, posting.laneBankAccountIds)) return "unconfigured";
   const onAt = await switchInKindPostingOn(orgId, now);
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this in-kind run creates nothing: ${close.error}`);
   const ctx = await inKindReadiness.readReadiness(orgId);
   const { ready, open } = await inKindReadiness.giftsToBook(orgId, ctx);
-  const run: Run = { orgId, client, accounts, classes, close, onAt, ctx, open };
+  const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open };
 
   const counts: InKindDrainCounts = {
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, failed: 0, waiting: 0,
@@ -411,7 +465,8 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
       counts.capped = true;
       break;
     }
-    const outcome = await postGift(run, gift.source, gift.id, new Date());
+    const result = await postGift(run, gift.source, gift.id, new Date());
+    const outcome = result === "not_ready" || result === "busy" ? "waiting" : result;
     counts[outcome]++;
     failuresInARow = outcome === "failed" ? failuresInARow + 1 : 0;
     if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {

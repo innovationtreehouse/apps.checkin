@@ -148,8 +148,10 @@ describe("bulk-donation wiring", () => {
     ]);
     process.env.QBO_REALM_ID = "123";
     booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
     inKindAccountsReady.mockReturnValue(false);
     await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
+    expect(inKindAccountsReady).toHaveBeenLastCalledWith(expect.objectContaining({ INKIND_CLEARING: "35" }), ["35"]);
     inKindAccountsReady.mockReturnValue(true);
     await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
@@ -207,6 +209,16 @@ describe("bulk-donation wiring", () => {
     await expect(inKindQb!.booksMap.classes()).resolves.toEqual(new Map([[1, "7"]]));
     await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
     expect(notifyFinanceAlert.mock.calls[0][0]).toContain("stray QuickBooks journal entries");
+  });
+
+  it("names the environment's lane bank accounts so the in-kind clearing account can be none of them", async () => {
+    process.env.QBO_REALM_ID = "123";
+    process.env.QBO_INCOME_BANK_ACCOUNT_ID = "35";
+    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "36";
+    expect((await config()).inKindQb!.laneBankAccountIds).toEqual(["35", "36"]);
+    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
+    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
+    expect((await config()).inKindQb!.laneBankAccountIds).toEqual([]);
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

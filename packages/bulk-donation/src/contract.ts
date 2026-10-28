@@ -89,6 +89,8 @@ export interface DonationQbPosting {
 export interface InKindQbPosting {
   client(): Promise<QuickBooksClient | null>;
   booksMap: BooksMap;
+  /** Bank accounts other lanes book through outside the books map (environment fallbacks); the clearing account may be none of them. */
+  laneBankAccountIds: string[];
   /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }

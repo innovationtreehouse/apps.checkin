@@ -63,6 +63,10 @@ const incomeDeposits: IncomeDeposits = {
   },
 };
 
+/** The bank accounts income and donations book through outside the books map; the in-kind clearing account may be neither. */
+const laneBankAccountIds = (): string[] =>
+  [process.env.QBO_INCOME_BANK_ACCOUNT_ID, process.env.QBO_DONATION_BANK_ACCOUNT_ID].filter((id): id is string => !!id);
+
 /** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
 export async function inKindPostingMissing(): Promise<string[]> {
   const accounts = await (await import("@/lib/finance/booksMap")).booksMap.accounts();
@@ -70,7 +74,7 @@ export async function inKindPostingMissing(): Promise<string[]> {
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
-    ...(unpicked.length === 0 && !inKindAccountsReady(accounts) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
+    ...(unpicked.length === 0 && !inKindAccountsReady(accounts, laneBankAccountIds()) ? [`a ${BOOKS_MAP_ROLE_LABELS.INKIND_CLEARING} that no other lane books to`] : []),
   ];
 }
 
@@ -83,6 +87,7 @@ function inKindQbPosting(): InKindQbPosting | undefined {
       accounts: async () => (await import("@/lib/finance/booksMap")).booksMap.accounts(),
       classes: async () => (await import("@/lib/finance/booksMap")).booksMap.classes(),
     },
+    laneBankAccountIds: laneBankAccountIds(),
     async sweepIncomplete({ since }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert(
