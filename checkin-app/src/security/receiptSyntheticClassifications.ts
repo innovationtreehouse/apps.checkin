@@ -9,7 +9,13 @@
  * not yet delivered to receiving its push record: whether catch-up has given up
  * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
  * `lastPushFailure`). The message is the push_failed audit row's `valueAfter`, so
- * it keeps that column's `personal` tier. Tiers match the generated
+ * it keeps that column's `personal` tier. A finalized receipt also carries its
+ * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
+ * expense's status with each rejected line's note, and an in-kind gift's
+ * decision. The line notes are approvers' free text, so the field is `personal`,
+ * like `validationNotes`. A rejected receipt says whether its uploader has yet
+ * to acknowledge the rejection (`rejectionUnacknowledged`), which keeps it in
+ * their My receipts pill until they do. Tiers match the generated
  * models field for field. No file column is listed, so the stripper drops one if
  * a projection ever passes it through: the file leaves only through the file
  * route (plan rule 7).
@@ -45,6 +51,14 @@
  * donor or note field. All `internal`. ReceiptConfirmationLineView — a line,
  * stamped with the receipt's `reimburseePersonId` as ReceiptLineView is with the
  * uploader; a line without the stamp fails closed.
+ *
+ * ReceiptReimbursedView — a reimbursement naming the caller that someone else
+ * uploaded, once finance has settled its receipt, as the person reimbursed reads
+ * what became of it: the receipt's date, vendor and total, its state, the
+ * reimbursee's id the row is scoped by, finance's reason when it was rejected
+ * (`rejectionReason`, `personal` like `validationNotes`), whether QuickBooks shows
+ * it paid (`reimbursement`), and its `purchaseOutcome` as on ReceiptView. No
+ * uploader, file or donor field.
  *
  * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
  * Person's `id` and `name`, both `public` on Person, so any receipt submitter
@@ -106,6 +120,8 @@ export const classifications = {
     pushGivenUp: "internal",
     lastPushFailedAt: "internal",
     lastPushFailure: "personal",
+    purchaseOutcome: "personal",
+    rejectionUnacknowledged: "internal",
   },
   ReceiptLineView: {
     id: "internal",
@@ -133,6 +149,18 @@ export const classifications = {
     receiptTotalCents: "internal",
     onBehalf: "internal",
     changedFields: "internal",
+  },
+  ReceiptReimbursedView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    state: "internal",
+    retailer: "internal",
+    receiptDate: "internal",
+    currency: "internal",
+    receiptTotalCents: "internal",
+    rejectionReason: "personal",
+    reimbursement: "internal",
+    purchaseOutcome: "personal",
   },
   ReceiptConfirmationLineView: {
     id: "internal",
