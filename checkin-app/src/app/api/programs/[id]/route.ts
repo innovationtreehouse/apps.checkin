@@ -6,6 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { rosterPerson } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -99,6 +100,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                             id: true,
                             name: true,
                             email: true,
+                            dateOfBirth: true,
                             householdId: true,
                             household: {
                                 select: {
@@ -150,6 +152,8 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isLeadMentor = !!sessionUser && sessionUser.id === program.leadMentorId;
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
+    const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
+    const roster = program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
 
     // A members-only program is hidden unless its leader opted it into the public
     // catalogue (publiclyVisible) — then anyone may view its detail, but the
@@ -194,7 +198,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         delete metadata.participants;
         return { Program: metadata };
     }
-    if (isPrivileged) return { Program: program };
+    if (isPrivileged) return { Program: { ...program, participants: roster } };
 
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
     // lead's for their own household. The stripper can't express "own household",
@@ -205,7 +209,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         p.personId === sessionUser?.id ||
         p.person?.householdId === viewer.householdId
     );
-    const participants = program.participants.map(({ status, pendingSince, ...row }) =>
+    const participants = roster.map(({ status, pendingSince, ...row }) =>
         seesPayment(row) ? { ...row, status, pendingSince } : row
     );
     return { Program: { ...program, participants } };
