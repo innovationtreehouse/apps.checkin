@@ -374,6 +374,6 @@ describe('S1 — scopesHeld ≡ frozen switch + intentional deltas (personas × 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(22); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265) +2 receipt confirmation (#2432)
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(23); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265) +2 receipt confirmation (#2432) +1 reimbursed (#2467)
     });
 });
