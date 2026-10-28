@@ -609,7 +609,7 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 ## Owner decisions (2026-10-27)
 
 Asked of the owner after the first draft. Q1–Q3 are settled. Q4 (a) is
-**interim, pending the Board**. Q5 is **open, pending the owner**.
+**interim, pending the Board**. Q5 is settled.
 
 **Q1. Members' and household leads' own corrections stay**, on closed visits
 only. Members insert their own past visits, correct their times and remove
@@ -631,7 +631,8 @@ The leader enters a departure; a mark never creates an open visit or ends one.
 pending the Board.** The kiosk keeps showing people the server closed out
 until it reconnects. Next morning one of them may see "Goodbye" on arrival.
 For a member, the server records that scan as flagged and changes nothing,
-and they badge again. **For a keyholder it is not harmless**: see Q5. No new
+and they badge again. For a keyholder the same mistaken scan also records a
+building close; that is accepted as an ordinary mistaken scan (Q5). No new
 code. The owner is raising this with the Board; until it rules, the design
 builds (a). The alternative on the table is the
 kiosk applying the 23:00 close to its own view by its own clock when it has not
@@ -641,31 +642,22 @@ timezone would empty the door screen while people are inside). The model
 confirms that risk: with a fast Pi clock, (b) shows a "Welcome" to someone
 still inside.
 
-**Q5. A wrong "Goodbye" for a keyholder records a building close. Open,
-pending the owner.** The kiosk was offline across 23:00, so it still shows
-keyholder K inside after the server closed K out. Next morning K arrives
-first. The kiosk shows K inside and nobody else, so K's badge is a one-badge
-close: the door says "You are closing the building", and the kiosk queues a
-close. The server applies it, never held, like every kiosk close. Nobody else
-is swept (nobody else is in yet), but the result is a recorded close nobody
-meant, K's visit linked as its closer, and a wrong message at the door; K
-badges again and is checked in.
+**Q5. A wrong "Goodbye" for a keyholder records a building close: accepted.**
+The kiosk was offline across 23:00, so it still shows keyholder K inside after
+the server closed K out. Next morning K arrives first. The kiosk shows K inside
+and nobody else, so K's badge is a one-badge close: the door says "You are
+closing the building", and the kiosk queues a close, which the server applies
+like every kiosk close. Nobody else is swept, since nobody else is in yet. The
+same happens on the same day, under any Q4 answer, when a keyholder who forgot
+to badge out comes back while the kiosk still shows them inside.
 
-The same thing already happens on the same day, under any Q4 answer, when a
-keyholder who forgot to badge out comes back while the kiosk still shows them
-inside. That is existing forgotten-badge-out behaviour; this design does not
-change it, and did not mention it before.
-
-This design does not decide it. The choices on the table, without a
-recommendation:
-
-- Accept it: the false close sweeps nobody, and the close log shows it.
-- Flag it: the server applies the close and flags it for review when the
-  closer had no open visit on the server at the scan time.
-- Treat it as an ordinary scan: the server records a one-badge close from a
-  keyholder with no open visit as a flagged check-in, not a close. This is the
-  server second-guessing a kiosk close, which the register forbids today.
-- Q4 (b) removes the overnight case only, not the same-day one.
+The owner accepts this as an ordinary mistaken scan. People read the screen: a
+returning keyholder who sees "Goodbye" or "closing the building" knows they
+forgot to badge out, badges straight back in, and fixes the missed scan-out
+later through their own corrections (Q1). The stray close record stays
+visible on the reconciliation screen's "closed out by a close" list. No
+confirm step is added at the kiosk, no flag, and the server does not
+second-guess the close.
 
 ## Checked by model
 
@@ -679,7 +671,7 @@ fence against (F1); clock drift moves a scan past the nightly close (F2);
 member inserts can overlap an open visit (F4); the web shows building state
 while scans are queued (F5); a live scan overtakes another person's queued
 scan (F6); the close log and the visit's close link disagree after a
-pull-back. F3 is Q5 above.
+pull-back. F3 is Q5 above, accepted by the owner.
 
 Held in the model, before these fixes:
 
