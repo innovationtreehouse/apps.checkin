@@ -55,17 +55,17 @@ export const receiptRepo = {
   },
 
   /**
-   * Writes both tables in one transaction, or in the caller's `tx`; with `expectedState` it is a
-   * compare-and-set.
+   * Writes both tables in one transaction, or in the caller's `tx`. The detail write is a
+   * compare-and-set on `expectedState`, made first so a lost race writes nothing.
    */
-  async update(id: string, set: ReceiptUpdate, expectedState?: string, tx?: Prisma.TransactionClient): Promise<void> {
+  async update(id: string, set: ReceiptUpdate, expectedState: string, tx?: Prisma.TransactionClient): Promise<void> {
     const write = async (client: Prisma.TransactionClient) => {
-      if (expectedState !== undefined) {
+      const moved = await client.receiptDetail.updateMany({ where: { id, state: expectedState }, data: { state: expectedState, ...set.detail } });
+      if (moved.count === 0) {
         const current = await client.receiptDetail.findUnique({ where: { id }, select: { state: true } });
-        if (current?.state !== expectedState) throw new ReceiptStateConflictError(expectedState, current?.state);
+        throw new ReceiptStateConflictError(expectedState, current?.state);
       }
       if (set.core && Object.keys(set.core).length) await client.receipt.update({ where: { id }, data: set.core });
-      if (set.detail && Object.keys(set.detail).length) await client.receiptDetail.update({ where: { id }, data: set.detail });
     };
     await (tx ? write(tx) : db.$transaction(write));
   },
