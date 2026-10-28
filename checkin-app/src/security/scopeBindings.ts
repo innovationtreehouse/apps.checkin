@@ -138,6 +138,7 @@ export const SCOPE_BINDINGS = {
     // The confirmation that signs a reimbursement belongs to the person reimbursed.
     ReceiptConfirmationView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     ReceiptConfirmationLineView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
+    ReceiptReimbursedView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     TrustedAdultReview: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },

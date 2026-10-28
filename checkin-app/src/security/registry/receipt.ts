@@ -45,6 +45,12 @@ const CONFIRMATION_VIEW: readonly OrderedViewEntry[] = [['isBoardMember', ['ever
 defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/confirmation', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
 
+// What became of the reimbursements someone else uploaded for the caller, read
+// by the person reimbursed alone (`their_own` on reimburseePersonId), with the
+// approvers' and finance's reasons. Any signed-in person is admitted because the
+// reimbursee can be anyone named; the library lists only the caller's own.
+defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenticated', envelope: null, returns: ['ReceiptReimbursedView'], orderedView: [['authenticated', ['their_own:personal', 'their_own:internal']]] });
+
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW });

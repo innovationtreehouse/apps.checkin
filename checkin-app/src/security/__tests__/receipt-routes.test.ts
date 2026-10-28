@@ -74,6 +74,9 @@ function signIn(id: unknown, flags: Flags = {}) {
 const RECEIPT = /^[A-Z]+ \/api\/receipts(\/|$)/;
 /** The reimbursee's confirmation: any signed-in person is admitted, and the library decides. */
 const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
+/** What became of reimbursements someone else uploaded: any signed-in person is admitted, and sees their own. */
+const REIMBURSED_ROUTE = 'GET /api/receipts/reimbursements';
+const REIMBURSEE_ROUTES = [...CONFIRMATION_ROUTES, REIMBURSED_ROUTE];
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -91,8 +94,8 @@ describe('receipt routes are registered', () => {
         expect(fileRoutes.sort()).toEqual(['GET /api/receipts/[id]/file', 'GET /api/receipts/mail-items/[id]/file']);
     });
 
-    it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s confirmation', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !CONFIRMATION_ROUTES.includes(e))) {
+    it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s own routes', () => {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e))) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
@@ -368,6 +371,33 @@ describe('the confirmation that signs a reimbursement', () => {
     });
 });
 
+describe('what became of a reimbursement someone else uploaded', () => {
+    const view = () => new Map(getRoute(REIMBURSED_ROUTE)!.orderedView);
+    const row = {
+        id: 'r-1', reimburseePersonId: 9, state: 'receipt_finalized', retailer: 'Acme', receiptDate: '2026-10-01', currency: 'USD',
+        receiptTotalCents: 6989, rejectionReason: null, reimbursement: { paidOn: null },
+        purchaseOutcome: { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null },
+    };
+
+    it('admits any signed-in person and shows each their own, notes included', () => {
+        expect(getRoute(REIMBURSED_ROUTE)?.authorize).toBe('authenticated');
+        expect(getRoute(REIMBURSED_ROUTE)?.orderedView).toEqual([['authenticated', ['their_own:personal', 'their_own:internal']]]);
+        const own = view().get('authenticated')!;
+        expect(stripValue('ReceiptReimbursedView', row, own, { selfId: 9 } as CallerContext)).toEqual(row);
+    });
+
+    it('returns nothing to anyone else, the uploader included', () => {
+        const own = view().get('authenticated')!;
+        expect(stripValue('ReceiptReimbursedView', row, own, { selfId: 7 } as CallerContext)).toEqual({});
+    });
+
+    it('drops an uploader, donor or name field the library might pass through', () => {
+        const own = view().get('authenticated')!;
+        const leaky = { ...row, uploadedByUserId: 7, reimbursementFor: 'Sam Lee', donorFirstName: 'Pat', validationNotes: 'x' };
+        expect(stripValue('ReceiptReimbursedView', leaky, own, { selfId: 9 } as CallerContext)).toEqual(row);
+    });
+});
+
 describe('the discard route', () => {
     const DISCARD = 'POST /api/receipts/[id]/discard';
 
@@ -401,12 +431,13 @@ describe('the submitter view', () => {
         donorLastName: 'Doe',
         donorCompanyName: 'Doe Hardware',
         reimbursement: { paidOn: null },
+        purchaseOutcome: { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null },
         lineItems: [{ id: 1, receiptId: 'r-1', uploadedByUserId: 7, description: 'Arduino', totalPriceCents: 6989 }],
     };
 
-    it('returns the uploader their own receipt, lines and paid status, without donor or reimbursee names', () => {
+    it('returns the uploader their own receipt, lines, paid status and purchase outcome, without donor or reimbursee names', () => {
         const out = stripValue('ReceiptView', row, own, ctx) as Record<string, unknown>;
-        expect(out).toMatchObject({ id: 'r-1', receiptTotalCents: 6989, validationNotes: 'rejected: wrong store', reimbursement: { paidOn: null } });
+        expect(out).toMatchObject({ id: 'r-1', receiptTotalCents: 6989, validationNotes: 'rejected: wrong store', reimbursement: { paidOn: null }, purchaseOutcome: row.purchaseOutcome });
         expect(out.lineItems).toEqual(row.lineItems);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
             expect(out).not.toHaveProperty(f);
