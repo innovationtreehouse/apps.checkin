@@ -96,9 +96,10 @@ nothing in the common case.
 **Mail items.** Holding an item puts `mail-items/<uuid>`. Assigning one
 runs the normal receipt insert, which puts `receipts/<newId>` from the same
 bytes, and clears the item's `file_key` in the claim. Discarding clears it too.
-After either commits, the app deletes the `mail-items/` object. Versioning keeps
-the deleted object for 30 days (§6), which is the window in which an admin can
-restore a mistaken discard.
+After either commits, the app deletes the `mail-items/` object. In prod,
+versioning keeps the deleted object for 30 days (§6), which is the window in
+which an admin can restore a mistaken discard. Dev and staging keep it for 1 day;
+nothing there is worth restoring.
 
 **Cleaning up spam.** Mail from a sender the app can't attribute never becomes a
 receipt; it's held in `mail-items/` until finance acts, so spam stays in the one
@@ -329,7 +330,7 @@ itself stays: it is part of the books. The file route then answers 404, as for
 any missing file (§3). The step computes the date from the receipt's current
 state each run, so a receipt that is reopened stops counting down.
 
-S3 keeps the deleted version for 30 days (§6), then removes it. Until the
+In prod, S3 keeps the deleted version for 30 days (§6), then removes it. Until the
 `file_blob` column is dropped (§4), the step also nulls that row's `file_blob`;
 this is the one place the plan removes bytes from the database, because the rule
 requires the file gone.
@@ -391,7 +392,7 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
   so the Form 990 is due November 15 (§7).
 - **Mail nobody acts on** (owner, 2026-10-17; was Q-S3-2): a held item nobody
   assigns or discards is discarded automatically at 90 days (§2). A discarded
-  item's file stays restorable by an admin for 30 days, then is gone (§6).
+  item's file stays restorable by an admin for 30 days in prod, then is gone (§6).
   "Held" means an emailed file from a sender the app can't match to a person; a
   known submitter over their daily limit is deferred, not held (below).
 - **Global held ceiling** (owner, 2026-10-17; was Q-S3-3): stays at 500 after the
