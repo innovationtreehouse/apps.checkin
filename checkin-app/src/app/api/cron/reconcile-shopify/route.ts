@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@checkin/receipt";
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -56,6 +56,9 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  *
  * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
+ *
+ * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
+ * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
  *
  * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
  * same way; counts only.
@@ -127,6 +130,14 @@ export const GET = withCron(async () => {
         receipt = { status: "error" };
     }
     logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
+    let receiptStuck: Awaited<ReturnType<typeof sweepStuckUploaded>> | { status: "error" };
+    try {
+        receiptStuck = await sweepStuckUploaded();
+    } catch (err) {
+        logger.error("[reconcile] receipt stuck-upload sweep failed:", err);
+        receiptStuck = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt stuck uploads ${JSON.stringify(receiptStuck)}`);
     let receiptPush: Awaited<ReturnType<typeof repushUnpushed>> | { status: "error" };
     try {
         receiptPush = await repushUnpushed();
@@ -151,5 +162,5 @@ export const GET = withCron(async () => {
         receiptMail = { status: "error" };
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptPush, donorSync, receiptMail });
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
 });

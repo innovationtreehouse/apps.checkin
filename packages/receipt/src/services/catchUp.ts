@@ -31,6 +31,38 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
   return { swept };
 }
 
+export const STUCK_UPLOADED_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * A receipt left in `uploaded` by a flow that never ran its checks moves to `flow_error`, which
+ * finance's queue lists and can restart. Its last audit entry (or its upload) dates the wait.
+ */
+export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: number; failed: number }> {
+  const cutoff = new Date(now.getTime() - STUCK_UPLOADED_AFTER_MS);
+  const rows = await db.receipt.findMany({
+    where: { orgId: (await getOrg()).id, details: { state: "uploaded" } },
+    select: { id: true, uploadedAt: true, auditLogs: { select: { changedAt: true }, orderBy: { id: "desc" }, take: 1 } },
+  });
+  const stuck = rows.filter((r) => (r.auditLogs[0]?.changedAt ?? r.uploadedAt) < cutoff).slice(0, CATCH_UP_CAP);
+  let swept = 0;
+  let failed = 0;
+  for (const { id } of stuck) {
+    // One row failing leaves it for the next run; the rest still move.
+    await db
+      .$transaction(async (tx) => {
+        const moved = await tx.receiptDetail.updateMany({
+          where: { id, state: "uploaded" },
+          data: { state: "flow_error", validationNotes: "The automatic checks stopped before finishing. Restart the flow." },
+        });
+        if (moved.count === 0) return;
+        await audit(tx, id, null, { action: "pipeline_failed", fieldChanged: "state", valueBefore: "uploaded", valueAfter: "stuck in uploaded" });
+        swept++;
+      })
+      .catch(() => failed++);
+  }
+  return { swept, failed };
+}
+
 /** Catch-up stops retrying a receipt after this many system push failures in a row. */
 export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
 

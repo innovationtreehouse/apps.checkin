@@ -259,7 +259,9 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const lineItems = await receiptRepo.listLineItems(receiptId);
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
-  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  // A receipt with no lines can balance, but delivery requires at least one line.
+  const noLines = lineItems.length === 0;
+  const valid = !noLines && validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
   const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
@@ -290,8 +292,10 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         return;
       case "validation_failed":
         await transition(
-          { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
-          "validation_failed (line items total does not match receipt total)",
+          noLines
+            ? { state: "validation_failed", validationNotes: "The receipt has no line items. Add at least one line." }
+            : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
+          noLines ? "validation_failed (no line items)" : "validation_failed (line items total does not match receipt total)",
         );
         return;
       case "submitter_review":
