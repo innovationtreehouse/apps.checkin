@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
 import { getInKindCapital, getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
-import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
@@ -617,11 +617,10 @@ function readHistory(orgId: string, entityType: "in_kind" | "manual_in_kind", en
 }
 
 /**
- * One gift for its own page: header, donor, lines, state, history and where it went. The donor
- * read is audited. A gift without a receipt loads its goods under its own inventory source key;
+ * One gift for its own page: header, donor, lines, state, history and where it went. A gift without a receipt loads its goods under its own inventory source key;
  * a receipt gift's goods are received through its receipt, so it has none.
  */
-async function getGift(orgId: string, source: InKindSource, id: number, reader: DonorReadContext) {
+async function getGift(orgId: string, source: InKindSource, id: number) {
   const gift = await loadGift(db, orgId, source, id);
   if (!gift) throw new ServiceError(404, "In-kind gift not found");
   const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
@@ -634,7 +633,6 @@ async function getGift(orgId: string, source: InKindSource, id: number, reader: 
     readHistory(orgId, entityType, entityId),
     getInKindCapital().awaitingReview(orgId),
   ]);
-  await recordDonorDataReads(db, orgId, entityType, reader, [entityId]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
   const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), postings.get(bookingKey(source, id)));
   const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);

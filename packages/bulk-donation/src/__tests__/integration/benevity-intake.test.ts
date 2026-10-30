@@ -8,14 +8,12 @@ import { db } from "../../db";
 import { parseBenevityCsv } from "../../lib/csv-parser";
 import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
-import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
 import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
 const AUDIT = { actorUserId: 1, actorUsername: "testfinance", correlationId: "corr-intake" };
-const READER = { actorUserId: 1, actorUsername: "testfinance", route: "/api/donations/transactions" };
 
 const HEADER =
   "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment";
@@ -248,32 +246,13 @@ describeDb("upload runs the owner-assigned cycle per new disbursement", () => {
   });
 });
 
-describeDb("donor data reads are audited", () => {
-  it("each pii read writes one DONOR_DATA_READ row with route and count", async () => {
-    await upload(FILE);
-    const rows = await transactionService.listUnassignedTransactions(orgId, READER);
-    expect(rows).toHaveLength(2);
-    const t1 = await transactionService.getTransaction(orgId, rows[0].id, READER);
-    expect(t1?.donorFirstName).toBe("Jane");
-    await transactionService.listTransactions(orgId, READER);
-    await commentRuleService.listCommentRules(orgId, { ...READER, route: "/api/donations/comment-rules" });
-
-    const reads = await db.workflowEvent.findMany({ where: { orgId, eventType: "DONOR_DATA_READ" }, orderBy: { id: "asc" } });
-    expect(reads.map((r) => JSON.parse(r.payload!))).toEqual([
-      { route: READER.route, filter: { unassigned: true }, count: 2 },
-      { route: READER.route, ids: [rows[0].id], count: 1 },
-      { route: READER.route, filter: { assigned: null }, count: 3 },
-      { route: "/api/donations/comment-rules", count: 0 },
-    ]);
-    expect(reads.every((r) => r.actorUserId === 1)).toBe(true);
-  });
-
+describeDb("donor data stays out of the workflow log", () => {
   it("no workflow event payload carries a donor field", async () => {
     await makeAccountMapRule(orgId);
     await upload(FILE);
     const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
     await transactionService.assignOwner(orgId, t1.id, 201, true, AUDIT);
-    await transactionService.listTransactions(orgId, READER);
+    await transactionService.listTransactions(orgId);
 
     const payloads = (await db.workflowEvent.findMany({ where: { orgId } })).map((e) => e.payload ?? "");
     expect(payloads.length).toBeGreaterThan(0);

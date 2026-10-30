@@ -7,7 +7,7 @@ import { inKindAcceptService, InKindDecisionInputSchema, type InKindSource } fro
 import { manualInKindService, ManualInKindInputSchema } from "../services/manualInKindService";
 import { getOrgId, getPrincipal } from "../runtime";
 import type { DonationRouteHandler, InKindDonor } from "../contract";
-import { auditContext, donorReader, pageArgs, parseBodyCapped } from "./_shared";
+import { auditContext, pageArgs, parseBodyCapped } from "./_shared";
 
 export const listQueue: DonationRouteHandler = async () => ({
   InKindQueueItemView: await inKindAcceptService.listQueue(await getOrgId(), (await getPrincipal()).id),
@@ -45,13 +45,12 @@ export const settleReceipt: DonationRouteHandler = async ({ req, params }) => {
   return { InKindSettleResult: await mapServiceErrors(() => inKindService.settle(orgId, id, kind, audit)) };
 };
 
-/** One gift for its page. Every view admitted to it sees the donor, so the read is always audited. */
+/** One gift for its page. */
 export function getGift(source: InKindSource): DonationRouteHandler {
-  return async ({ req, params }) => {
+  return async ({ params }) => {
     const id = parseId(params.id);
-    const reader = await donorReader(req, `GET /api/donations/in-kind/${source}/[id]`);
     const orgId = await getOrgId();
-    return { InKindGiftDetailView: await mapServiceErrors(() => inKindAcceptService.getGift(orgId, source, id, reader)) };
+    return { InKindGiftDetailView: await mapServiceErrors(() => inKindAcceptService.getGift(orgId, source, id)) };
   };
 }
 
@@ -62,11 +61,10 @@ export function listByBucket(seeAll: boolean): DonationRouteHandler {
   });
 }
 
-/** The host decides from the caller's view whether donor identity is read (and audited) at all. */
+/** The host decides from the caller's view whether donor identity is read at all. */
 export function listManual(withDonor: boolean): DonationRouteHandler {
   return async ({ req }) => {
-    const reader = withDonor ? await donorReader(req, "GET /api/donations/in-kind/manual") : null;
-    return { ManualInKindDonation: await manualInKindService.list(await getOrgId(), reader, pageArgs(req)) };
+    return { ManualInKindDonation: await manualInKindService.list(await getOrgId(), withDonor, pageArgs(req)) };
   };
 }
 

@@ -5,6 +5,7 @@ import {
     financeViewKey,
     financeViewWindow,
     recordFinanceView,
+    recordFinanceViews,
     type FinanceView,
 } from "@/lib/finance/financeViewLog";
 import type { DbClient } from "@/lib/db-client";
@@ -105,5 +106,26 @@ describe("recordFinanceView", () => {
         const db = makeDb();
         db.financeViewLog.createMany.mockRejectedValue(new Error("connection lost"));
         await expect(recordFinanceView(view, asDb(db))).rejects.toThrow("connection lost");
+    });
+});
+
+describe("recordFinanceViews", () => {
+    test("writes every view in one statement and returns the inserted count", async () => {
+        const db = makeDb();
+        db.financeViewLog.createMany.mockResolvedValue({ count: 1 });
+        const other = { ...view, recordIds: ["r_456"], viewedAt: new Date("2026-10-27T14:20:00.000Z") };
+        await expect(recordFinanceViews([view, other], asDb(db))).resolves.toBe(1);
+
+        expect(db.financeViewLog.createMany).toHaveBeenCalledTimes(1);
+        const { data, skipDuplicates } = db.financeViewLog.createMany.mock.calls[0][0];
+        expect(skipDuplicates).toBe(true);
+        expect(data.map((row: { viewKey: string }) => row.viewKey)).toEqual([financeViewKey(view), financeViewKey(other)]);
+        expect(data[1].window.toISOString()).toBe("2026-10-27T14:15:00.000Z");
+    });
+
+    test("writes nothing for no views", async () => {
+        const db = makeDb();
+        await expect(recordFinanceViews([], asDb(db))).resolves.toBe(0);
+        expect(db.financeViewLog.createMany).not.toHaveBeenCalled();
     });
 });

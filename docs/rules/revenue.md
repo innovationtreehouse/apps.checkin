@@ -240,11 +240,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   who submits a receipt for a gift of goods records its donor, and can say it
   isn't a gift after all.  [Decision]
 
-- Only finance and the board can see who gave. Each look at a donor is
-  recorded.  [Decision — *Principle: least privilege*]
+- Only finance and the board can see who gave.  [Decision — *Principle: least privilege*]
 
-- Every view of finance records other than a person's own is recorded: who looked,
-  which records, through which screen, and when, never what the records said.
+- Every view of finance records other than a person's own is recorded, each look
+  at a donor included: who looked, which records, through which screen, and when,
+  never what the records said.
   A person looking at their own receipts is not recorded, and neither is a
   count. Only the Board reads the record.  [Decision — owner]
 

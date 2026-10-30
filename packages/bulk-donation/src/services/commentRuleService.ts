@@ -1,13 +1,11 @@
 import { db } from "../db";
-import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "@checkin/component-kit";
 
 export const commentRuleService = {
-  async listCommentRules(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {
-    const rows = await db.transactionCommentRule.findMany({ where: { orgId }, orderBy: { id: "asc" }, ...page });
-    await recordDonorDataRead(db, orgId, "comment_rule", reader, { count: rows.length });
-    return rows;
+  async listCommentRules(orgId: string, page?: { skip: number; take: number }) {
+    return db.transactionCommentRule.findMany({ where: { orgId }, orderBy: { id: "asc" }, ...page });
   },
 
   async deleteCommentRule(orgId: string, id: number, audit: AuditContext) {
