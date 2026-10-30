@@ -10,12 +10,15 @@ const APPROVER = principal(2);
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 
+let caller: ExpensePrincipal;
+
 function as(p: ExpensePrincipal) {
-  bindPorts({ auth: { getPrincipal: async () => p }, signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+  caller = p;
+  bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
 }
 
 function call(route: ExpenseRouteHandler, path: string) {
-  return route({ req: new Request(`http://test/api/expense${path}`), params: {} });
+  return route({ req: new Request(`http://test/api/expense${path}`), params: {}, principal: caller });
 }
 
 const HIDDEN: [string, ExpensePrincipal, string[]][] = [
