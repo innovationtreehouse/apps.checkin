@@ -8,7 +8,7 @@ import { config } from "@/lib/config";
 import { activateProgramEnrollment, refuseReversedActivation } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
-import { membershipVariantIdSet, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
+import { findMembershipLine, membershipVariantYears, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
 import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
@@ -21,6 +21,7 @@ interface ShopifyOrder {
     line_items?: { variant_id?: number | string; quantity?: number; current_quantity?: number | null }[];
     financial_status?: string | null;
     cancelled_at?: string | null;
+    processed_at?: string | null;
     /** Coupons applied at checkout — the program member-code entitlement check below. */
     discount_codes?: { code?: string }[];
 }
@@ -70,7 +71,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
 // Shopify store; local receives it from the self-fired mock (/api/dev/shopify/orders-paid).
 // The HMAC secret differs per env (config.shopifyWebhookSecret). The only env-branched
 // logic is the synthetic dev-mock variant fallback, gated on config.shopifyMockActive()
-// (⇔ CHECKIN_ENV=local) inside membershipVariantIdSet.
+// (⇔ CHECKIN_ENV=local) inside membershipVariantYears.
 export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, order: ShopifyOrder) => {
         // Only a paid, unreversed orders/paid delivery moves anything. A reversed one is
         // left to the reconciler, which raises it against the pending record.
@@ -132,8 +133,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 logger.info(`[SHOPIFY WEBHOOK] Test order ${orderId || "?"} for membership process ${membershipProcessIdStr} — ignored`);
             } else if (!isNaN(processId)) {
                 const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-                const hasMembershipItem = (order.line_items ?? []).some((li) => membershipVariantIdSet(settings).has(String(li.variant_id)));
-                const result = await activateByProcessId(processId, orderId, hasMembershipItem);
+                const variantYears = await membershipVariantYears(settings, order.processed_at ? new Date(order.processed_at) : new Date());
+                const line = findMembershipLine(variantYears, (order.line_items ?? []).map((li) => String(li.variant_id)));
+                const result = await activateByProcessId(processId, orderId, line);
                 await raiseMembershipPaymentOutcome(result.outcome, { shopifyOrderId: orderId || null, processId });
                 outcome = `process ${processId}: ${result.outcome}`;
                 logger.info(`[SHOPIFY WEBHOOK] Membership payment for process ${processId}: ${result.outcome}`);

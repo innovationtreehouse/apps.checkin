@@ -15,9 +15,11 @@ import type { ExpenseRouteHandler } from "../../contract";
 const FINANCE = principal(3, { isFinance: true });
 const ACTOR = { actorUserId: 3, actorUsername: "person-3" };
 
+let caller = FINANCE;
+
 function call(route: ExpenseRouteHandler, method: string, params: Record<string, string> = {}, body?: unknown) {
   const req = new Request("http://test/api/expense", body === undefined ? { method } : { method, body: JSON.stringify(body) });
-  return route({ req, params });
+  return route({ req, params, principal: caller });
 }
 
 async function onlyOrgAudit() {
@@ -37,7 +39,10 @@ async function auditOf(write: () => Promise<unknown>) {
 const mapping = { category: "Hardware", subcategory: "Cables", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "5000" };
 
 describeDb("FINANCE writes are audited", () => {
-  beforeEach(() => bindPorts({ auth: { getPrincipal: async () => FINANCE } }));
+  beforeEach(() => {
+    bindPorts({});
+    caller = FINANCE;
+  });
 
   it("setting a held line's account records hold_account_set with before and after", async () => {
     const id = await seedExpense({ state: "qb_on_hold" });
@@ -82,7 +87,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("marking test data is FINANCE only", async () => {
     const id = await seedExpense();
-    bindPorts({ auth: { getPrincipal: async () => principal(4, { isBoard: true }) } });
+    caller = principal(4, { isBoard: true });
 
     await expect(call(expenses.testData, "PUT", { id }, { isTestData: true })).rejects.toMatchObject({ status: 403 });
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ isTestData: false });

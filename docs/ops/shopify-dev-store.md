@@ -11,7 +11,7 @@ correct — `api/webhooks/shopify/route.ts` + `withWebhook`/`verifyShopifyHmac`
 (`webhookAuth.ts`) + the `config.ts` getters — so "make it real" is store setup +
 secret wiring, not new prod code. (This folds in the former separate
 implementation-plan doc; its runbook is §2 below. §2/§4/§6 anchors are kept
-because code comments and PRODUCTION_PLAN.md cite them.)
+because code comments cite them.)
 
 **Related:** `docs/ops/contract-signing-mock.md` (sibling in-process mock), #278
 (checkout-token honor-system TODO), #624/#625 (order-amount / price-alignment

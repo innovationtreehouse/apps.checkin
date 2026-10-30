@@ -13,7 +13,7 @@ receipt costs and what a donated item is worth fall under the expense rules
 goods.
 
 How the pieces are built is described in
-`docs/designs/COMPONENT_ARCHITECTURE.md`.
+`docs/architecture/COMPONENT_ARCHITECTURE.md`.
 
 ## Policy
 

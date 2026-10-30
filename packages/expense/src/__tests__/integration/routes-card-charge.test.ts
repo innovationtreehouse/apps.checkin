@@ -10,16 +10,18 @@ import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 
+let caller: ExpensePrincipal;
+
 function as(who: ExpensePrincipal, households: number[][] = []) {
+  caller = who;
   bindPorts({
-    auth: { getPrincipal: async () => who },
     signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], households }),
   });
 }
 
 function call(route: ExpenseRouteHandler, id: string, body: unknown) {
   const req = new Request(`http://test/api/expense/expenses/${id}/x`, { method: "POST", body: JSON.stringify(body) });
-  return route({ req, params: { id } });
+  return route({ req, params: { id }, principal: caller });
 }
 
 async function cardCharge() {
@@ -77,7 +79,7 @@ describeDb("the sign route's response", () => {
     const lineItemId = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, lineItemId, { ownerId: 100, status: "approved", decidedByUserId: 2 });
     const req = new Request(`http://test/api/expense/expenses/${id}/line-items/${lineItemId}/signoffs`, { method: "POST", body: JSON.stringify({ seat: "TREASURER" }) });
-    const res = (await expenses.sign({ req, params: { id, lineItemId: String(lineItemId) } })) as { ExpenseLineSignoffStatus: { filled: string[]; actions: unknown[]; awaiting: string[] }[] };
+    const res = (await expenses.sign({ req, params: { id, lineItemId: String(lineItemId) }, principal: caller })) as { ExpenseLineSignoffStatus: { filled: string[]; actions: unknown[]; awaiting: string[] }[] };
     // A card charge takes no submitter seat, so the Treasurer's signature leaves nothing to wait on.
     expect(res.ExpenseLineSignoffStatus).toEqual([expect.objectContaining({ filled: ["TREASURER"], actions: [], awaiting: [] })]);
   });

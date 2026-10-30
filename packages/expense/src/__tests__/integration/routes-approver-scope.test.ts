@@ -11,7 +11,7 @@ import { db } from "../../db";
 import { expenses } from "../../routes";
 import { SIGNOFF_BADGE_EXPENSE_CAP, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { financeQueueActionable, financeQueueCounts } from "../../services/financeQueueService";
-import type { ExpenseRouteHandler } from "../../contract";
+import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
 const OWN_BUCKET = 100;
 const OTHER_BUCKET = 200;
@@ -23,16 +23,18 @@ let expenseId: string;
 let lineItemId: number;
 let approvalId: number;
 
+let caller: ExpensePrincipal;
+
 function as(personId: number) {
+  caller = principal(personId);
   bindPorts({
-    auth: { getPrincipal: async () => principal(personId) },
     signoff: directory({ approvers: { [OWN_BUCKET]: [APPROVER], [OTHER_BUCKET]: [OUTSIDER] } }),
   });
 }
 
 function call(route: ExpenseRouteHandler, path: string, params: Record<string, string> = {}, body?: unknown) {
   const req = new Request(`http://test/api/expense${path}`, body === undefined ? {} : { method: "POST", body: JSON.stringify(body) });
-  return route({ req, params });
+  return route({ req, params, principal: caller });
 }
 
 const ids = () => ({ id: expenseId, approvalId: String(approvalId), lineItemId: String(lineItemId) });

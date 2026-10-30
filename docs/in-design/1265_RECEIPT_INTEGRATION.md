@@ -858,7 +858,7 @@ system of record for reimbursement and the app never authors a reimbursement fac
 a duplicate upload is flagged for a person, never rejected, and the file hash is
 deliberately not unique (`[Decision — deliberate limit]`); OCR results are never
 partially kept. The S1 contract, OCR call shape and secret model go to
-`docs/designs/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
+`docs/architecture/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
 The rest is mechanism and is deleted.
 
 ---

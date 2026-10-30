@@ -56,7 +56,7 @@ checkin, and every decision is audited.
 not a closing reference.
 
 **Base architecture:** carried over unchanged from
-`docs/designs/COMPONENT_ARCHITECTURE.md` (the distilled catalog and
+`docs/architecture/COMPONENT_ARCHITECTURE.md` (the distilled catalog and
 local-inventory designs) and `1272_EXPENSE_QB_INTEGRATION.md`
 (in-process library, own database, checkin security regime, retired source
 auth, injected `Org`, vitest + flow tests, no hosted `/api/internal`). This doc
