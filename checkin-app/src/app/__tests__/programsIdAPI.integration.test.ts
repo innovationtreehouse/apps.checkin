@@ -116,17 +116,17 @@ describe('Individual Program API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { appliesToYear: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).getUTCFullYear() - 1, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
         const orgMemberOnlyProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
         });
         orgMemberOnlyProgramId = orgMemberOnlyProgram.id;
 
         const publicMemberOnlyProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
         });
         publicMemberOnlyProgramId = publicMemberOnlyProgram.id;
 
@@ -544,7 +544,7 @@ describe('Individual Program API Integration Tests', () => {
             });
 
             const pastBoundaryProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
+                data: { appliesToYear: boundary.getUTCFullYear(), offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
             });
             pastBoundaryProgramId = pastBoundaryProgram.id;
         });
@@ -741,7 +741,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clamps publiclyVisible to false when PATCHed onto a public (non-members-only) program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
+                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ publiclyVisible: true }) });
@@ -759,7 +759,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clears publiclyVisible when a members-only program is flipped to public', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
+                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ orgMemberOnly: false }) });
@@ -809,7 +809,7 @@ describe('Individual Program API Integration Tests', () => {
             newLeadId = newLead.id;
 
             const noLeadProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'No Lead Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -820,12 +820,12 @@ describe('Individual Program API Integration Tests', () => {
             noLeadProgramId = noLeadProgram.id;
 
             const noEventsProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
             });
             noEventsProgramId = noEventsProgram.id;
 
             const finishedProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Finished Prog ID API Test',
                     phase: 'FINISHED',
                     enrollmentStatus: 'CLOSED',
@@ -838,7 +838,7 @@ describe('Individual Program API Integration Tests', () => {
             finishedProgramId = finishedProgram.id;
 
             const validPublishProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Valid Publish Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -1077,6 +1077,7 @@ describe('Individual Program API Integration Tests', () => {
 
             const capped = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     offSaleAt: new Date('2999-01-01'),
@@ -1092,6 +1093,7 @@ describe('Individual Program API Integration Tests', () => {
 
             const uncapped = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     offSaleAt: new Date('2999-01-01'),
@@ -1166,6 +1168,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: 'Prog ID API Test Shopify Sale Ended',
@@ -1197,6 +1200,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: 'Prog ID API Test Shopify Sale Ended Cut',
@@ -1226,6 +1230,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Hidden',
@@ -1295,6 +1300,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Reopen',
@@ -1327,6 +1333,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Sysadmin',
@@ -1355,6 +1362,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Restock',
@@ -1409,17 +1417,17 @@ describe('Individual Program API Integration Tests', () => {
 
         beforeAll(async () => {
             const freeProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
             });
             freeProgramId = freeProgram.id;
 
             const pricedNoVariant = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
             });
             pricedNoVariantProgramId = pricedNoVariant.id;
 
             const pricedWithVariant = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Priced With Variant Prog ID API Test',
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
@@ -1658,7 +1666,7 @@ describe('Individual Program API Integration Tests', () => {
             leadBId = (await mk('pay-lead-b', hhB.id, true)).id;
             kidBId = (await mk('pay-kid-b', hhB.id)).id;
             programId = (await prisma.program.create({
-                data: { name: 'Pay Status Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
+                data: { appliesToYear: 2026, name: 'Pay Status Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
             })).id;
             await prisma.programParticipant.createMany({
                 data: [
@@ -1748,7 +1756,7 @@ describe('Individual Program API Integration Tests', () => {
             kid10Id = (await prisma.person.create({ data: { email: 'age10-prog-id-api-test@example.com', name: 'Ten Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2016, 0, 1)) } })).id;
             kid15Id = (await prisma.person.create({ data: { email: 'age15-prog-id-api-test@example.com', name: 'Fifteen Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2011, 0, 1)) } })).id;
             programId = (await prisma.program.create({
-                data: { name: 'Age Recheck Prog ID API Test', startAt: new Date('2026-06-15'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
+                data: { appliesToYear: 2026, name: 'Age Recheck Prog ID API Test', startAt: new Date('2026-06-15'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
             })).id;
             await prisma.programParticipant.createMany({
                 data: [

@@ -106,7 +106,7 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         // No DOB, not declared adult → DOB_MISSING, not NEEDED.
         missingDobId = (await makePerson('nodob', { dateOfBirth: null })).id;
 
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, leadMentorId: leadId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, leadMentorId: leadId } });
         programId = program.id;
         await prisma.programParticipant.create({ data: { programId, personId: participantId } });
         await prisma.programParticipant.create({ data: { programId, personId: freshId } });

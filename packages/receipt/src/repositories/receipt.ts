@@ -30,8 +30,8 @@ export interface ReceiptUpdate {
 
 export const receiptRepo = {
   /** Org-scoped; `uploadedByUserId` narrows to one submitter's receipts. */
-  async find(id: string, orgId: string, uploadedByUserId?: number): Promise<ReceiptRow | undefined> {
-    const r = await db.receipt.findFirst({
+  async find(id: string, orgId: string, uploadedByUserId?: number, tx?: Prisma.TransactionClient): Promise<ReceiptRow | undefined> {
+    const r = await (tx ?? db).receipt.findFirst({
       where: { id, orgId, ...(uploadedByUserId === undefined ? {} : { uploadedByUserId }) },
       ...listShape,
     });

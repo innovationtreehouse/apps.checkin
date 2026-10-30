@@ -76,7 +76,7 @@ describe("getPrincipal", () => {
   });
 
   const signedIn = (user: Record<string, unknown>) => mockSession.mockResolvedValue({ user });
-  const getPrincipal = async () => (await import("../configure")).getPrincipal();
+  const getPrincipal = async () => (await import("@/lib/components/host")).getPrincipal();
 
   it("returns the principal for a live session", async () => {
     signedIn({ id: 7, name: "Ada" });

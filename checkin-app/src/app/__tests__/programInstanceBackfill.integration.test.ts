@@ -59,6 +59,7 @@ describe('ProgramInstance phase-1 backfill (MB)', () => {
 
         const full = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: 'Backfill Full Program',
                 leadMentorId: leadId,
                 startAt: new Date('2026-09-01'),
@@ -77,6 +78,7 @@ describe('ProgramInstance phase-1 backfill (MB)', () => {
 
         const bare = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: 'Backfill Bare Program',
                 startAt: new Date('2027-01-01'),
                 endAt: new Date('2027-03-01'),

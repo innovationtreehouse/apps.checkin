@@ -9,19 +9,21 @@ const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIN
 const inKindAccountsReady = jest.fn();
 jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation, IN_KIND_ROLES, inKindAccountsReady }));
 const ORG = { id: "treehouse", name: "Treehouse" };
-jest.mock("@/lib/catalog/configure", () => ({ getOrg: async () => ORG, getPrincipal: jest.fn() }));
+jest.mock("@/lib/components/host", () => ({ getOrg: async () => ORG, getPrincipal: jest.fn() }));
 const searchItems = jest.fn();
 const getItem = jest.fn();
 jest.mock("@checkin/global-catalog", () => ({ readService: { searchItems, getItem }, referenceMatchingService: {} }));
 const applyDonation = jest.fn();
-jest.mock("@/lib/workflowMapping/inventorySink", () => ({ inventoryReceipts: () => ({ applyDonation }) }));
 const expectDeposit = jest.fn();
 const depositStatus = jest.fn();
 jest.mock("@checkin/income", () => ({ expectDeposit, depositStatus }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
-// local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check is used here.
-jest.mock("@checkin/local-inventory", () => ({ isProvisionalGtin13: (g: string) => g.startsWith("0200") && g.substring(6, 8) === "27" }));
+// local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check and apply are used here.
+jest.mock("@checkin/local-inventory", () => ({
+  inventoryApply: { applyDonation },
+  isProvisionalGtin13: (g: string) => g.startsWith("0200") && g.substring(6, 8) === "27",
+}));
 const signoff = {
   financeHolders: jest.fn(),
   boardMembers: jest.fn(),

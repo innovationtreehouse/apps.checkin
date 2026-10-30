@@ -1,9 +1,11 @@
 import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
+import type { Session } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { notifyFinanceAlert } from '@/lib/emailRecipients';
 import { expenseOutcomes } from '@checkin/expense';
 import { receivingOutcomes } from '@checkin/workflow-mapping';
 import { giftOutcomes } from '@checkin/bulk-donation';
+import { sessionUser } from '@/lib/components/host';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
@@ -16,7 +18,7 @@ jest.mock('@checkin/receipt', () => ({
 jest.mock('@checkin/expense', () => ({ reimbursementStatus: {}, expenseOutcomes: { forReceipts: jest.fn() } }));
 jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receivingOutcomes: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
-jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn() }));
+jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
@@ -230,5 +232,37 @@ describe('receipt runtime: purchase outcome binding', () => {
                 ['r-3', { receiving: null, money: null, gift: null }],
             ]),
         );
+    });
+});
+
+describe('receipt runtime: principal', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it('refuses a session checkin refuses, without reading the Person', async () => {
+        jest.mocked(sessionUser).mockResolvedValue(null);
+        prisma.person.findFirst = jest.fn();
+        expect(await boundConfig().auth?.getPrincipal()).toBeNull();
+        expect(prisma.person.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('takes names and adulthood from the live Person, roles from the session', async () => {
+        jest.mocked(sessionUser).mockResolvedValue({ id: 7, isBoardMember: true } as Session['user']);
+        prisma.person.findFirst = jest.fn().mockResolvedValue({ name: 'Pat Example', dateOfBirth: ADULT_DOB, isDeclaredAdult: null });
+        expect(await boundConfig().auth?.getPrincipal()).toEqual({
+            id: 7,
+            name: 'Pat Example',
+            firstName: 'Pat',
+            lastName: 'Example',
+            isAdult: true,
+            isBoardMember: true,
+            addsPeople: true,
+        });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null } });
+    });
+
+    it('refuses a session whose Person is gone', async () => {
+        jest.mocked(sessionUser).mockResolvedValue({ id: 7 } as Session['user']);
+        prisma.person.findFirst = jest.fn().mockResolvedValue(null);
+        expect(await boundConfig().auth?.getPrincipal()).toBeNull();
     });
 });

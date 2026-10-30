@@ -52,7 +52,7 @@ function programRow(householdMembers: object[] = [PARENT]) {
     return {
         id: PROGRAM_ID, name: "Robotics", leadMentorId: LEAD_ID,
         startAt: new Date("2026-09-01T00:00:00Z"), endAt: new Date("2026-12-31T00:00:00Z"),
-        appliesToYear: null, offSaleAt: null, phase: "RUNNING", enrollmentStatus: "OPEN",
+        appliesToYear: 2026, offSaleAt: null, phase: "RUNNING", enrollmentStatus: "OPEN",
         orgMemberOnly: false, publiclyVisible: true, announceOnOpen: false, minAge: null, maxAge: null,
         maxParticipants: null, orgMemberPriceCents: null, nonOrgMemberPriceCents: null,
         shopifyProductId: null, shopifyVariantId: null, claimantShopifyVariantId: null,

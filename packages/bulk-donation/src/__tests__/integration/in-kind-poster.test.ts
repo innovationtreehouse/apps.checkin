@@ -4,7 +4,7 @@
  * clearing-account pair is found first. Nothing books on or before the books closing date.
  * Finance books, skips or matches by id what the drain hands over.
  */
-import { it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { QuickBooksClient, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -42,9 +42,13 @@ class FakeQbo {
   posts: { key: string; body: PostedJournal }[] = [];
   closeDate: string | null = null;
   dropAfterCreate = false;
+  /** The create fails without reaching the books. */
+  refuseCreate = false;
   createTimes = new Map<string, Date>();
   /** Runs inside a by-id read, standing in for a drain post that lands meanwhile. */
   duringByIdRead: (() => Promise<void>) | null = null;
+  /** Runs after a created-since read has its answer, so what lands meanwhile is not in it. */
+  afterSinceRead: (() => Promise<void>) | null = null;
   private nextId = 9000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -56,6 +60,7 @@ class FakeQbo {
       const since = /FROM JournalEntry WHERE MetaData\.CreateTime >= '([^']+)'/.exec(query);
       if (since) {
         const list = this.journals.filter((j) => (this.createTimes.get(j.Id)?.getTime() ?? 0) >= Date.parse(since[1]));
+        await this.afterSinceRead?.();
         return json({ QueryResponse: list.length ? { JournalEntry: list } : {} });
       }
       const m = /FROM (JournalEntry|Deposit|Purchase) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(query);
@@ -72,6 +77,7 @@ class FakeQbo {
       return json({ QueryResponse: list.length ? { [m[1]]: list } : {} });
     }
     if (!url.pathname.endsWith("/journalentry")) throw new Error(`unexpected write ${url.pathname}`);
+    if (this.refuseCreate) throw new Error("connection refused");
     const body = JSON.parse(String(init?.body)) as PostedJournal;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
@@ -447,6 +453,49 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     await expect(resolve(id, { action: "match", journalEntryId: "82" })).rejects.toMatchObject({ status: 409 });
     expect(await bookings(id)).toEqual([]);
     expect((await posting(id)).matchState).toBe("UNBOOKED");
+  });
+
+  describe("a drain retry whose create lands between finance's read and write", () => {
+    /** A gift whose first create never reached the books, and the retry to land once, unanswered. */
+    async function failedGiftAndRetry() {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.refuseCreate = true;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+      qbo.refuseCreate = false;
+      const attemptedAt = (await posting(id)).qbCreateAttemptedAt;
+      expect(attemptedAt).not.toBeNull();
+      const retry = async () => {
+        qbo.duringByIdRead = qbo.afterSinceRead = null;
+        qbo.dropAfterCreate = true;
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+        qbo.dropAfterCreate = false;
+      };
+      return { id, attemptedAt, retry };
+    }
+
+    it("refuses a skip, which then links the landed entry", async () => {
+      const { id, attemptedAt, retry } = await failedGiftAndRetry();
+      qbo.afterSinceRead = retry;
+      await expect(resolve(id, { action: "skip", reason: "looks unbooked" })).rejects.toMatchObject({ status: 409 });
+      expect(qbo.posts).toHaveLength(1);
+      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbCreateAttemptedAt: attemptedAt });
+      expect(await bookings(id)).toEqual([]);
+
+      expect(await resolve(id, { action: "skip", reason: "looks unbooked" })).toMatchObject({ qbState: "CREATED" });
+      expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    });
+
+    it("refuses a match, which then links the landed entry", async () => {
+      const { id, retry } = await failedGiftAndRetry();
+      qbo.journals.push(handJournal("82", [["Credit", "400", 33], ["Debit", "600", 33]]));
+      qbo.duringByIdRead = retry;
+      await expect(resolve(id, { action: "match", journalEntryId: "82" })).rejects.toMatchObject({ status: 409 });
+      expect(await bookings(id)).toEqual([]);
+
+      expect(await resolve(id, { action: "match", journalEntryId: "82" })).toMatchObject({ qbState: "CREATED" });
+      expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    });
   });
 
   it("a skipped gift stays in the queue while it carries a note, such as the sweep's stray entry", async () => {

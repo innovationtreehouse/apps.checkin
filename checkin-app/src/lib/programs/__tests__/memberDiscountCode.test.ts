@@ -31,7 +31,8 @@ const settledThrough = isMembershipFeeSettledThrough as jest.Mock;
 
 beforeEach(() => {
     jest.clearAllMocks();
-    findUnique.mockResolvedValue({ startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01") });
+    findUnique.mockResolvedValue({ startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), appliesToYear: 2025 });
+    (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue(null);
     // Default: every id asked about really is enrolled in the program. The
     // stuffed-id test below overrides this with the DB's narrower answer.
     participants.mockImplementation(({ where }: { where: { personId: { in: number[] } } }) =>
@@ -164,13 +165,6 @@ describe("unentitledMemberCodeUse", () => {
         expect(settledThrough).not.toHaveBeenCalled();
         expect(findUnique).not.toHaveBeenCalled();
         expect(participants).not.toHaveBeenCalled();
-    });
-
-    it("a program with no dates asks the status-only question (through = null)", async () => {
-        findUnique.mockResolvedValue({ startAt: null, endAt: null });
-        settledThrough.mockResolvedValue(false);
-        expect(await unentitledMemberCodeUse(42, [1], ["PRG42-ABCD1234"], "ord-1")).toBe(true);
-        expect(settledThrough).toHaveBeenCalledWith(1, null);
     });
 });
 

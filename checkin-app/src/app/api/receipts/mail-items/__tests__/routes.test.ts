@@ -49,6 +49,7 @@ const ITEM = {
   senderAddress: "stranger@elsewhere.test",
   status: "held",
   holdReason: "unverified_sender",
+  dmarcVerdict: "fail",
   mimeType: "application/pdf",
   receiptId: null,
 };

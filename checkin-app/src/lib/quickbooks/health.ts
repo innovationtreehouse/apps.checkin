@@ -104,7 +104,7 @@ async function laneChecks(): Promise<ConfigCheck[]> {
         import("@/lib/income/configure"),
         import("@/lib/bulkDonation/configure"),
         import("@/lib/expense/configure"),
-        import("@/lib/catalog/configure"),
+        import("@/lib/components/host"),
     ]);
     const lanes: Lane[] = [
         {

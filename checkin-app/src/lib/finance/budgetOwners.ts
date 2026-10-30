@@ -6,6 +6,7 @@ import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
+import { quickBooks } from "@/lib/components/ports";
 
 // Budget-owner buckets (#1280 §6) and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -41,7 +42,7 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
 /** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
 export async function listQuickBooksClasses() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_CLASSES.map((c) => ({ ...c }));
-    const qb = await (await import("@/lib/quickbooks/client")).getQuickBooks();
+    const qb = await quickBooks();
     if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
     const classes = await qb.classes().catch((error: unknown) => {
         logger.error("QuickBooks Class list failed:", error);

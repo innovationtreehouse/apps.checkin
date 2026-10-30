@@ -27,7 +27,8 @@ import {
 } from "@checkin/receipt";
 import { ingestReceipt, receivingOutcomes } from "@checkin/workflow-mapping";
 import { giftOutcomes, recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg, sessionUser } from "@/lib/components/host";
+import { householdOf } from "@/lib/components/ports";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 
@@ -44,20 +45,14 @@ async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, Purch
 }
 
 /**
- * The signed-in person as a receipt principal; null unless the session carries an integer id
- * that names a live Person. Names and adulthood come from the Person row: the uploader's
+ * The signed-in person as a receipt principal; null for any session checkin refuses or one
+ * that names no live Person. Names and adulthood come from the Person row: the uploader's
  * names fill "I am the donor", and only an adult may ask to be reimbursed.
  */
 async function getPrincipal(): Promise<ReceiptPrincipal | null> {
-  // Lazy: importing auth-options at boot would crash a Google-credless boot.
-  const [{ getServerSession }, { authOptions }, { default: prisma }, { isKnownAdult }] = await Promise.all([
-    import("next-auth"),
-    import("@/lib/auth-options"),
-    import("@/lib/prisma"),
-    import("@/lib/programAge"),
-  ]);
-  const user = (await getServerSession(authOptions))?.user;
-  if (!user || typeof user.id !== "number") return null;
+  const user = await sessionUser();
+  if (!user) return null;
+  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/programAge")]);
   const person = await prisma.person.findFirst({
     where: { id: user.id, mergedIntoId: null },
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
@@ -236,17 +231,6 @@ const replies: ReceiptReplies = {
     return sendMailReply(ack, process.env.RECEIPT_MAILBOX_ADDRESS);
   },
 };
-
-/** Live members of every household holding one of these people; a merged-away person's household still counts. */
-async function householdOf(personIds: number[]): Promise<number[]> {
-  if (personIds.length === 0) return [];
-  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  const members = await prisma.person.findMany({
-    where: { household: { householdMembers: { some: { id: { in: personIds } } } }, ...LIVE_PERSON },
-    select: { id: true },
-  });
-  return members.map((m) => m.id);
-}
 
 export function configureRuntime(): void {
   configureReceipt({

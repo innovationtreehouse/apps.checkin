@@ -218,7 +218,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
             householdId = hh.id;
             const person = await prisma.person.create({ data: { name: 'Dev Mock Participant', household: { connect: { id: hh.id } } } });
             personId = person.id;
-            const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Dev Mock Program ${TAG}` } });
+            const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Dev Mock Program ${TAG}` } });
             programId = program.id;
         });
 

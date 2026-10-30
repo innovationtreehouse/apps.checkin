@@ -41,6 +41,8 @@ async function giftRef(orgId: string, source: InKindSource, id: number): Promise
   return { source, id, entityType: "in_kind", entityId: row.receiptId ?? String(id) };
 }
 
+type HeldPosting = Awaited<ReturnType<typeof heldPosting>>;
+
 /** The gift's posting, refused unless the drain handed it to finance. */
 async function heldPosting(orgId: string, source: InKindSource, id: number) {
   const posting = await db.inKindPosting.findUnique({ where: { orgId_source_giftId: { orgId, source, giftId: id } } });
@@ -70,15 +72,16 @@ async function readyGift(run: Run, source: InKindSource, id: number): Promise<Gi
 }
 
 /**
- * Saves a settlement finance made, while the gift is still finance's and no create was attempted
- * since `attemptedAt` was read (that create may have landed); another gift holding an entry is refused.
+ * Saves a settlement finance made, while the gift is still finance's and its posting is unchanged
+ * since `read`: every claim moves `updatedAt`, so a create attempted meanwhile, first or retry, is
+ * refused (it may have landed). Another gift holding an entry is refused too.
  */
-async function settleByFinance(orgId: string, gift: GiftRef, attemptedAt: Date | null, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
+async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
   try {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
       if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) throw new ServiceError(409, "Already resolved");
-      if (posting.qbCreateAttemptedAt?.getTime() !== attemptedAt?.getTime()) throw new ServiceError(409, "The app tried to book this gift meanwhile; reload and try again");
+      if (posting.updatedAt.getTime() !== read.updatedAt.getTime()) throw new ServiceError(409, "The app may have tried to book this gift meanwhile; reload and try again");
       await writeSettlement(tx, orgId, gift, posting.id, s, actor, { from: posting.matchState, manual: true, ...payload });
     });
   } catch (err) {
@@ -91,14 +94,14 @@ async function settleByFinance(orgId: string, gift: GiftRef, attemptedAt: Date |
  * Before finance skips or matches a gift whose create may have landed, look for the app's own
  * JournalEntry. Found: the gift is linked to it as CREATED in place of the action. Unsure: refused.
  */
-async function linkOwnFirst(orgId: string, gift: GiftRef, attemptedAt: Date | null, actor: Actor): Promise<boolean> {
-  if (!attemptedAt) return false;
+async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, actor: Actor): Promise<boolean> {
+  if (!read.qbCreateAttemptedAt) return false;
   const client = await getInKindQbPosting()?.client();
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
-  const own = await lookupOwnJournal({ orgId, client }, gift, attemptedAt);
+  const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
   if (!own) return false;
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
-  await settleByFinance(orgId, gift, attemptedAt, own, actor, { note: "the app had already booked this gift" });
+  await settleByFinance(orgId, gift, read, own, actor, { note: "the app had already booked this gift" });
   return true;
 }
 
@@ -153,8 +156,8 @@ async function match(orgId: string, source: InKindSource, id: number, input: Ext
   const posting = await heldPosting(orgId, source, id);
   const run = await openRun(orgId, actor);
   const gift = await readyGift(run, source, id);
-  if (await linkOwnFirst(orgId, ref, posting.qbCreateAttemptedAt, actor)) return;
-  await settleByFinance(orgId, ref, posting.qbCreateAttemptedAt, await readMatch(run, gift, input), actor, {});
+  if (await linkOwnFirst(orgId, ref, posting, actor)) return;
+  await settleByFinance(orgId, ref, posting, await readMatch(run, gift, input), actor, {});
 }
 
 async function skip(orgId: string, source: InKindSource, id: number, reason: string, actor: Actor): Promise<void> {
@@ -162,8 +165,8 @@ async function skip(orgId: string, source: InKindSource, id: number, reason: str
   if (!why) throw new ServiceError(400, "A reason is required to skip");
   const ref = await giftRef(orgId, source, id);
   const posting = await heldPosting(orgId, source, id);
-  if (await linkOwnFirst(orgId, ref, posting.qbCreateAttemptedAt, actor)) return;
-  await settleByFinance(orgId, ref, posting.qbCreateAttemptedAt, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
+  if (await linkOwnFirst(orgId, ref, posting, actor)) return;
+  await settleByFinance(orgId, ref, posting, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
 }
 
 /**

@@ -307,6 +307,9 @@ model ReceiptMailItem {
   // Why a held item was held: unverified_sender | not_a_submitter. Null on items held before it was recorded.
   /// @sensitivity:internal
   holdReason     String?   @map("hold_reason")
+  // The sender check's outcome: pass | fail | none. Null on items stored before it was recorded.
+  /// @sensitivity:internal
+  dmarcVerdict   String?   @map("dmarc_verdict")
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")

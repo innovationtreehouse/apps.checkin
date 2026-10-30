@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dmarcAligned } from "../../services/mailIntake";
+import { dmarcAligned, dmarcVerdict } from "../../services/mailIntake";
 
 const header = (name: string) => (value: string) => ({ name, value });
 
@@ -108,5 +108,26 @@ describe("dmarcAligned", () => {
       expect(withReturnPath("<prvs=1234abcd=alice@example.org>", GMAIL)).toBe(true);
       expect(withReturnPath("<>", GMAIL)).toBe(true);
     });
+  });
+});
+
+describe("dmarcVerdict", () => {
+  const verdict = (auth: string, address: string | null = "alice@example.org") => dmarcVerdict([header("Authentication-Results")(auth)], address);
+
+  it("passes only what dmarcAligned passes", () => {
+    expect(verdict(GMAIL)).toBe("pass");
+    expect(verdict("mx.google.com; spf=pass smtp.mailfrom=alice@example.org; dmarc=pass header.from=example.org")).toBe("fail");
+  });
+
+  it("is none only when Google reports no record for the From domain", () => {
+    expect(verdict("mx.google.com; spf=pass; dmarc=none header.from=example.org")).toBe("none");
+    expect(verdict("mx.google.com; dmarc=none header.from=example.net")).toBe("fail");
+    expect(verdict("evil.example; dmarc=none header.from=example.org")).toBe("fail");
+  });
+
+  it("fails everything else", () => {
+    expect(verdict(GMAIL.replace("dmarc=pass (p", "dmarc=fail (p"))).toBe("fail");
+    expect(verdict(GMAIL, null)).toBe("fail");
+    expect(dmarcVerdict(undefined, "alice@example.org")).toBe("fail");
   });
 });

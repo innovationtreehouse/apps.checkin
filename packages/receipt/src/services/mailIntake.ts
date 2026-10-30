@@ -184,16 +184,43 @@ const envelopeSafe = (headers: Headers | undefined, authResults: string): boolea
  * results, two header.from properties) fails closed too.
  */
 export function dmarcAligned(headers: Headers | undefined, address: string): boolean {
-  const topmost = headerValues(headers, "Authentication-Results")[0];
-  if (topmost === undefined || !envelopeSafe(headers, topmost)) return false;
-  const parsed = parseAuthResults(topmost);
-  if (!parsed || parsed.authservId.toLowerCase() !== "mx.google.com") return false;
-  const dmarc = parsed.results.filter((r) => r.method.toLowerCase() === "dmarc");
-  if (dmarc.length !== 1 || dmarc[0].result.toLowerCase() !== "pass") return false;
+  const results = googleResults(headers);
   const domain = address.split("@")[1];
+  return (
+    !!results &&
+    dmarcResultFor(results, domain) === "pass" &&
+    results.some((r) => r.method.toLowerCase() === "dkim" && r.result.toLowerCase() === "pass" && signedBy(r, domain))
+  );
+}
+
+/** The method results of the topmost `Authentication-Results`, when Google wrote it and it parses; else null. */
+function googleResults(headers: Headers | undefined): ResInfo[] | null {
+  const topmost = headerValues(headers, "Authentication-Results")[0];
+  if (topmost === undefined || !envelopeSafe(headers, topmost)) return null;
+  const parsed = parseAuthResults(topmost);
+  return parsed && parsed.authservId.toLowerCase() === "mx.google.com" ? parsed.results : null;
+}
+
+/** The lowercased result of the single dmarc clause naming exactly this `From` domain; else null. */
+function dmarcResultFor(results: ResInfo[], domain: string): string | null {
+  const dmarc = results.filter((r) => r.method.toLowerCase() === "dmarc");
+  if (dmarc.length !== 1) return null;
   const from = dmarc[0].props.filter(([key]) => key.toLowerCase() === "header.from");
-  if (from.length !== 1 || from[0][1].toLowerCase() !== domain) return false;
-  return parsed.results.some((r) => r.method.toLowerCase() === "dkim" && r.result.toLowerCase() === "pass" && signedBy(r, domain));
+  return from.length === 1 && from[0][1].toLowerCase() === domain ? dmarc[0].result.toLowerCase() : null;
+}
+
+/** The sender check's outcome, stored on each mail item. */
+export type DmarcVerdict = "pass" | "fail" | "none";
+
+/**
+ * `pass` is exactly `dmarcAligned`. `none` means Google found no DMARC record for the `From`
+ * domain. Everything else fails, including a DMARC pass on SPF alone and mail with no single `From`.
+ */
+export function dmarcVerdict(headers: Headers | undefined, address: string | null): DmarcVerdict {
+  if (!address) return "fail";
+  if (dmarcAligned(headers, address)) return "pass";
+  const results = googleResults(headers);
+  return results && dmarcResultFor(results, address.split("@")[1]) === "none" ? "none" : "fail";
 }
 
 /**
@@ -373,8 +400,9 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     counts.ignored += ignored;
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
-    const aligned = !!address && dmarcAligned(headers, address);
-    const sender: ReceiptPrincipal | null = aligned ? await ports().people.submitterByEmail(address) : null;
+    const verdict = dmarcVerdict(headers, address);
+    const aligned = verdict === "pass";
+    const sender: ReceiptPrincipal | null = address && aligned ? await ports().people.submitterByEmail(address) : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
     const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
@@ -397,7 +425,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         counts.skipped++;
         continue;
       }
-      const item = { orgId, ...key, receivedAt: new Date(Number(msg.internalDate)), senderAddress: address ?? "" };
+      const item = { orgId, ...key, receivedAt: new Date(Number(msg.internalDate)), senderAddress: address ?? "", dmarcVerdict: verdict };
       const check = ignoredHashes.has(key.attachmentHash) ? null : checkReceiptFile(bytes, file.declaredType);
       if (check && !check.ok) {
         counts.rejected++;

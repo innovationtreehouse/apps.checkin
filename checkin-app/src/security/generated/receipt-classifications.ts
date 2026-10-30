@@ -110,6 +110,7 @@ export const classifications = {
         senderAddress: 'pii',
         status: 'internal',
         holdReason: 'internal',
+        dmarcVerdict: 'internal',
         fileBlob: 'pii',
         mimeType: 'internal',
         receiptId: 'internal',

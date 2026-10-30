@@ -32,6 +32,7 @@ const emailBoard = jest.mocked(emailBoardMembers);
 async function mkProgram(name: string, data: Partial<{ startAt: Date; offSaleAt: Date | null; phase: 'UPCOMING' | 'FINISHED'; saleEndedAt: Date; claimantShopifyVariantId: string }>) {
     return prisma.program.create({
         data: {
+            appliesToYear: 2026,
             name: `${TAG} ${name}`,
             startAt: data.startAt ?? day('2026-11-01'),
             endAt: day('2026-12-31'),

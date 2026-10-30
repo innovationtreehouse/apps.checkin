@@ -138,7 +138,7 @@ async function makeProgramEnrollment(opts: {
     }
     const variantId = `variant-prg-${opts.email}`;
     const program = await prisma.program.create({
-        data: { name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
+        data: { appliesToYear: 2026, name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({
         data: { programId: program.id, personId: person.id, status: opts.status, shopifyOrderId: opts.shopifyOrderId ?? null },
