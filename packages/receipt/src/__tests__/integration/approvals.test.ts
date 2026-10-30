@@ -155,12 +155,21 @@ const HOUSEMATE: ReceiptPrincipal = { ...FINANCE, id: 970, name: "housemate" };
 const INDEPENDENT: ReceiptPrincipal = { ...FINANCE, id: 980, name: "independent" };
 
 describeDb("receipts awaiting a conflicted finance viewer", () => {
+  const BOB_HOUSEHOLD = [BOB.id, HOUSEMATE.id];
+  let householdLookups: number[][] = [];
+
   beforeEach(() => {
+    householdLookups = [];
     const ports = recordingPorts();
     configure({
       receiptSink: ports.receiptSink,
       donorSink: ports.donorSink,
-      households: { householdOf: async (ids) => (ids.includes(BOB.id) ? [BOB.id, HOUSEMATE.id] : []) },
+      households: {
+        householdOf: async (ids) => {
+          householdLookups.push(ids);
+          return ids.some((id) => BOB_HOUSEHOLD.includes(id)) ? BOB_HOUSEHOLD : [];
+        },
+      },
     });
   });
 
@@ -186,6 +195,10 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(HOUSEMATE.id)).toEqual(counts(2, 2, 0));
+
+    householdLookups = [];
+    await receiptService.countAwaitingFinance(HOUSEMATE.id);
+    expect(householdLookups).toEqual([[HOUSEMATE.id]]);
 
     // The review tabs match the pill for a FINANCE viewer, and stay org-wide for the Board.
     expect((await receiptService.queueCounts(HOUSEMATE.id)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
