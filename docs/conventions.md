@@ -196,9 +196,13 @@ missed a row stored at a different time of day.
 
 - **A library's runtime fails closed the same way everywhere.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures
-  it, every accessor throws. A missing principal, or one without an integer id,
-  is a 401. An unbound port or accessor throws `NotWiredError` and never fakes
-  success. A callee that takes an `orgId` from its caller checks it with
+  it, an accessor that needs the configuration throws. `configured()` and
+  `getOrgEventConsumers` return nothing instead, for reads that must not throw,
+  such as one after a commit. A missing principal, or one without an integer id,
+  is a 401. An unbound push or write port throws and never fakes success: it
+  throws `NotWiredError`, except workflow-mapping's push ports, which throw a
+  plain `Error`. An unbound read port falls back to an inert adapter that returns
+  an empty result. A callee that takes an `orgId` from its caller checks it with
   `assertOrg` first.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race

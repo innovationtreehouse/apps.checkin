@@ -18,8 +18,8 @@ import { MAX_PROGRAM_AGE } from "@/lib/programAge";
  *                               (a real sub-26 DoB is authoritative, supersedes the flag)
  *
  * Route EVERY interactive path that persists Person.dateOfBirth through this. The
- * nightly cron + the #1165 backfill migration are the safety net for rows that
- * slip past (e.g. bulk import); this is the write-time guard so it can't creep back.
+ * nightly cron is the safety net for rows that slip past; this is the write-time
+ * guard so they can't creep back.
  *
  * A DoB is a calendar date, so a date string is parsed through `parseDateOnly` —
  * this is the choke-point that owns the calendar-date convention for interactive

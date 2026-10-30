@@ -136,7 +136,7 @@ interface RuntimeShape<Principal> {
 /**
  * One component's runtime: the host configures it once at boot, routes and services read it.
  * Stored on globalThis so the instrumentation chunk and the route chunks share one runtime,
- * and it survives dev HMR. Every accessor throws until the host has configured it.
+ * and it survives dev HMR. Every accessor but `configured` throws until the host has configured it.
  */
 export function defineRuntime<Config extends RuntimeShape<Principal>, Principal extends { id: number }>(name: string) {
   const key = Symbol.for(`@checkin/component-kit/runtime/${name}`);

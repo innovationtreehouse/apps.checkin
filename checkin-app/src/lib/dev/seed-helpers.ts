@@ -38,7 +38,7 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Baseline — the standard 9 debug personas + tools + a sample program. Idempotent
+// Baseline — the standard debug personas + tools + a sample program. Idempotent
 // (upserts), so it is safe to run on a fresh DB or after a reset. This is the body that
 // used to live in prisma/seed.ts main().
 // ──────────────────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
-    // 2. The 9 debug personas (solo personas get a single-person household of their own)
+    // 2. The debug personas (solo personas get a single-person household of their own)
     const isBoardMember = await prisma.person.upsert({
         where: { email: "boardmember@example.com" },
         update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true },
