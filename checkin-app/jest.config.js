@@ -50,11 +50,7 @@ const customJestConfig = {
     // `npm run test:coverage` leaves the env unset, so it still enforces here.
     ...(process.env.SKIP_COVERAGE_THRESHOLD ? {} : {
         coverageThreshold: {
-            global: {
-                lines: 85,
-                branches: 75,
-                functions: 75,
-            },
+            global: require('./coverage-floor.json'),
         },
     }),
     // Count every source file, so untested files show as 0% rather than vanishing.
@@ -76,39 +72,14 @@ const customJestConfig = {
     testEnvironment: 'jest-environment-jsdom',
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',
-        // Workspace TS package — point jest at its source so it transforms it.
-        '^@checkin/money$': '<rootDir>/../packages/money/src/index.ts',
-        '^@checkin/utils$': '<rootDir>/../packages/utils/src/index.ts',
-        '^@checkin/pg-kit$': '<rootDir>/../packages/pg-kit/src/index.ts',
-        '^@checkin/component-kit$': '<rootDir>/../packages/component-kit/src/index.ts',
-        '^@checkin/component-ui$': '<rootDir>/../packages/component-ui/src/index.tsx',
-        // Checkin-hosted libraries (#1286, #1287, #1272): jest's resolver doesn't honor
-        // a package's `exports` subpaths, so map them to source. Subpath rule first (more
-        // specific), then the bare entry.
-        '^@checkin/global-catalog/(.*)$': '<rootDir>/../packages/global-catalog/src/$1',
-        '^@checkin/global-catalog$': '<rootDir>/../packages/global-catalog/src/index.ts',
-        '^@checkin/local-inventory/(.*)$': '<rootDir>/../packages/local-inventory/src/$1',
-        '^@checkin/local-inventory$': '<rootDir>/../packages/local-inventory/src/index.ts',
-        '^@checkin/bulk-donation/(.*)$': '<rootDir>/../packages/bulk-donation/src/$1',
-        '^@checkin/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
-        '^@checkin/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
-        '^@checkin/expense$': '<rootDir>/../packages/expense/src/index.ts',
-        // The Shopify mirror's generated client (lib/shopifyRead/client.ts).
+        // jest's resolver doesn't honor a package's `exports`, whose entries declare only
+        // `import`, so every workspace package maps to its source. Most specific rule first.
         '^@checkin/s-ingest-core/client$': '<rootDir>/../packages/s-ingest-core/src/generated/checkin-prisma/client.ts',
-        '^@checkin/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
-        '^@checkin/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
-        // Shared packages the libraries import; their `exports` declare only `import`.
-        '^@checkin/workflows/(.*)$': '<rootDir>/../packages/workflows/src/$1',
-        '^@checkin/workflows$': '<rootDir>/../packages/workflows/src/index.ts',
-        '^@checkin/receipt-types/(.*)$': '<rootDir>/../packages/receipt-types/src/$1',
-        '^@checkin/receipt-types$': '<rootDir>/../packages/receipt-types/src/index.ts',
-        '^@checkin/gtin$': '<rootDir>/../packages/gtin/src/index.ts',
-        '^@checkin/donations$': '<rootDir>/../packages/donations/src/index.ts',
-        '^@checkin/workflow-mapping/(.*)$': '<rootDir>/../packages/workflow-mapping/src/$1',
-        '^@checkin/workflow-mapping$': '<rootDir>/../packages/workflow-mapping/src/index.ts',
-        '^@checkin/income/(.*)$': '<rootDir>/../packages/income/src/$1',
-        '^@checkin/income$': '<rootDir>/../packages/income/src/index.ts',
-        '^@checkin/quickbooks$': '<rootDir>/../packages/quickbooks/src/index.ts',
+        '^@checkin/([^/]+)/(.*)$': '<rootDir>/../packages/$1/src/$2',
+        '^@checkin/([^/]+)$': [
+            '<rootDir>/../packages/$1/src/index.ts',
+            '<rootDir>/../packages/$1/src/index.tsx',
+        ],
     },
     testPathIgnorePatterns: [
         '/node_modules/',

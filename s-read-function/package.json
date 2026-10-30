@@ -22,6 +22,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.8",
     "tsx": "^4.19.0",
