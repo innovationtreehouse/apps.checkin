@@ -212,6 +212,12 @@ Procedure below is built on them.
 - Nobody clears a blocked application on their own. After a rejection the check
   needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25, 2026-10-27]
 
+- A person merge that brings in a valid check clears an application that has
+  approvals only; the approvals stay on it as a record. A standing rejection stops
+  the merge, and so does a Board reset, which needs two new approvals whatever the
+  earlier check says. A rejection changed to approve and then undone no longer
+  stands, so a merge after that clears the application.  [Decision — owner ruling 2026-10-30]
+
 - The reviewer who rejected may change their answer to approve. That starts the
   review over: every earlier decision on it, theirs and anyone else's, is
   discarded, and their approval is the first of the two it needs. They name the

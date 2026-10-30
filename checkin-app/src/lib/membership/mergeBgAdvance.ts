@@ -20,6 +20,9 @@ import { carriedComplianceDate } from "@/lib/person/merge/plan";
  * check because a parent's is fresh.
  *
  * Advance only: it acts on rows whose `bgClearedAt` is null and never unstamps one.
+ *
+ * Approvals do not hold up a carried-in check; they stay on the row as a record. A
+ * standing rejection stops it, and so does a board reset.
  */
 
 /** A process this carryover may act on. */
@@ -114,21 +117,23 @@ function uncleared(householdId: number, from: object, extra: object = {}): Promi
 }
 
 /**
- * Stamp `bgClearedAt` under a CAS on the from-state, and apply the volunteer
- * allowlist: the fresh-check shortcut means `clearBackgroundCheck` never runs this
- * cycle, and without it a pre-designated volunteer household gets the non-volunteer
- * membership fee (#874). Returns false when the row moved on under us.
+ * Stamp `bgClearedAt` under a CAS on the from-state, and apply the volunteer status:
+ * the fresh-check shortcut means `clearBackgroundCheck` never runs this cycle, and
+ * without it a pre-designated or reviewer-marked volunteer household gets the
+ * non-volunteer membership fee (#874). Returns false when the row moved on under us.
  *
- * One transaction, FOR UPDATE first: the attestation count only excludes a review a
- * human is mid-way through if it is read under the lock, and the stamp, its audit
- * row and the volunteer write must land together or not at all.
+ * One transaction, FOR UPDATE first: a rejection only stops the stamp if it is read
+ * under the lock, and the stamp, its audit row and the volunteer write must land
+ * together or not at all.
  */
 async function stampBgCleared(process: Candidate, householdId: number, actorId: number, from: object, source: Provenance): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
-        // A review an eligible reviewer has already attested is theirs to finish; a
-        // dedupe action does not complete a human's 2-of-N.
-        if (await tx.backgroundCheckAttestation.count({ where: { processId: process.id } })) return false;
+        const attestations = await tx.backgroundCheckAttestation.findMany({
+            where: { processId: process.id },
+            select: { result: true, isMarkedVolunteerFamily: true },
+        });
+        if (attestations.some((a) => a.result === "REJECT")) return false;
         if (await wasBoardReset(tx, process.id)) return false;
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: process.id, bgClearedAt: null, ...from },
@@ -145,7 +150,7 @@ async function stampBgCleared(process: Candidate, householdId: number, actorId: 
                 newData: { bgClearedAt: true, ...source, reason: "still-valid background check carried in by participant merge" },
             },
         });
-        await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, householdId, false);
+        await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, householdId, attestations.some((a) => a.isMarkedVolunteerFamily));
         return true;
     });
 }
@@ -192,7 +197,7 @@ const HELD_STATES = [
  * Stamping `bgClearedAt` on a held row drops it out of the reviewer queue with no exit
  * but archival. So run the real clearance, which stamps and converges in one write —
  * to PENDING_PAYMENT if the membership fee is still owed, to ACTIVE if it is already paid.
- * Zero attestations, re-read under the lock.
+ * No standing rejection, re-read under the lock.
  */
 async function clearHeldRow(
     householdId: number,
@@ -207,7 +212,7 @@ async function clearHeldRow(
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
             const fresh = await tx.orgMembershipProcess.findUnique({
                 where: { id: process.id },
-                select: { status: true, bgClearedAt: true, _count: { select: { attestations: true } } },
+                select: { status: true, bgClearedAt: true, _count: { select: { attestations: { where: { result: "REJECT" } } } } },
             });
             if (!fresh || fresh.status !== status || fresh.bgClearedAt || fresh._count.attestations > 0) return null;
             if (await wasBoardReset(tx, process.id)) return null;
@@ -215,7 +220,7 @@ async function clearHeldRow(
                 provenance: {
                     via: "merge",
                     sourcePersonId: mergedPersonId,
-                    reason: "still-valid background check carried in by participant merge; no reviewer attested",
+                    reason: "still-valid background check carried in by participant merge",
                 },
             });
         });
