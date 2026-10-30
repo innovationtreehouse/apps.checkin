@@ -1,6 +1,5 @@
 /** Audit, paging and capped-body helpers for the route factories. */
 import type { AuditContext } from "../workflows/disbursement.actor";
-import type { DonorReadContext } from "../repositories/audit";
 import { httpError, isComponentHttpError, zodMessage } from "@checkin/component-kit";
 import type { ZodType } from "zod";
 import { getPrincipal } from "../runtime";
@@ -65,11 +64,6 @@ export async function auditContext(req: Request): Promise<AuditContext & { actor
     actorUsername: principal.name ?? String(principal.id),
     correlationId: correlationId(req),
   };
-}
-
-/** Who reads donor data, through which endpoint (the DONOR_DATA_READ audit row). */
-export async function donorReader(req: Request, route: string): Promise<DonorReadContext> {
-  return { ...(await auditContext(req)), route };
 }
 
 /** `page` (1-based) and `limit` (1–200, default 50) as Prisma skip/take. */

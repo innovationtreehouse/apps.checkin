@@ -7,7 +7,6 @@ import { getServerSession } from "next-auth/next";
 import { POST as discard } from "../discard/route";
 import { POST as reject } from "../reject/route";
 
-jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
   receiptService: { discard: jest.fn(), rejectFinancial: jest.fn() },
 }));

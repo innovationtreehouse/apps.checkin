@@ -5,7 +5,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
 import { getCatalogLookup, getInventoryApply } from "../runtime";
-import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -52,18 +52,16 @@ const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyNa
 
 export const manualInKindService = {
   /**
-   * Newest first. Donor fields are selected, and each returned record's read audited, only when
-   * `reader` is given: the caller passes one only for a viewer allowed to see donor identity.
+   * Newest first. Donor fields are selected only when `withDonor` is set: the caller sets it only
+   * for a viewer allowed to see donor identity.
    */
-  async list(orgId: string, reader: DonorReadContext | null, page?: { skip: number; take: number }) {
-    const rows = await db.manualInKindDonation.findMany({
+  async list(orgId: string, withDonor: boolean, page?: { skip: number; take: number }) {
+    return db.manualInKindDonation.findMany({
       where: { orgId },
-      select: reader ? { ...LIST_SELECT, ...DONOR_SELECT } : LIST_SELECT,
+      select: withDonor ? { ...LIST_SELECT, ...DONOR_SELECT } : LIST_SELECT,
       orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
       ...page,
     });
-    if (reader) await recordDonorDataReads(db, orgId, "manual_in_kind", reader, rows.map((r) => String(r.id)));
-    return rows;
   },
 
   /**
