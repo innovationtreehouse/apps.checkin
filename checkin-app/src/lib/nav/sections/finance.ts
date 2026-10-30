@@ -46,6 +46,7 @@ export const FINANCE: NavSection = {
     { name: "Books map", href: "/books-map", icon: "🗺️", library: "expense" },
     ...RECEIPT_MAIL_NAV.map((l) => ({ ...receipt(l), visible: anyRole(["isFinance"]) })),
     ...RECEIPT_FINANCE_NAV.map(receipt),
+    receipt({ name: "Mail aliases", href: "/finance/mail-aliases", icon: "📮" }),
   ],
   visible: anyRole(FINANCE_ROLES),
   hrefFor: (u, c) => firstVisibleHref(FINANCE, u, c),

@@ -130,6 +130,7 @@ const PERSON_RELATION_NAMES = [
  *     would falsify history, not protect anyone.
  */
 const ALLOWLIST: Record<string, string> = {
+    'lib/receipt/mailAliases.ts': "Reads an alias's person through the alias's own FK: a merge moves every alias to the survivor (moveMailAliases), so an alias's person is never a tombstone. Its one Person list query spreads LIVE_PERSON.",
     // ── sweeps / reconcilers (rule: "must still see tombstone rows") ──────────
     'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (lib/person/merge/execute.ts moveJoinTables), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
     'app/api/cron/pending-participants/route.ts': '7-day clock → deleteAndReleaseHold — must see a tombstoned participant to release its hold.',

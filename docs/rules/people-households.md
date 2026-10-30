@@ -167,6 +167,11 @@ Things the app takes as true because they are handled outside it.
 
 - Email identity is case-insensitive.  [Decision]
 
+- A person may be identified by extra addresses for receipt mail only. Finance
+  or the Board records them, never for their own household, and each is unique
+  across every person's sign-in address and every other extra address. Setting a
+  sign-in email to such an address removes it.  [Decision — owner]
+
 - Where someone signs in through the outside sign-in service, the address they
   sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
 

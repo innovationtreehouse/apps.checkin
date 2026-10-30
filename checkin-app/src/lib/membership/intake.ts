@@ -1,4 +1,6 @@
 import prisma from "@/lib/prisma";
+import { personActor } from "@/lib/auditActor";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
@@ -403,6 +405,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     await addLeadOrRecord(tx, sp.id, { personId: sp.id, householdId });
                 } else if ((spName = nameWrite(sp.name)) !== undefined) {
                     const newSpName: string = spName;
+                    if (sp.email) await removeAliasesForSignInEmail(tx, sp.email, personActor(userId), "intake_add_member");
                     const created = await tx.person.create({
                         data: {
                             id: await mintPersonId(tx),
@@ -445,6 +448,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     });
                 } else if ((childName = nameWrite(child.name)) !== undefined) {
                     const newChildName: string = childName;
+                    if (child.email) await removeAliasesForSignInEmail(tx, child.email, personActor(userId), "intake_add_member");
                     await tx.person.create({
                         data: {
                             id: await mintPersonId(tx),

@@ -9,6 +9,8 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -101,6 +103,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const updatedParticipant = await prisma.$transaction(async (tx) => {
+            if (emailChanged && body.email) await removeAliasesForSignInEmail(tx, body.email, personActor(auth.user.id), "board_email_change");
             const unlinked = emailChanged ? (await tx.account.deleteMany({ where: { userId: id } })).count : 0;
             const updated = await tx.person.update({
                 where: { id },
