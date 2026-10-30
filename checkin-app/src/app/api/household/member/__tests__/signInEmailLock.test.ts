@@ -98,6 +98,14 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 
+    it("rolls back when the member becomes trusted between the check and the write", async () => {
+        findPerson.mockResolvedValue(target(CO_LEAD, 0));
+        tx.person.findUnique.mockResolvedValueOnce({ ...target(CO_LEAD, 0), roles: [{ role: "KEYHOLDER" }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain("can only be changed by the board");
+    });
+
     it("refuses a lead editing a signed-in co-lead's email", async () => {
         findPerson.mockResolvedValue(target(CO_LEAD, 1));
         const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });

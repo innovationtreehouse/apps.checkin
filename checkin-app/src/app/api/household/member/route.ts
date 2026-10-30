@@ -19,6 +19,8 @@ import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
+class BecameTrustedError extends Error {}
+
 export const PATCH = withAuth(
     {},
     async (req, auth) => {
@@ -137,6 +139,12 @@ export const PATCH = withAuth(
                     select: HOUSEHOLD_PEER_SELECT,
                 });
 
+                // Read after the write and roll back: a grant this misses commits after
+                // the edit, so it lands on the new address rather than being changed under.
+                if (email !== undefined && !holdsGrant && (await trustStatus(tx, participantId)).isTrusted) {
+                    throw new BecameTrustedError();
+                }
+
                 // Set when the field edits saved but the requested promotion to lead
                 // was declined by the per-household cap (#269). We report this back
                 // rather than 400 the whole edit, so the form can say the member's
@@ -223,6 +231,10 @@ export const PATCH = withAuth(
         } catch (error: unknown) {
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof BecameTrustedError) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
             }
             logger.error("Household Member PATCH Error:", error);
             return apiError("Internal Server Error", 500);
