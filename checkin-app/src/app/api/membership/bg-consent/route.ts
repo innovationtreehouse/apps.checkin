@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 // Zoho-only and unreachable from this route, but the Record keeps the map total.
 /**
  * POST /api/membership/bg-consent — applicant-facing "I submitted my consent on
- * Averity" self-report (#875). Records consent on the caller's own process
- * awaiting external action via markBgConsent (applicant as audit actor), which
- * may advance the application to PENDING_PAYMENT. Honor-system by design; the
+ * Averity" self-report (#875). Records consent via markBgConsent (applicant as
+ * audit actor) on a lead's household process awaiting external action, which may
+ * advance it to PENDING_PAYMENT, or else on the caller's own open PERSON_BG
+ * obligation. Honor-system by design; the
  * board's mark-bg-consent remains the backstop.
  */
 export const POST = withAuth({}, async (_req, auth) => {

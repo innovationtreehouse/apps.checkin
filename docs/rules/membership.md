@@ -494,8 +494,14 @@ Procedure below is built on them.
 - A background check for an adult child needs neither a sign-in of their own nor
   an email address in the app. The board or a household lead records that an
   external check exists and submits it for review, and consent is implicit in the
-  subject having gone and taken it. The applicant-facing consent attestation is a
-  household path and never this one.  [Decision]
+  subject having gone and taken it.  [Decision]
+
+- An adult who does sign in can record their own check through the
+  applicant-facing consent attestation, so someone who has done their part can
+  say so and stop being chased. A household lead's attestation goes to the
+  household's application while one awaits it; otherwise anyone's goes to their
+  own open check. The audit names the person who attested, so their own record
+  stays distinguishable from the board's.  [Decision]
 
 ### Individual agreement for adult children
 
