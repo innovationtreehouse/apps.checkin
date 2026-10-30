@@ -111,10 +111,11 @@ Things the app takes as true because they are handled outside it.
   exception on it, sign any sign-off seat, or record Board authorization.
   Classifying a purchase that is already signed off is bookkeeping, and any
   finance holder may do it: the capital or non-capital designation, the
-  depreciation cycle and owner bucket, the account set on a mapping hold, and
-  resubmitting a held expense. Until a receipt is finalized, its submitter may
-  correct its tax and date; a receipt whose tax or date its submitter corrected
-  goes to finance review.
+  depreciation cycle and owner bucket, the account set on a mapping hold,
+  resubmitting a held expense, and matching the expense to its QuickBooks
+  entry. Until a receipt is finalized, its submitter may correct its tax and
+  date; a receipt whose tax or date its submitter corrected goes to finance
+  review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - A tax or date the submitter fills in where the field was blank goes to
@@ -129,11 +130,6 @@ Things the app takes as true because they are handled outside it.
 
 - A person conflicted on an expense may not skip it in QuickBooks.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
-
-- A person conflicted on an expense may not choose which QuickBooks entry it is
-  matched to. The app does not refuse this yet: any finance holder can make the
-  match.
-  [Short of policy — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Excluding a QuickBooks entry from matching can hide spending, but no conflict
   check can refuse it, because a QuickBooks entry names no person. Every
