@@ -1,8 +1,8 @@
-import type { PrismaClient, Prisma } from "../generated/prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 
 const REF_SELECT = { gtin13: true, id: true, conversionFactor: true, conversionVersion: true } as const;
 
-export function createItemReferenceRepository(db: PrismaClient) {
+export function createItemReferenceRepository(db: Prisma.TransactionClient) {
   return {
     // ── Item References ───────────────────────────────────────────────────────
 
@@ -27,21 +27,21 @@ export function createItemReferenceRepository(db: PrismaClient) {
         select: REF_SELECT,
       }),
 
-    findConflictByMfrPart: (partNumber: string, manufacturer: string, excludeGtin13: string) =>
+    findConflictByMfrPart: (partNumber: string, manufacturer: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { manufacturer, partNumber, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { manufacturer, partNumber, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 
-    findConflictByRetailerPart: (retailer: string, partNumber: string, excludeGtin13: string) =>
+    findConflictByRetailerPart: (retailer: string, partNumber: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { retailer, partNumber, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { retailer, partNumber, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 
-    findConflictByMfrDesc: (descriptionNormalized: string, manufacturer: string, excludeGtin13: string) =>
+    findConflictByMfrDesc: (descriptionNormalized: string, manufacturer: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { manufacturer, descriptionNormalized, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { manufacturer, descriptionNormalized, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 
