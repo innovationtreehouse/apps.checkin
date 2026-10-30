@@ -38,7 +38,10 @@ so work waits for a retry and nothing pretends to have been delivered.
 
 ## Intake paths
 
-All three paths go through `insertReceipt` in `src/lib/insert.ts`.
+Upload and mail call `insertReceipt` in `src/lib/insert.ts`, and import calls
+`insertReceiptsTogether`. Both write each row through `insertInto`, so a change to
+how a row is written reaches all three paths, and a change to `insertReceipt` alone,
+such as its limit pre-check, does not reach import.
 
 - **Upload** (`POST /api/receipts/upload`). With details, the receipt starts at
   `uploaded` and the pipeline runs. With a file alone, it starts at `auto_upload`
@@ -115,8 +118,8 @@ who wants to type them discards it and uploads again with details. A receipt who
 request died mid-call stays in `auto_upload` until the daily sweep moves it to
 `ocr_failed`, once it is more than ten minutes old.
 
-**Secret and selection.** The only secret the library uses is `ANTHROPIC_API_KEY`,
-read from the environment in `configure.ts`. The adapter follows `CHECKIN_ENV`,
+**Secret and selection.** The only secret OCR uses is `ANTHROPIC_API_KEY`, read from
+the environment in `configure.ts`. The adapter follows `CHECKIN_ENV`,
 never whether a key is set: `local` binds the fixture, and anything else binds the
 real client, which fails every reading with "OCR is not configured" when the key
 is missing. Manual entry keeps working either way. Whether a given environment has
@@ -287,6 +290,7 @@ it because Chrome's viewer refuses a sandboxed document, and text only as an
 attachment. All of them carry `nosniff`. The receipt page shows text in a React text
 node, so HTML source from a mailed body appears as visible tags.
 
-The file columns are `pii` tier. List and mail-queue selects omit `fileBlob` and
+`fileBlob` and `fileKey` are `pii` tier; `fileSize` and `fileHash` are `internal`.
+List and mail-queue selects omit `fileBlob` and
 `fileKey`. A missing object answers 404 on the file route and fails OCR into
 `ocr_failed`.
