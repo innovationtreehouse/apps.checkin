@@ -121,7 +121,8 @@ async function consumeInSweep(ev: OrgEventRecord): Promise<ConsumeResult> {
  * consumes those not in the ledger, then reconciles pending provisionals that have a stored
  * resolution. Reading from the start means no event is missed however late it committed or
  * however many later ids were received. What stays undone is retried on the next run. A person
- * is alerted once per run for an event newly failed, over the cap or unreadable; a retry that
+ * is alerted once per run for an event newly failed, an unreadable catalog, or a capped run that
+ * processed nothing; a capped run that made progress drains itself on later runs, and a retry that
  * fails again only stays failed in the ledger and the counts. The host's daily reconcile cron step calls it. Capped; counts only.
  */
 export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
@@ -164,6 +165,7 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   }
 
   const reconciled = await reconcilePendingProvisionals(orgId, limit);
-  if (newlyFailed > 0 || unprocessed > 0 || unreadable) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
+  const stalled = unprocessed > 0 && counts.processed === 0;
+  if (newlyFailed > 0 || stalled || unreadable) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
   return { ...counts, ...reconciled, unprocessed, unreadable };
 }

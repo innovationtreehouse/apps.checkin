@@ -226,7 +226,17 @@ describeDb("S5 catch-up: alerts", () => {
     expect(orgEventsStuck).toHaveBeenCalledTimes(1);
   });
 
-  it("alerts on every run while the sweep stays over its cap", async () => {
+  it("doesn't alert while a capped sweep makes progress, and drains over later runs", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(pagedSource([rejected(1), rejected(2), rejected(3)]), { orgEventsStuck });
+
+    expect(await catchUpOrgEvents(2)).toMatchObject({ processed: 2, unprocessed: 1 });
+    expect(await catchUpOrgEvents(2)).toMatchObject({ processed: 1, unprocessed: 0 });
+
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+  });
+
+  it("alerts on every run while a capped sweep processes nothing", async () => {
     const orgEventsStuck = vi.fn(async () => {});
     configure(pagedSource([rejected(1), rejected(2)]), { orgEventsStuck });
 
