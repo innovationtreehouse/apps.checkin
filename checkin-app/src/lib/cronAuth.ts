@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { logger } from "./logger";
 import { config } from "./config";
 import { cronJobName, recordCronRun } from "./cronRuns";
+import { constantTimeEqual } from "./signatureCompare";
 
 /**
  * Shared auth gate for the cron routes. Checks `Authorization: Bearer $CRON_SECRET`
- * with a length guard before the timing-safe compare. Returns a 401 NextResponse
- * when unauthorized (missing header, unset CRON_SECRET, length mismatch, or wrong
- * token), or null when the request is authorized.
+ * with a constant-time compare. Returns a 401 NextResponse when unauthorized
+ * (missing header, unset CRON_SECRET, or wrong token), or null when the request
+ * is authorized.
  *
  *   const denied = requireCronSecret(req);
  *   if (denied) return denied;
@@ -21,13 +21,7 @@ export function requireCronSecret(req: Request): NextResponse | null {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const expectedHeader = `Bearer ${cronSecret}`;
-
-    // Hash both values to ensure fixed length before comparison to avoid leaking the secret length
-    const providedBuffer = crypto.createHash('sha256').update(authHeader).digest();
-    const expectedBuffer = crypto.createHash('sha256').update(expectedHeader).digest();
-
-    if (!crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    if (!constantTimeEqual(authHeader, `Bearer ${cronSecret}`)) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
