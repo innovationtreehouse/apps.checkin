@@ -1273,22 +1273,16 @@ export const receiptService = {
       receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
       receiptRepo.listParties({ orgId, pushedAt: null, details: { state: "receipt_finalized" } }),
     ]);
-    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    const [stopped, household] = await Promise.all([
+      givenUp(orgId, undelivered.map((r) => r.id)),
+      ports().households.householdOf([viewerId]),
+    ]);
+    const conflicted = new Set([viewerId, ...household]);
     const rows = [...queued, ...undelivered.filter((r) => stopped.has(r.id))];
-    const lookups = new Map<string, Promise<number[]>>();
-    const partiesOf = (r: Parties): Promise<number[]> => {
-      const key = `${r.uploadedByUserId}:${r.reimburseePersonId}`;
-      const known = lookups.get(key);
-      if (known) return known;
-      const lookup = conflictedParties(r);
-      lookups.set(key, lookup);
-      return lookup;
-    };
-    const conflicted = await Promise.all(rows.map(async (r) => (await partiesOf(r)).includes(viewerId)));
     const byState: Record<string, number> = Object.fromEntries(FINANCE_ACTION_STATES.map((s) => [s, 0]));
     let total = 0;
-    rows.forEach((r, i) => {
-      if (conflicted[i]) return;
+    rows.forEach((r) => {
+      if (conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId))) return;
       if (r.state in byState) byState[r.state] += 1;
       total += 1;
     });
