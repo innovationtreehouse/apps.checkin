@@ -14,7 +14,15 @@ const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
 /** An ISO 4217 code; money formatting throws on anything else. */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
-const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
+/** The most a money column holds: its integer cents limit, in dollars. */
+const MAX_DOLLARS = (2 ** 31 - 1) / 100;
+const dollarString = z.string().refine(
+  (v) => {
+    const dollars = parseFloat(v);
+    return Number.isFinite(dollars) && dollars >= 0 && dollars <= MAX_DOLLARS;
+  },
+  { message: "must be a number from 0 to 21,474,836.47" },
+);
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
 /** A calendar date as the date picker sends it. */
