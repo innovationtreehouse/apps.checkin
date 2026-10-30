@@ -1068,8 +1068,18 @@ defineOutbound({
 defineOutbound({
     surface: 'gmail.read',
     // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com. Read-only by intent:
-    // the token comes from a refresher outside this repo and its scope is not checked.
+    // the token comes from gmail-refresher-function, whose consent CLI refuses any
+    // scope but gmail.readonly. The app does not check the scope at runtime.
     // List/get requests only: a date-window query string and message/attachment ids;
     // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'gmail.oauth',
+    // gmail-refresher-function/src/oauth.ts → accounts.google.com, oauth2.googleapis.com.
+    // The app's client credentials, an authorization code or a refresh token; no model
+    // data. The consent URL also carries the mailbox address as login_hint: the org's
+    // own mailbox, named by the operator running consent, not a model field, so no tier.
     tiers: [],
 });
