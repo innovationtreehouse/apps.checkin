@@ -21,9 +21,9 @@ async function send<T>(url: string, init?: RequestInit): Promise<T | null> {
     const res = await fetch(url, init);
     const data = await res.json().catch(() => null);
     if (res.ok) return data as T;
-    notifications.show({ color: "red", title: "Mail aliases", message: data?.error ?? `The server returned an error (${res.status}).` });
+    notifications.show({ color: "red", title: "Mail aliases", message: data?.error ?? `The server returned an error (${res.status}).`, autoClose: false });
   } catch {
-    notifications.show({ color: "red", title: "Mail aliases", message: "Couldn't reach the server. Check your connection and try again." });
+    notifications.show({ color: "red", title: "Mail aliases", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false });
   }
   return null;
 }
