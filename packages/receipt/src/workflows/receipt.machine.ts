@@ -46,6 +46,7 @@ export const receiptMachine = setup({
     ocr_failed: {
       on: {
         OCR_RETRY: { target: 'auto_upload' },
+        RESUBMIT:  { target: 'uploaded'    },
         DISCARD:   { target: 'discarded'   },
         REJECT:    { target: 'rejected'    },
       },

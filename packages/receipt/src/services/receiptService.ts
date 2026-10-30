@@ -48,7 +48,7 @@ export type Access = "submitter" | "finance";
 /** Receipts waiting on one FINANCE viewer: all of them, and per FINANCE_ACTION_STATES state. */
 export type FinanceCounts = { total: number; byState: Record<string, number> };
 
-const EDITABLE: ReadonlySet<string> = new Set(["validation_failed", "submitter_review"]);
+const EDITABLE: ReadonlySet<string> = new Set(["ocr_failed", "validation_failed", "submitter_review"]);
 const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
 
@@ -127,7 +127,7 @@ async function loadForChange(id: string, access: Access, actor: ReceiptPrincipal
   return row;
 }
 
-const EDIT_STATE_MESSAGE = "Receipt can only be edited in validation_failed or submitter_review state";
+const EDIT_STATE_MESSAGE = "Receipt can only be edited in ocr_failed, validation_failed or submitter_review state";
 
 /**
  * Re-check the state under a row lock inside an edit's transaction, so the edit commits before any
@@ -723,7 +723,7 @@ export const receiptService = {
     const actor = await requireActor();
     const line = parse(AddLineItemSchema, rawLine);
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Can only add lines in validation_failed or submitter_review state";
+    const stateMessage = "Can only add lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
     return db.$transaction(async (tx) => {
@@ -743,7 +743,7 @@ export const receiptService = {
     const actor = await requireActor();
     const edit = parse(EditLineItemSchema, rawLine);
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Line items can only be edited in validation_failed or submitter_review state";
+    const stateMessage = "Line items can only be edited in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
 
@@ -793,7 +793,7 @@ export const receiptService = {
   async deleteLine(id: string, access: Access, lineItemId: number): Promise<void> {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Can only delete lines in validation_failed or submitter_review state";
+    const stateMessage = "Can only delete lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
     await db.$transaction(async (tx) => {
@@ -972,7 +972,7 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "resubmit");
-    await step(row, { type: "RESUBMIT" }, "uploaded", {}, actor, "resubmitted");
+    await step(row, { type: "RESUBMIT" }, "uploaded", { detail: { validationNotes: null } }, actor, "resubmitted");
     await runFullFlow(id, actor);
     return load(id, access, actor);
   },

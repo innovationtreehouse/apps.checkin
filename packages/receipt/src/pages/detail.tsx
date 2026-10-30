@@ -14,6 +14,7 @@ import { formatCents } from "@checkin/money";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
+import { missingDetails } from "../lib/missingDetails";
 import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -85,7 +86,7 @@ function PurchaseOutcomePanel({ receipt }: { receipt: Receipt }) {
   );
 }
 
-const EDITABLE = new Set(["validation_failed", "submitter_review"]);
+const EDITABLE = new Set(["ocr_failed", "validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 /**
@@ -186,6 +187,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const totalsOff = r.state === "validation_failed";
   // A saved receipt whose lines already add up still needs a way out of Totals off.
   const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
+  const unread = r.state === "ocr_failed";
+  // Details saved before a failed resubmit still need a way out of Couldn't read.
+  const savedTyped = unread && missingDetails(r).length === 0;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -350,7 +354,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
 
           {editing && (
             <Group gap="xs">
-              <Button size="xs" disabled={!dirty && !savedAddsUp} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : save())}>Save changes</Button>
+              <Button size="xs" disabled={!dirty && !savedAddsUp && !savedTyped} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : unread ? afterSave(() => resubmit(dirty)) : save())}>Save changes</Button>
               {dirty && (
                 <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
