@@ -42,10 +42,10 @@ import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generate
 // both — default to "keep" for name and the identity unit; tests that specifically
 // exercise fieldChoices validation pass their own map (including `{}` to
 // deliberately hit the "missing choice" 400).
-function mergeReq(keepId: number, mergeId: number, fieldChoices: Record<string, string> = { name: "keep", identity: "keep" }) {
+function mergeReq(keepId: number, mergeId: number, fieldChoices: Record<string, string> = { name: "keep", identity: "keep" }, emailChangeReason = "Same person, duplicate record") {
     return new Request("http://localhost/api/membership-ops/participants/merge", {
         method: "POST",
-        body: JSON.stringify({ keepId, mergeId, fieldChoices })
+        body: JSON.stringify({ keepId, mergeId, fieldChoices, emailChangeReason })
     }) as unknown as import("next/server").NextRequest;
 }
 
@@ -905,6 +905,65 @@ describe("Merge Participants API", () => {
     });
 
     // Matrix 4
+    // Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27.
+    describe("a trusted person's sign-in email", () => {
+        const stillLive = async (id: number) => (await prisma.person.findUnique({ where: { id } }))?.mergedIntoId === null;
+
+        it("refuses a sysadmin when the merged-away record is trusted, reason or not", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
+            mockGetServerSession.mockResolvedValue({ user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: false } });
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(403);
+            expect(await stillLive(pMergeId)).toBe(true);
+        });
+
+        it("refuses a board member with no reason", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
+            expect((await POST(mergeReq(pKeepId, pMergeId, undefined, "  "))).status).toBe(400);
+            expect(await stillLive(pMergeId)).toBe(true);
+        });
+
+        it("refuses when a trusted keeper would take the other side's identity without a reason", async () => {
+            await prisma.personRole.create({ data: { personId: pKeepId, role: "KEYHOLDER" } });
+            expect((await POST(mergeReq(pKeepId, pMergeId, { name: "keep", identity: "merge" }, ""))).status).toBe(400);
+            expect(await stillLive(pMergeId)).toBe(true);
+        });
+
+        describe("when the merged-away record has a linked sign-in account", () => {
+            beforeEach(async () => {
+                await prisma.personRole.create({ data: { personId: pKeepId, role: "KEYHOLDER" } });
+                await prisma.account.create({ data: { userId: pMergeId, type: "oauth", provider: "google", providerAccountId: `trusted-keeper-${pMergeId}` } });
+            });
+
+            it("refuses a sysadmin moving it onto a trusted keeper", async () => {
+                mockGetServerSession.mockResolvedValue({ user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: false } });
+                expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(403);
+                expect(await stillLive(pMergeId)).toBe(true);
+            });
+
+            it("refuses a board member with no reason", async () => {
+                expect((await POST(mergeReq(pKeepId, pMergeId, undefined, ""))).status).toBe(400);
+                expect(await stillLive(pMergeId)).toBe(true);
+            });
+
+            it("lets a board member move it with a reason", async () => {
+                expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+                expect(await prisma.account.count({ where: { userId: pKeepId } })).toBe(1);
+            });
+        });
+
+        it("lets a trusted keeper keep their identity with no reason", async () => {
+            await prisma.personRole.create({ data: { personId: pKeepId, role: "KEYHOLDER" } });
+            expect((await POST(mergeReq(pKeepId, pMergeId, undefined, ""))).status).toBe(200);
+        });
+
+        it("lets a board member do it with a reason, and the record keeps the reason", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
+            expect((await POST(mergeReq(pKeepId, pMergeId, undefined, "Same person"))).status).toBe(200);
+            const audit = await prisma.auditLog.findFirst({ where: { tableName: "Person", action: "DELETE", secondaryAffectedEntity: pMergeId } });
+            expect((audit?.newData as { emailChangeReason?: string }).emailChangeReason).toBe("Same person");
+        });
+    });
+
     it("400s on self-merge", async () => {
         const res = await POST(mergeReq(pKeepId, pKeepId));
         expect(res.status).toBe(400);

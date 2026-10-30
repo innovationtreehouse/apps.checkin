@@ -1980,7 +1980,7 @@ model Org {
 }
 
 /// An accounting bucket that expense lines and bulk-donation gifts are owned by
-/// (#1280 §6). Not a Person. Its approvers are its owner and its treasurers, set
+/// (#1280). Not a Person. Its approvers are its owner and its treasurers, set
 /// by the Board. An org-level bucket (Facility is one of several) has none,
 /// because finance assigning an item to it is the approval.
 /// Buckets are archived, never deleted — libraries hold `id` as an opaque

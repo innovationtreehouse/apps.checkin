@@ -64,6 +64,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 
 - **[s-read-function/README.md](s-read-function/README.md)** — the Shopify → Postgres ingestion pipeline; [DEPLOY.md](s-read-function/DEPLOY.md) for rollout, [FUTUREWORK.md](s-read-function/FUTUREWORK.md) for the backlog.
 - **[Program Capacity & Scholarships](docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md)** — capacity as single-pool Shopify inventory and the scholarship hold-ledger lifecycle.
+- **[Receipt Pipeline](docs/architecture/RECEIPT_PIPELINE.md)** — one receipt from arrival to its QuickBooks entry, library by library.
 
 ### Testing
 

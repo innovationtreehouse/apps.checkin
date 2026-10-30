@@ -16,9 +16,12 @@ import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInE
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+
+class BecameTrustedError extends Error {}
 
 export const PATCH = withAuth(
     {},
@@ -107,7 +110,8 @@ export const PATCH = withAuth(
                 + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
                 || Boolean(targetHouseholdMember.lastBackgroundCheck)
                 || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily);
+                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily)
+                || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
@@ -135,6 +139,12 @@ export const PATCH = withAuth(
                     },
                     select: HOUSEHOLD_PEER_SELECT,
                 });
+
+                // Read after the write and roll back: a grant this misses commits after
+                // the edit, so it lands on the new address rather than being changed under.
+                if (email !== undefined && !holdsGrant && (await trustStatus(tx, participantId)).isTrusted) {
+                    throw new BecameTrustedError();
+                }
 
                 // Set when the field edits saved but the requested promotion to lead
                 // was declined by the per-household cap (#269). We report this back
@@ -222,6 +232,10 @@ export const PATCH = withAuth(
         } catch (error: unknown) {
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof BecameTrustedError) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
             }
             logger.error("Household Member PATCH Error:", error);
             return apiError("Internal Server Error", 500);

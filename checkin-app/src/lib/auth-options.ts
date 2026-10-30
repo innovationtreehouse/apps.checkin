@@ -11,7 +11,7 @@ import { config, ORG_DOMAIN } from "@/lib/config";
 import { evaluateMint, type MintMode } from "@/lib/impersonation";
 import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
-import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
+import { ROLE_FLAGS, setRoleFlag, trustStatus } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -59,6 +59,16 @@ const toAdapterUser = (u: { id: number; email: string | null }): AdapterUser =>
     ({ ...u, id: String(u.id), email: u.email ?? "" }) as AdapterUser;
 // string (NextAuth) → Int (DB). NaN-safe; callers treat NaN as "no such id".
 const toDbId = (id: string | number): number => (typeof id === "number" ? id : parseInt(id, 10));
+
+// The address inside a Google id token, which NextAuth has already verified by this point.
+function idTokenEmail(idToken: string | undefined): string | null {
+    try {
+        const { email } = JSON.parse(Buffer.from(idToken?.split(".")[1] ?? "", "base64url").toString());
+        return typeof email === "string" ? email : null;
+    } catch {
+        return null;
+    }
+}
 
 // Every participant must belong to a household (Participant.householdId is
 // required), so new sign-ups get a single-person household they lead.
@@ -125,19 +135,12 @@ const patchedAdapter = {
         return account?.user ? toAdapterUser(account.user) : null;
     },
 
-    updateUser: async ({ id, ...data }: { id: string; name?: string | null; email?: string | null; image?: string | null; emailVerified?: Date | null }) => {
-        const user = await prisma.$transaction(async (tx) => {
-            if (data.email) {
-                const prior = await tx.person.findUnique({ where: { id: toDbId(id) }, select: { email: true } });
-                if (prior?.email?.toLowerCase() !== data.email.toLowerCase()) {
-                    await removeAliasesForSignInEmail(tx, data.email, systemActor("system:google-sign-in"), "provider_email_change");
-                }
-            }
-            return tx.person.update({
-                where: { id: toDbId(id) },
-                // A provider that stops sending a name must not erase one already on file.
-                data: { name: nameWrite(data.name), email: data.email ?? undefined, image: data.image, emailVerified: data.emailVerified },
-            });
+    updateUser: async ({ id, ...data }: { id: string; name?: string | null; image?: string | null; emailVerified?: Date | null }) => {
+        const user = await prisma.person.update({
+            where: { id: toDbId(id) },
+            // A provider that stops sending a name must not erase one already on file.
+            // Never the email: the sign-in flow has no business changing who signs in as this person.
+            data: { name: nameWrite(data.name), image: data.image, emailVerified: data.emailVerified },
         });
         return toAdapterUser(user);
     },
@@ -151,9 +154,19 @@ const patchedAdapter = {
     // it, and map only our own columns so a provider's extra token fields can't
     // reach prisma.account.create.
     linkAccount: async (account: AdapterAccount) => {
+        const userId = toDbId(account.userId);
+        // NextAuth links any new Google account to a live session, whatever its address,
+        // and that account then signs in as this person.
+        if ((await trustStatus(prisma, userId)).isTrusted) {
+            const person = await prisma.person.findUnique({ where: { id: userId }, select: { email: true } });
+            const linking = idTokenEmail(account.id_token);
+            if (!linking || !person?.email || normalizeEmail(linking) !== normalizeEmail(person.email)) {
+                throw new Error("A trusted person's sign-in can only be linked from their email on file.");
+            }
+        }
         await prisma.account.create({
             data: {
-                userId: toDbId(account.userId),
+                userId,
                 type: account.type,
                 provider: account.provider,
                 providerAccountId: account.providerAccountId,

@@ -175,8 +175,20 @@ Things the app takes as true because they are handled outside it.
 - Where someone signs in through the outside sign-in service, the address they
   sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
 
+- A person in a position of trust holds any granted role (sysadmin, board, finance,
+  operations, inventory manager, keyholder, background-check reviewer), owns a bucket
+  or is its treasurer, leads a program, or may certify others on a tool. One list serves
+  every rule that names them.  [Decision — Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27; bucket owners per owner decision 2026-10-30]
+
+- A trusted person's sign-in email changes only by a board member's action, with a
+  written reason the record keeps. A merge counts: it needs the same when the trusted
+  person is the merged-away side, or a trusted keeper takes the other side's identity
+  or its linked sign-in accounts. Keeping a trusted person's record and identity, with
+  no account coming across, needs neither. A sign-in account with
+  a different address cannot be linked to them.  [Decision — Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27; bucket owners per owner decision 2026-10-30]
+
 - A member's email is not edited from the household card, by them or by a lead,
-  once they have signed in or hold anything the board granted: a role, a program
+  once they have signed in, are in a position of trust, or hold anything the board granted: a role, a program
   they lead or volunteer on, or a background check on file. The board changes it,
   and the refusal says how to ask. A member with neither stays editable, and
   resending the unchanged address is not a change.  [Decision]

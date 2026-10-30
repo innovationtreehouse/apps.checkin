@@ -155,6 +155,19 @@ describe('Profile API Integration Tests', () => {
             expect(auditLogs.length).toBeGreaterThan(0);
         });
 
+        it('ignores an email in the body: self-service never changes a sign-in address', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            const before = await prisma.person.findUnique({ where: { id: testUserId }, select: { email: true } });
+
+            const req = new Request('http://localhost:4000/api/profile', {
+                method: 'PATCH',
+                body: JSON.stringify({ email: 'changed-profile-api-test@example.com' })
+            });
+            await PATCH(req as unknown as import("next/server").NextRequest);
+
+            expect(await prisma.person.findUnique({ where: { id: testUserId }, select: { email: true } })).toEqual(before);
+        });
+
         it('should reject a blank name and leave the stored name unchanged', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
 

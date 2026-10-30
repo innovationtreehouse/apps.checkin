@@ -21,6 +21,7 @@ import {
     getFileRoute,
     isFileOnlyField,
     type FileRouteSpec,
+    type Role,
     type Token,
 } from '@/security/core';
 import { stripValue } from '@/security/stripper';
@@ -254,6 +255,12 @@ describe('defineFileRoute — registration', () => {
         expect(() =>
             defineFileRoute({ ...base, orderedView: [['authenticated', ['bogus' as Token]]] }),
         ).toThrow(/invalid token/);
+    });
+
+    it('rejects an unknown view role, like defineRoute', () => {
+        expect(() =>
+            defineFileRoute({ ...base, orderedView: [['bogus' as Role, ['public']]] }),
+        ).toThrow("unknown role 'bogus'");
     });
 
     it('shares one endpoint namespace with JSON routes', () => {

@@ -624,6 +624,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
+      {signoffs.error && <LoadError what="the line actions" message={signoffs.error} onRetry={signoffs.reload} />}
       {waitingOnYou > 0 && <Text size="sm" fw={600}>{waitingOnYou} of {e.lineItems.length} lines wait on you.</Text>}
       <ApproveAllButton base={base} statuses={signoffs.data ?? []} approvals={approvalRows} onDone={() => void decided()} />
       <Table>

@@ -150,6 +150,15 @@ Things the app takes as true because they are handled outside it.
   acknowledgement, and no acknowledgement is sent twice.
   [Decision]
 
+- A person whose emailed file is refused is told which file and why: too large,
+  the wrong type, empty, an email attached as a file, or the holding queue is
+  full. This reaches them even when no receipt was made, and does not wait on
+  the message's other files. If the receipt already exists, one email covers
+  both. Only senders who pass the sender check and may submit receipts are
+  told. Forged, unknown and automatic mail gets nothing. No notice is sent
+  twice.
+  [Decision — owner]
+
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
   fraction of a cent. Then the total may differ by up to one cent for each
@@ -199,8 +208,12 @@ Things the app takes as true because they are handled outside it.
   [Decision]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
-  needs no spending sign-off.
+  needs no spending sign-off. It is a donation, not an expense record.
   [Decision]
+
+- Donated equipment goes through the same capital thresholds, review and register
+  as purchased equipment.
+  [Decision — owner]
 
 - Finance may record old receipts for purchases already in the books. Doing so
   never reimburses anyone and never books anything a second time.

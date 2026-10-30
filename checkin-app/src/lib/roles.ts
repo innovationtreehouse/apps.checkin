@@ -115,6 +115,36 @@ async function applyRoleFlag(
     });
 }
 
+/** A position of trust: every granted role, plus those derived from other tables. */
+export type TrustedRole = PersonRoleKind | "BUCKET_OWNER" | "BUCKET_TREASURER" | "PROGRAM_LEADER" | "TOOL_CERTIFIER";
+
+/**
+ * The one answer to "is this person trusted?", and which roles make them so.
+ * Board ruling B1/B2, 2026-10-27; trusted list per owner decisions 2026-10-27 and 2026-10-30.
+ * Any row counts, including on an archived bucket or a past program, so the
+ * answer stays fail-closed until the row itself is removed.
+ */
+export async function trustStatus(db: DbClient, personId: number): Promise<{ isTrusted: boolean; roles: TrustedRole[] }> {
+    const person = await db.person.findUnique({
+        where: { id: personId },
+        select: {
+            roles: { select: { role: true } },
+            budgetOwnersOwned: { select: { id: true }, take: 1 },
+            budgetOwnerTreasurerships: { select: { budgetOwnerId: true }, take: 1 },
+            programsLed: { select: { id: true }, take: 1 },
+            instancesLed: { select: { id: true }, take: 1 },
+            toolStatuses: { where: { level: "MAY_CERTIFY_OTHERS" }, select: { toolId: true }, take: 1 },
+        },
+    });
+    if (!person) return { isTrusted: false, roles: [] };
+    const roles: TrustedRole[] = person.roles.map((r) => r.role);
+    if (person.budgetOwnersOwned.length > 0) roles.push("BUCKET_OWNER");
+    if (person.budgetOwnerTreasurerships.length > 0) roles.push("BUCKET_TREASURER");
+    if (person.programsLed.length + person.instancesLed.length > 0) roles.push("PROGRAM_LEADER");
+    if (person.toolStatuses.length > 0) roles.push("TOOL_CERTIFIER");
+    return { isTrusted: roles.length > 0, roles };
+}
+
 /** Thrown by `setRoleFlag` when the actor's authority matrix denies the requested change. */
 export class RoleMatrixError extends Error {}
 /** Thrown by `setRoleFlag` when the change would remove the last remaining board member. */

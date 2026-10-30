@@ -1,11 +1,11 @@
 import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
-import type { TxClient } from "@/lib/db-client";
+import type { DbClient, TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
-import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError } from "@/lib/roles";
+import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { bgSubjectKey } from "./guard";
 import {
@@ -40,7 +40,32 @@ export type MergePlan = {
     choices: FieldChoices;
     keeperUpdate: Record<string, unknown>;
     bgFreshBeforeMerge: boolean;
+    emailChangeReason: string;
 };
+
+/**
+ * A trusted person's login email changes only by Board action, with a reason. A
+ * merge changes it when the trusted person is the merged-away side, whose roles
+ * land on the keeper's login, or when a trusted keeper takes the other side's identity
+ * or its linked sign-in accounts, which then sign in as the keeper.
+ */
+async function trustedLoginRefusal(
+    db: DbClient,
+    plan: Pick<MergePlan, "keeperUpdate" | "emailChangeReason"> & { keepId: number; mergeId: number },
+    actor: AuthenticatedUser | null,
+): Promise<MergeRefusal | null> {
+    const changesTrustedLogin = (await trustStatus(db, plan.mergeId)).isTrusted
+        || (("email" in plan.keeperUpdate || await db.account.count({ where: { userId: plan.mergeId } }) > 0)
+            && (await trustStatus(db, plan.keepId)).isTrusted);
+    if (!changesTrustedLogin) return null;
+    if (!actor?.isBoardMember) {
+        return { status: 403, error: "This merge changes the sign-in email of someone in a position of trust. Only a board member can do that." };
+    }
+    if (!plan.emailChangeReason) {
+        return { status: 400, error: "This merge changes the sign-in email of someone in a position of trust. Give a reason." };
+    }
+    return null;
+}
 
 /**
  * Load both people and run every pre-transaction refusal, in the order a
@@ -51,6 +76,7 @@ export async function prepareMerge(
     keepId: number,
     mergeId: number,
     fieldChoices: unknown,
+    emailChangeReason?: unknown,
 ): Promise<{ plan: MergePlan } | { refused: MergeRefusal }> {
     const keep = await prisma.person.findUnique({ where: { id: keepId }, include: KEEP_INCLUDE });
     const merge = await prisma.person.findUnique({ where: { id: mergeId }, include: MERGE_INCLUDE });
@@ -101,12 +127,16 @@ export async function prepareMerge(
     const keeperUpdate = planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) return { refused: { status: 400, error: keeperUpdate.error } };
 
+    const reason = typeof emailChangeReason === "string" ? emailChangeReason.trim() : "";
+    const trustBlock = await trustedLoginRefusal(prisma, { keepId, mergeId, keeperUpdate: keeperUpdate.data, emailChangeReason: reason }, actor);
+    if (trustBlock) return { refused: trustBlock };
+
     // The post-commit carryover acts only on a household THIS merge made
     // background-check fresh, so it needs the pre-merge answer: afterwards the
     // keeper already carries the merged date and the two are indistinguishable.
     const bgFreshBeforeMerge = await householdBgFresh(keep.householdId);
 
-    return { plan: { keep, merge, choices: parsed.choices, keeperUpdate: keeperUpdate.data, bgFreshBeforeMerge } };
+    return { plan: { keep, merge, choices: parsed.choices, keeperUpdate: keeperUpdate.data, bgFreshBeforeMerge, emailChangeReason: reason } };
 }
 
 /** Per-relation tallies recorded in the merge's audit row. */
@@ -221,6 +251,8 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     }
     const refusal = subjectRefusal(keep, merge, actor);
     if (refusal) throw new MergeRefusedError(refusal);
+    const trustBlock = await trustedLoginRefusal(tx, { ...plan, keepId: keep.id, mergeId: merge.id }, actor);
+    if (trustBlock) throw new MergeRefusedError(trustBlock);
 }
 
 /**
@@ -570,7 +602,12 @@ async function auditMerge(tx: TxClient, plan: MergePlan, actor: AuthenticatedUse
                 ...personPreImage(plan.merge),
                 keeper: personPreImage(plan.keep),
             },
-            newData: { keepId: plan.keep.id, fieldChoices: plan.choices, moved },
+            newData: {
+                keepId: plan.keep.id,
+                fieldChoices: plan.choices,
+                moved,
+                ...(plan.emailChangeReason && { emailChangeReason: plan.emailChangeReason }),
+            },
         },
     });
 }
