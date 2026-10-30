@@ -1,7 +1,9 @@
 /**
  * @jest-environment node
  */
-import { accessOf, readJsonCapped } from "@/lib/receipt/route";
+import { MAX_UPLOAD_BODY_BYTES as RECEIPT_UPLOAD_CEILING } from "@checkin/receipt";
+import { accessOf } from "@/lib/receipt/route";
+import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
 
 describe("accessOf", () => {
   it("acts org-wide only for the finance and board views", () => {
@@ -12,23 +14,8 @@ describe("accessOf", () => {
   });
 });
 
-describe("readJsonCapped", () => {
-  const bytes = (text: string) => new TextEncoder().encode(text);
-  async function* body(text: string) {
-    yield bytes(text);
-  }
-
-  it("parses a JSON body within the cap", async () => {
-    await expect(readJsonCapped(body('[{"a":1}]'), null, 100, "split it")).resolves.toEqual([{ a: 1 }]);
-  });
-
-  it("refuses an over-cap batch with the caller's message", async () => {
-    const big = JSON.stringify([{ fileBase64: "x".repeat(200) }]);
-    await expect(readJsonCapped(body(big), null, 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-    await expect(readJsonCapped(body("[]"), "101", 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-  });
-
-  it("answers 400 for a body that is not JSON", async () => {
-    await expect(readJsonCapped(body("not json"), null, 100, "split it")).rejects.toMatchObject({ status: 400 });
+describe("upload ceiling", () => {
+  it("matches the API's body limit", () => {
+    expect(RECEIPT_UPLOAD_CEILING).toBe(MAX_UPLOAD_BODY_BYTES);
   });
 });

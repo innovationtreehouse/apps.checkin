@@ -321,3 +321,27 @@ export interface ReceiptConfig {
   /** New files go to the store instead of the database. */
   storeNewFilesInBucket?: boolean;
 }
+
+// ── Route factories (mounted by the host under its handler()) ──────────────────
+
+/** The slice of a route context a factory consumes. */
+export interface ReceiptRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+  /** Which rows the view handler() picked may act on. */
+  access: "finance" | "submitter";
+  /** The caller's Person.id under FINANCE's own view; null under any other view, BOARD's included. */
+  financeActorId: number | null;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type ReceiptBag = Record<string, unknown>;
+export type ReceiptRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptBag>;
+
+/** A stored file a file-route factory serves; the host refuses a type it cannot deliver and emits `row.fileBlob`. */
+export interface ReceiptFile {
+  row: Record<string, unknown>;
+  contentType: string;
+  filename?: string;
+}
+export type ReceiptFileRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptFile>;
