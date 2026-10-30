@@ -186,6 +186,18 @@ describe("acts per role", () => {
       }
     }
   });
+
+  it("offers at most one part per line, so parts never tie for the main act", () => {
+    // 4 is a bucket approver, FINANCE and Board at once.
+    const everything = { approvers: [2, 4], finance: [3, 4], board: [4, 5, 6] };
+    for (const caller of [2, 3, 4, 5]) {
+      for (const facts of [everything, { ...everything, boardSeat: true, kind: "card_charge" as const }, { ...everything, approvers: [], orgLevel: true }]) {
+        for (const c of [{}, APPROVED, { ...APPROVED, filled: seats(["TREASURER", 3]) }]) {
+          expect(run({ caller, facts, ...c }).actions.filter((a) => a.act === "approve" || a.act === "sign").length).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
 });
 
 describe("acts per conflict", () => {

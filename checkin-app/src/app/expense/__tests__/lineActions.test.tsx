@@ -3,10 +3,16 @@ import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
+let mockErrors: Record<string, string> = {};
+const mockReload: jest.Mock<void, [string]> = jest.fn();
 const mockSend: jest.Mock<Promise<boolean>, unknown[]> = jest.fn(async () => true);
 
 jest.mock("@checkin/expense/components/api", () => ({
-  useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
+  useLoad: (path: string | null) => ({
+    data: path && !mockErrors[path] ? mockLoads[path] ?? null : null,
+    error: path ? mockErrors[path] ?? null : null,
+    reload: () => { if (path) mockReload(path); },
+  }),
   useRoles: () => ({ isFinance: true, isBoard: true }),
   useBuckets: () => [],
   send: (...args: unknown[]) => mockSend(...args),
@@ -36,7 +42,11 @@ beforeAll(() => {
   } as unknown as typeof ResizeObserver;
 });
 
-beforeEach(() => mockSend.mockClear());
+beforeEach(() => {
+  mockSend.mockClear();
+  mockReload.mockClear();
+  mockErrors = {};
+});
 
 type Act = { act: string; seat?: string; primary: boolean; noteRequired: boolean };
 interface LineSpec { actions?: Act[]; awaiting?: string[]; status?: string }
@@ -198,5 +208,24 @@ describe("required notes (3.16)", () => {
     expect(confirm).toBeEnabled();
     await act(async () => { fireEvent.click(confirm); });
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: null }, "Approve as Program approver done");
+  });
+});
+
+describe("a failed line-actions load", () => {
+  it("shows a red error with what failed and a retry that reloads the line actions", () => {
+    mockErrors = { "/expenses/e1/signoffs": "Server error (500)" };
+    load([{ actions: [APPROVE] }]);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load the line actions");
+    expect(alert).toHaveTextContent("Server error (500)");
+    expect(screen.getByText("Part 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(mockReload).toHaveBeenCalledWith("/expenses/e1/signoffs");
+  });
+
+  it("shows no error when the line actions load", () => {
+    load([{ actions: [APPROVE] }]);
+    expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
   });
 });

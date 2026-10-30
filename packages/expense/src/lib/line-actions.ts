@@ -105,9 +105,10 @@ function callerActs(input: LineActionsInput): LineAction[] {
 
 /**
  * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the part
- * (approve or a seat) with the fewest other people able to take it, ties going approval, then
- * Treasurer, then Board; a bucket fix stands alone when the caller has no part to take. A Board
- * stand-in's approval is the main act only when no bucket approver can approve the line.
+ * (approve or a seat) with the fewest other people able to take it; a bucket fix stands alone when
+ * the caller has no part to take. A Board stand-in's approval is the main act only when no bucket
+ * approver can approve the line. Parts never tie: the approval, the Treasurer seat and the Board
+ * seat open one after another (`orderRefusal`), so the caller has at most one part on a line.
  */
 function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const assign = acts.find((a) => a.act === "assign-bucket" || a.act === "resolve-bucket");
