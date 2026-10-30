@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { rosterPerson } from "@/lib/person/leaderEmail";
+import { leaderMaySeeEmail, rosterHousehold, rosterPerson } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -153,7 +153,13 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
-    const roster = program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
+    const emailWithheldFrom = new Set(viewerIsLeader
+        ? program.participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth)).map(p => p.personId)
+        : []);
+    const roster = program.participants.map(p => ({
+        ...p,
+        person: { ...rosterPerson(p.person, viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+    }));
 
     // A members-only program is hidden unless its leader opted it into the public
     // catalogue (publiclyVisible) — then anyone may view its detail, but the
