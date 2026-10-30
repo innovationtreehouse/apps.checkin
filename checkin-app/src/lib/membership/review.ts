@@ -249,15 +249,26 @@ export async function attestedUnclearedProcessIds(reviewerId: number): Promise<n
     return rows.map((r) => r.id);
 }
 
-/** IDs of blocked applications whose rejection is this reviewer's — the ones they may change to an approval. */
+/** IDs of blocked applications whose rejection is this reviewer's and whose household is not denied — the ones they may change to an approval. */
 export async function ownRejectedProcessIds(reviewerId: number): Promise<number[]> {
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) return [];
     const rows = await prisma.orgMembershipProcess.findMany({
         where: { status: "BLOCKED", attestations: { some: { reviewerId, result: "REJECT" } } },
-        select: { id: true },
+        select: {
+            id: true,
+            subjectPersonId: true,
+            subjectPerson: { select: { household: { select: { orgMembership: { select: { status: true } } } } } },
+            orgMembership: { select: { status: true } },
+        },
     });
-    return rows.map((r) => r.id);
+    return rows
+        .filter((p) => {
+            // Same applicant household as applicantHousehold(), which the switch refuses on when denied.
+            const applicantMembership = p.subjectPersonId ? p.subjectPerson?.household?.orgMembership : p.orgMembership;
+            return applicantMembership?.status !== "DENIED";
+        })
+        .map((p) => p.id);
 }
 
 /**
