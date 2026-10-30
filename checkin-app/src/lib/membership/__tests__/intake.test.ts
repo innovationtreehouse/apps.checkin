@@ -25,6 +25,7 @@ const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
 
+jest.mock('@/lib/person/mailAliases', () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {

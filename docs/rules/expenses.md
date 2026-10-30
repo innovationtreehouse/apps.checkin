@@ -156,10 +156,14 @@ Things the app takes as true because they are handled outside it.
 
 - Mail to the receipt mailbox counts as from a person only when Google's own
   check shows the sender's domain signed it (DKIM) and passed DMARC, and the
-  sender is that person's sign-in email. A pass on SPF alone is not enough.
-  Anything else waits for finance, which sees why it was held: the sender
-  could not be verified, or nobody who may submit receipts uses that address.
-  [Decision — owner]
+  sender is that person's sign-in email or an approved alias. A pass on SPF
+  alone is not enough. Anything else waits for finance, which sees why it was
+  held: the sender could not be verified, or nobody who may submit receipts uses
+  that address.  [Decision — owner]
+
+- Mail from a person's alias is their own, on the same daily allowance. An alias
+  counts only after finance or the Board approves it, on an authenticated first
+  mail assigned to that person.  [Decision — owner]
 
 - A test or staging instance reads only its own test mailbox, never the real
   one. It refuses to read mail unless it is told which mailbox is the real one

@@ -73,10 +73,12 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
 }
 
 /**
- * The one live, sign-in-verified person with this email who would pass the `receipt-submitter`
- * gate if signed in, else null. Claims come from the same derivation the session uses. The
- * caller vouches for the address in place of the provider's verified-email claim: mail intake
- * by DMARC alignment, the finance mail queue by the finance holder who typed it.
+ * The one live, sign-in-verified person whose email or approved mail alias is exactly this
+ * address and who would pass the `receipt-submitter` gate if signed in, else null. Claims come
+ * from the same derivation the session uses, and from the person, never the incoming address,
+ * which only finds them. The caller vouches for the address in place of the provider's
+ * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
+ * holder who typed it.
  */
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
   const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
@@ -88,8 +90,13 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
       import("@/lib/programAge"),
     ]);
   const matches = await prisma.person.findMany({
-    where: { ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON, email: { equals: address, mode: "insensitive" } },
+    where: {
+      ...LIVE_PERSON,
+      ...SIGN_IN_VERIFIED_PERSON,
+      OR: [{ email: { equals: address, mode: "insensitive" } }, { mailAliases: { some: { address, approvedAt: { not: null } } } }],
+    },
     include: {
+      mailAliases: { where: { address, approvedAt: { not: null } }, select: { id: true } },
       toolStatuses: { select: { toolId: true, level: true } },
       programsLed: { select: { id: true, phase: true } },
       programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
@@ -98,11 +105,12 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
     },
     take: 2,
   });
-  // Only the person's own sign-in email vouches for them, and only it carries the org-account claim.
-  const exact = matches.filter((p) => p.email?.toLowerCase() === address);
+  // Only the person's own sign-in email or an approved alias vouches for them.
+  const exact = matches.filter((p) => p.email?.toLowerCase() === address || p.mailAliases.length > 0);
   if (matches.length !== 1 || exact.length !== 1) return null;
   const [person] = exact;
-  const claims: JWT = { id: person.id, email: person.email, hd: address.split("@")[1], emailVerified: true };
+  // The org-account claim follows the sign-in email, including for mail from an alias.
+  const claims: JWT = { id: person.id, email: person.email, hd: person.email?.split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
   if (claims.denied || !canSubmitReceipts(claims)) return null;
   const leadsActiveProgram = person.programsLed.some((p) => p.phase !== "FINISHED");

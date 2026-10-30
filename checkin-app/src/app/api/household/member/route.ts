@@ -17,6 +17,8 @@ import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/members
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 
 export const PATCH = withAuth(
     {},
@@ -118,6 +120,9 @@ export const PATCH = withAuth(
             }
 
             const { updatedHouseholdMember, leadRejection, deniedLead, warning } = await prisma.$transaction(async (tx) => {
+                if (email && !holdsGrant && email.toLowerCase() !== targetHouseholdMember.email?.toLowerCase()) {
+                    await removeAliasesForSignInEmail(tx, email, personActor(userId), "household_card_edit");
+                }
                 const updatedHouseholdMember = await tx.person.update({
                     where: { id: participantId },
                     data: {

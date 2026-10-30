@@ -48,6 +48,8 @@ jest.mock('@/lib/prisma', () => ({
         // createParticipantWithHousehold mints the person id through
         // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
+        $executeRaw: jest.fn(),
+        personMailAlias: { findMany: jest.fn().mockResolvedValue([]) },
         $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prismaMockTx)),
     },
 }));
@@ -76,7 +78,7 @@ const mockUpdate = (prisma as unknown as { person: { update: jest.Mock } })
 const mockCheckinEnv = config.checkinEnv as jest.Mock;
 
 // The transaction client the `$transaction` mock above hands to its callback — same object as
-// `prisma` itself is fine here since createParticipantWithHousehold only touches household/participant.
+// `prisma` itself is fine here since createParticipantWithHousehold only touches household, participant and mail aliases.
 const prismaMockTx = prisma as unknown as { household: { create: jest.Mock }; person: { create: jest.Mock } };
 
 type JwtCallback = NonNullable<NonNullable<typeof authOptions.callbacks>['jwt']>;
