@@ -19,8 +19,6 @@ interface Settings {
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
   volunteerFamilyDiscountCode: string | null;
-  // Sent by a server still on the pre-rename release during a deploy.
-  volunteerDiscountCode?: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
@@ -85,7 +83,7 @@ export default function MembershipSettingsPage() {
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
           variantId: settings.orgMembershipVariantId ?? "",
           productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerFamilyDiscountCode ?? settings.volunteerDiscountCode ?? "",
+          discountCode: settings.volunteerFamilyDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
         setStandardFee(snap.standardFee);
