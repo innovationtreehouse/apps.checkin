@@ -32,8 +32,9 @@ function renderPage() {
 }
 
 // Nobody is ever pre-checked, so every enrolling test picks its participants the
-// way a household does. findByLabelText waits out the in-flight household fetch.
-async function selectMember(name: string) {
+// way a household does. A click toggles, so a second call unchecks. findByLabelText
+// waits out the in-flight household fetch.
+async function toggleMember(name: string) {
     fireEvent.click(await screen.findByLabelText(name));
 }
 
@@ -93,7 +94,7 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByText("(Enrolled)")).toBeInTheDocument();
         expect(screen.getByText("(Too young)")).toBeInTheDocument();
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Successfully enrolled!" })),
@@ -216,7 +217,7 @@ describe("ProgramEnrollmentPage", () => {
         // still unchecked, so enrolling them stays a deliberate act.
         await screen.findByText("Which of your household wants to enroll?");
         expect(await screen.findByLabelText("New Kid")).not.toBeChecked();
-        await selectMember("New Kid");
+        await toggleMember("New Kid");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Successfully enrolled!" })),
@@ -319,7 +320,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
         // No chargeable variant → persistent error, and NO enrollment is created.
         await waitFor(() =>
@@ -385,7 +386,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         await requestPlan();
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested! Please check your email/) })),
@@ -416,7 +417,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         await requestPlan();
         expect(await screen.findByText("Already pending.")).toBeInTheDocument();
     });
@@ -436,7 +437,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         await requestPlan();
         expect(await screen.findByText(/failed to alert the Scholarship Review Team/)).toBeInTheDocument();
     });
@@ -449,7 +450,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
         await requestPlan();
         await waitFor(() =>
@@ -469,7 +470,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByLabelText("Too Young"));
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
         await waitFor(() =>
@@ -492,7 +493,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Successfully enrolled!" })),
@@ -520,7 +521,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
 
         expect(await screen.findByText("Too young for this program.")).toBeInTheDocument();
@@ -537,7 +538,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
 
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
         await waitFor(() =>
@@ -558,7 +559,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
@@ -583,7 +584,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
@@ -620,7 +621,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
         await screen.findByText("Which of your household wants to enroll?");
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText(refusal)).toBeInTheDocument();
@@ -671,7 +672,7 @@ describe("ProgramEnrollmentPage", () => {
         expect(await screen.findByLabelText("Jamie Guardian")).not.toBeChecked();
         expect(screen.getByText("(Not paid yet — select to pay now)")).toBeInTheDocument();
 
-        await selectMember("Jamie Guardian");
+        await toggleMember("Jamie Guardian");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
@@ -697,7 +698,7 @@ describe("ProgramEnrollmentPage", () => {
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
@@ -729,7 +730,7 @@ describe("ProgramEnrollmentPage", () => {
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Kid One is already paid.")).toBeInTheDocument();
@@ -767,7 +768,7 @@ describe("ProgramEnrollmentPage", () => {
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
@@ -799,7 +800,7 @@ describe("ProgramEnrollmentPage", () => {
         // The household/EC probes that gate the button's disabled state are still
         // in flight right after the panel appears — pick a member, then wait for
         // it to actually enable (avoids a race with populateHousehold's fetches).
-        await selectMember("Kid One");
+        await toggleMember("Kid One");
         await waitFor(() => expect(screen.getByRole("button", { name: "Pay on Shopify" })).toBeEnabled());
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
@@ -943,6 +944,21 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByLabelText("Too Young")).not.toBeChecked();
         expect(screen.getByRole("button", { name: "Complete Enrollment" })).toBeDisabled();
         expect(screen.getByText("Check the box next to each person you want to enroll.")).toBeInTheDocument();
+    });
+
+    it("priced program: the scholarship request button starts disabled until someone is selected", async () => {
+        setSession({ id: 999 });
+        mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        expect(await screen.findByLabelText("Kid One")).not.toBeChecked();
+        const requestButton = screen.getByRole("button", { name: /request a scholarship or payment plan/i });
+        expect(requestButton).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Pay on Shopify" })).toBeDisabled();
+
+        await toggleMember("Kid One");
+        expect(requestButton).toBeEnabled();
     });
 
     // An adult clears a program with no upper age limit, so auto-selecting the
