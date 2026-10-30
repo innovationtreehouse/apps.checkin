@@ -157,6 +157,19 @@ describeDb("confirming again through the receipt", () => {
     expect(await submitterSeats(id)).toEqual([]);
   });
 
+  it("is offered only to whom it would sign: not the Board member who recorded the Board authorization", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
+    await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    await db.expense.update({ where: { id }, data: { boardAuthorization: "Board minutes, item 4", boardAuthorizedByUserId: 5 } });
+    expect(await submitterConfirmations.confirmable([id], 5)).toEqual([]);
+    expect(await submitterConfirmations.confirmable([id], 6)).toEqual([id]);
+    expect(await submitterConfirmations.confirmable([id], 1)).toEqual([id]);
+    expect(await submitterConfirmations.confirmable([id], 2)).toEqual([]);
+    await submitterConfirmations.confirm(id, 1, { id: 1, name: "person-1" }, null);
+    expect(await submitterConfirmations.confirmable([id], 1)).toEqual([]);
+  });
+
   it("only an open reimbursement, for its reimbursee", async () => {
     const { id } = await openReimbursement();
     // The expense's reimbursee is 1, so a confirmation naming anyone else is not theirs.

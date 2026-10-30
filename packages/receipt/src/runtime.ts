@@ -53,6 +53,7 @@ export const inertSubmitterConfirmations: SubmitterConfirmations = {
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
+  confirmable: async () => [],
 };
 
 /** Knows no households: only the uploader and the reimbursee themselves are refused. */

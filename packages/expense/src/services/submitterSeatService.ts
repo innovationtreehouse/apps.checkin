@@ -1,8 +1,8 @@
 // The reimbursement submitter's seat (Financial Policy Art. IX §IX.3). The person reimbursed signs
 // by confirming the receipt as read, or a Board member does on behalf of one with no account; the
 // seat on each line cites that confirmation.
-import type { Prisma } from "../generated/prisma/client";
-import { db } from "../db";
+import type { Expense, Prisma } from "../generated/prisma/client";
+import { db, type Db } from "../db";
 import type { SubmitterConfirmations } from "../contract";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
@@ -66,6 +66,20 @@ export async function voidSubmitterConfirmation(tx: Prisma.TransactionClient, ac
   await clearFrom(tx, actor, expenseId, null, "SUBMITTER", `finance changed ${fields.join(", ")}`);
 }
 
+/**
+ * The lines of an expense still waiting for the submitter seat, and why `signerUserId` may not
+ * sign one of them, or null.
+ */
+async function waitingSeats(client: Db, expense: Expense, signerUserId: number, readOnly = false): Promise<{ waiting: number[]; refusal: string | null }> {
+  const [facts, filled] = await Promise.all([signoffFactsByLine(client, expense, { readOnly }), filledSeatsByLine(client, expense.id)]);
+  const waiting = [...facts.keys()].filter((id) => !(filled.get(id) ?? []).some((f) => f.seat === "SUBMITTER"));
+  for (const id of waiting) {
+    const refusal = submitterSeatRefusal(facts.get(id)!, filled.get(id) ?? [], signerUserId);
+    if (refusal) return { waiting, refusal };
+  }
+  return { waiting, refusal: null };
+}
+
 export const submitterConfirmations: SubmitterConfirmations = {
   async awaiting() {
     const expenses = await db.expense.findMany({
@@ -89,17 +103,24 @@ export const submitterConfirmations: SubmitterConfirmations = {
       const expense = await tx.expense.findFirst({ where: { id: receiptId, orgId: await getOrgId(), reimburseePersonId, ...TAKES_SUBMITTER_SEAT } });
       if (!expense) return null;
       // Each line still waiting takes the seat's own refusals, read under the expense lock.
-      const [facts, filled] = await Promise.all([signoffFactsByLine(tx, expense), filledSeatsByLine(tx, expense.id)]);
-      const waiting = [...facts.keys()].filter((id) => !(filled.get(id) ?? []).some((f) => f.seat === "SUBMITTER"));
-      for (const id of waiting) {
-        const refusal = submitterSeatRefusal(facts.get(id)!, filled.get(id) ?? [], signer.userId);
-        if (refusal) throw new ServiceError(403, refusal);
-      }
+      const { waiting, refusal } = await waitingSeats(tx, expense, signer.userId);
+      if (refusal) throw new ServiceError(403, refusal);
       const signed = await recordSubmitterSeats(tx, expense.id, waiting, signer, { reimburseePersonId, confirmedAt: new Date().toISOString(), reason });
       return signed > 0 ? expense : null;
     });
     if (!result) return false;
     if (result.state === "qb_pending" && (await unsignedLines(db, result)).size === 0) await drainExpense(result.orgId, result.id);
     return true;
+  },
+
+  async confirmable(receiptIds, signerUserId) {
+    if (receiptIds.length === 0) return [];
+    const expenses = await db.expense.findMany({ where: { id: { in: receiptIds }, orgId: await getOrgId(), ...TAKES_SUBMITTER_SEAT } });
+    const out: string[] = [];
+    for (const expense of expenses) {
+      const { waiting, refusal } = await waitingSeats(db, expense, signerUserId, true);
+      if (waiting.length > 0 && !refusal) out.push(expense.id);
+    }
+    return out;
   },
 };

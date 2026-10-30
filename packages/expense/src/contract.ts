@@ -315,6 +315,7 @@ export interface ReimbursementStatus {
 export interface SubmitterConfirmations {
   awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
 }
 
 /** Where each receipt's expense stands, as its uploader and reimbursee read it. */
