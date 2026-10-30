@@ -1184,7 +1184,7 @@ export const receiptService = {
         r.state === "discarded" ||
         (r.state === "rejected" && !rejectionUnacknowledged(r)) ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
+      const reimbursement = r.needsReimbursement ? (paid && !paid.get(r.id)?.statusUnavailable ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
       return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
@@ -1215,7 +1215,7 @@ export const receiptService = {
       currency: r.currency,
       receiptTotalCents: r.receiptTotalCents,
       rejectionReason: r.state === "rejected" ? r.validationNotes : null,
-      reimbursement: paid ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
+      reimbursement: paid && !paid.get(r.id)?.statusUnavailable ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
       purchaseOutcome: outcomeOf(r, outcomes),
     }));
   },

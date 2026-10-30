@@ -67,8 +67,8 @@ export interface DonorSink {
 
 // ── X12: reimbursement status ← expense ──────────────────────────────────────
 
-export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable() }));
-export type PaidStatus = { paidOn: string | null };
+export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable(), statusUnavailable: z.boolean().optional() }));
+export type PaidStatus = { paidOn: string | null; statusUnavailable?: boolean };
 
 /** An owed receipt; a backfilled one names the hand-booked QuickBooks transaction it matched. */
 export type ReimbursementAsk = { receiptId: string; qbEntity: string | null; qbTxnId: string | null };

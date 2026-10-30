@@ -127,6 +127,9 @@ Things the app takes as true because they are handled outside it.
   finance, name the person reimbursed, or close its reviews.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A person conflicted on an expense may not skip it in QuickBooks.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
   match.
@@ -452,3 +455,12 @@ the parts specific to expenses.
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
+
+- Finance may skip an expense that waits on it to reach the books, giving a
+  reason. The record keeps who skipped it and why. The app never books or
+  matches a skipped expense again, even if the expense later goes back to an
+  earlier step. If the app may already have created the entry, it looks for that
+  entry first and links it instead of skipping. A skipped reimbursement shows
+  its payment status as unavailable, because the app holds no entry to read a
+  payment from.
+  [Decision — owner]

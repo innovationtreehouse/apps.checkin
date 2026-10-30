@@ -2,7 +2,7 @@
  * QB-2 write path: the outbox drains into QuickBooks through the real QuickBooksClient over an
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
-import { it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
@@ -14,8 +14,8 @@ import { expenseReasons } from "../../services/reasonService";
 import {
   MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
-import { matchExpenseToQb } from "../../services/qbMatchService";
-import { POSTED_CHECK_OFF } from "../../services/flagService";
+import { matchExpenseToQb, skipExpenseQb } from "../../services/qbMatchService";
+import { POSTED_CHECK_OFF, SKIPPED_CHECK_OFF } from "../../services/flagService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { runExpenseQbPosting } from "../../services/sweeps";
 
@@ -1107,6 +1107,116 @@ describeDb("QB closed books — a create that may have landed", () => {
 
     await expect(matchExpenseToQb(principal(500, { isFinance: true }), id, "hand-1")).rejects.toMatchObject({ status: 409 });
     expect((await expenseRow(id)).qbTxnId).toBeNull();
+  });
+
+  describe("finance's skip", () => {
+    const finance = principal(500, { isFinance: true });
+    const unbooked = async (qbMatchState = "UNBOOKED") => {
+      const { id } = await outboxed("2026-09-10");
+      await db.expense.update({ where: { id }, data: { qbMatchState } });
+      return id;
+    };
+    /** An expense whose create may have landed: the app's entry exists, and finance holds it again. */
+    const attempted = async (qbMatchState = "UNBOOKED") => {
+      const { id } = await outboxed("2026-09-10");
+      qbo.mode = "accept-then-drop";
+      await postExpenseToQb(ORG, id);
+      qbo.mode = "ok";
+      await db.expense.update({ where: { id }, data: { qbMatchState } });
+      return id;
+    };
+
+    it.each(["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"])("skips a %s expense, audited with who and why, and the drain never takes it", async (state) => {
+      const id = await unbooked(state);
+
+      await skipExpenseQb(finance, id, "  booked by hand in 2025  ");
+
+      expect((await expenseRow(id)).qbMatchState).toBe("SKIPPED");
+      expect(await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "qb_skipped" } })).toMatchObject({
+        userId: 500, valueBefore: state, valueAfter: "SKIPPED", notes: "booked by hand in 2025",
+      });
+      await drainExpenseOutbox();
+      expect(qbo.posts).toHaveLength(0);
+      expect((await expenseRow(id)).qbMatchState).toBe("SKIPPED");
+      await expect(matchExpenseToQb(finance, id, "hand-1")).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("needs finance and a reason", async () => {
+      const id = await unbooked();
+      await expect(skipExpenseQb(principal(500), id, "why")).rejects.toMatchObject({ status: 403 });
+      await expect(skipExpenseQb(finance, id, "   ")).rejects.toMatchObject({ status: 400 });
+      expect((await expenseRow(id)).qbMatchState).toBe("UNBOOKED");
+    });
+
+    it("refuses a conflicted party", async () => {
+      const id = await unbooked();
+      const { submitterId } = await expenseRow(id);
+      await expect(skipExpenseQb(principal(submitterId, { isFinance: true }), id, "why")).rejects.toMatchObject({ status: 403 });
+      expect((await expenseRow(id)).qbMatchState).toBe("UNBOOKED");
+    });
+
+    it.each(["UNMATCHED", "POST_FAILED", "POSTING", "CREATED", "MATCHED", "SKIPPED"])("refuses a %s expense", async (state) => {
+      const id = await unbooked(state);
+      await expect(skipExpenseQb(finance, id, "why")).rejects.toMatchObject({ status: 409 });
+      expect((await expenseRow(id)).qbMatchState).toBe(state);
+    });
+
+    it("links the app's own entry instead of skipping, and says so", async () => {
+      const id = await attempted();
+      const own = qbo.purchases[0].Id;
+
+      await expect(skipExpenseQb(finance, id, "why")).rejects.toMatchObject({ status: 409, message: expect.stringContaining(own) });
+
+      expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: own });
+      expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_skipped" } })).toBe(0);
+    });
+
+    it("skips an attempted expense when no entry of its own is found", async () => {
+      const id = await attempted();
+      qbo.purchases = [];
+      await skipExpenseQb(finance, id, "why");
+      expect((await expenseRow(id)).qbMatchState).toBe("SKIPPED");
+    });
+
+    it("answers 503 and changes nothing when the lookup fails", async () => {
+      const id = await attempted();
+      qbo.mode = "down";
+      await expect(skipExpenseQb(finance, id, "why")).rejects.toMatchObject({ status: 503 });
+      expect((await expenseRow(id)).qbMatchState).toBe("UNBOOKED");
+    });
+
+    it("refuses when the app's own entry is held by another expense", async () => {
+      const id = await attempted();
+      const holder = await seedExpense({ state: "qb_complete", backfill: true });
+      await db.expense.update({ where: { id: holder }, data: { qbTxnEntity: "Purchase", qbTxnId: qbo.purchases[0].Id } });
+      await expect(skipExpenseQb(finance, id, "why")).rejects.toMatchObject({ status: 409 });
+      expect((await expenseRow(id)).qbMatchState).toBe("UNBOOKED");
+    });
+
+    it("refuses when a create attempt moved the expense while finance's lookup ran", async () => {
+      const id = await attempted("NEEDS_FINANCE");
+      qbo.purchases = [];
+      let release = () => {};
+      qbo.gate = new Promise((resolve) => { release = resolve; });
+      const skipping = skipExpenseQb(finance, id, "why");
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+      await db.expense.update({ where: { id }, data: { qbPostAttempts: { increment: 1 } } });
+      release();
+
+      await expect(skipping).rejects.toMatchObject({ status: 409 });
+      expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+    });
+
+    it("closes an open held review, so the expense leaves the queue", async () => {
+      const id = await unbooked();
+      await db.expenseFlag.create({ data: { orgId: ORG, expenseId: id, kind: "QB_POST_HELD", audience: "FINANCE", detail: "dated in closed books" } });
+
+      await skipExpenseQb(finance, id, "why");
+
+      expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id, kind: "QB_POST_HELD" } })).notes).toBe(SKIPPED_CHECK_OFF);
+      expect(await expenseReasons(finance, id)).toEqual([]);
+    });
   });
 
   it("a post that lost its claim after creating raises a duplicate-to-void review with the entry's id", async () => {
