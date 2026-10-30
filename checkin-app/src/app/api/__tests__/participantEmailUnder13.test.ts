@@ -221,3 +221,35 @@ describe("an enrolled participant who also volunteers on the program", () => {
         });
     });
 });
+
+describe("an enrolled participant who also volunteers on the event's program", () => {
+    const volunteerRow = ({ id, name, email }: { id: number; name: string; email: string }) => ({ programId: PROGRAM_ID, personId: id, isCore: false, person: { id, name, email } });
+    const volunteerEmails = async () => {
+        const res = await eventGET(new Request(`http://localhost/api/events/${EVENT_ID}`) as never, { params: Promise.resolve({ id: String(EVENT_ID) }) });
+        const { program } = await res.json() as { program: { volunteers: { personId: number; person: { email?: string | null } }[] } };
+        return Object.fromEntries(program.volunteers.map(v => [v.personId, v.person.email ?? null]));
+    };
+
+    beforeEach(() => {
+        const row = eventRow();
+        db.event.findUnique.mockResolvedValue({ ...row, program: { ...row.program, volunteers: KIDS.map(volunteerRow) } });
+    });
+
+    it("follows the participant rule on the volunteer list for the lead mentor", async () => {
+        asLead();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+        });
+    });
+
+    it("leaves the volunteer list whole for the board", async () => {
+        asBoard();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: UNDER_13.email,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: UNKNOWN_DOB.email,
+        });
+    });
+});

@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
+import { emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -153,9 +153,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
-    const emailWithheldFrom = new Set(viewerIsLeader
-        ? program.participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth)).map(p => p.personId)
-        : []);
+    const emailWithheldFrom = emailWithheldParticipants(program.participants, viewerIsLeader);
     const roster = program.participants.map(p => ({
         ...p,
         person: { ...rosterPerson(p.person, viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },

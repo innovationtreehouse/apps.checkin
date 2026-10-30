@@ -20,6 +20,16 @@ export function rosterPerson<P extends { email: string | null; dateOfBirth: Date
     return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
 }
 
+/** The enrolled participants whose email the viewer may not see, wherever the response lists them. */
+export function emailWithheldParticipants(
+    participants: { personId: number; person: { dateOfBirth: Date | null } }[],
+    viewerIsLeader: boolean,
+): Set<number> {
+    return new Set(viewerIsLeader
+        ? participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth)).map(p => p.personId)
+        : []);
+}
+
 /** Nulls the email of a person the rule hides, wherever the response lists them. */
 export function withholdEmail<P extends { id: number; email: string | null }>(person: P, emailWithheldFrom: ReadonlySet<number>): P {
     return emailWithheldFrom.has(person.id) ? { ...person, email: null } : person;
