@@ -517,6 +517,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
+    auditedRead: true,
 });
 
 // The "who is 18 as of the member-year start" roster (Membership Audit). Ships
@@ -577,6 +578,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
+    auditedRead: true,
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not

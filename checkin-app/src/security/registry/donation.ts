@@ -44,23 +44,23 @@ const IN_KIND_WRITE_VIEW: readonly OrderedViewEntry[] = [
 ];
 
 // Reads — FINANCE or BOARD.
-defineRoute({ endpoint: 'GET /api/donations/uploaded-files', authorize: 'finance-or-board', envelope: null, returns: ['UploadedFile'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/transactions', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/transactions/unassigned', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/transactions/[id]', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/comment-rules', authorize: 'finance-or-board', envelope: null, returns: ['TransactionCommentRule'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/uploaded-files', authorize: 'finance-or-board', envelope: null, returns: ['UploadedFile'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/transactions', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/transactions/unassigned', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/transactions/[id]', authorize: 'finance-or-board', envelope: null, returns: ['Transaction'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/comment-rules', authorize: 'finance-or-board', envelope: null, returns: ['TransactionCommentRule'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/donations/account-map', authorize: 'finance-or-board', envelope: null, returns: ['AccountMap'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/disbursement-holds', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementHold', 'Transaction'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/disbursement-events', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementEvent'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/disbursement-holds', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementHold', 'Transaction'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/disbursement-events', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementEvent'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/donations/nav-counts', authorize: 'finance-or-board', envelope: null, returns: ['DonationNavCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 // One in-kind gift's page, with its donor, lines and history; same audience as the queue.
-defineRoute({ endpoint: 'GET /api/donations/in-kind/receipt/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/donations/in-kind/manual/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/receipt/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/manual/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 
 // The stored upload, served by fileHandler as a text/plain attachment.
-defineFileRoute({ endpoint: 'GET /api/donations/uploaded-files/[id]/blob', authorize: 'finance-or-board', orderedView: FINANCE_OR_BOARD_VIEW, file: { model: 'UploadedFile', field: 'fileBlob' } });
+defineFileRoute({ endpoint: 'GET /api/donations/uploaded-files/[id]/blob', authorize: 'finance-or-board', orderedView: FINANCE_OR_BOARD_VIEW, file: { model: 'UploadedFile', field: 'fileBlob' }, auditedRead: true });
 
 // Writes — FINANCE only.
 defineRoute({ endpoint: 'POST /api/donations/uploaded-files', authorize: 'finance', envelope: null, returns: ['UploadedFile'], orderedView: FINANCE_VIEW });
@@ -94,4 +94,4 @@ defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/qb-resolve', au
 
 // In-kind gifts in the caller's buckets — FINANCE, BOARD or a bucket approver,
 // who sees them and does not decide them.
-defineRoute({ endpoint: 'GET /api/donations/in-kind/by-bucket', authorize: 'expense-approver', envelope: null, returns: ['InKindBucketGiftView'], orderedView: BUCKET_APPROVER_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/by-bucket', authorize: 'expense-approver', envelope: null, returns: ['InKindBucketGiftView'], orderedView: BUCKET_APPROVER_VIEW, auditedRead: true });

@@ -52,6 +52,10 @@ Things the app takes as true because they are handled outside it.
   where the app allows an edit.
   [Decision — owner]
 
+- Each view of receipts and expenses other than the viewer's own is recorded,
+  under the finance-view rule in `revenue.md`.
+  [Decision — owner]
+
 - An adult member or a staff/role holder may submit a receipt and view, edit,
   and fetch their own receipts. An adult member is a person whose session age
   band is adult and whose household membership is ACTIVE. A role holder or a
