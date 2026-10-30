@@ -325,15 +325,15 @@ export default function CompliancePage() {
         )}
       </Stack>
 
-      {/* Permanent, unlike the list above: a merge takes the later of the two dates with
-          no record of whose check it was, so every future merge can mint another. Stays
-          until #1396 closes that hole. */}
+      {/* Standing, unlike the list above: every merge can add a row, and this is how the
+          board spots a merge of two different people. */}
       {mergeInherited.length > 0 && (
         <Stack gap="sm">
           <Title order={4}>Background-check dates inherited from a merge</Title>
           <Text c="dimmed" size="sm">
-            These people took their background-check date from a record merged into theirs. The
-            merge keeps the later date without recording whose check it was.
+            These people took their background-check date from a record merged into theirs, and
+            each row names that record. A merge of two different people would leave someone
+            holding another person&apos;s check, so confirm the two records are the same person.
           </Text>
           {mergeInherited.map((p) => (
             <Card key={p.personId} withBorder radius="md" padding="lg">

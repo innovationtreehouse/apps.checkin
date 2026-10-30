@@ -221,6 +221,10 @@ Procedure below is built on them.
   carrying one forward. Nobody can change it in the app, earlier, later or by
   removing it; a wrong date is corrected by hand in the database.  [Decision — Board ruling B5/B25, 2026-10-27]
 
+- The application's audit row and the merge archive are enough record of where a
+  merged background-check date came from. No link to the original application is
+  kept.  [Decision — deliberate limit]
+
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to
   hold it.  [Decision — *Policy: Membership Policy, Art. VI §VI.2*]

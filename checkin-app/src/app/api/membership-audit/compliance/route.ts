@@ -64,7 +64,8 @@ function mergeSourceIdentities(s: {
  *                             where every lead was stamped. One-time cleanup; narrow
  *                             it with ?bgClearedSince=YYYY-MM-DD.
  *   mergeInheritedBgChecks  — survivors of a person merge who took the merged-away
- *                             record's date. Permanent until #1396 closes that hole.
+ *                             record's date. A standing list: it is how the board
+ *                             spots a merge of two different people.
  */
 export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
     const now = new Date();
@@ -256,11 +257,10 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         };
     });
 
-    // 6. Background-check dates that arrived through a person merge (#1396). The merge
-    //    rule takes the later of the two dates unconditionally, with no record of whose
-    //    check it was, so a survivor can hold a date that traces to nobody. Unlike the
-    //    blanket stamps this list never empties on its own — every future merge can mint
-    //    another — so it stays after the one-time cleanup is done.
+    // 6. Background-check dates that arrived through a person merge, which takes the
+    //    later of the two dates unconditionally. Unlike the blanket stamps this list is
+    //    standing: every merge can add a row, and it is how the board spots a merge of
+    //    two different people.
     //
     //    Both the predicate and `fromName` used to come from the tombstone Person
     //    row, which #1456 phase 2b-3 deletes — taking this list's answer with it.
