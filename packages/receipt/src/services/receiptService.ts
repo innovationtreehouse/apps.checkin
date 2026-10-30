@@ -105,10 +105,19 @@ const EDIT_STATE_MESSAGE = "Receipt can only be edited in validation_failed or s
 /**
  * Re-check the state under a row lock inside an edit's transaction, so the edit commits before any
  * step that freezes the receipt, or not at all. Delivery happens only from a frozen state.
+ * Returns the row as of the lock: audit before-values and gates must come from it, since a row read
+ * earlier can predate an edit this one queued behind.
  */
-async function lockForEdit(tx: Prisma.TransactionClient, id: string, states: ReadonlySet<string>, message: string): Promise<void> {
-  const [locked] = await tx.$queryRaw<{ state: string }[]>`SELECT state FROM receipt_details WHERE id = ${id} FOR UPDATE`;
+async function lockForEdit(
+  tx: Prisma.TransactionClient,
+  { id, orgId }: Pick<ReceiptRow, "id" | "orgId">,
+  states: ReadonlySet<string>,
+  message: string,
+): Promise<ReceiptRow> {
+  await tx.$queryRaw`SELECT id FROM receipt_details WHERE id = ${id} FOR UPDATE`;
+  const locked = await receiptRepo.find(id, orgId, undefined, tx);
   if (!locked || !states.has(locked.state)) throw new ServiceError(400, message);
+  return locked;
 }
 
 /** Move along one machine edge with a compare-and-set on the current state, then audit. */
@@ -649,23 +658,23 @@ export const receiptService = {
       discountCents: updates.discount === undefined ? undefined : toCents(updates.discount),
       receiptTotalCents: updates.receiptTotal === undefined ? undefined : toCents(updates.receiptTotal),
     };
-    const changed = Object.entries(next).filter(
-      ([k, v]) => v !== undefined && String(row[k as keyof typeof next]) !== String(v),
-    );
-    if (changed.length === 0) return load(id, access, actor);
-    // A submitter's tax or date correction needs a fresh finance review.
-    const reopensReview = asSubmitter && changed.some(([field]) => SUBMITTER_CORRECTION_FIELDS.includes(field));
 
     await db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, EDITABLE, EDIT_STATE_MESSAGE);
+      const locked = await lockForEdit(tx, row, EDITABLE, EDIT_STATE_MESSAGE);
+      const changed = Object.entries(next).filter(
+        ([k, v]) => v !== undefined && String(locked[k as keyof typeof next]) !== String(v),
+      );
+      if (changed.length === 0) return;
+      // A submitter's tax or date correction needs a fresh finance review.
+      const reopensReview = asSubmitter && changed.some(([field]) => SUBMITTER_CORRECTION_FIELDS.includes(field));
       await tx.receiptDetail.update({ where: { id }, data: reopensReview ? { ...next, approvedAt: null } : next });
       if (reopensReview) await tx.receiptFinanceReview.deleteMany({ where: { receiptId: id } });
-      await voidConfirmation(tx, row, asSubmitter, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
+      await voidConfirmation(tx, locked, asSubmitter, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
       for (const [field, after] of changed) {
         await audit(tx, id, actor, {
           action: "field_edit",
           fieldChanged: field,
-          valueBefore: String(row[field as keyof typeof next]),
+          valueBefore: String(locked[field as keyof typeof next]),
           valueAfter: String(after),
         });
       }
@@ -681,14 +690,14 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
     return db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, EDITABLE, stateMessage);
+      const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const count = await tx.receiptLineItem.count({ where: { receiptId: id } });
       if (count >= 200) throw new ServiceError(400, "At most 200 line items");
       const last = await tx.receiptLineItem.aggregate({ where: { receiptId: id }, _max: { lineNumber: true } });
       const [data] = toLineRows([{ ...toLine(line), lineNumber: (last._max.lineNumber ?? 0) + 1 }]);
       const created = await tx.receiptLineItem.create({ data: { ...data, receiptId: id } });
       await audit(tx, id, actor, { action: "line_added", lineItemId: created.id });
-      await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
       return created;
     });
   },
@@ -702,7 +711,7 @@ export const receiptService = {
     const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
 
     return db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, EDITABLE, stateMessage);
+      const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
       if (!li) throw new ServiceError(404, "Line item not found");
 
@@ -739,7 +748,7 @@ export const receiptService = {
           lineItemId,
         });
       }
-      if (edited.length > 0) await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
+      if (edited.length > 0) await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
       return updated;
     });
   },
@@ -751,12 +760,12 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
     await db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, EDITABLE, stateMessage);
+      const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
       if (!li) throw new ServiceError(404, "Line item not found");
       await audit(tx, id, actor, { action: "line_deleted", lineItemId });
       await tx.receiptLineItem.delete({ where: { id: lineItemId } });
-      await voidConfirmation(tx, row, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
     });
   },
 
@@ -1018,10 +1027,10 @@ export const receiptService = {
     const stateMessage = "Receipt is not in submitter_review state";
     if (row.state !== "submitter_review") throw new ServiceError(400, stateMessage);
     if (needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
-    if (needsReimbursement && row.isInKind) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
 
     await db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, IN_SUBMITTER_REVIEW, stateMessage);
+      const locked = await lockForEdit(tx, row, IN_SUBMITTER_REVIEW, stateMessage);
+      if (needsReimbursement && locked.isInKind) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
       await tx.receipt.update({
         where: { id },
         data: needsReimbursement
@@ -1031,7 +1040,7 @@ export const receiptService = {
       await audit(tx, id, actor, {
         action: "reimbursement_updated",
         fieldChanged: "needsReimbursement",
-        valueBefore: String(row.needsReimbursement),
+        valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
     });
@@ -1044,23 +1053,24 @@ export const receiptService = {
     const input = parse(InKindInputSchema, rawInput);
     const row = await loadForChange(id, "submitter", actor);
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, EDIT_STATE_MESSAGE);
-    if (input.isInKind && row.needsReimbursement) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
-    if (!input.isInKind && row.donorSync === "none") return toSubmitterView(row);
 
     const donor = input.isInKind && input.donor
       ? donorNames(input.donor, actor)
       : { donorFirstName: null, donorLastName: null, donorCompanyName: null };
-    await db.$transaction(async (tx) => {
-      await lockForEdit(tx, id, EDITABLE, EDIT_STATE_MESSAGE);
+    const updated = await db.$transaction(async (tx) => {
+      const locked = await lockForEdit(tx, row, EDITABLE, EDIT_STATE_MESSAGE);
+      if (input.isInKind && locked.needsReimbursement) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
+      if (!input.isInKind && locked.donorSync === "none") return false;
       await tx.receipt.update({ where: { id }, data: { isInKind: input.isInKind, donorSync: "pending", donorSyncSeq: { increment: 1 }, ...donor } });
       await audit(tx, id, actor, {
         action: "in_kind_updated",
         fieldChanged: "isInKind",
-        valueBefore: String(row.isInKind),
+        valueBefore: String(locked.isInKind),
         valueAfter: String(input.isInKind),
       });
+      return true;
     });
-    await sendDonorSync(id, actor);
+    if (updated) await sendDonorSync(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
