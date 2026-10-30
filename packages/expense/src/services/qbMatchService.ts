@@ -1,6 +1,6 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
-import { appKeyOf, qbKey, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
+import { appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
@@ -115,12 +115,6 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string,
 
 /** Days either side of a line's receipt date that a QuickBooks candidate may fall in. */
 export const MATCH_WINDOW_DAYS = 7;
-
-function shiftDate(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 async function loadExpense(expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() }, include: { lineItems: true } });

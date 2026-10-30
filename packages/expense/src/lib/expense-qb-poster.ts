@@ -2,7 +2,7 @@
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
-import { findOrCreate, qbKey, type FindOrCreateResult, type QboPurchase, type QuickBooksClient, type TxnWrite } from "@checkin/quickbooks";
+import { findOrCreate, qbKey, shiftDate, type FindOrCreateResult, type QboPurchase, type QuickBooksClient, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
@@ -125,12 +125,6 @@ export async function qbCreatesToday(client: Db = db): Promise<number> {
   const midnight = new Date();
   midnight.setUTCHours(0, 0, 0, 0);
   return client.expenseAuditLog.count({ where: { action: "qb_created", changedAt: { gte: midnight } } });
-}
-
-function shiftDate(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */

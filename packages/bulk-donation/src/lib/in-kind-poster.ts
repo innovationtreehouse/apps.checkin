@@ -6,6 +6,7 @@ import {
   appKeyOf,
   findOrCreateInKindJournal,
   qbKey,
+  shiftDate,
   type BooksMapRole,
   type FindOrCreateResult,
   type InKindJournalLine,
@@ -56,12 +57,6 @@ async function switchInKindPostingOn(orgId: string, now: Date): Promise<Date> {
   const at = await inKindPostingOnAt(orgId);
   if (!at) throw new Error("the in-kind posting stamp did not save");
   return at;
-}
-
-function shiftDate(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 const windowOf = (date: string) => ({ from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) });

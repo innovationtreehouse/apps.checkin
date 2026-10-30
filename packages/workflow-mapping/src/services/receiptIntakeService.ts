@@ -5,7 +5,7 @@ import type { ReceivedReceipt, ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { catalogLookupResultSchema } from "../contract";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 import { initialReceiptState } from "../workflows/workflow-mapping.machine";
 
 type Recognized = Map<number, { gtin13: string; conversionFactor: number; conversionVersion: number }>;
@@ -54,7 +54,7 @@ export interface IngestResult {
  * payload, an org mismatch, or a database failure; a failed push is recorded as `apply_failed`.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const receipt = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
     message: "receipt orgId does not match this org",
     path: ["orgId"],

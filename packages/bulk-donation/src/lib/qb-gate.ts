@@ -1,5 +1,5 @@
 // The closed-books gate, caps and timings the in-kind drain books QuickBooks entries with.
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import { shiftDate, type QuickBooksClient } from "@checkin/quickbooks";
 
 /** Days either side of a record's date a QuickBooks entry may be dated. */
 export const MATCH_WINDOW_DAYS = 7;
@@ -21,12 +21,6 @@ export async function readCloseDate(client: QuickBooksClient): Promise<CloseRead
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-}
-
-function shiftDate(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 /**

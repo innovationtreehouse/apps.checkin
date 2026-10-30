@@ -1,14 +1,14 @@
 import { db } from "../db";
 import { getOrgSettings } from "../lib/receipt-flow";
 import { OrgSettingsSchema } from "../lib/schemas";
-import { getOrg, requireActor } from "../runtime";
+import { getOrgId, requireActor } from "../runtime";
 import { ServiceError } from "@checkin/component-kit";
 
 /** The org's tax-exempt and age-limit settings (FINANCE; the host route gates). */
 export const orgSettingsService = {
   async get() {
     await requireActor();
-    return getOrgSettings((await getOrg()).id);
+    return getOrgSettings(await getOrgId());
   },
 
   /** Every changed setting writes an audit row (who, before, after): these switch financial review. */
@@ -16,7 +16,7 @@ export const orgSettingsService = {
     const actor = await requireActor();
     const parsed = OrgSettingsSchema.safeParse(rawUpdates);
     if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     return db.$transaction(async (tx) => {
       const before = await getOrgSettings(orgId, tx);
       const after = await tx.receiptOrgSettings.update({ where: { orgId }, data: parsed.data });

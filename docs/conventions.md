@@ -195,6 +195,20 @@ missed a row stored at a different time of day.
 
 ---
 
+## A shared helper has one home
+
+- **Before writing a small helper, look in the package that owns its kind, and
+  add a new one there rather than copying it.**
+  - `@checkin/component-kit`: a library's errors, route parsing (`parseId`,
+    `readJson`, `parseBody`) and runtime (`defineRuntime`, which gives `getOrgId`).
+  - `@checkin/pg-kit`: the advisory lock, unique-race retries and the lazy Prisma
+    client. `monitoring-db` and `s-ingest-core` wrap the lock only to bind their
+    own database.
+  - `@checkin/quickbooks`: moving a day for a books window (`shiftDate`).
+  - `@checkin/money` and `@checkin/component-ui`: as the section above says.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never

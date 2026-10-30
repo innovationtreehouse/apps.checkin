@@ -3,7 +3,7 @@ import { db } from "../db";
 import { EDITABLE_RECEIPT_WHERE } from "../db/schema";
 import type { OrgEventConsumer, OrgEventRecord } from "../contract";
 import { insertAuditEvent } from "../lib/audit";
-import { getAlerts, getOrg, ports } from "../runtime";
+import { getAlerts, getOrgId, ports } from "../runtime";
 
 /** Whether this event already wrote its audit row, so a replay does not write it again. */
 async function alreadyAudited(eventType: string, eventId: number): Promise<boolean> {
@@ -58,7 +58,7 @@ async function remapProvisional(
 }
 
 async function applyEvent(event: OrgEventRecord): Promise<void> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   if (event.orgId !== orgId) {
     // Not ours to apply: audit it and move past, so one stray event cannot halt the feed.
     console.error(`[workflow-mapping/org-events] event ${event.id} is for another org; skipped`);
@@ -179,7 +179,7 @@ export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{
   let budget = limit - firstRetries.length;
   let newlyFailed = 0;
   try {
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
     let after = 0;
     for (;;) {

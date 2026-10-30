@@ -83,10 +83,6 @@ export function configureExpense(config: ExpenseConfig): void {
 
 export const getExpenseRuntime = expenseRuntime.require;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return getExpenseRuntime().org();
-}
-
 /** The current request's org id, the scope of every expense row. */
 export const getOrgId = expenseRuntime.getOrgId;
 

@@ -4,14 +4,14 @@ import { db } from "../db";
 import { sendDonorSync } from "../lib/donor-sync";
 import { pushReceipt } from "../lib/receipt-flow";
 import { audit } from "../repositories/receipt";
-import { getOrg } from "../runtime";
+import { getOrgId } from "../runtime";
 
 export const OCR_INTERRUPTED_AFTER_MS = 10 * 60 * 1000;
 export const CATCH_UP_CAP = 50;
 
 /** A receipt left in `auto_upload` by a process that died mid-OCR moves to `ocr_failed`. */
 export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: number; failed: number }> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const stuck = await db.receiptDetail.findMany({
     where: { orgId, state: "auto_upload", ocrStartedAt: { lt: new Date(now.getTime() - OCR_INTERRUPTED_AFTER_MS) } },
     select: { id: true },
@@ -49,7 +49,7 @@ export const STUCK_UPLOADED_AFTER_MS = 60 * 60 * 1000;
 export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: number; failed: number }> {
   const cutoff = new Date(now.getTime() - STUCK_UPLOADED_AFTER_MS);
   const rows = await db.receipt.findMany({
-    where: { orgId: (await getOrg()).id, details: { state: "uploaded" } },
+    where: { orgId: await getOrgId(), details: { state: "uploaded" } },
     select: { id: true, uploadedAt: true, auditLogs: { select: { changedAt: true }, orderBy: { id: "desc" }, take: 1 } },
   });
   const stuck = rows.filter((r) => (r.auditLogs[0]?.changedAt ?? r.uploadedAt) < cutoff).slice(0, CATCH_UP_CAP);
@@ -136,7 +136,7 @@ export async function pushRecords(orgId: string, ids: string[]): Promise<Map<str
 
 /** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
 export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const rows = await db.receipt.findMany({
     where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } },
     select: { id: true },
@@ -152,7 +152,7 @@ export async function repushUnpushed(): Promise<{ pushed: number; failed: number
 /** X13 re-send for receipts whose donor change donations has not heard. */
 export async function resendDonorSync(): Promise<{ resent: number; failed: number }> {
   const rows = await db.receipt.findMany({
-    where: { orgId: (await getOrg()).id, donorSync: "pending" },
+    where: { orgId: await getOrgId(), donorSync: "pending" },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
     take: CATCH_UP_CAP,

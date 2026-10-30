@@ -1,7 +1,6 @@
 import type {
   DonorSink,
   OcrProvider,
-  OrgIdentity,
   ReceiptConfig,
   ReceiptFileStore,
   MailboxReader,
@@ -109,9 +108,7 @@ const requireRuntime = receiptRuntime.require;
 
 export const configureReceipt = receiptRuntime.configure;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
+export const getOrgId = receiptRuntime.getOrgId;
 
 export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
