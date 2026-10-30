@@ -16,7 +16,7 @@ const WEIGHTS: Record<VisitSource, number> = {
     SCANNER: 3,     // physical measurement
     LEAD_MARKED: 2, // staff observation (roster mark) — residual when how is unknown
     TYPED: 1,       // a clock typed into a form (how). Who is byProxy, not this.
-    WEB: 1,         // legacy typed-form rows; writers move to TYPED after expand rolls out
+    WEB: 1,         // retired; only the previous release writes it, during a rolling deploy's drain window
     // A machine close is a placeholder the member is *meant* to fix, so
     // correcting one never flags — suppressed by SOURCE, not magnitude: the cron stamps at its own run time, making the correction largest
     // exactly where the overwritten value deserves the least trust.
