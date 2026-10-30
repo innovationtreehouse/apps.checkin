@@ -18,11 +18,12 @@ const CONTACTS: Record<number, { email: string; name: string }> = {
 let messages: Map<string, MailMessage>;
 let sent: MailAcknowledgement[];
 let failSends: boolean;
+let attachment: () => Promise<Buffer>;
 
 const reader: MailboxReader = {
   listRecent: async () => [...messages.keys()],
   getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
-  getAttachment: async () => Buffer.alloc(0),
+  getAttachment: async () => attachment(),
 };
 
 /** A message holding one PDF; `headers` adds to Google's verdict and the From. */
@@ -55,8 +56,17 @@ beforeEach(async () => {
   messages = new Map();
   sent = [];
   failSends = false;
+  attachment = async () => Buffer.alloc(0);
   setup();
 });
+
+async function fillToCeiling(): Promise<void> {
+  await db.receiptMailItem.createMany({
+    data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
+      orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileBlob: new Uint8Array([1]), dmarcVerdict: "pass",
+    })),
+  });
+}
 
 function setup(overrides: Partial<ReceiptConfig> = {}): void {
   configure({
@@ -328,17 +338,44 @@ describeDb("mailed receipt acknowledgements", () => {
 
   it("refuses a file finally at the held ceiling, tells the sender, and never reads it again", async () => {
     setup({ limits: { mailUploadsPerPersonPerDay: 0 } });
-    await db.receiptMailItem.createMany({
-      data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
-        orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileBlob: new Uint8Array([1]), dmarcVerdict: "pass",
-      })),
-    });
+    await fillToCeiling();
     send("m1");
     expect(await readMailbox()).toMatchObject({ overCeiling: 1 });
     expect(sent).toEqual([expect.objectContaining({ receiptId: null, refused: [{ file: "m1.pdf", reason: "ceiling" }] })]);
     expect(await db.receiptMailItem.findFirstOrThrow({ where: { gmailMessageId: "m1" } })).toMatchObject({ status: "refused", fileBlob: null });
     expect(await readMailbox()).toMatchObject({ overCeiling: 0, skipped: 1 });
     expect(sent).toHaveLength(1);
+  });
+
+  it("still names a file refused at the ceiling when a later file's read failed on that pass", async () => {
+    setup({ limits: { mailUploadsPerPersonPerDay: 0 } });
+    await fillToCeiling();
+    mailWith("m1", [
+      { mimeType: "application/pdf", filename: "a.pdf", body: { data: b64(`%PDF-1.4 a ${Date.now()}`), size: 30 } },
+      { mimeType: "application/pdf", filename: "b.pdf", body: { attachmentId: "b", size: 30 } },
+    ]);
+    attachment = () => Promise.reject(new Error("read failed"));
+    expect(await readMailbox()).toMatchObject({ overCeiling: 1, failed: 1 });
+    expect(sent).toEqual([]);
+
+    setup();
+    attachment = async () => Buffer.from(`%PDF-1.4 b ${Date.now()}`);
+    await readMailbox();
+    const [receipt] = await db.receipt.findMany();
+    expect(sent).toEqual([expect.objectContaining({ receiptId: receipt.id, refused: [{ file: "a.pdf", reason: "ceiling" }] })]);
+  });
+
+  it("still names a stored refusal when every file of the message is already in the ledger", async () => {
+    const bytes = Buffer.from("%PDF-1.4 a");
+    mailWith("m1", [{ mimeType: "application/pdf", filename: "a.pdf", body: { data: bytes.toString("base64url"), size: bytes.length } }]);
+    await db.receiptMailItem.create({
+      data: {
+        orgId: TEST_ORG_ID, gmailMessageId: "m1", attachmentHash: "h", receivedAt: new Date(), senderAddress: "alice@example.org", status: "refused", dmarcVerdict: "pass",
+        refusal: { file: "a.pdf", reason: "ceiling" },
+      },
+    });
+    expect(await readMailbox()).toMatchObject({ skipped: 1 });
+    expect(sent).toEqual([expect.objectContaining({ receiptId: null, refused: [{ file: "a.pdf", reason: "ceiling" }] })]);
   });
 
   it("retries a send that reported failure, up to its limit, and stops", async () => {

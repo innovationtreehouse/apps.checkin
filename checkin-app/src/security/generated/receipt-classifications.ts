@@ -113,6 +113,7 @@ export const classifications = {
         status: 'internal',
         holdReason: 'internal',
         dmarcVerdict: 'internal',
+        refusal: 'pii',
         fileBlob: 'pii',
         fileKey: 'pii',
         fileSize: 'internal',

@@ -407,7 +407,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
     // Every file already in the ledger: nothing to download.
-    const ledgered = files.length > 0 && (await db.receiptMailItem.count({ where: { gmailMessageId: msg.id } })) >= files.length;
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
+    const ledgered = files.length > 0 && rows.length >= files.length;
+    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
+    refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const verdict = dmarcVerdict(headers, address);
@@ -486,10 +489,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           }
           if (!roomToHold(bytes.length)) {
             // Final at the ceiling, so a later run cannot take a file the sender was told to send again.
-            // ponytail: a crash before the message's refusals are written loses this notice; store it with the row if one is ever missed.
             if (stored() >= MAIL_HELD_CEILING) {
-              await db.receiptMailItem.create({ data: { ...item, status: "refused" } });
-              refused.push({ file: file.name, reason: "ceiling" });
+              const refusal: MailRefusal = { file: file.name, reason: "ceiling" };
+              await db.receiptMailItem.create({ data: { ...item, status: "refused", refusal: { ...refusal } } });
+              refused.push(refusal);
             } else {
               putOff = true;
             }
