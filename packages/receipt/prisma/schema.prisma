@@ -357,6 +357,28 @@ model ReceiptMailReply {
   @@map("receipt_mail_replies")
 }
 
+// A message a mail run could not finish: failed, put off or not reached. Removed once read
+// clean, or once alerted and no longer listed; a stored row is how the alert survives a bad day.
+model ReceiptMailAtRisk {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @unique @map("gmail_message_id")
+  // Null when the message could not be fetched, so its age is unknown.
+  /// @sensitivity:internal
+  receivedAt     DateTime? @map("received_at")
+  // Set only after the alert was sent, so a failed send retries on the next run.
+  /// @sensitivity:internal
+  alertedAt      DateTime? @map("alerted_at")
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orgId, alertedAt])
+  @@map("receipt_mail_at_risk")
+}
+
 // Files the organization has said are never receipts (#1265 §2a). Mail intake skips a
 // candidate whose SHA-256 is listed; manual upload never consults it.
 model ReceiptIgnoredFile {

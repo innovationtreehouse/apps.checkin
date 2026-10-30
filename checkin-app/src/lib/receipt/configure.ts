@@ -197,8 +197,16 @@ const alerts: ReceiptAlerts = {
     const since = oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "";
     await notifyFinanceAlert(
       "Receipts: mailed receipts are about to be missed",
-      `<p>Today's mail run did not finish reading ${messages} message(s) in the receipt mailbox${since}. They leave the 3-day reading window before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
+      `<p>Mail runs did not finish reading ${messages} message(s) in the receipt mailbox${since}. They have left the 3-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
       "Receipt mail ageing alert failed:",
+    );
+  },
+  async mailListingFailed() {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert(
+      "Receipts: the receipt mailbox could not be read",
+      `<p>Today's mail run could not list the receipt mailbox, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have the mailbox's Gmail access checked, then upload or forward anything that was missed. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
+      "Receipt mailbox listing alert failed:",
     );
   },
 };

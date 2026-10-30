@@ -25,7 +25,7 @@ export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
 /** Held and deferred items past which nothing more is stored; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
 // ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
-// budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
+// budget's worth of fetches can still push a later receipt past the window, with an alert; widen the budget then.
 /** Wall time per run; messages not reached wait for the next run. */
 export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -33,7 +33,8 @@ const DAY_MS = 24 * 60 * 60_000;
 export type MailIntakeResult =
   | { status: "unbound" }
   | {
-      status: "ok";
+      /** `listing_failed`: the mailbox could not be listed, so no message was read this run. */
+      status: "ok" | "listing_failed";
       messages: number;
       receipts: number;
       held: number;
@@ -512,50 +513,79 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   // Mail received before this is out of the window by the next daily run.
   const lastChance = started - (MAIL_WINDOW_DAYS - 1) * DAY_MS;
-  let agingOut = 0;
-  const agingDates: number[] = [];
-  /** Counts messages left unread as ageing out when they arrived before lastChance, or when their arrival is unknown. */
-  const leftUnread = (receivedAt: number | null, messages = 1) => {
-    if (receivedAt !== null && receivedAt >= lastChance) return;
-    agingOut += messages;
-    if (receivedAt !== null) agingDates.push(receivedAt);
-  };
+  /** Stored as soon as it happens, so a run that dies later still leaves the message to alert on. */
+  const leftUnread = (gmailMessageId: string, receivedAt: Date | null) =>
+    db.receiptMailAtRisk.upsert({
+      where: { gmailMessageId },
+      create: { orgId, gmailMessageId, receivedAt },
+      update: receivedAt ? { receivedAt } : {},
+    });
 
-  const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
-  for (const [i, id] of ids.entries()) {
-    if ((capped() && holdsSpent()) || outOfTime()) {
-      counts.unread = ids.length - i;
-      // Oldest first, so the first unread message dates them all.
-      leftUnread(await reader.getMessage(id).then((m) => Number(m.internalDate), () => null), counts.unread);
-      break;
+  async function readListed(ids: string[], reader: MailboxReader): Promise<void> {
+    const readClean: string[] = [];
+    for (const [i, id] of ids.entries()) {
+      if ((capped() && holdsSpent()) || outOfTime()) {
+        const unread = ids.slice(i);
+        counts.unread = unread.length;
+        // Oldest first, so the first unread message dates them all.
+        const receivedAt = await reader.getMessage(id).then((m) => new Date(Number(m.internalDate)), () => null);
+        await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+        break;
+      }
+      counts.messages++;
+      const deferredBefore = counts.deferred;
+      let msg: MailMessage | null = null;
+      try {
+        msg = await reader.getMessage(id);
+        await readMessage(msg, reader);
+      } catch (err) {
+        counts.failed++;
+        console.error("[receipt] mail intake failed for one message:", err);
+        await leftUnread(id, msg && new Date(Number(msg.internalDate)));
+        continue;
+      }
+      if (counts.deferred > deferredBefore) await leftUnread(id, new Date(Number(msg.internalDate)));
+      else readClean.push(id);
     }
-    counts.messages++;
-    const deferredBefore = counts.deferred;
-    let msg: MailMessage | null = null;
-    try {
-      msg = await reader.getMessage(id);
-      await readMessage(msg, reader);
-    } catch (err) {
-      counts.failed++;
-      console.error("[receipt] mail intake failed for one message:", err);
-      leftUnread(msg && Number(msg.internalDate));
-      continue;
-    }
-    if (counts.deferred > deferredBefore) leftUnread(Number(msg.internalDate));
+    await db.receiptMailAtRisk.deleteMany({
+      where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: ids } }] },
+    });
   }
 
-  // ponytail: one alert per run; a message sits in the last day of the window for one daily run, so it alerts once. A same-day rerun alerts again.
-  if (agingOut > 0) {
+  /** One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent. */
+  async function alertAtRisk(): Promise<void> {
+    const rows = await db.receiptMailAtRisk.findMany({
+      where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
+      select: { id: true, receivedAt: true },
+    });
+    if (rows.length === 0) return;
+    const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
     try {
       await ports().alerts.mailAgingOut({
         orgId,
-        messages: agingOut,
-        oldestReceivedAt: agingDates.length > 0 ? new Date(Math.min(...agingDates)) : null,
+        messages: rows.length,
+        oldestReceivedAt: dates.length > 0 ? new Date(Math.min(...dates)) : null,
       });
+      await db.receiptMailAtRisk.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { alertedAt: new Date() } });
     } catch (err) {
       console.error("[receipt] mail ageing alert failed:", err);
     }
   }
+
+  let ids: string[] | null = null;
+  try {
+    ids = await reader.listRecent(MAIL_WINDOW_DAYS);
+  } catch (err) {
+    console.error("[receipt] mailbox listing failed:", err);
+    // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
+    try {
+      await ports().alerts.mailListingFailed({ orgId });
+    } catch (alertErr) {
+      console.error("[receipt] mailbox listing alert failed:", alertErr);
+    }
+  }
+  if (ids) await readListed(ids, reader);
+  await alertAtRisk();
 
   let replies = { sent: 0, failed: 0 };
   try {
@@ -571,5 +601,5 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       console.error("[receipt] mail hold ceiling alert failed:", err);
     }
   }
-  return { status: "ok", ...counts, replied: replies.sent, replyFailed: replies.failed };
+  return { status: ids ? "ok" : "listing_failed", ...counts, replied: replies.sent, replyFailed: replies.failed };
 }

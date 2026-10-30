@@ -129,6 +129,14 @@ export const classifications = {
         attempts: 'internal',
         createdAt: 'internal',
     },
+    ReceiptMailAtRisk: {
+        id: 'internal',
+        orgId: 'internal',
+        gmailMessageId: 'internal',
+        receivedAt: 'internal',
+        alertedAt: 'internal',
+        createdAt: 'internal',
+    },
     ReceiptIgnoredFile: {
         id: 'internal',
         orgId: 'internal',
@@ -171,6 +179,8 @@ export const relations = {
     ReceiptMailItem: {
     },
     ReceiptMailReply: {
+    },
+    ReceiptMailAtRisk: {
     },
     ReceiptIgnoredFile: {
     },
