@@ -42,8 +42,14 @@ model Receipt {
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
+  // Null once the file lives in the store under fileKey.
   /// @sensitivity:pii
-  fileBlob           Bytes    @map("file_blob")
+  fileBlob           Bytes?   @map("file_blob")
+  // The object holding the file; null means the bytes are in fileBlob.
+  /// @sensitivity:pii
+  fileKey            String?  @map("file_key")
+  /// @sensitivity:internal
+  fileSize           Int?     @map("file_size")
   /// @sensitivity:internal
   fileHash           String   @map("file_hash")
   /// @sensitivity:internal
@@ -310,6 +316,12 @@ model ReceiptMailItem {
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")
+  // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
+  // to name the object for an admin restore. Null with no fileBlob means no file is kept.
+  /// @sensitivity:pii
+  fileKey        String?   @map("file_key")
+  /// @sensitivity:internal
+  fileSize       Int?      @map("file_size")
   /// @sensitivity:internal
   mimeType       String?   @map("mime_type")
   /// @sensitivity:internal

@@ -41,6 +41,19 @@ export function getConfigHealth(): ConfigCheck[] {
                   : "NOT configured — set AGREEMENT_PDF_S3_BUCKET (sign endpoint 503s without it).",
         },
         {
+            id: "receipt-files-s3",
+            label: "Receipt files (S3)",
+            // Only a gap once new files go to the bucket; a laptop uses a temp directory.
+            ok: config.isLocal() || !config.receiptFilesS3() || !!config.receiptFilesBucket(),
+            detail: config.receiptFilesBucket()
+                ? "Bucket configured."
+                : config.isLocal()
+                  ? "Not required on local; files go to a temp directory."
+                  : config.receiptFilesS3()
+                    ? "NOT configured — set RECEIPT_FILES_S3_BUCKET (receipt uploads and mail intake 503 without it)."
+                    : "Not set (fine while RECEIPT_FILES_S3 is off).",
+        },
+        {
             id: "zoho-webhook-secret",
             label: "Zoho webhook secret",
             // zohoWebhookSecret() falls back to the fixed mock secret when the mock is active,

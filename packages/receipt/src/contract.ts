@@ -249,6 +249,15 @@ export interface ReceiptAlerts {
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
 }
 
+/** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */
+export interface ReceiptFileStore {
+  /** Writes once; refuses a key already written and a body not matching `sha256` (hex). */
+  put(key: string, bytes: Uint8Array, sha256: string): Promise<void>;
+  /** The object's bytes, or null when it does not exist. */
+  get(key: string): Promise<Uint8Array | null>;
+  delete(key: string): Promise<void>;
+}
+
 export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
@@ -268,4 +277,8 @@ export interface ReceiptConfig {
   replies?: ReceiptReplies;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
+  /** Unset means no row may have a key: reading or writing one throws. */
+  fileStore?: ReceiptFileStore;
+  /** New files go to the store instead of the database. */
+  storeNewFilesInBucket?: boolean;
 }

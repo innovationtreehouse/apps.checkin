@@ -13,6 +13,7 @@ export { receiptService, type Access, type FinanceCounts, type SubmitterReceipt 
 export { importReceipts, type ImportRowResult } from "./services/importService";
 export { orgSettingsService } from "./services/orgSettingsService";
 export { createGmailReader } from "./lib/gmail";
+export { createMemoryFileStore } from "./lib/fileStorage";
 export { readMailbox, type MailIntakeResult } from "./services/mailIntake";
 export { repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "./services/catchUp";
 export { mailQueueService } from "./services/mailQueueService";

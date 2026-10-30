@@ -17,6 +17,7 @@ import { sendDonorSync } from "../lib/donor-sync";
 import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
+import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
@@ -256,8 +257,12 @@ async function reserveOcrCall(actor: ReceiptPrincipal): Promise<void> {
 
 /** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
 async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
-  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, mimeType: true } });
-  const raw = await ports().ocr.extract(Buffer.from(file.fileBlob), file.mimeType);
+  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
+  const bytes = await readStoredFile(file).catch((err: unknown) => {
+    console.error(`[receipt] could not read the file of ${id}:`, err);
+    return null;
+  });
+  const raw: OcrResult = bytes ? await ports().ocr.extract(Buffer.from(bytes), file.mimeType) : { success: false, error: "The receipt file could not be read" };
   const parsed = raw.success ? OcrDataSchema.safeParse(raw.data) : null;
   const result: OcrResult = !raw.success
     ? raw
@@ -301,14 +306,14 @@ async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Prom
  * OCR allowance lands in `ocr_failed`, where its uploader types the details. `uploadLimits: false`
  * skips the daily upload limits for this one file, for a deferred file finance releases.
  * `mailAllowance: false` checks the manual upload limits in place of the mail limit, for a file
- * finance assigns.
+ * finance assigns. `heldFileKey` names the mail item's object, deleted once the insert has committed.
  */
 export async function intakeMailedReceipt(
   actor: ReceiptPrincipal,
   file: Buffer,
   mimeType: string,
   ledger: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>,
-  { uploadLimits = true, mailAllowance = true }: { uploadLimits?: boolean; mailAllowance?: boolean } = {},
+  { uploadLimits = true, mailAllowance = true, heldFileKey = null }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null } = {},
 ): Promise<string> {
   const id = await insertReceipt({
     orgId: (await getOrg()).id,
@@ -328,6 +333,7 @@ export async function intakeMailedReceipt(
         : undefined,
     afterInsert: ledger,
   });
+  await deleteStoredFiles([heldFileKey]);
   try {
     await reserveOcrCall(actor);
   } catch (err) {
@@ -1122,9 +1128,11 @@ export const receiptService = {
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
     await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, mimeType: true, uploadedByUserId: true } });
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, uploadedByUserId: true } });
+    const fileBlob = await readStoredFile(file);
+    if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
-    return file;
+    return { fileBlob, mimeType: file.mimeType, uploadedByUserId: file.uploadedByUserId };
   },
 
   /**
