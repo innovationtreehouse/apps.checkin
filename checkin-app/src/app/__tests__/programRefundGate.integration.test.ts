@@ -48,7 +48,7 @@ describe('a refunded order never activates a program place', () => {
     const refundedMirrorOrder = (oid: string, children: number[]): MirrorOrder => ({
         orderGid: `gid://shopify/Order/${oid}`, legacyId: oid, customerEmail: null, financialStatus: 'REFUNDED',
         totalCents: 10000, subtotalCents: 10000, totalRefundedCents: 10000, discountCents: 0, discountCodes: [],
-        cancelledAt: null, updatedAt: new Date(),
+        processedAt: null, cancelledAt: null, updatedAt: new Date(),
         noteAttributes: [{ key: 'Program_ID', value: String(programId) }, { key: 'CheckMeIn_Account_ID', value: children.join(',') }],
     });
     const statusOf = async (personId: number) =>

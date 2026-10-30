@@ -144,6 +144,11 @@ export function membershipYearCycle(
     return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
 }
 
+/** The live year at `now`, named by the year its opening boundary is in; null with no boundary set. */
+export function liveMembershipYear(configuredBoundary: Date | null | undefined, now: Date): number | null {
+    return configuredBoundary ? membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear() : null;
+}
+
 /**
  * How far a household's membership fee reaches in the live cycle: the boundary that closes it
  * when the household settled for it, else the boundary that opened it — which is
