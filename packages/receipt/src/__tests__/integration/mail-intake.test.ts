@@ -471,6 +471,7 @@ describeDb("mail intake ageing alert", () => {
     send("m1", { ageMs: old });
     await readMailbox();
     expect(agingAlerts).toHaveLength(1);
+    expect(await db.receiptMailAtRisk.count()).toBe(1);
 
     mail.messages.delete("m1");
     await readMailbox();
