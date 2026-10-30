@@ -314,11 +314,20 @@ check the folder in Gmail itself.
 **Mail about to leave the window** (`[Decision]`). The run reads mail oldest
 first, so mail it puts off (a cap or budget spent, the time budget reached, or
 a message whose reading failed) is read next run. Mail received more than two
-days ago will be out of the 3-day window by then, so the run sends finance one
-alert naming how many such messages there are and when the oldest arrived.
-With a daily run each message is in that last day once, so it is alerted once.
-`ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
-receipts in one window; widen the window or the cap if either happens.
+days ago will be out of the 3-day window by then, so finance gets one alert
+naming how many such messages there are and when the oldest arrived. Each such
+message is stored when the run leaves it, and removed once a later run reads it
+clean. The alert goes out on any run that finds one stored past that age, so a
+crashed run, a missed day or a failed send only delays it, and it is marked sent
+only after it is sent, so it is not repeated. A message that cannot be fetched
+has no known age, so it alerts on the first run that fails to fetch it.
+
+**Mailbox that cannot be listed** (`[Decision]`). The run alerts finance on every
+run the listing fails, still sends the acknowledgements owed, and the cron run
+records a failure, so System Status shows it. `ponytail:` ceiling is a cron that
+does not run at all for longer than 3 days, which System Status shows as not
+running, or more than 30 mailed receipts in one window; widen the window or the
+cap if either happens.
 
 **Message to receipt.**
 
@@ -858,7 +867,7 @@ system of record for reimbursement and the app never authors a reimbursement fac
 a duplicate upload is flagged for a person, never rejected, and the file hash is
 deliberately not unique (`[Decision — deliberate limit]`); OCR results are never
 partially kept. The S1 contract, OCR call shape and secret model go to
-`docs/designs/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
+`docs/architecture/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
 The rest is mechanism and is deleted.
 
 ---

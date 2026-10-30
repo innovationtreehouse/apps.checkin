@@ -52,6 +52,7 @@ export const classifications = {
         reviewedAt: 'internal',
         reviewedByUserId: 'internal',
         reviewedOnBehalfReason: 'personal',
+        rejectionAcknowledgedAt: 'internal',
         qbTxnId: 'internal',
         qbEntity: 'internal',
         importSourceId: 'internal',
@@ -129,6 +130,14 @@ export const classifications = {
         attempts: 'internal',
         createdAt: 'internal',
     },
+    ReceiptMailAtRisk: {
+        id: 'internal',
+        orgId: 'internal',
+        gmailMessageId: 'internal',
+        receivedAt: 'internal',
+        alertedAt: 'internal',
+        createdAt: 'internal',
+    },
     ReceiptIgnoredFile: {
         id: 'internal',
         orgId: 'internal',
@@ -171,6 +180,8 @@ export const relations = {
     ReceiptMailItem: {
     },
     ReceiptMailReply: {
+    },
+    ReceiptMailAtRisk: {
     },
     ReceiptIgnoredFile: {
     },

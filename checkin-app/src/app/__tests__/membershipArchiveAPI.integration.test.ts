@@ -403,7 +403,7 @@ describe('Membership application archive API', () => {
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old' } });
         await recordRefund(processId, boardId, 'Refunded in Shopify');
 
-        await activateByProcessId(processId, 'ord-new', true);
+        await activateByProcessId(processId, 'ord-new', { appliesToYear: 2026 });
         const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect({ status: after?.status, paid: !!after?.paidAt, order: after?.shopifyOrderId })
             .toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, order: 'ord-new' });

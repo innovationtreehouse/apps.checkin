@@ -1,9 +1,9 @@
+import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import { createItemReferenceRepository } from "../repositories/itemReference";
-import { createCatalogRepository } from "../repositories/catalog";
+import { ServiceError } from "@checkin/component-kit";
 
 const itemRefRepo = createItemReferenceRepository(db);
-const catalogRepo = createCatalogRepository(db);
 import { normalizeDescription } from "../lib/normalizeDescription";
 
 export interface LookupEntry {
@@ -141,29 +141,70 @@ export async function checkReferences(params: {
   };
 }
 
-export async function findAutoConflict(ownGtin13: string, fields: RefFields): Promise<string | null> {
+/** The lookup keys a reference answers to, the same ones lookups and the conflict check use. */
+function referenceKeys(fields: RefFields): string[] {
+  const { partNumber, manufacturer, retailer } = fields;
+  const normalized = fields.description ? normalizeDescription(fields.description) : null;
+  const keys: unknown[][] = [];
+  if (manufacturer && partNumber) keys.push(["mfr-part", manufacturer, partNumber]);
+  if (retailer && partNumber) keys.push(["retailer-part", retailer, partNumber]);
+  if (!partNumber && manufacturer && normalized) keys.push(["mfr-desc", manufacturer, normalized]);
+  return keys.map((k) => JSON.stringify(k));
+}
+
+/** Holds each of the reference's lookup keys until `tx` ends, in sorted order so writers can't deadlock. */
+export async function lockReferenceKeys(tx: Prisma.TransactionClient, fields: RefFields): Promise<void> {
+  for (const key of referenceKeys(fields).sort()) {
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`item-reference:${key}`}, 0))`;
+  }
+}
+
+async function findAutoConflict(
+  tx: Prisma.TransactionClient,
+  ownGtin13: string,
+  fields: RefFields,
+  excludeId?: number,
+): Promise<string | null> {
+  const refs = createItemReferenceRepository(tx);
   const conflictLabel = async (gtin13: string) => {
-    const it = await catalogRepo.findItemByGtinForConflict(gtin13);
+    const it = await tx.item.findFirst({ where: { gtin13 }, select: { name: true } });
     return it?.name ?? gtin13;
   };
 
   if (fields.manufacturer && fields.partNumber) {
-    const hit = await itemRefRepo.findConflictByMfrPart(fields.partNumber, fields.manufacturer, ownGtin13);
+    const hit = await refs.findConflictByMfrPart(fields.partNumber, fields.manufacturer, ownGtin13, excludeId);
     if (hit) return `Auto-reference conflict with "${await conflictLabel(hit.gtin13)}" (same manufacturer + part number)`;
   }
 
   if (fields.retailer && fields.partNumber) {
-    const hit = await itemRefRepo.findConflictByRetailerPart(fields.retailer, fields.partNumber, ownGtin13);
+    const hit = await refs.findConflictByRetailerPart(fields.retailer, fields.partNumber, ownGtin13, excludeId);
     if (hit) return `Auto-reference conflict with "${await conflictLabel(hit.gtin13)}" (same retailer + part number)`;
   }
 
   if (!fields.partNumber && fields.manufacturer && fields.description) {
     const normalized = normalizeDescription(fields.description);
     if (normalized) {
-      const hit = await itemRefRepo.findConflictByMfrDesc(normalized, fields.manufacturer, ownGtin13);
+      const hit = await refs.findConflictByMfrDesc(normalized, fields.manufacturer, ownGtin13, excludeId);
       if (hit) return `Auto-reference conflict with "${await conflictLabel(hit.gtin13)}" (same manufacturer + description)`;
     }
   }
 
   return null;
+}
+
+/**
+ * Refuses a reference write that would point a lookup key at a second item. Every writer calls
+ * this in the transaction that writes the reference; the key locks make check-then-write atomic.
+ * `excludeId` is the reference being moved to `ownGtin13`, which must not conflict with itself.
+ * ponytail: app-level locks, so a writer that skips this isn't stopped; a partial EXCLUDE constraint is the upgrade.
+ */
+export async function assertNoReferenceConflict(
+  tx: Prisma.TransactionClient,
+  ownGtin13: string,
+  fields: RefFields,
+  excludeId?: number,
+): Promise<void> {
+  await lockReferenceKeys(tx, fields);
+  const conflict = await findAutoConflict(tx, ownGtin13, fields, excludeId);
+  if (conflict) throw new ServiceError(409, conflict);
 }

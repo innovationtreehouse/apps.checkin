@@ -1,6 +1,7 @@
 import { httpError } from "@checkin/component-kit";
 import { db } from "../db";
-import { EDITABLE_RECEIPT_WHERE, type ReceivedReceipt, type ReceivedReceiptLineStatusRow } from "../db/schema";
+import { EDITABLE_RECEIPT_WHERE, type NewWorkflowAuditEvent, type ReceivedReceipt, type ReceivedReceiptLineStatusRow } from "../db/schema";
+import { insertAuditEvent } from "../lib/audit";
 import { lineLockReason } from "../lib/line-lock";
 import { parseStoredReceipt } from "../lib/parse-receipt";
 import { getOrg } from "../runtime";
@@ -39,15 +40,20 @@ type LineDecision = Pick<ReceivedReceiptLineStatusRow,
 
 /**
  * Write a line decision only if its receipt is still editable at write time, so a concurrent
- * proceed or apply cannot be followed by an edit to what was pushed.
+ * proceed or apply cannot be followed by an edit to what was pushed. The audit row commits with
+ * the decision, so no edit lands unlogged.
  */
 export async function updateEditableLine(
   edit: { received: ReceivedReceipt; lineStatus: ReceivedReceiptLineStatusRow },
   data: Partial<LineDecision>,
+  event: NewWorkflowAuditEvent,
 ): Promise<void> {
-  const { count } = await db.receivedReceiptLineStatus.updateMany({
-    where: { id: edit.lineStatus.id, receivedReceipt: EDITABLE_RECEIPT_WHERE },
-    data,
+  await db.$transaction(async (tx) => {
+    const { count } = await tx.receivedReceiptLineStatus.updateMany({
+      where: { id: edit.lineStatus.id, receivedReceipt: EDITABLE_RECEIPT_WHERE },
+      data,
+    });
+    if (count !== 1) throw httpError(409, "Receipt is no longer editable");
+    await insertAuditEvent(tx, event);
   });
-  if (count !== 1) throw httpError(409, "Receipt is no longer editable");
 }

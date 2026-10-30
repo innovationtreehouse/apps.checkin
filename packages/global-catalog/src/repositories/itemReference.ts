@@ -1,13 +1,19 @@
-import type { PrismaClient, Prisma } from "../generated/prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 
 const REF_SELECT = { gtin13: true, id: true, conversionFactor: true, conversionVersion: true } as const;
 
-export function createItemReferenceRepository(db: PrismaClient) {
+export function createItemReferenceRepository(db: Prisma.TransactionClient) {
   return {
     // ── Item References ───────────────────────────────────────────────────────
 
     findById: (id: number) =>
       db.itemReference.findFirst({ where: { id } }),
+
+    /** Holds the row until the transaction ends, so its item and archived state can't change under a conflict check. */
+    async findByIdForUpdate(id: number) {
+      await db.$queryRaw`SELECT 1 FROM item_references WHERE id = ${id} FOR UPDATE`;
+      return db.itemReference.findFirst({ where: { id } });
+    },
 
     findByMfrPart: (partNumber: string, manufacturer: string) =>
       db.itemReference.findFirst({
@@ -27,21 +33,21 @@ export function createItemReferenceRepository(db: PrismaClient) {
         select: REF_SELECT,
       }),
 
-    findConflictByMfrPart: (partNumber: string, manufacturer: string, excludeGtin13: string) =>
+    findConflictByMfrPart: (partNumber: string, manufacturer: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { manufacturer, partNumber, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { manufacturer, partNumber, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 
-    findConflictByRetailerPart: (retailer: string, partNumber: string, excludeGtin13: string) =>
+    findConflictByRetailerPart: (retailer: string, partNumber: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { retailer, partNumber, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { retailer, partNumber, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 
-    findConflictByMfrDesc: (descriptionNormalized: string, manufacturer: string, excludeGtin13: string) =>
+    findConflictByMfrDesc: (descriptionNormalized: string, manufacturer: string, excludeGtin13: string, excludeId?: number) =>
       db.itemReference.findFirst({
-        where: { manufacturer, descriptionNormalized, gtin13: { not: excludeGtin13 }, archivedAt: null },
+        where: { manufacturer, descriptionNormalized, gtin13: { not: excludeGtin13 }, id: { not: excludeId }, archivedAt: null },
         select: { gtin13: true },
       }),
 

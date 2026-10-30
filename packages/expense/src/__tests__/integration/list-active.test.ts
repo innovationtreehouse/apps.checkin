@@ -9,12 +9,12 @@ import type { ExpenseRouteHandler } from "../../contract";
 let openId: string;
 
 function call(route: ExpenseRouteHandler, path: string) {
-  return route({ req: new Request(`http://test/api/expense${path}`), params: {} });
+  return route({ req: new Request(`http://test/api/expense${path}`), params: {}, principal: principal(1, { isFinance: true }) });
 }
 
 describeDb("expense list active filter", () => {
   beforeEach(async () => {
-    bindPorts({ auth: { getPrincipal: async () => principal(1, { isFinance: true }) }, signoff: directory({}) });
+    bindPorts({ signoff: directory({}) });
     openId = await seedExpense({ state: "owner_approval" });
     for (const state of CLOSED_STATES) await seedExpense({ state });
   });

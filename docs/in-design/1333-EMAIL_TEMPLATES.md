@@ -158,9 +158,9 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (47)
+## Key list (49)
 
-45 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+47 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
@@ -205,7 +205,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `membership.welcome` | `sendCongrats`, first membership | family | `actionLink` ("Visit your dashboard") |
 | `membership.renewed` | `sendCongrats`, renewal | family | `actionLink` ("Visit your dashboard") |
 
-### board — 5
+### board — 6
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
@@ -213,15 +213,17 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `board.pendingDigest` | pending-participants digest | board | approachingCount, overdueCount, approachingList, overdueList |
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
 | `board.programAgeMisfit` | program date/age edit (`programs/update.ts`) | board | programName, count, people, `actionLink` ("Open the program") |
+| `board.inventoryEventsStuck` | inventory catch-up finds stuck catalog events | board | problem |
 
 > See sub-decision B (blurb) below.
 
-### finance — 8
+### finance — 9
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
 | `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
 | `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
 | `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |

@@ -5,10 +5,12 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import {
   OcrDataSchema,
+  purchaseOutcomesSchema,
   reimbursementStatusSchema,
   type OcrData,
   type OcrResult,
   type PaidStatus,
+  type PurchaseOutcome,
   type ReceiptPrincipal,
   type ReimbursementAsk,
   type ReimburseeOption,
@@ -50,11 +52,16 @@ const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
-export type SubmitterReceipt = Omit<ReceiptRow, "donorFirstName" | "donorLastName" | "donorCompanyName">;
+
+export type SubmitterReceipt = Omit<ReceiptRow, "donorFirstName" | "donorLastName" | "donorCompanyName"> & { rejectionUnacknowledged: boolean };
+
+/** A rejected receipt its uploader has not yet acknowledged; it counts in their pill until they do. */
+const rejectionUnacknowledged = (row: Pick<ReceiptRow, "state" | "rejectionAcknowledgedAt">): boolean =>
+  row.state === "rejected" && row.rejectionAcknowledgedAt === null;
 
 function toSubmitterView(row: ReceiptRow): SubmitterReceipt {
   const { donorFirstName: _f, donorLastName: _l, donorCompanyName: _c, ...rest } = row;
-  return rest;
+  return { ...rest, rejectionUnacknowledged: rejectionUnacknowledged(row) };
 }
 
 /** X12 answer; null when QuickBooks is off or the read fails, never an error on the page. */
@@ -65,6 +72,25 @@ async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidSta
     console.warn("[receipt] reimbursement status unavailable", err);
     return null;
   }
+}
+
+/** Downstream outcome of each finalized receipt; null when it cannot be read, never an error on the page. */
+async function purchaseOutcomes(rows: { id: string; state: string }[]): Promise<Map<string, PurchaseOutcome> | null> {
+  const ids = rows.filter((r) => r.state === "receipt_finalized").map((r) => r.id);
+  if (!ids.length) return new Map();
+  try {
+    return purchaseOutcomesSchema.parse(await ports().purchaseOutcomes.forReceipts(ids));
+  } catch (err) {
+    console.warn("[receipt] purchase outcome unavailable", err);
+    return null;
+  }
+}
+
+/** A finalized receipt's outcome as a view field: `{ unavailable: true }` when the read failed. */
+function outcomeOf(r: { id: string; state: string }, outcomes: Map<string, PurchaseOutcome> | null): PurchaseOutcome | { unavailable: true } | null {
+  if (r.state !== "receipt_finalized") return null;
+  if (!outcomes) return { unavailable: true };
+  return outcomes.get(r.id) ?? { receiving: null, money: null, gift: null };
 }
 
 const toCents = (dollars: number | string | undefined): number =>
@@ -266,16 +292,21 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
       : { success: false, error: "OCR returned invalid receipt data" };
   if (result.success) {
     assertExpectedState("auto_upload", { type: "OCR_SUCCEEDED" }, NEUTRAL_CONTEXT, "uploaded");
-    await db.$transaction(async (tx) => {
+    const landed = await db.$transaction(async (tx) => {
       const moved = await tx.receiptDetail.updateMany({
         where: { id, state: "auto_upload" },
         data: { ...ocrDetail(result.data), state: "uploaded", validationNotes: null },
       });
-      if (moved.count === 0) throw new ServiceError(409, "Receipt left OCR while it was being read");
+      if (moved.count === 0) {
+        await audit(tx, id, actor, { action: "ocr_result_refused", valueAfter: "receipt left OCR while it was being read" });
+        return false;
+      }
       await tx.receiptLineItem.deleteMany({ where: { receiptId: id } });
       await tx.receipt.update({ where: { id }, data: { lineItems: { create: toLineRows(result.data.lineItems.map(toLine)) } } });
       await audit(tx, id, actor, { action: "ocr_complete" });
+      return true;
     });
+    if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
     await failOcr(id, actor, result.error);
@@ -1111,8 +1142,9 @@ export const receiptService = {
     const row = await load(id, access, actor);
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
-    const receipt = access === "finance" ? row : toSubmitterView(row);
-    return { ...receipt, lineItems, financialReviewReasons: reasons };
+    const receipt = access === "finance" ? { ...row, rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
+    const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
+    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome };
   },
 
   /**
@@ -1129,25 +1161,55 @@ export const receiptService = {
 
   /**
    * "My receipts": the caller's own receipts, each owed one with its QuickBooks paid status, or
-   * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected, or
-   * finalized and either not owed or shown paid.
+   * `statusUnavailable` when that status cannot be read. Complete = discarded, rejected and
+   * acknowledged, or finalized and either not owed or shown paid.
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
-    const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
+    const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid?.get(r.id)?.paidOn ?? null) : null;
       const complete =
         r.state === "discarded" ||
-        r.state === "rejected" ||
+        (r.state === "rejected" && !rejectionUnacknowledged(r)) ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
       const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
-      return { ...toSubmitterView(r), reimbursement, complete };
+      return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
+  },
+
+  /**
+   * Reimbursements naming the caller that someone else uploaded, once finance has settled the
+   * receipt: finalized with its purchase outcome, or rejected with finance's reason. No uploader,
+   * donor or file field.
+   */
+  async listReimbursedToMe() {
+    const actor = await requireActor();
+    const rows = await receiptRepo.list({
+      orgId: (await getOrg()).id,
+      needsReimbursement: true,
+      reimburseePersonId: actor.id,
+      uploadedByUserId: { not: actor.id },
+      details: { state: { in: ["receipt_finalized", "rejected"] } },
+    });
+    const owed = rows.map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
+    const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
+    return rows.map((r) => ({
+      id: r.id,
+      reimburseePersonId: actor.id,
+      state: r.state,
+      retailer: r.retailer,
+      receiptDate: r.receiptDate,
+      currency: r.currency,
+      receiptTotalCents: r.receiptTotalCents,
+      rejectionReason: r.state === "rejected" ? r.validationNotes : null,
+      reimbursement: paid ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
+      purchaseOutcome: outcomeOf(r, outcomes),
+    }));
   },
 
   async listForOrg() {
@@ -1192,11 +1254,18 @@ export const receiptService = {
   },
 
   /**
-   * How many of the org's receipts wait on this FINANCE viewer, in all and per state, for the
-   * host's nav pill and the review queues. A receipt the viewer is conflicted on is left out.
+   * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
+   * review queues. The total also holds undelivered receipts catch-up gave up on, which have no
+   * queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
-    const rows = await receiptRepo.listParties({ orgId: (await getOrg()).id, details: { state: { in: [...FINANCE_ACTION_STATES] } } });
+    const orgId = (await getOrg()).id;
+    const [queued, undelivered] = await Promise.all([
+      receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
+      receiptRepo.listParties({ orgId, pushedAt: null, details: { state: "receipt_finalized" } }),
+    ]);
+    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    const rows = [...queued, ...undelivered.filter((r) => stopped.has(r.id))];
     const lookups = new Map<string, Promise<number[]>>();
     const partiesOf = (r: Parties): Promise<number[]> => {
       const key = `${r.uploadedByUserId}:${r.reimburseePersonId}`;
@@ -1211,7 +1280,7 @@ export const receiptService = {
     let total = 0;
     rows.forEach((r, i) => {
       if (conflicted[i]) return;
-      byState[r.state] += 1;
+      if (r.state in byState) byState[r.state] += 1;
       total += 1;
     });
     return { total, byState };
@@ -1219,25 +1288,47 @@ export const receiptService = {
 
   async listNeedsAttention(access: Access) {
     const actor = await requireActor();
+    const orgId = (await getOrg()).id;
     const rows = await receiptRepo.list({
-      orgId: (await getOrg()).id,
+      orgId,
       ...(access === "submitter" ? { uploadedByUserId: actor.id } : {}),
       details: { state: { in: NEEDS_ATTENTION } },
     });
-    return access === "finance" ? rows : rows.map(toSubmitterView);
+    if (access !== "finance") return rows.map(toSubmitterView);
+    const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
+    const records = await pushRecords(orgId, undelivered.map((r) => r.id));
+    return [...rows, ...undelivered.flatMap((r) => (records.get(r.id)?.pushGivenUp ? [{ ...r, ...records.get(r.id) }] : []))];
   },
 
   /**
    * How many of this person's receipts wait on them, for the host's nav pill: those in a state that
-   * waits on the uploader, less a reimbursement for someone else, which its reimbursee confirms.
+   * waits on the uploader, less a reimbursement for someone else, which its reimbursee confirms,
+   * plus each rejected one they have not yet acknowledged.
    */
   async countAwaitingSubmitter(personId: number): Promise<number> {
     return receiptRepo.count({
       orgId: (await getOrg()).id,
       uploadedByUserId: personId,
-      details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-      NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+      OR: [
+        {
+          details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
+          NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+        },
+        { details: { state: "rejected", rejectionAcknowledgedAt: null } },
+      ],
     });
+  },
+
+  /** The uploader acknowledges finance's rejection of their receipt, which leaves their pill. A repeat does nothing. */
+  async acknowledgeRejection(id: string) {
+    const actor = await requireActor();
+    const row = await load(id, "submitter", actor);
+    if (row.state !== "rejected") throw new ServiceError(400, "Only a rejected receipt is acknowledged");
+    if (row.rejectionAcknowledgedAt === null) {
+      const acknowledged = await db.receiptDetail.updateMany({ where: { id, rejectionAcknowledgedAt: null }, data: { rejectionAcknowledgedAt: new Date() } });
+      if (acknowledged.count > 0) await audit(db, id, actor, { action: "rejection_acknowledged" });
+    }
+    return toSubmitterView(await load(id, "submitter", actor));
   },
 
   /**

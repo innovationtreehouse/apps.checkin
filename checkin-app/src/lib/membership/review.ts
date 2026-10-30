@@ -515,8 +515,7 @@ export async function clearBackgroundCheck(
 
     // PERSON_BG: subject-scoped. Stamp ONLY the subject person and resolve — there is
     // no household membership to activate/pay, so skip the payment/activation
-    // convergence entirely, and do NOT touch the household-lead blanket stamp (that's
-    // the household path below, whose lead-stamp change is Phase 5).
+    // convergence entirely. The household path below stamps the adults its review covered.
     if (process.subjectPersonId) {
         const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
         await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });

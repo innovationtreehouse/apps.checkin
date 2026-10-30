@@ -167,6 +167,14 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
+    "board.inventoryEventsStuck": {
+        // problem: what the catch-up found, in code because it depends on the failure.
+        allowedTokens: { problem: text },
+        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
+        defaultSubject: "Inventory: catalog events need attention",
+        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },
@@ -186,7 +194,13 @@ export const REGISTRY = {
         allowedTokens: { messages: text, since: text, actionLink: link("Open the incoming receipt queue") },
         sampleCtx: { messages: "6", since: ", the oldest received Sat, 07 Mar 2026 10:05:00 GMT", actionLink: SAMPLE_URL },
         defaultSubject: "Receipts: mailed receipts are about to be missed",
-        defaultBody: "Today's mail run did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They leave the 3-day reading window before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
+        defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 3-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
+    },
+    "finance.receiptMailboxUnreadable": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: the receipt mailbox could not be read",
+        defaultBody: "Today's mail run could not list the receipt mailbox, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have the mailbox's Gmail access checked, then upload or forward anything that was missed. {{actionLink}}",
     },
     "finance.incomeBucketUnusable": {
         allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },

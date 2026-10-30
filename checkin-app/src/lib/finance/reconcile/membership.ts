@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
-import { activateByProcessId, type ActivateOutcome } from "@/lib/membership/payment";
+import { activateByProcessId, type ActivateOutcome, type MembershipLine } from "@/lib/membership/payment";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
@@ -32,21 +33,29 @@ export async function raiseMembershipPaymentOutcome(
 }
 
 /**
- * The membership variant-id set (BoardSettings variants + the dev-mock variant
- * when the Shopify mock is active) — the ONE "is this line a membership?" rule.
- * Exported so matchAudit.ts consumes the same set as the #1074 item gate; a
- * variant added here but missed in a private copy would silently VANISH from
- * the audit (filtered out in SQL), not show as a gap.
+ * Membership variant id → the year it sells: the ONE "is this line a membership?"
+ * rule. Exported so matchAudit.ts consumes the same keys as the item gate; a variant
+ * missed in a private copy would silently VANISH from the audit (filtered out in
+ * SQL), not show as a gap. The BoardSettings variant and the dev-mock variant (when
+ * the Shopify mock is active) sell the live year at `paidAt` unless a row claims them.
  */
-export function membershipVariantIdSet(settings: {
-    orgMembershipVariantId: string | null;
-} | null): Set<string> {
-    return new Set(
-        [
-            settings?.orgMembershipVariantId,
-            config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null,
-        ].filter((v): v is string => !!v),
-    );
+export async function membershipVariantYears(
+    settings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null,
+    paidAt: Date,
+): Promise<Map<string, number | null>> {
+    const rows = await prisma.membershipYearVariant.findMany({ select: { shopifyVariantId: true, membershipYear: true } });
+    const years = new Map<string, number | null>(rows.map((r) => [r.shopifyVariantId, r.membershipYear]));
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt);
+    for (const variantId of [settings?.orgMembershipVariantId, config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null]) {
+        if (variantId && !years.has(variantId)) years.set(variantId, liveYear);
+    }
+    return years;
+}
+
+/** The order's membership line, or null when no line's variant sells a membership year. */
+export function findMembershipLine(years: Map<string, number | null>, lineVariantIds: string[]): MembershipLine | null {
+    const variantId = lineVariantIds.find((v) => years.has(v));
+    return variantId === undefined ? null : { appliesToYear: years.get(variantId) ?? null };
 }
 
 /**
@@ -182,7 +191,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
 
     // Membership-item gate, parity with the orders/paid webhook: recover only if the
     // order actually CONTAINS a membership product (its variant id), the same
-    // membershipVariantIdSet the webhook builds — mirrored
+    // membershipVariantYears the webhook builds — mirrored
     // onto order lines since #1048. A variant id is stable and can't drift; the old
     // total-price gate false-raised AMOUNT_MISMATCH on every couponed order (volunteer
     // rate, promo), whose sub-fee total is indistinguishable from an underpayment by
@@ -191,12 +200,14 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
         where: { id: 1 },
         select: {
             orgMembershipVariantId: true,
+            orgMembershipYearBoundary: true,
             standardMembershipFeeCents: true,
             volunteerMembershipFeeCents: true,
             volunteerFamilyDiscountCode: true,
         },
     });
-    const membershipVariantIds = membershipVariantIdSet(settings ?? null);
+    const paidAt = order.processedAt ?? new Date();
+    const variantYears = await membershipVariantYears(settings ?? null, paidAt);
     const lineVariantIds = await mirror.orderLineVariantIds(order.orderGid);
     // Both branches below need the membership's volunteer flag: the amount-gate
     // fallback for the expected membership fee, the coupon entitlement check for volunteerOnly.
@@ -204,9 +215,11 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
         ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { isVolunteerFamily: true } })
         : null;
 
+    let line: MembershipLine | null;
     if (lineVariantIds.length > 0) {
         // Post-#1048 order: variant ids are mirrored, so the item check is authoritative.
-        if (!lineVariantIds.some((v) => membershipVariantIds.has(v))) {
+        line = findMembershipLine(variantYears, lineVariantIds);
+        if (!line) {
             // Attributed to a pending process, paid, but no membership product on it —
             // the webhook's NO_ITEM case (activate() fails closed there).
             await raisePaymentException("NO_ITEM", { shopifyOrderId: order.legacyId, processId: proc.id });
@@ -223,6 +236,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
             await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: order.legacyId, processId: proc.id });
             return true;
         }
+        line = { appliesToYear: liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt) };
     }
 
     // Coupon entitlement: the item gates above prove the order carries the membership
@@ -236,12 +250,12 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
         return true;
     }
 
-    // Recover: advance past the paid checkpoint. hasMembershipItem=true — the order
+    // Recover: advance past the paid checkpoint, with the line found above — the order
     // contains a known membership variant (or, for a pre-backfill order, covers the membership fee)
     // and is matched to this specific pending process (honest missed-webhook
     // assumption; the reconciler is not the attack surface the public webhook is, and
     // it leaves a full AuditLog trail via activate()).
-    const { outcome } = await activateByProcessId(proc.id, order.legacyId ?? "", true);
+    const { outcome } = await activateByProcessId(proc.id, order.legacyId ?? "", line);
     logger.info(`[reconcile] recovered missed payment: process ${proc.id} ← order ${order.legacyId} (${outcome})`);
     await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId: order.legacyId, processId: proc.id });
     return true;

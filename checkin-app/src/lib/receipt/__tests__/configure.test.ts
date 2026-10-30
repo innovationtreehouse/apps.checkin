@@ -2,6 +2,9 @@ import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
 import type { Session } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { notifyFinanceAlert } from '@/lib/emailRecipients';
+import { expenseOutcomes } from '@checkin/expense';
+import { receivingOutcomes } from '@checkin/workflow-mapping';
+import { giftOutcomes } from '@checkin/bulk-donation';
 import { sessionUser } from '@/lib/components/host';
 import { configureRuntime } from '../configure';
 
@@ -12,9 +15,9 @@ jest.mock('@checkin/receipt', () => ({
     createGmailReader: jest.fn(() => ({ listRecent: jest.fn() })),
     fixtureOcr: {},
 }));
-jest.mock('@checkin/expense', () => ({ reimbursementStatus: {} }));
-jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn() }));
-jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ reimbursementStatus: {}, expenseOutcomes: { forReceipts: jest.fn() } }));
+jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receivingOutcomes: jest.fn() }));
+jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 
@@ -148,6 +151,13 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
     });
 
+    it('alerts finance when the mailbox cannot be listed', async () => {
+        await boundConfig().alerts?.mailListingFailed({ orgId: 'org' });
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(key).toBe('finance.receiptMailboxUnreadable');
+        expect(values).toMatchObject({ actionLink: expect.stringContaining('/receipts/mail') });
+    });
+
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
         const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
@@ -209,6 +219,22 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
+    });
+});
+
+describe('receipt runtime: purchase outcome binding', () => {
+    it('joins receiving, the expense and the gift for each receipt asked about', async () => {
+        jest.mocked(receivingOutcomes).mockResolvedValue(new Map([['r-1', 'received'], ['r-2', 'waiting']]));
+        jest.mocked(expenseOutcomes.forReceipts).mockResolvedValue(new Map([['r-1', { status: 'line_rejected', notes: ['Not a program cost'] }]]));
+        jest.mocked(giftOutcomes).mockResolvedValue(new Map());
+        const answer = await boundConfig().purchaseOutcomes?.forReceipts(['r-1', 'r-2', 'r-3']);
+        expect(answer).toEqual(
+            new Map([
+                ['r-1', { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
+                ['r-2', { receiving: 'waiting', money: null, gift: null }],
+                ['r-3', { receiving: null, money: null, gift: null }],
+            ]),
+        );
     });
 });
 

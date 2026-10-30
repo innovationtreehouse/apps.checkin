@@ -492,10 +492,6 @@ describe('saveIntake', () => {
         expect(addHouseholdLead).toHaveBeenCalledWith(prisma, 7, 55);
     });
 
-    // #1432 follow-up: the plan's table wrongly marked this row closed by
-    // #1688, which closed explicit `null` only — a blank/whitespace name still
-    // wrote through. Same rejection as sites 9/10 (Decision 5): a submitted
-    // name is required to be non-blank.
     it('rejects blanking an existing secondary parent name on update', async () => {
         await expect(saveIntake(1, { secondaryParent: { id: 4, name: '   ' } })).rejects.toMatchObject({ code: 'name_required' });
         expect(prisma.person.update).not.toHaveBeenCalled();

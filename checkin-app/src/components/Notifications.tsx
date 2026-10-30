@@ -34,9 +34,6 @@ export default function Notifications() {
 
   return (
     <Group gap="sm" wrap="wrap">
-      {/* Reviewer's pending-review queue moved to the green /membership-ops nav+tab
-          pill (reviewBadges → review.canActOn, branch claude/cool-chatelet-760f39):
-          same count, same gate, an action-green surface in the right place. */}
       {m.blocked > 0 && (
         <Button
           component={Link}

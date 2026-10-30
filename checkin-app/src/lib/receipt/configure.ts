@@ -3,32 +3,46 @@
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
  * are read lazily, inside a request, and so are households. Bound crossings: X6 (the S1 sink,
  * workflow-mapping's intake, which dedupes on `receiptId`), X12 (reimbursement status, read
- * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable") and X13
- * (the donor sink, bound to donations in-process). Mail intake (§2a) is bound only on a deployed
+ * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable"), X13
+ * (the donor sink, bound to donations in-process) and the purchase outcome (receiving, expense
+ * and donations, joined here). Mail intake (§2a) is bound only on a deployed
  * instance with both the token refresher and the mailbox configured; each mailed receipt is
  * acknowledged by email (mailReply.ts).
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
 import { z } from "zod";
-import { reimbursementStatus, submitterConfirmations } from "@checkin/expense";
+import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
   createAnthropicOcr,
   createGmailReader,
   fixtureOcr,
   type MailboxReader,
+  type PurchaseOutcome,
   type ReceiptAlerts,
   type ReceiptReplies,
   type ReceiptPrincipal,
   type ReimburseeOption,
 } from "@checkin/receipt";
-import { ingestReceipt } from "@checkin/workflow-mapping";
-import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
+import { ingestReceipt, receivingOutcomes } from "@checkin/workflow-mapping";
+import { giftOutcomes, recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
+
+/** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
+async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
+  const [receiving, money, gift] = await Promise.all([
+    receivingOutcomes(receiptIds),
+    expenseOutcomes.forReceipts(receiptIds),
+    giftOutcomes(receiptIds),
+  ]);
+  return new Map(
+    receiptIds.map((id) => [id, { receiving: receiving.get(id) ?? null, money: money.get(id) ?? null, gift: gift.get(id) ?? null }]),
+  );
+}
 
 /**
  * The signed-in person as a receipt principal; null for any session checkin refuses or one
@@ -200,6 +214,12 @@ const alerts: ReceiptAlerts = {
       actionLink: `${config.baseUrl()}/receipts/mail`,
     }, "Receipt mail ageing alert failed:");
   },
+  async mailListingFailed() {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.receiptMailboxUnreadable", {
+      actionLink: `${config.baseUrl()}/receipts/mail`,
+    }, "Receipt mailbox listing alert failed:");
+  },
 };
 
 /** A live, sign-in-verified person's email and name, for a mailed receipt's acknowledgement. */
@@ -229,6 +249,7 @@ export function configureRuntime(): void {
     replies,
     reimbursementStatus,
     submitterConfirmations,
+    purchaseOutcomes: { forReceipts: purchaseOutcomes },
     receiptSink: { ingestReceipt },
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance

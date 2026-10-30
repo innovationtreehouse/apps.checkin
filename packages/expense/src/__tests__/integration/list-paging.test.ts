@@ -1,14 +1,14 @@
 /** List routes return one page: 50 rows by default, never more than 200 whatever `limit` asks. */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { ORG } from "../helpers/seed";
+import { ORG, principal } from "../helpers/seed";
 import { db } from "../../db";
 import { finance } from "../../routes";
 
 const ROWS = 201;
 
 async function exclusions(query: string): Promise<unknown> {
-  const out = await finance.qbExclusions({ req: new Request(`http://test/api/expense/qb-exclusions${query}`), params: {} });
+  const out = await finance.qbExclusions({ req: new Request(`http://test/api/expense/qb-exclusions${query}`), params: {}, principal: principal(1, { isFinance: true }) });
   return out.ExpenseQbMatchExclusion;
 }
 

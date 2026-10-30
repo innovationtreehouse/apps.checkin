@@ -439,6 +439,12 @@ Procedure below is built on them.
 - Nobody is removed for falling out of compliance. The view reports and sends
   nothing, so a violation waits until a person looks.  [Decision — deliberate limit; *Principle: people decide about people*]
 
+### Adding a contact
+
+- "Add contact", which creates a person from a name and email address alone, is
+  for the Board and operations. The person gets a household of their own, with no
+  membership, and leads it.  [Decision — deliberate limit]
+
 ### Background checks for individual adults
 
 - Activating a membership opens a background-check obligation for that
