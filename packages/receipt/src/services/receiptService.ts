@@ -1097,6 +1097,7 @@ export const receiptService = {
     const updated = await db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, EDIT_STATE_MESSAGE);
       if (input.isInKind && locked.needsReimbursement) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
+      if (input.isInKind && locked.qbTxnId) throw new ServiceError(400, "This receipt is already in QuickBooks, so it can't be marked as a donation");
       if (!input.isInKind && locked.donorSync === "none") return false;
       await tx.receipt.update({ where: { id }, data: { isInKind: input.isInKind, donorSync: "pending", donorSyncSeq: { increment: 1 }, ...donor } });
       await audit(tx, id, actor, {
