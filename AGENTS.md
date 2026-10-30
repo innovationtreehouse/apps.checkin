@@ -347,6 +347,7 @@ Read these before changing the relevant area — start here, then follow links.
 
 **Architecture** (`docs/architecture/`)
 - `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` — single-pool Shopify capacity model + the scholarship hold-ledger state machine (read before touching `Program`/`ProgramParticipant` capacity or payment-plan logic).
+- `RECEIPT_PIPELINE.md` — one receipt from arrival to its QuickBooks entry: each hand-off between the receipt, workflow-mapping, expense and bulk-donation libraries, and the host file that binds it.
 
 **Subprojects** (each has its own `README.md`)
 - `client/` — the Raspberry-Pi kiosk client (Python).
