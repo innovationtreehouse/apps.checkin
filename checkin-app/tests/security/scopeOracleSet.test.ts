@@ -51,6 +51,7 @@ const ORACLES = [
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',
     'inventory-strip.test.ts',
+    'key-volunteer-strip.test.ts',
     'led-households-roster.test.ts',
     'mail-alias-routes.test.ts',
     'member-tier.test.ts',
