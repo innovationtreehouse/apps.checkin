@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
+import { methodsFor } from "../../lib/mergeConflictMethods";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
 import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createProvisionalResolutionRepository } from "../../lib/repositories/provisionalResolutionRepository";
@@ -158,6 +159,57 @@ describeDb("stock write concurrency", () => {
     expect(await db.inventoryLog.count({ where: { gtin13: REAL } })).toBe(1);
   });
 
+  describe("when the provisional holds no stock", () => {
+    const openConflict = () =>
+      db.inventoryMergeConflict.create({
+        data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 11 },
+      });
+
+    it.each([
+      ["a zero count", async () => { await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 0, desiredQuantity: 8 } }); }],
+      ["no row", async () => {}],
+    ])("use_provisional is refused with %s, leaving the real count and the conflict alone", async (_label, seedProvisional) => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 12 } });
+      await seedProvisional();
+      const conflict = await openConflict();
+
+      await expect(provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1))
+        .rejects.toMatchObject({ status: 409 });
+
+      expect(await qty(REAL)).toBe(12);
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "pending" });
+    });
+
+    it("use_provisional is refused on a removed real row, keeping the provisional's settings", async () => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 0, desiredQuantity: 8 } });
+      const conflict = await openConflict();
+
+      await expect(provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1))
+        .rejects.toMatchObject({ status: 409 });
+
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toMatchObject({ desiredQuantity: 8 });
+    });
+
+    it.each(["use_existing", "sum"] as const)("%s still closes it at the real count", async (quantityMethod) => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 12 } });
+      const conflict = await openConflict();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 1);
+
+      expect(await qty(REAL)).toBe(12);
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+    });
+
+    it("the page offers use_provisional only for a provisional with stock", () => {
+      const offered = (quantity: number) => methodsFor(quantity).map((m) => m.value);
+      expect(offered(0)).toEqual(["use_existing", "sum"]);
+      expect(offered(1)).toEqual(["use_existing", "use_provisional", "sum"]);
+    });
+  });
+
   describe("after the real item's row was removed", () => {
     async function conflictOverRemovedRealItem() {
       await db.orgItem.create({
@@ -178,6 +230,23 @@ describeDb("stock write concurrency", () => {
       expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toMatchObject({ existingQuantity: 4, desiredQuantity: 8 });
       expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
       expect(await db.inventoryLog.findFirst({ where: { gtin13: REAL } })).toMatchObject({ valueBefore: "0", valueAfter: "4" });
+    });
+
+    it("keeps a first receipt that creates the real row while the resolve runs", async () => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      // The receipt's insert is uncommitted, so the resolve sees no real row and waits on the unique index.
+      let resolving!: Promise<unknown>;
+      await db.$transaction(async (tx) => {
+        await tx.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 3 } });
+        resolving = provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1);
+        await someoneBlocked();
+      });
+      await resolving;
+
+      expect(await qty(REAL)).toBe(7);
+      expect(await db.inventoryLog.findFirst({ where: { gtin13: REAL } })).toMatchObject({ valueBefore: "3", valueAfter: "7" });
     });
 
     it("use_existing closes it without bringing the removed row back", async () => {
