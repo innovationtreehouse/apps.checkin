@@ -278,6 +278,39 @@ describe("reviewing an OCR-read receipt", () => {
   });
 });
 
+describe("typing the details of a receipt OCR could not read", () => {
+  const unread = {
+    ...receipt, state: "ocr_failed", validationNotes: "OCR failed: not configured", retailer: null, receiptDate: null,
+    receiptTotalCents: null, taxCents: 0, shippingCents: 0, lineItems: [],
+  };
+
+  it("still offers reading it again, and refuses to move on while details are blank", () => {
+    mockReceipt = unread;
+    wrap();
+    expect(screen.getByRole("button", { name: "Read it again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("saves the typed details, then sends the receipt on through the flow", async () => {
+    mockReceipt = { ...unread, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    type("Retailer", "Acme");
+    type("Date", "2026-10-01");
+    type("Receipt total", "5.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1", "/r1/resubmit"]);
+    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+  });
+
+  it("sends on details saved before a failed resubmit, with nothing left to save", async () => {
+    mockReceipt = { ...unread, retailer: "Acme", receiptDate: "2026-10-01", receiptTotalCents: 500, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+  });
+});
+
 describe("a submitter's tax or date correction in finance review", () => {
   const edit = (id: number, userId: number, fieldChanged: string, valueBefore: string, valueAfter: string) => ({
     id, action: "field_edit", userId, username: "alice", fieldChanged, valueBefore, valueAfter, changedAt: "2026-10-02T00:00:00Z",
