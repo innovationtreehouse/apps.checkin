@@ -9,6 +9,7 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -131,10 +132,12 @@ export type ActivateOutcome =
  *   so a later clearance can never activate an unpaid application.
  * - Any other paid order — duplicate, after certify, after close, before payment
  *   was due — records nothing and returns `nothing_due`.
+ *
+ * The move out of PENDING_PAYMENT records the membership year the settlement bought.
  */
 async function settle(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null },
 ): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
@@ -220,7 +223,7 @@ async function settle(
         }
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null },
-            data: { paidAt: now, stageEnteredAt: now, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE" },
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE" },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -277,7 +280,7 @@ async function auditNoItem(tx: Prisma.TransactionClient, processId: number, stat
 /** Record a payment against a process (see settle). Returns the process row. */
 export async function activate(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null },
 ) {
     await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -287,9 +290,9 @@ export async function activate(
  * Board override: certify a payment plan and activate without a Shopify payment.
  * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
  * the actor's own household; activate() rejects (409) under the row lock unless
- * the process is awaiting payment.
+ * the process is awaiting payment. Records `year`, or with none the live year.
  */
-export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string }) {
+export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number }) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
     // caller (grant, renewal grant, payment-plan approve, certify-payment) is covered.
     const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { isBoardMember: true } });
@@ -302,12 +305,17 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     if (await hasHouseholdConflict(prisma, actorId, process.orgMembership?.householdId)) {
         throw new PaymentError("forbidden", "You cannot certify your own household's membership — someone outside your household must.");
     }
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason });
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const appliesToYear = opts?.year ?? liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear });
 }
 
-/** Shopify path (webhook + reconcile): settle a paid order and say what it did. */
-export async function activateByProcessId(processId: number, shopifyOrderId: string, hasMembershipItem: boolean) {
-    const { outcome } = await settle(processId, { via: "payment", shopifyOrderId, hasMembershipItem });
+/** An order's membership line and the year it buys; the year is null when no boundary is set. */
+export type MembershipLine = { appliesToYear: number | null };
+
+/** Shopify path (webhook + reconcile): settle a paid order and say what it did. A null line means no membership product. */
+export async function activateByProcessId(processId: number, shopifyOrderId: string, line: MembershipLine | null) {
+    const { outcome } = await settle(processId, { via: "payment", shopifyOrderId, hasMembershipItem: line !== null, appliesToYear: line?.appliesToYear });
     return { outcome, process: await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }) };
 }
 

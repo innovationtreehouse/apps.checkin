@@ -18,6 +18,7 @@ import { POST as DenyPost } from '@/app/api/finance-ops/membership-payment-plans
 import { POST as RequestPost } from '@/app/api/membership/request-payment-plan/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, renderAckBody } from '@/lib/scholarshipEmails';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -188,6 +189,8 @@ describe('Membership payment-plan routes', () => {
             expect(proc?.isPaymentPlanRequested).toBe(false);
             expect(proc?.manualPaymentById).toBe(boardId);
             expect(proc?.certificationNote).toBe('Board approved scholarship');
+            const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+            expect(proc?.appliesToYear).toBe(liveMembershipYear(settings?.orgMembershipYearBoundary, new Date()));
 
             const membership = await prisma.orgMembership.findUnique({ where: { id: leadMembershipId } });
             expect(membership?.status).toBe('ACTIVE');

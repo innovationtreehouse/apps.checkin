@@ -612,7 +612,35 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(res.status).toBe(200);
         // H2: whether the order actually contains the configured membership variant
         // is forwarded so activate() can enforce it.
-        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', true);
+        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: null });
+    });
+
+    it('forwards the year of the order\'s variant row', async () => {
+        const variant = 'year-row-variant-1655';
+        await prisma.membershipYearVariant.create({ data: { membershipYear: 2031, shopifyVariantId: variant } });
+        try {
+            const body = JSON.stringify({
+                financial_status: 'paid',
+                id: 98770,
+                line_items: [{ variant_id: variant }],
+                note_attributes: [{ name: 'Membership_Process_ID', value: '44' }],
+            });
+            expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        } finally {
+            await prisma.membershipYearVariant.delete({ where: { membershipYear: 2031 } });
+        }
+        expect(activateByProcessId).toHaveBeenCalledWith(44, '98770', { appliesToYear: 2031 });
+    });
+
+    it('forwards no membership line for a variant in no year\'s row', async () => {
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98771,
+            line_items: [{ variant_id: 'not-a-membership-variant' }],
+            note_attributes: [{ name: 'Membership_Process_ID', value: '45' }],
+        });
+        expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(45, '98771', null);
     });
 
     it('activates the program seat AND the membership when one order carries both', async () => {
@@ -629,7 +657,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
-        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', true);
+        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', { appliesToYear: null });
         const row = await prisma.programParticipant.findUnique({
             where: { programId_personId: { programId, personId: p1 } },
         });

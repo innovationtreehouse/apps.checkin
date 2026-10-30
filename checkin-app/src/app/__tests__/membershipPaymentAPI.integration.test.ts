@@ -15,6 +15,7 @@ import { GET as PAYMENT } from '@/app/api/membership/payment/route';
 import { ensurePaymentLink, ensurePaymentLinkForUser, activate } from '@/lib/membership/payment';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
@@ -219,6 +220,8 @@ describe('Membership payment API', () => {
         expect(proc?.status).toBe('ACTIVE');
         expect(proc?.manualPaymentById).toBe(boardId);
         expect(proc?.certificationNote).toBe('Paid by check, deposited manually');
+        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        expect(proc?.appliesToYear).toBe(liveMembershipYear(settings?.orgMembershipYearBoundary, new Date()));
 
         // The audit row records WHO recorded the payment — the acting board member, not SYSTEM_ACTOR.
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: certProc }, orderBy: { id: 'desc' } });

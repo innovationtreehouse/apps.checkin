@@ -16,6 +16,7 @@
 import { POST } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -410,6 +411,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(process?.paidAt).not.toBeNull();
         expect(process?.manualPaymentById).toBe(boardId);
         expect(process?.certificationNote).toBe('Family paid the membership fee in person at the board meeting.');
+        expect(process?.appliesToYear).toBe(liveMembershipYear(BOUNDARY, new Date()));
         const processCount = await prisma.orgMembershipProcess.count({ where: { orgMembershipId: grantableMembershipId } });
         expect(processCount).toBe(1);
 

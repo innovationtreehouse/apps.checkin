@@ -77,6 +77,7 @@ beforeEach(() => {
     activate.mockResolvedValue({ outcome: 'active', process: { status: 'ACTIVE' } });
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
     prisma.boardSettings.findUnique = boardSettingsFindUnique as unknown as typeof prisma.boardSettings.findUnique;
+    prisma.membershipYearVariant.findMany = jest.fn().mockResolvedValue([]) as unknown as typeof prisma.membershipYearVariant.findMany;
 });
 
 describe('POST /api/webhooks/shopify — delivery receipts', () => {
@@ -91,7 +92,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
     it('records a valid membership delivery with hmacValid true and a settled outcome', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
-        expect(activate).toHaveBeenCalledWith(12, '999001', false);
+        expect(activate).toHaveBeenCalledWith(12, '999001', null);
         expect(auditCreate).toHaveBeenCalledTimes(1);
         const { data } = auditCreate.mock.calls[0][0];
         expect(data.tableName).toBe('ShopifyWebhookReceipt');
@@ -127,7 +128,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
         expect((await res.json()).success).toBe(true);
-        expect(activate).toHaveBeenCalledWith(12, '999001', false);
+        expect(activate).toHaveBeenCalledWith(12, '999001', null);
     });
 
     it('flags Shopify\'s "Send test notification" sample as test: true', async () => {
