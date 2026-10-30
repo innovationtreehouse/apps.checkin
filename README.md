@@ -50,7 +50,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 
 ### Deployment & operations
 
-- **[Production Launch Runbook](docs/designs/PRODUCTION_PLAN.md)** — the ordered checklist behind ops.innovationtreehouse.org.
+- **[Production Runbook](docs/ops/production-runbook.md)** — how to deploy to ops.innovationtreehouse.org and roll back.
 - **[Deploy / Migration Order of Operations](docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md)** — why migrations run before rollout and what that implies for schema changes.
 - **[Migration Coalesce Flow](docs/ops/MIGRATION_COALESCE_FLOW.md)** — a release may apply at most **one** new migration; how to coalesce accumulated migrations ([`checkin-app/scripts/coalesce-migrations.ts`](checkin-app/scripts/coalesce-migrations.ts)).
 - **[`.github/workflows/`](.github/workflows/)** — [`ci.yml`](.github/workflows/ci.yml) (lint, tests, build — also reused to revalidate release tags), [`deploy-dev.yml`](.github/workflows/deploy-dev.yml) (merge to main → dev), [`deploy-prod.yml`](.github/workflows/deploy-prod.yml) (published `v*` release → prod, human-approved), [`migration-safety.yml`](.github/workflows/migration-safety.yml) (new migrations must apply to a *populated* DB), [`flow-tests.yml`](.github/workflows/flow-tests.yml), [`shopify-live.yml`](.github/workflows/shopify-live.yml), [`security-boundary-isolation.yml`](.github/workflows/security-boundary-isolation.yml).

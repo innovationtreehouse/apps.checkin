@@ -3,12 +3,12 @@
 This working doc plans the one-time move of the existing docs into the classes
 `DOCUMENTATION_STANDARD.md` defines. It is deleted by the last PR in §4.
 
-The rules register, the reorganised `AGENTS.md` map and most of the ops moves
-are on `main`. What remains is to empty both `designs/` folders, split the
-vocabulary, finish two domain files, and settle the questions in §7. Section 4
-breaks that into PRs small enough to hand to one session each.
+The rules register, the reorganised `AGENTS.md` map, the ops moves and the
+vocabulary split are on `main`, and `checkin-app/docs/` is gone. What remains is
+to empty `docs/designs/`, close out, and settle Q2. Section 4 breaks the work into
+PRs small enough to hand to one session each.
 
-State in this doc was checked against `main` at `bf17f8610` on 2026-10-16.
+State in §3 was checked against `main` at `1e98ce93b` on 2026-10-30.
 
 ---
 
@@ -57,16 +57,16 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `ARCHITECT_IDEAS_o46.md` | Still-open items became backlog rows PL18–PL26; deleted | done, PR 2 |
 | `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moved to `docs/architecture/` (Q4) | done, PR 4 |
 | `DESIGN.md` | Use cases checked against the register; three missing rules added to `attendance-checkin.md` and `people-households.md`; deleted | done, PR 2 |
-| `PRODUCTION_PLAN.md` | The app is live, so only its deploy and rollback runbook moves, to `docs/ops/production-runbook.md`; unfinished follow-ups become issues; the launch checklist is dropped (Q7) | todo, PR 3 |
+| `PRODUCTION_PLAN.md` | The app is live, so only its deploy and rollback runbook moves, to `docs/ops/production-runbook.md`; unfinished follow-ups become issues; the launch checklist is dropped (Q7) | done, PR 3 |
 | `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
 ### 3.2 `checkin-app/docs/designs/`
 
 | File | Action | Status |
 |---|---|---|
-| `1256_ATTENDANCE_CORRECTION_SURFACE.md` | Retire | in flight, #2275 |
-| `975-LEGACY_VARIANT_CONTRACT.md` | Retire | in flight, sibling session |
-| `1441_PROGRAM_DATES.md` | Retire | in flight, #2262 |
+| `1256_ATTENDANCE_CORRECTION_SURFACE.md` | Retire | done, #2275 |
+| `975-LEGACY_VARIANT_CONTRACT.md` | Retire | done |
+| `1441_PROGRAM_DATES.md` | Retire | done, #2262 |
 | `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | done, PR 1 |
 | `SHOPIFY_DEV_STORE_WEBHOOK.md` | Ops reference; move to `docs/ops/shopify-dev-store.md`, keeping the §2, §4 and §6 numbering that code cites | done, PR 1 |
 | `SHOPIFY_MEMBER_SEGMENT_PRICING.md` | Not built; move to `docs/in-design/` | done, PR 1 |
@@ -79,10 +79,10 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | Work | Action | Status |
 |---|---|---|
 | `VOCABULARY.md` | Build conventions to `docs/conventions.md`; drop the migration log; domain facts to the register or cut where already there (§3.4); then to `docs/VOCABULARY.md` (Q6) | done, PR 6 and the DM-6 PR |
-| `docs/rules/expenses.md`, `inventory.md` | No Policy section yet; check the policy corpus and add one, even if empty | todo, PR 7, after #2224 |
-| Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | backlog pointer done, PR 2; source comments todo, PR 8 |
+| `docs/rules/expenses.md`, `inventory.md` | No Policy section yet; check the policy corpus and add one, even if empty | done, PR 7 |
+| Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | done, PR 2 and PR 8 |
 | Root-vs-app split | Per Q6: `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` and `MIGRATION_COALESCE_FLOW.md` to `docs/ops/`, `VOCABULARY.md` to `docs/`, `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` to `docs/architecture/`, the lifecycle diagrams to `docs/generated/lifecycle/`; `UNFINISHED.md` stays until PR 5 deletes it, and `checkin-app/docs/` goes with it | done, the DM-6 PR |
-| `AGENTS.md` "Design & product" block | Rewritten as an Operations block once its last entry moves | todo, PR 3 |
+| `AGENTS.md` "Design & product" block | Rewritten as an Operations block once its last entry moves | done, PR 3 |
 
 ### 3.4 What the vocabulary split moves
 
