@@ -97,10 +97,10 @@ const ALIAS_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', ['everyones:pii', 'everyones:internal', 'public']],
     ['isBoardMember', ['everyones:pii', 'everyones:internal', 'public']],
 ];
-defineRoute({ endpoint: 'GET /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'POST /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'DELETE /api/finance/mail-aliases/[id]', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'GET /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'DELETE /api/finance/mail-aliases/[id]', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
 
 // Mailbox ignore list: FINANCE only, kept beside the mail queue. A held mail
 // item joins it through the discard route above (`ignoreFile: true`).
