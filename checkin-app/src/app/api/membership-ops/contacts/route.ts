@@ -9,9 +9,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 
-// Email-only contact creation for Board + Operations. Sysadmin is deliberately
-// EXCLUDED (Jeff's decision; same board-only shape as Finance Ops #1083) — do
-// NOT add 'isSysadmin' here.
+// Email-only contact creation for Board + Operations; do NOT add 'isSysadmin'
+// (docs/rules/membership.md, "Adding a contact").
 export const POST = withAuth({ roles: ['isBoardMember', 'isOperations'] }, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     try {
