@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface ExclusionRow {
   id: number;
@@ -33,7 +33,7 @@ export default function ExclusionsPage() {
       rows.reload();
       notifyNavCounts();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }

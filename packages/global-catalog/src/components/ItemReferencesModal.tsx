@@ -7,7 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
@@ -51,7 +51,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
       exitEdit();
       notifications.show({ message: "Reference updated", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }
@@ -142,7 +142,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       setShowAdd(false);
       notifications.show({ message: "Reference added", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     } finally { setCreating(false); }
   }
 
@@ -152,7 +152,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       await loadRefs();
       notifications.show({ message: "Reference archived", color: "orange" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" });
+      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
     }
   }
 

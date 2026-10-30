@@ -4,6 +4,7 @@
  * throws ServiceError for every expected failure, which componentRoute renders.
  */
 import { recordReceiptDonorReads } from "@checkin/bulk-donation";
+import { parseId } from "@checkin/component-kit";
 import type { Access } from "@checkin/receipt";
 import { readCapped } from "@checkin/utils";
 import { componentRoute } from "@/lib/components/route";
@@ -61,23 +62,11 @@ export function sessionId(ctx: HandlerContext<Record<string, string>>): number {
   return ctx.auth.user.id;
 }
 
-export function mailItemId(raw: string): number {
-  const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid mail item id");
-  return id;
-}
+export const mailItemId = (raw: string): number => parseId(raw, "mail item id");
 
-export function lineItemId(raw: string): number {
-  const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid line item id");
-  return id;
-}
+export const lineItemId = (raw: string): number => parseId(raw, "line item id");
 
-export function ignoredFileId(raw: string): number {
-  const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid ignored file id");
-  return id;
-}
+export const ignoredFileId = (raw: string): number => parseId(raw, "ignored file id");
 
 /**
  * A line row carries no owner column, and the stripper scopes each nested row by itself, so a

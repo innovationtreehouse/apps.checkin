@@ -22,7 +22,7 @@ export type AdminHousehold = {
   emergencyContactPhone: string | null;
   householdMembers?: Array<{ id: number; name: string | null; email: string | null; dateOfBirth?: string | null }>;
   householdLeads?: Array<{ personId: number }>;
-  orgMembership?: { memberSince: string | null; isVolunteerFamily?: boolean; isVolunteer?: boolean } | null;
+  orgMembership?: { memberSince: string | null; isVolunteerFamily?: boolean } | null;
 } & Partial<StructuredAddress>;
 
 type FormState = {
@@ -94,8 +94,7 @@ export function AdminEditHouseholdModal({
           emergencyContactPhone: h.emergencyContactPhone || "",
           // date-only slice of the membership's join date (ISO → YYYY-MM-DD)
           memberSince: h.orgMembership?.memberSince ? h.orgMembership.memberSince.slice(0, 10) : "",
-          // isVolunteer comes from a server still on the pre-rename release during a deploy.
-          isVolunteerFamily: !!(h.orgMembership?.isVolunteerFamily ?? h.orgMembership?.isVolunteer),
+          isVolunteerFamily: !!h.orgMembership?.isVolunteerFamily,
         };
         setForm(loaded);
         setInitial(loaded);

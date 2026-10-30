@@ -52,7 +52,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   const [pendingRemoveVolId, setPendingRemoveVolId] = useState<number | null>(null);
   const [confirmAddPartOpened, { open: openConfirmAddPart, close: closeConfirmAddPart }] = useDisclosure(false);
   const [confirmRemovePartOpened, { open: openConfirmRemovePart, close: closeConfirmRemovePart }] = useDisclosure(false);
-  const [pendingRemovePartId, setPendingRemovePartId] = useState<number | null>(null);
+  const [pendingRemovePart, setPendingRemovePart] = useState<Participant | null>(null);
   const [pendingRemoveNeedsReason, setPendingRemoveNeedsReason] = useState(false);
   const [removeReason, setRemoveReason] = useState("");
 
@@ -72,9 +72,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init });
       const data = await readJson(res);
       if (res.ok) return data;
-      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: 6000 });
+      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: false });
     } catch {
-      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: 6000 });
+      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: false });
     }
     return null;
   };
@@ -155,7 +155,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       else {
         if (res.status === 409) {
           // Race: benign double-submit / stale view — already enrolled.
-          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: 4000 });
+          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: false });
           setNewPartId(""); setPartLabel("");
           fetchProgram();
         } else {
@@ -167,20 +167,21 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     }
   };
 
-  const handleRemoveParticipant = (participantId: number, needsReason = false) => {
-    setPendingRemovePartId(participantId);
+  const handleRemoveParticipant = (p: Participant, needsReason = false) => {
+    setPendingRemovePart(p);
     setPendingRemoveNeedsReason(needsReason);
     setRemoveReason("");
     openConfirmRemovePart();
   };
 
-  const confirmRemoveParticipant = async () => {
-    if (pendingRemovePartId === null) return;
+  // "remove" deletes a place nobody took up; "withdraw" keeps it as history.
+  const confirmRemoveParticipant = async (mode: 'remove' | 'withdraw') => {
+    if (pendingRemovePart === null) return;
     closeConfirmRemovePart();
-    const participantId = pendingRemovePartId;
+    const participantId = pendingRemovePart.personId;
     const reason = removeReason.trim();
-    setPendingRemovePartId(null);
-    const body = pendingRemoveNeedsReason ? { participantId, reason } : { participantId };
+    setPendingRemovePart(null);
+    const body = pendingRemoveNeedsReason ? { participantId, mode, reason } : { participantId, mode };
     const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
     if (data) {
       if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
@@ -269,7 +270,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
                   {isPriced && !isBoardMember ? (
                     <Button size="compact-xs" variant="subtle" color="red" disabled title="Only the Board removes a paid place">Remove</Button>
                   ) : (
-                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId, isBoardMember)}>Remove</Button>
+                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p, isBoardMember)}>Remove</Button>
                   )}
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
@@ -305,7 +306,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
                   <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}</Text>
-                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p.personId)}>Remove</Button>
+                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
@@ -334,7 +335,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       </Modal>
 
       <Modal opened={confirmRemovePartOpened} onClose={closeConfirmRemovePart} title={<Text span fw={700} fz="lg">Remove Participant</Text>} centered>
-        <Text mb="lg">Remove this participant?</Text>
+        <Text mb="lg">Did this participant take part? A withdrawal keeps their enrollment as history; removing deletes it as if they never enrolled.</Text>
         {pendingRemoveNeedsReason && (
           <Textarea
             mb="lg"
@@ -347,7 +348,8 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         )}
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmRemovePart}>Cancel</Button>
-          <Button color="red" onClick={confirmRemoveParticipant} disabled={pendingRemoveNeedsReason && !removeReason.trim()}>Remove</Button>
+          <Button color="red" variant={pendingRemovePart?.status === 'ACTIVE' ? 'light' : 'filled'} disabled={pendingRemoveNeedsReason && !removeReason.trim()} onClick={() => confirmRemoveParticipant('remove')}>Never took part: remove</Button>
+          <Button color="red" variant={pendingRemovePart?.status === 'ACTIVE' ? 'filled' : 'light'} disabled={pendingRemoveNeedsReason && !removeReason.trim()} onClick={() => confirmRemoveParticipant('withdraw')}>Withdrew: keep history</Button>
         </Group>
       </Modal>
     </Stack>

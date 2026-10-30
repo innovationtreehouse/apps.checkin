@@ -24,6 +24,17 @@ describe("SystemVersionBox", () => {
     expect(await screen.findByText(/Update Available!/)).toBeInTheDocument();
     expect(screen.getByText(/Fix the thing/)).toBeInTheDocument();
   });
+
+  it("does not compare a build with no SHA against GitHub", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-version": { version: "dev" },
+      "commits/main": { sha: "bbb2222" },
+    });
+    renderWithProviders(<SystemVersionBox />);
+    expect(await screen.findByText("dev")).toBeInTheDocument();
+    expect(screen.queryByText(/Update Available!/)).not.toBeInTheDocument();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BadgeScanChart", () => {

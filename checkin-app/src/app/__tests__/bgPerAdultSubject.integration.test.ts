@@ -12,7 +12,7 @@
 import { POST as ATTEST } from '@/app/api/membership/reviews/route';
 import { POST as OVERRIDE } from '@/app/api/membership-ops/applications/review-override/route';
 import { GET as COMPLIANCE } from '@/app/api/membership-audit/compliance/route';
-import { eligibleReviewProcessIds, overrideBlocked } from '@/lib/membership/review';
+import { eligibleReviewProcessIds, boardResetReview } from '@/lib/membership/review';
 import { bgFreshThreshold, personBgVerdict } from '@/lib/membership/personBgCheck';
 import { householdBgIsFresh } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
@@ -88,7 +88,7 @@ describe('Per-adult background-check subjects', () => {
         await prisma.$disconnect();
     });
 
-    // ── The regression itself ────────────────────────────────────────────────
+    // ── Only the named adult is stamped ──────────────────────────────────────
     it('stamps only the adult both reviewers named — the household-mate stays unchecked', async () => {
         const hh = await twoLeadHousehold('Regression');
 
@@ -274,7 +274,7 @@ describe('Per-adult background-check subjects', () => {
         // it is why the unnamed approval can be refused rather than counted.
         expect(await eligibleReviewProcessIds(rev1)).not.toContain(hh.processId);
         expect(await eligibleReviewProcessIds(rev2)).not.toContain(hh.processId);
-        await overrideBlocked(hh.processId, board, 'reset');
+        await boardResetReview(hh.processId, board);
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: hh.processId } })).toBe(0);
 
         as(rev1, { isBackgroundCheckReviewer: true });
@@ -291,36 +291,38 @@ describe('Per-adult background-check subjects', () => {
         expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership fee'))).toBe(true);
     });
 
-    // ── Board force-approve ──────────────────────────────────────────────────
-    it('a force-approve stamps the adult it names and no others', async () => {
-        const hh = await twoLeadHousehold('ForceNamed');
+    // ── A blocked review: no board clearance (Board ruling B5/B25) ────────────
+    it('the board cannot clear a blocked review: the override approve is gone (400, nothing stamped)', async () => {
+        const hh = await twoLeadHousehold('NoForce');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
 
         as(board, { isBoardMember: true });
         const res = await OVERRIDE(req({ processId: hh.processId, action: 'approve', subjectPersonIds: [hh.alex] }) as never);
-        expect(res.status).toBe(200);
-
-        // Counting attestations here would stamp nobody — a blocked process never holds
-        // a second approval — so the board asserts its subject instead.
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
-        expect(proc?.bgClearedAt).not.toBeNull();
-        expect(await bgDate(hh.alex)).not.toBeNull();
-        expect(await bgDate(hh.sam)).toBeNull();
-    });
-
-    it('a force-approve that names nobody is a 400 and clears nothing', async () => {
-        const hh = await twoLeadHousehold('ForceUnnamed');
-        as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
-
-        as(board, { isBoardMember: true });
-        const res = await OVERRIDE(req({ processId: hh.processId, action: 'approve' }) as never);
         expect(res.status).toBe(400);
-        expect((await res.json()).code).toBe('invalid_subject');
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
         expect(proc?.bgClearedAt).toBeNull();
         expect(proc?.status).toBe('BLOCKED');
+        expect(await bgDate(hh.alex)).toBeNull();
+    });
+
+    it('the rejector changing to approve names one adult, and only that adult is stamped once a second reviewer agrees', async () => {
+        const hh = await twoLeadHousehold('SwitchNamed');
+        // A current application: consent recorded, so the review it returns to is listed.
+        await prisma.orgMembershipProcess.update({ where: { id: hh.processId }, data: { status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
+        const unnamed = await ATTEST(req({ processId: hh.processId, result: 'APPROVE' }) as never);
+        expect(unnamed.status).toBe(400);
+        const switched = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
+        expect((await switched.json()).outcome).toEqual({ status: 'PENDING_PAYMENT', approvals: 1 });
+
+        as(rev2, { isBackgroundCheckReviewer: true });
+        const second = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
+        expect(second.status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } }))?.bgClearedAt).not.toBeNull();
+        expect(await bgDate(hh.alex)).not.toBeNull();
+        expect(await bgDate(hh.sam)).toBeNull();
     });
 
     it('a reset needs no subjects — it deletes the attestations and re-opens review', async () => {

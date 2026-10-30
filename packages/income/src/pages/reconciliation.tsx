@@ -2,11 +2,13 @@
 import { Fragment, useState } from "react";
 import { Anchor, Badge, Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, money, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 
 interface ReconRow {
   id: number;
+  source: string;
   payoutGid: string;
   payoutDate: string;
   payoutNetCents: number;
@@ -15,6 +17,8 @@ interface ReconRow {
   reason: string | null;
   qbNote: string | null;
 }
+
+const SOURCE_LABEL: Record<string, string> = { shopify: "Shopify payout", benevity: "Benevity disbursement" };
 
 interface Deposit {
   id: string;
@@ -57,7 +61,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
       notifications.show({ message, color: "green" });
       onDone();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
@@ -65,7 +69,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
 
   const resolve = (body: unknown, message: string) => act(() => post(`/reconciliation/${row.id}/resolve`, body), message);
   const needReason = () => {
-    if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red" });
+    if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red", autoClose: false });
     return !!reason.trim();
   };
 
@@ -93,7 +97,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
               {candidates.data.map((d) => (
                 <Table.Tr key={d.id}>
                   <Table.Td>{d.txnDate}</Table.Td>
-                  <Table.Td>{money(d.totalCents)}</Table.Td>
+                  <Table.Td>{formatCents(d.totalCents)}</Table.Td>
                   <Table.Td><Code>{d.id}</Code></Table.Td>
                   <Table.Td>
                     <Group gap="xs">
@@ -156,7 +160,7 @@ export default function ReconciliationPage() {
       });
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setRunning(false);
     }
@@ -175,10 +179,10 @@ export default function ReconciliationPage() {
           <Table striped withTableBorder>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Payout date</Table.Th>
+                <Table.Th>Date</Table.Th>
                 <Table.Th>Net</Table.Th>
                 <Table.Th>Why</Table.Th>
-                <Table.Th>Payout</Table.Th>
+                <Table.Th>Source</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -187,14 +191,17 @@ export default function ReconciliationPage() {
                 <Fragment key={row.id}>
                   <Table.Tr>
                     <Table.Td>{row.payoutDate}</Table.Td>
-                    <Table.Td>{money(row.payoutNetCents)}</Table.Td>
+                    <Table.Td>{formatCents(row.payoutNetCents)}</Table.Td>
                     <Table.Td>
                       <Badge size="sm" color="orange">{row.kind ?? row.status}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>
                       {row.reason && <Text size="sm">{row.reason}</Text>}
                       {row.qbNote && <Text size="sm" c="orange">{row.qbNote}</Text>}
                     </Table.Td>
-                    <Table.Td><Code>{row.payoutGid}</Code></Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{SOURCE_LABEL[row.source] ?? row.source}</Text>
+                      <Code>{row.payoutGid}</Code>
+                    </Table.Td>
                     <Table.Td>
                       {isFinance && (
                         <Anchor size="sm" onClick={() => setOpen(open === row.id ? null : row.id)}>

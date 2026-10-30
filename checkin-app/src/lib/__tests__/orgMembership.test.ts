@@ -268,12 +268,6 @@ describe('programCoverageDate', () => {
 
     beforeEach(() => prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: SEPT_1 }));
 
-    it('no stated year → the end date, without reading the boundary', async () => {
-        const endAt = day(2027, 3, 1);
-        expect(await programCoverageDate({ endAt, appliesToYear: null })).toBe(endAt);
-        expect(prisma.boardSettings.findUnique).not.toHaveBeenCalled();
-    });
-
     it('a program inside one year admits exactly the households the end-date rule does', async () => {
         for (const endAt of [day(2026, 9, 2), day(2027, 3, 1), day(2027, 9, 1)]) {
             const through = await programCoverageDate({ endAt, appliesToYear: 2026 });

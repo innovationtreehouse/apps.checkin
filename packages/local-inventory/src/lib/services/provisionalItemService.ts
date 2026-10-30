@@ -33,6 +33,22 @@ export async function lockProvisional(tx: Prisma.TransactionClient, orgId: strin
   return tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13 } });
 }
 
+/**
+ * The GTIN a stock add on `gtin13` lands on. A provisional GTIN since resolved by the global
+ * catalog receives under its real GTIN, unless a unit conflict on it is still open: then it joins
+ * the provisional stock that the conflict's resolution settles. The locks order this against a
+ * merge or resolution.
+ */
+export async function receivingGtin13(tx: Prisma.TransactionClient, orgId: string, gtin13: string): Promise<string> {
+  const provisional = await lockProvisional(tx, orgId, gtin13);
+  if (!provisional?.resolvedToGtin13) return gtin13;
+  await lockOrgItemPair(tx, orgId, gtin13, provisional.resolvedToGtin13);
+  const openConflict = await tx.inventoryMergeConflict.findFirst({
+    where: { orgId, provisionalGtin13: gtin13, status: "pending" },
+  });
+  return openConflict ? gtin13 : provisional.resolvedToGtin13;
+}
+
 export function createProvisionalItemService({
   provisionalRepo,
   resolutionRepo,
@@ -255,10 +271,13 @@ export function createProvisionalItemService({
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.inventoryProvisionalItem.update({
-          where: { id: provisional.id },
+        // The status was read outside this transaction; a concurrent approve or map that
+        // already moved the provisional's stock wins.
+        const claimed = await tx.inventoryProvisionalItem.updateMany({
+          where: { id: provisional.id, status: "pending" },
           data: { status: nextStatus, rejectionReason: rejectionReason ?? null, reviewedAt: now },
         });
+        if (claimed.count === 0) throw new ServiceError(409, "Provisional item was already resolved");
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisional.id, gtin13: provisionalGtin13,
@@ -331,10 +350,8 @@ export function createProvisionalItemService({
         const { provisionalRow, existingRow: realRow } = await lockOrgItemPair(
           tx, orgId, conflict.provisionalGtin13, conflict.realGtin13,
         );
-        if (!realRow) throw new ServiceError(400, "Real GTIN org item not found");
-
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
-        const existingQty = realRow.existingQuantity;
+        const existingQty = realRow?.existingQuantity ?? 0;
 
         let finalQuantity: number;
         if (resolution.quantityMethod === "use_provisional") finalQuantity = provisionalQty;
@@ -349,10 +366,28 @@ export function createProvisionalItemService({
         });
         if (closed.count === 0) throw new ServiceError(400, "Conflict is already resolved");
 
-        await tx.orgItem.update({
-          where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
-          data: { existingQuantity: finalQuantity },
-        });
+        let valueBefore = existingQty;
+        let valueAfter = finalQuantity;
+        if (realRow) {
+          await tx.orgItem.update({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            data: { existingQuantity: finalQuantity },
+          });
+        } else if (finalQuantity > 0) {
+          // A missing real row is unlocked, so a first receipt can insert it concurrently; the
+          // increment folds that receipt in. Nothing to land means the removed row stays removed.
+          ({ existingQuantity: valueAfter } = await tx.orgItem.upsert({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            create: {
+              orgId, gtin13: conflict.realGtin13, existingQuantity: finalQuantity,
+              desiredQuantity: provisionalRow?.desiredQuantity,
+              locationId: provisionalRow?.locationId,
+              backstockLocationId: provisionalRow?.backstockLocationId,
+            },
+            update: { existingQuantity: { increment: finalQuantity } },
+          }));
+          valueBefore = valueAfter - finalQuantity;
+        }
 
         if (provisionalRow) {
           await tx.orgItem.delete({
@@ -364,7 +399,7 @@ export function createProvisionalItemService({
           data: {
             orgId, userId, username: username ?? null, changedAt: now, changeType: "manual",
             gtin13: conflict.realGtin13, fieldChanged: "existingQuantity",
-            valueBefore: String(existingQty), valueAfter: String(finalQuantity), receiptId: null,
+            valueBefore: String(valueBefore), valueAfter: String(valueAfter), receiptId: null,
           },
         });
 

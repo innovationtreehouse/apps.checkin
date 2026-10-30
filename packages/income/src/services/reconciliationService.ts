@@ -8,19 +8,19 @@ import {
   RECON_STATUS,
   addDays,
   audit,
-  incomeKey,
   isClaimed,
   lockReconciliation,
   matchWindow,
-  otherLaneClaims,
   postingOnAt,
   runReconcile,
+  stampOf,
   windowDays,
   type ReconStatus,
 } from "../lib/reconcile";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
 import { closedThroughOf, isPostable, ownEntry, postPayout, type OwnEntry } from "../lib/outbox";
+import { BANK_ROLE, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "../lib/sources";
 import { ServiceError } from "@checkin/component-kit";
 
 export interface Actor {
@@ -43,13 +43,19 @@ async function openRow(orgId: string, id: number) {
   return row;
 }
 
-/** Deposits into the payout bank account dated within ±window of the payout, read live from QuickBooks. */
-async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
-  const { deposits: source, bankAccountId: bank } = getIncomeConfig();
+/** The bank account a row's deposits land in, from the books map. */
+async function bankOf(row: { source: string }): Promise<string | undefined> {
+  return (await roleAccounts())[isBenevity(row) ? BANK_ROLE.benevity : BANK_ROLE.shopify];
+}
+
+/** Deposits into the row's bank account dated within ±window of its date, read live from QuickBooks. */
+async function windowDeposits(row: { source: string; payoutDate: string }): Promise<QbDeposit[]> {
+  const { deposits: source } = getIncomeConfig();
+  const bank = await bankOf(row);
   if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
-  const w = windowDays();
-  const from = addDays(payoutDate, -w);
-  const to = addDays(payoutDate, w);
+  const w = windowDays(row.source);
+  const from = addDays(row.payoutDate, -w);
+  const to = addDays(row.payoutDate, w);
   return (await depositsIn(source, [[from, to]])).filter((d) => d.depositToAccount === bank);
 }
 
@@ -107,33 +113,37 @@ async function ownEntryFirst(orgId: string, id: number, actor: Actor) {
 /** Finance's go-ahead runs the post path with the gate read now; a failed read is a 503. */
 async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
   const { mirror, posting } = getIncomeConfig();
-  if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
+  const row = await openRow(orgId, id);
+  if (!posting || (!isBenevity(row) && (!mirror || !posting.mirrorNewestWins))) {
+    throw new ServiceError(503, "QuickBooks deposit creation is not available");
+  }
   let closeDate: string | null;
   try {
     closeDate = await posting.client.bookCloseDate();
   } catch {
     throw new ServiceError(503, "QuickBooks could not be read for its books closing date");
   }
-  const closedThrough = closedThroughOf(closeDate, await postingOnAt(orgId));
+  const closedThrough = closedThroughOf(closeDate, stampOf(await postingOnAt(orgId), row.source));
   if (!closedThrough) throw new ServiceError(409, "QuickBooks has no books closing date set, and income posting is not switched on");
   const turn = await postPayout(orgId, id, { closedThrough, mayCreate: true }, true, { actor, book });
   if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
   if (turn.outcome === "held") throw new ServiceError(409, `Decide the payout's items first: ${turn.row.reason ?? ""}`);
-  if (book && turn.outcome === "waiting") throw new ServiceError(409, "The payout is not ready to book: it is being posted, or its Shopify payout changed");
+  if (book && turn.outcome === "waiting") {
+    throw new ServiceError(409, "The payout is not ready to book: it is being posted, its Shopify payout changed, or a books-map role it needs has no account");
+  }
   return turn.row;
 }
 
-/** Drop deposits a payout or another lane already holds, or finance excluded. */
+/** Drop deposits a payout already holds, or finance excluded. */
 async function unclaimed(client: TxClient, orgId: string, deposits: QbDeposit[]): Promise<QbDeposit[]> {
-  const [foreign, claimed, excluded] = await Promise.all([
-    otherLaneClaims(orgId),
+  const [claimed, excluded] = await Promise.all([
     client.payoutReconciliation.findMany({
       where: { orgId, depositId: { not: null } },
       select: { depositId: true },
     }),
     client.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
-  const taken = new Set([...foreign, ...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
+  const taken = new Set([...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
   return deposits.filter((d) => !taken.has(d.id));
 }
 
@@ -145,14 +155,16 @@ async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: stri
     })
   ).filter(isPostable);
   if (!rows.length) return false;
-  const { deposits: source, bankAccountId: bank } = getIncomeConfig();
-  if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
-  const windows = rows.map((r) => matchWindow(r.payoutDate));
+  const { deposits: source } = getIncomeConfig();
+  const accounts = await roleAccounts();
+  const banks = { [DEPOSIT_SOURCE.SHOPIFY]: accounts[BANK_ROLE.shopify], [DEPOSIT_SOURCE.BENEVITY]: accounts[BANK_ROLE.benevity] };
+  if (!source || (!banks.shopify && !banks.benevity)) throw new ServiceError(503, "QuickBooks is not connected");
+  const windows = rows.map((r) => matchWindow(r.payoutDate, r.source));
   const d = (await depositsIn(source, windows.map((w): [string, string] => [w.from, w.to]))).find((x) => x.id === qbTxnId);
   if (!d) return false;
   return rows.some((row, i) =>
     d.txnDate >= windows[i].from && d.txnDate <= windows[i].to &&
-    (d.appKey === incomeKey(row.payoutGid) || (d.depositToAccount === bank && d.totalCents === row.payoutNetCents)));
+    ((d.appKey === rowKey(row)) || (d.depositToAccount === banks[isBenevity(row) ? DEPOSIT_SOURCE.BENEVITY : DEPOSIT_SOURCE.SHOPIFY] && d.totalCents === row.payoutNetCents)));
 }
 
 export const reconciliationService = {
@@ -200,7 +212,7 @@ export const reconciliationService = {
 
   async candidates(orgId: string, id: number) {
     const row = await openRow(orgId, id);
-    return unclaimed(db, orgId, await windowDeposits(row.payoutDate));
+    return unclaimed(db, orgId, await windowDeposits(row));
   },
 
   /** A deposit whose amount differs from the payout's net needs finance's reason. */
@@ -209,7 +221,7 @@ export const reconciliationService = {
     const linked = await ownEntryFirst(orgId, id, actor);
     if (linked) return linked;
     const row = await openRow(orgId, id);
-    const inWindow = await windowDeposits(row.payoutDate);
+    const inWindow = await windowDeposits(row);
 
     try {
       return await db.$transaction(async (tx) => {
@@ -227,7 +239,7 @@ export const reconciliationService = {
             status: RECON_STATUS.RESOLVED,
             kind: null,
             resolution: RECON_RESOLUTION.MANUAL,
-            origin: deposit.appKey === incomeKey(current.payoutGid) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
+            origin: deposit.appKey === rowKey(current) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
             qbNote: null,
             postClaimedAt: null,

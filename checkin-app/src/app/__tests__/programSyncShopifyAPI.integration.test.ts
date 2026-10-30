@@ -75,6 +75,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
     const makeBrokenProgram = () =>
         prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: `Broken Prog ${TAG} ${Math.round(performance.now())}`,
@@ -183,6 +184,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: `Pre-claimant Prog ${TAG}`,
@@ -210,6 +212,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         // Priced AND has both variants -> nothing to mint.
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: `Configured Prog ${TAG}`,

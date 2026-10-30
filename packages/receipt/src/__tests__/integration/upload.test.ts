@@ -1,10 +1,11 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { CompletedReceiptSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import {
   ALICE,
+  BOB,
   MINOR,
   actAs,
   actions,
@@ -50,11 +51,107 @@ describeDb("manual upload", () => {
     expect(r.pushedAt).toBeNull();
   });
 
-  it("'I paid for this myself' makes the uploader the reimbursee, from the principal", async () => {
+  it("a reimbursement with no reimbursee named makes the uploader the reimbursee, from the principal", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     expect(r.state).toBe("submitter_review");
     expect(r.reimburseePersonId).toBe(ALICE.id);
     expect(r.reimbursementFor).toBe(ALICE.name);
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reimbursee_named" } })).toMatchObject({
+      userId: ALICE.id,
+      valueAfter: String(ALICE.id),
+    });
+  });
+
+  describe("naming someone else as reimbursee", () => {
+    // Bob is an adult; MINOR is not. Membership is never asked: a non-member adult is named like any adult.
+    const people = new Map([
+      [BOB.id, { id: BOB.id, name: "Bob Baker", isAdult: true }],
+      [MINOR.id, { id: MINOR.id, name: "Kit Kid", isAdult: false }],
+    ]);
+    const reimbursees = {
+      search: async () => [],
+      byId: async (id: number) => people.get(id) ?? null,
+      hasAccount: async () => true,
+      addNonMemberAdult: async (name: string) => {
+        added.push(name);
+        return { id: 555, name };
+      },
+    };
+    let added: string[] = [];
+    beforeEach(() => {
+      added = [];
+      configure({ receiptSink: ports.receiptSink, reimbursees });
+    });
+
+    it("stores their Person id and name, records the uploader as who named them, and pushes them to expense", async () => {
+      const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: BOB.id });
+      expect(r).toMatchObject({ uploadedByUserId: ALICE.id, reimburseePersonId: BOB.id, reimbursementFor: "Bob Baker" });
+      expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reimbursee_named" } })).toMatchObject({
+        userId: ALICE.id,
+        valueAfter: String(BOB.id),
+      });
+
+      actAs(BOB);
+      await receiptService.confirmAsReimbursee(r.id);
+      const payload = CompletedReceiptSchema.parse(ports.calls.pushes.at(-1));
+      expect(payload).toMatchObject({ submitterId: ALICE.id, needsReimbursement: true, reimburseePersonId: BOB.id, reimbursementFor: "Bob Baker" });
+      expect(payload.submitterConfirmation).toMatchObject({ confirmedByPersonId: BOB.id });
+    });
+
+    it("refuses a reimbursee who is not a live person, and stores nothing", async () => {
+      await expect(
+        receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: 4242 }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("refuses a minor as reimbursee, by name, and stores nothing", async () => {
+      await expect(
+        receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, reimburseePersonId: MINOR.id }),
+      ).rejects.toMatchObject({ status: 400, message: "Kit Kid cannot be reimbursed: only an adult can be" });
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("refuses a reimbursee without a reimbursement", async () => {
+      await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), reimburseePersonId: BOB.id })).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("finance, operations or the board adds a non-member by name, who becomes the reimbursee", async () => {
+      actAs({ ...ALICE, addsPeople: true });
+      const r = await receiptService.upload(textFile(), "text/plain", {
+        details: manualDetails(),
+        needsReimbursement: true,
+        newReimbursee: { name: " Dana Field ", isAdult: true },
+      });
+      expect(added).toEqual(["Dana Field"]);
+      expect(r).toMatchObject({ uploadedByUserId: ALICE.id, reimburseePersonId: 555, reimbursementFor: "Dana Field" });
+      expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reimbursee_named" } })).toMatchObject({ valueAfter: "555" });
+    });
+
+    it("refuses to add a non-member for an uploader without finance, operations or the board, and adds nobody", async () => {
+      await expect(
+        receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, newReimbursee: { name: "Dana Field", isAdult: true } }),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(added).toEqual([]);
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("refuses a new person not declared an adult, or alongside a picked person", async () => {
+      actAs({ ...ALICE, addsPeople: true });
+      const upload = (extra: Record<string, unknown>) =>
+        receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true, ...extra });
+      await expect(upload({ newReimbursee: { name: "Dana Field" } })).rejects.toMatchObject({ status: 400 });
+      await expect(upload({ newReimbursee: { name: "Dana Field", isAdult: true }, reimburseePersonId: BOB.id })).rejects.toMatchObject({ status: 400 });
+      expect(added).toEqual([]);
+    });
+
+    it("searches by at least two characters", async () => {
+      const searched: string[] = [];
+      configure({ reimbursees: { ...reimbursees, search: async (q) => (searched.push(q), [{ id: BOB.id, name: "Bob Baker" }]) } });
+      expect(await receiptService.reimburseeOptions(" b ")).toEqual([]);
+      expect(await receiptService.reimburseeOptions(" bo ")).toEqual([{ id: BOB.id, name: "Bob Baker" }]);
+      expect(searched).toEqual(["bo"]);
+    });
   });
 
   it("stores the typed currency, discount, part #, manufacturer and backordered flag", async () => {

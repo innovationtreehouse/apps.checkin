@@ -7,7 +7,7 @@
  * (payment-first) and a second approval after the refund (check-last).
  */
 
-import { attest, overrideBlocked } from '@/lib/membership/review';
+import { attest, boardResetReview } from '@/lib/membership/review';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
@@ -94,7 +94,7 @@ describe('a refunded order never activates', () => {
         expect(await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`)).toBe(false);
 
         // A retried orders/paid carries the original paid payload.
-        const { outcome } = await activateByProcessId(processId, oid, true);
+        const { outcome } = await activateByProcessId(processId, oid, { appliesToYear: 2026 });
         await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId: oid, processId });
 
         expect(outcome).toBe('refunded');
@@ -148,14 +148,17 @@ describe('a refunded order never activates', () => {
         expect(emailed('you can now pay your membership dues')).toBe(false);
     });
 
-    it('a board override approve on a paid, blocked, refunded application holds instead of activating', async () => {
+    it('a paid, blocked, refunded application whose rejector changes to approve holds at the second approval instead of activating', async () => {
         const oid = orderId('Blk');
-        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'BLOCKED', paid: true, shopifyOrderId: oid });
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
+        await attest(revA, processId, { result: 'REJECT', note: 'concern' });
 
         await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`);
         await prisma.paymentException.updateMany({ where: { kind: 'REFUND', processId }, data: { status: 'RESOLVED', resolvedAt: new Date() } });
 
-        await overrideBlocked(processId, board, 'approve', [leadId]);
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
 
         expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
@@ -209,7 +212,7 @@ describe('a refunded order never activates', () => {
 
     it('an unrefunded order still activates, on either path', async () => {
         const payFirst = await makeApplicant({ status: 'PENDING_PAYMENT', bgCleared: true });
-        const { outcome } = await activateByProcessId(payFirst.processId, orderId('C1'), true);
+        const { outcome } = await activateByProcessId(payFirst.processId, orderId('C1'), { appliesToYear: 2026 });
         expect(outcome).toBe('active');
         expect(await membershipStatusOf(payFirst.orgMembershipId)).toBe('ACTIVE');
 
@@ -218,5 +221,19 @@ describe('a refunded order never activates', () => {
         await attest(revB, checkLast.processId, { result: 'APPROVE', subjectPersonIds: [checkLast.leadId] });
         expect((await processOf(checkLast.processId))?.status).toBe('ACTIVE');
         expect(await membershipStatusOf(checkLast.orgMembershipId)).toBe('ACTIVE');
+    });
+
+    it('a payment on a blocked application keeps its year through a board reset and clearance', async () => {
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'BLOCKED' });
+
+        expect((await activateByProcessId(processId, orderId('BlkYear'), { appliesToYear: 2026 })).outcome).toBe('paid_while_blocked');
+        expect((await boardResetReview(processId, board)).status).toBe('PENDING_BG_CLEARANCE');
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+        const proc = await processOf(processId);
+        expect(proc?.status).toBe('ACTIVE');
+        expect(proc?.appliesToYear).toBe(2026);
+        expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
 });

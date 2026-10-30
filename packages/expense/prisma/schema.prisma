@@ -25,9 +25,9 @@ model ExpenseOrgSettings {
   capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
   /// @sensitivity:internal
   capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
-  // Unit price at or over which a line raises CAPITAL_EQUIPMENT for finance.
+  // The client never reads or writes it.
   /// @sensitivity:internal
-  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents")
+  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents") @ignore
   // Receipt total at or over which THRESHOLD_CROSSED goes to the board and the expense is held
   // until the Board's approval is recorded. A single line's total never counts.
   /// @sensitivity:internal
@@ -40,6 +40,10 @@ model ExpenseOrgSettings {
   everydayTotalLimitCents      Int    @default(50000) @map("everyday_total_limit_cents")
   /// @sensitivity:internal
   everydayItemLimitCents       Int    @default(25000) @map("everyday_item_limit_cents")
+  // When QuickBooks posting switched on, set by the first connected drain run and never moved;
+  // null means off. Only an expense submitted after it books itself.
+  /// @sensitivity:internal
+  qbPostingOnAt                DateTime? @map("qb_posting_on_at")
 
   @@map("org_settings")
 }
@@ -139,7 +143,7 @@ model Expense {
   /// @sensitivity:internal
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
   // QuickBooks match state of the whole expense (one QB entry per expense):
-  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED, or not sent:
+  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | UNBOOKED (BEFORE_LINE reads as it) | POST_FAILED, or not sent:
   // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
   // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
   // once; qb_vendor_id is the Vendor a Bill was posted to.
@@ -160,14 +164,13 @@ model Expense {
   // A MATCHED entry as QuickBooks held it at match (JSON); the drift check compares against it.
   /// @sensitivity:internal
   qbMatchBaseline    String?   @map("qb_match_baseline")
+  // The first post claim that could create the entry; set once, never moved. A later post looks
+  // up the app's own entry created since then before anything creates, matches or skips it.
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")
-  // The client never reads or writes these; the amounts alone decide whether a charge is Everyday.
-  /// @sensitivity:internal
-  singleSource       Boolean   @default(false) @map("single_source") @ignore
-  /// @sensitivity:internal
-  financeNotEveryday Boolean   @default(false) @map("finance_not_everyday") @ignore
   // What the Board authorized for a card charge, as recorded by FINANCE (or a Board member). It
   // stands in for the Board seat on the charge's org-level lines; null or blank does not.
   /// @sensitivity:internal
@@ -193,29 +196,55 @@ model Expense {
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
   receiptReview      ExpenseReceiptReview?
+  taxApproval        ExpenseTaxApproval?
 
   @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
 }
 
-// Finance's approval of the receipt in receipt finance review, from CompletedReceipt.financeReview.
-// Absent when the receipt never waited on finance review.
+// The receipt's finance review as the receipt sent it: whether its org held the tax for review,
+// and finance's approval (CompletedReceipt.financeReview). Absent when the receipt said neither.
 model ExpenseReceiptReview {
   /// @sensitivity:internal
-  expenseId        String   @id @map("expense_id")
-  // The receipt's FinancialReviewReason values: tax | old_date | future_date | submitter_correction.
+  expenseId         String    @id @map("expense_id")
+  // CompletedReceipt.taxReviewRequired; null when the receipt did not say.
   /// @sensitivity:internal
-  reasons          String[]
+  taxReviewRequired Boolean?  @map("tax_review_required")
+  // The approval's FinancialReviewReason values: tax | old_date | future_date | submitter_correction.
+  /// @sensitivity:internal
+  reasons           String[]
+  // The receipt's tax when finance approved it; the approval covers that amount only.
+  /// @sensitivity:internal
+  approvedTaxCents  Int?      @map("approved_tax_cents")
+  /// @sensitivity:pii
+  approvedByUserId  Int?      @map("approved_by_user_id")
+  /// @sensitivity:personal
+  note              String?
+  /// @sensitivity:internal
+  approvedAt        DateTime? @map("approved_at")
+
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@map("expense_receipt_reviews")
+}
+
+// Finance's approval of the expense's tax, for tax the receipt's finance review did not cover. It
+// covers the amount approved only. A sibling table, so routes returning Expense rows never carry the note.
+model ExpenseTaxApproval {
+  /// @sensitivity:internal
+  expenseId        String   @id @map("expense_id")
+  /// @sensitivity:internal
+  taxCents         Int      @map("tax_cents")
   /// @sensitivity:pii
   approvedByUserId Int      @map("approved_by_user_id")
   /// @sensitivity:personal
   note             String?
   /// @sensitivity:internal
-  approvedAt       DateTime @map("approved_at")
+  approvedAt       DateTime @default(now()) @map("approved_at")
 
   expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 
-  @@map("expense_receipt_reviews")
+  @@map("expense_tax_approvals")
 }
 
 model ExpenseLineItem {
@@ -243,6 +272,9 @@ model ExpenseLineItem {
   gtin13            String?
   /// @sensitivity:internal
   isDelayed         Boolean  @default(false) @map("is_delayed")
+  // Receiving marked the line non-inventory: finance picks its owner and account by hand each time.
+  /// @sensitivity:internal
+  nonInventory      Boolean  @default(false) @map("non_inventory")
   /// @sensitivity:internal
   isCapital         Boolean  @default(false) @map("is_capital")
   /// @sensitivity:pii
@@ -264,7 +296,7 @@ model ExpenseLineItem {
   allocatedShippingCents Int?  @map("allocated_shipping_cents")
   /// @sensitivity:internal
   allocatedDiscountCents Int?  @map("allocated_discount_cents")
-  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED.
+  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED.
   // Read only: the expense holds its QuickBooks entry; qb_txn_id is unique, so a line held an entry at most once.
   /// @sensitivity:internal
   qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
@@ -307,6 +339,9 @@ model LineItemOwnerApproval {
   decidedByUserId   Int?      @map("decided_by_user_id")
   /// @sensitivity:personal
   notes             String?
+  // Finance made the line's bucket final while settling an exception: no further exception is raised on it.
+  /// @sensitivity:internal
+  bucketFinal       Boolean   @default(false) @map("bucket_final")
 
   expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
@@ -368,8 +403,9 @@ model ExpenseEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
+  /// Out of the client; nothing reads or writes it. A later migration drops the column.
   /// @sensitivity:personal
-  payload   String?
+  payload   String?  @ignore
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -554,12 +590,54 @@ model CapitalAsset {
   /// @sensitivity:internal
   sourceQbTxnId        String?  @map("source_qb_txn_id")
   /// @sensitivity:internal
+  sourceDonatedLineId  Int?     @map("source_donated_line_id")
+  /// @sensitivity:internal
   seeded               Boolean  @default(false)
   /// @sensitivity:internal
   createdAt            DateTime @default(now()) @map("created_at")
 
   @@unique([orgId, assetNumber], name: "capital_assets_org_number_unique")
   @@map("capital_assets")
+}
+
+// A donated gift line at or over the capital thresholds, waiting on or past finance's capital
+// review. Keyed by the gift line, so a resend does nothing. It carries the gift's ids, never its
+// donor. `isCapital` is null until reviewed; an asset line mints into the register.
+model DonatedCapitalLine {
+  /// @sensitivity:internal
+  id                Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId             String    @map("org_id")
+  /// @sensitivity:internal
+  giftSource        String    @map("gift_source")
+  /// @sensitivity:internal
+  giftId            Int       @map("gift_id")
+  /// @sensitivity:internal
+  giftLineId        Int       @map("gift_line_id")
+  /// @sensitivity:internal
+  description       String
+  /// @sensitivity:internal
+  quantity          Float
+  // The line's value with its share of the receipt's tax and shipping.
+  /// @sensitivity:internal
+  costCents         Int       @map("cost_cents")
+  /// @sensitivity:internal
+  acquisitionDate   String?   @map("acquisition_date")
+  /// @sensitivity:internal
+  budgetOwnerId     Int       @map("budget_owner_id")
+  /// @sensitivity:internal
+  isCapital         Boolean?  @map("is_capital")
+  /// @sensitivity:internal
+  depreciationYears Int?      @map("depreciation_years")
+  /// @sensitivity:pii
+  reviewedByUserId  Int?      @map("reviewed_by_user_id")
+  /// @sensitivity:internal
+  reviewedAt        DateTime? @map("reviewed_at")
+  /// @sensitivity:internal
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@unique([orgId, giftSource, giftId, giftLineId], map: "donated_capital_lines_gift_line_key")
+  @@map("donated_capital_lines")
 }
 
 // A QuickBooks transaction finance has permanently removed from matching (D5).
@@ -621,10 +699,11 @@ model ExpenseReimburseeVendor {
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
-// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER | BOARD; a Board member may fill the middle two
-// when nobody eligible can. BOARD is the extra Board signer on a non-Everyday card-charge line
-// without written Board authorization. The two uniques make a seat fillable once and a person
-// able to fill one seat per line.
+// seat: SUBMITTER | TREASURER | BOARD; the program approver signs by approving the line. A Board
+// member may fill the Treasurer seat when nobody eligible can. BOARD is the extra Board signer on
+// a non-Everyday card-charge line without written Board authorization, or on a reimbursement owed
+// to a non-member. The two uniques make a seat fillable once and a person able to fill one seat
+// per line.
 model ExpenseLineSignoff {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -648,9 +727,8 @@ model ExpenseLineSignoff {
   @@map("expense_line_signoffs")
 }
 
-// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
-// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
-// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
+// A finance review: a judgment no other decision records, checked off with a note. kind:
+// QB_DUPLICATE_TO_VOID | QB_DRIFT | QB_POST_HELD; rows of retired kinds stay checked off. audience: FINANCE.
 model ExpenseFlag {
   /// @sensitivity:internal
   id                   Int       @id @default(autoincrement())

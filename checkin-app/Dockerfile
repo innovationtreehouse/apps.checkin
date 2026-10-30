@@ -29,11 +29,6 @@ RUN npm ci
 FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-# npm does not hoist remote-tarball deps (xlsx is pinned to the SheetJS CDN
-# tarball, not the vulnerable registry build) to the root node_modules — they
-# stay in the workspace's own node_modules. Copy it too, or `next build` fails
-# with "Module not found: Can't resolve 'xlsx'".
-COPY --from=deps /app/checkin-app/node_modules ./checkin-app/node_modules
 COPY . .
 # Generate the Prisma client + security classifications inside the app workspace
 # (its schema lives at checkin-app/prisma; the security generator resolves its

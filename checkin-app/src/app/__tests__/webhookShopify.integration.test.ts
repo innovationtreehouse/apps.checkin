@@ -69,7 +69,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // on the shared BoardSettings row (a boundary's next occurrence is
         // never in the past, so the fee-settled test can't lose that race).
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
         programId = program.id;
 
@@ -277,6 +277,8 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         const clearExceptions = () => prisma.paymentException.deleteMany({ where: { programId } });
         beforeEach(clearExceptions);
         afterEach(clearExceptions);
+        // Each case starts with nobody enrolled: a row left holding order 555 would count as a seat that order spent.
+        beforeEach(() => prisma.programParticipant.deleteMany({ where: { programId } }));
 
         const orderBody = (id: number, accountIds: string, quantity: number) => JSON.stringify({
             id,
@@ -550,7 +552,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     it('fails closed when the Program has no Shopify variant configured at all', async () => {
         // "Cannot verify" must mean "don't activate", not "trust the payload".
         const noVariantProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Test No-Variant Program ${TAG}`, enrollmentStatus: 'OPEN' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Test No-Variant Program ${TAG}`, enrollmentStatus: 'OPEN' },
         });
         try {
             await prisma.programParticipant.create({
@@ -610,7 +612,53 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(res.status).toBe(200);
         // H2: whether the order actually contains the configured membership variant
         // is forwarded so activate() can enforce it.
-        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', true);
+        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: null });
+    });
+
+    it('forwards the year of the order\'s variant row', async () => {
+        const variant = 'year-row-variant-1655';
+        await prisma.membershipYearVariant.create({ data: { membershipYear: 2031, shopifyVariantId: variant } });
+        try {
+            const body = JSON.stringify({
+                financial_status: 'paid',
+                id: 98770,
+                line_items: [{ variant_id: variant }],
+                note_attributes: [{ name: 'Membership_Process_ID', value: '44' }],
+            });
+            expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        } finally {
+            await prisma.membershipYearVariant.delete({ where: { membershipYear: 2031 } });
+        }
+        expect(activateByProcessId).toHaveBeenCalledWith(44, '98770', { appliesToYear: 2031 });
+    });
+
+    it('takes the year from processed_at, not from when the webhook arrives', async () => {
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)) } });
+        try {
+            const body = JSON.stringify({
+                financial_status: 'paid',
+                id: 98772,
+                // Before the 2020 renewal window opens on 1 June, so still the year opened in August 2019.
+                processed_at: '2020-05-15T12:00:00Z',
+                line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID }],
+                note_attributes: [{ name: 'Membership_Process_ID', value: '46' }],
+            });
+            expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        } finally {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
+        }
+        expect(activateByProcessId).toHaveBeenCalledWith(46, '98772', { appliesToYear: 2019 });
+    });
+
+    it('forwards no membership line for a variant in no year\'s row', async () => {
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98771,
+            line_items: [{ variant_id: 'not-a-membership-variant' }],
+            note_attributes: [{ name: 'Membership_Process_ID', value: '45' }],
+        });
+        expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(45, '98771', null);
     });
 
     it('activates the program seat AND the membership when one order carries both', async () => {
@@ -627,7 +675,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
-        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', true);
+        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', { appliesToYear: null });
         const row = await prisma.programParticipant.findUnique({
             where: { programId_personId: { programId, personId: p1 } },
         });
@@ -664,7 +712,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
         beforeAll(async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: SINGLE_VARIANT_ID },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: SINGLE_VARIANT_ID },
             });
             singlePoolProgramId = program.id;
 

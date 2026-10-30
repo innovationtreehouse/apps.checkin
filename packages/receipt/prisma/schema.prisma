@@ -42,8 +42,14 @@ model Receipt {
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
+  // Null once the file lives in the store under fileKey.
   /// @sensitivity:pii
-  fileBlob           Bytes    @map("file_blob")
+  fileBlob           Bytes?   @map("file_blob")
+  // The object holding the file; null means the bytes are in fileBlob.
+  /// @sensitivity:pii
+  fileKey            String?  @map("file_key")
+  /// @sensitivity:internal
+  fileSize           Int?     @map("file_size")
   /// @sensitivity:internal
   fileHash           String   @map("file_hash")
   /// @sensitivity:internal
@@ -53,7 +59,7 @@ model Receipt {
   // Display only; the reimbursee's identity is reimburseePersonId.
   /// @sensitivity:pii
   reimbursementFor   String?  @map("reimbursement_for")
-  // The checkin Person.id owed the reimbursement: always the uploader; null for backfill.
+  // The checkin Person.id owed the reimbursement, named by the uploader; null for backfill.
   /// @sensitivity:internal
   reimburseePersonId Int?     @map("reimbursee_person_id")
   // upload | email | import
@@ -70,6 +76,9 @@ model Receipt {
   // X13 delivery: none (never in-kind) | pending | synced
   /// @sensitivity:internal
   donorSync          String   @default("none") @map("donor_sync")
+  // Bumped by every in-kind mark or donor change; sent with each X13 call so donations can drop a stale one.
+  /// @sensitivity:internal
+  donorSyncSeq       Int      @default(0) @map("donor_sync_seq")
   // Stamped when the S1 push returns; null means not yet delivered.
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")
@@ -78,6 +87,9 @@ model Receipt {
   financeReview ReceiptFinanceReview?
   lineItems     ReceiptLineItem[]
   auditLogs     ReceiptAuditLog[]
+
+  pairDecisions      ReceiptPairDecision[] @relation("PairDecisionReceipt")
+  pairDecisionsOther ReceiptPairDecision[] @relation("PairDecisionOtherReceipt")
 
   // NOT unique by design: a re-uploaded duplicate file must insert so the
   // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
@@ -130,6 +142,15 @@ model ReceiptDetail {
   approvedAt                 DateTime? @map("approved_at")
   /// @sensitivity:internal
   reviewedAt                 DateTime? @map("reviewed_at")
+  /// Who confirmed the receipt as read: the person reimbursed, or a Board member on their behalf.
+  /// @sensitivity:internal
+  reviewedByUserId           Int?      @map("reviewed_by_user_id")
+  /// The Board member's reason for confirming on behalf of a reimbursee with no account; free text.
+  /// @sensitivity:personal
+  reviewedOnBehalfReason     String?   @map("reviewed_on_behalf_reason")
+  /// When the uploader acknowledged finance's rejection; until then the receipt counts in their pill.
+  /// @sensitivity:internal
+  rejectionAcknowledgedAt    DateTime? @map("rejection_acknowledged_at")
 
   // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
   /// @sensitivity:internal
@@ -162,6 +183,9 @@ model ReceiptFinanceReview {
   decidedByUserId Int      @map("decided_by_user_id")
   /// @sensitivity:personal
   note            String?
+  // The receipt's tax when finance decided; a later change to the tax is not covered.
+  /// @sensitivity:internal
+  taxCents        Int?     @map("tax_cents")
   /// @sensitivity:internal
   decidedAt       DateTime @default(now()) @map("decided_at")
 
@@ -232,6 +256,42 @@ model ReceiptAuditLog {
   @@map("receipt_audit_log")
 }
 
+// Finance's latest duplicate decision on one pair of receipts (#2516 design §6.3). The pair is
+// unordered and stored once: receiptId < otherReceiptId, a CHECK in the migration.
+model ReceiptPairDecision {
+  /// @sensitivity:internal
+  id              Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId           String   @map("org_id")
+  /// Either receipt may be another submitter's: pii keeps it off the submitter's own view.
+  /// @sensitivity:pii
+  receiptId       String   @map("receipt_id")
+  /// Either receipt may be another submitter's: pii keeps it off the submitter's own view.
+  /// @sensitivity:pii
+  otherReceiptId  String   @map("other_receipt_id")
+  // different | copy_of
+  /// @sensitivity:internal
+  kind            String
+  /// For copy_of, which of the two receipts is the copy; null for different.
+  /// @sensitivity:pii
+  copyReceiptId   String?  @map("copy_receipt_id")
+  // The deciding Person.id.
+  /// @sensitivity:internal
+  decidedByUserId Int      @map("decided_by_user_id")
+  /// @sensitivity:internal
+  decidedAt       DateTime @default(now()) @map("decided_at")
+  /// @sensitivity:personal
+  note            String?
+
+  // Restrict: a decision is a human record, so deleting a receipt never drops it.
+  receipt      Receipt @relation("PairDecisionReceipt", fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  otherReceipt Receipt @relation("PairDecisionOtherReceipt", fields: [otherReceiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([receiptId, otherReceiptId], name: "receipt_pair_decisions_pair_unique")
+  @@index([otherReceiptId])
+  @@map("receipt_pair_decisions")
+}
+
 // Gmail intake ledger (phase G). One row per file a message yields: an attachment,
 // an inline image or the body. Inert until G binds the mailbox.
 model ReceiptMailItem {
@@ -250,9 +310,21 @@ model ReceiptMailItem {
   // held | deferred | assigned | discarded
   /// @sensitivity:internal
   status         String    @default("held")
+  // Why a held item was held: unverified_sender | not_a_submitter. Null on items held before it was recorded.
+  /// @sensitivity:internal
+  holdReason     String?   @map("hold_reason")
+  // The sender check's outcome: pass | fail | none. Null on items stored before it was recorded.
+  /// @sensitivity:internal
+  dmarcVerdict   String?   @map("dmarc_verdict")
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")
+  // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
+  // to name the object for an admin restore. Null with no fileBlob means no file is kept.
+  /// @sensitivity:pii
+  fileKey        String?   @map("file_key")
+  /// @sensitivity:internal
+  fileSize       Int?      @map("file_size")
   /// @sensitivity:internal
   mimeType       String?   @map("mime_type")
   /// @sensitivity:internal
@@ -263,6 +335,63 @@ model ReceiptMailItem {
   @@unique([gmailMessageId, attachmentHash])
   @@index([orgId, status])
   @@map("receipt_mail_items")
+}
+
+// One acknowledgement owed per mailed message: to its sender, and to the person
+// its receipt is credited to when that is someone else. Sent once the message has a receipt.
+model ReceiptMailReply {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @unique @map("gmail_message_id")
+  /// @sensitivity:pii
+  senderAddress  String    @map("sender_address")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  // False for a sender that failed DMARC or an automated message: only the credited person is told.
+  /// @sensitivity:internal
+  replyToSender  Boolean   @map("reply_to_sender")
+  // Set before sending, so a send is never repeated; cleared only after a send that reported failure.
+  /// @sensitivity:internal
+  claimedAt      DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  senderSentAt   DateTime? @map("sender_sent_at")
+  /// @sensitivity:internal
+  creditedSentAt DateTime? @map("credited_sent_at")
+  // Set once sent, given up after REPLY_ATTEMPTS, or the message can no longer become a receipt.
+  /// @sensitivity:internal
+  doneAt         DateTime? @map("done_at")
+  /// @sensitivity:internal
+  attempts       Int       @default(0)
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orgId, doneAt])
+  @@map("receipt_mail_replies")
+}
+
+// A message a mail run could not finish: failed, put off or not reached. Removed once read
+// clean, or once alerted and no longer listed; a stored row is how the alert survives a bad day.
+model ReceiptMailAtRisk {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @unique @map("gmail_message_id")
+  // Null when the message could not be fetched, so its age is unknown.
+  /// @sensitivity:internal
+  receivedAt     DateTime? @map("received_at")
+  // Set only after the alert was sent, so a failed send retries on the next run.
+  /// @sensitivity:internal
+  alertedAt      DateTime? @map("alerted_at")
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orgId, alertedAt])
+  @@map("receipt_mail_at_risk")
 }
 
 // Files the organization has said are never receipts (#1265 §2a). Mail intake skips a

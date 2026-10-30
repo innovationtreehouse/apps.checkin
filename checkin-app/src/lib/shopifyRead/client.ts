@@ -110,6 +110,8 @@ export interface MirrorOrder {
      */
     discountCodes: string[];
     cancelledAt: Date | null;
+    /** When Shopify processed the order; a membership line without its own year row sells the live year at this moment. */
+    processedAt: Date | null;
     updatedAt: Date | null;
     /**
      * The cart attributes we set on the checkout link (Membership_Process_ID,
@@ -130,6 +132,7 @@ const ORDER_SELECT = {
     discountCents: true,
     discountCodes: true,
     cancelledAt: true,
+    processedAt: true,
     updatedAt: true,
     noteAttributes: true,
 } as const;
@@ -225,15 +228,18 @@ export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
 }
 
 /** One order's attributable lines with their quantities — the program seat count.
- *  Lines an order edit removed are excluded; they were not paid for. */
-export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number }[]> {
+ *  Lines an order edit removed are excluded; they were not paid for. `quantity` is the
+ *  original count; `currentQuantity` excludes units an edit or refund took off the line. */
+export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number; currentQuantity: number }[]> {
     const db = await getClient();
     if (!db) return [];
     const rows = await db.shopOrderLine.findMany({
         where: { orderGid, variantLegacyId: { not: null }, removed: false },
-        select: { variantLegacyId: true, quantity: true },
+        select: { variantLegacyId: true, quantity: true, currentQuantity: true },
     });
-    return rows.flatMap((r) => (r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity }]));
+    return rows.flatMap((r) =>
+        r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity, currentQuantity: r.currentQuantity ?? r.quantity }],
+    );
 }
 
 /** The `sync_run` columns the board needs to judge how fresh the mirror is. */
@@ -465,6 +471,8 @@ export interface IncomeMirrorLineRow {
     title: string | null;
     sku: string | null;
     quantity: number;
+    /** Units still on the line after edits and refunds; `quantity` when the row predates the column. */
+    currentQuantity: number;
     priceCents: number;
     discountCents: number;
 }
@@ -547,9 +555,9 @@ export async function incomeOrderLines(orderGids: string[]): Promise<IncomeMirro
     const rows = await db.shopOrderLine.findMany({
         where: { orderGid: { in: orderGids }, removed: false },
         orderBy: [{ orderGid: "asc" }, { lineGid: "asc" }],
-        select: { orderGid: true, variantLegacyId: true, title: true, sku: true, quantity: true, priceCents: true, discountCents: true },
+        select: { orderGid: true, variantLegacyId: true, title: true, sku: true, quantity: true, currentQuantity: true, priceCents: true, discountCents: true },
     });
-    return rows.map(({ variantLegacyId, ...l }) => ({ ...l, variantId: variantLegacyId }));
+    return rows.map(({ variantLegacyId, currentQuantity, ...l }) => ({ ...l, variantId: variantLegacyId, currentQuantity: currentQuantity ?? l.quantity }));
 }
 
 /** Every variant on a real order's line, with the title and SKU of its newest order. */

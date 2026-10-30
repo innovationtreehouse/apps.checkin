@@ -63,10 +63,77 @@ describe("catalog layout tabs", () => {
   });
 
   it("hides the sub-row on a tab without sub-pages", () => {
-    setSession({ id: 3, isBoardMember: true });
-    setPathname("/inventory/receive-queue");
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/merge-conflicts");
     renderLayout();
     expect(screen.queryByRole("tab", { name: /Categories/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /Locations/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("org inventory subtabs", () => {
+  const subtabNames = () => {
+    const names = screen.getAllByRole("tab").map((t) => (t.textContent ?? "").replace(/^[^A-Za-z]+/, ""));
+    return names.slice(names.findIndex((n) => n.includes("All inventory")));
+  };
+
+  it("lays out one row for an inventory manager: All inventory, Needs a location, Receive queue, Locations, Inventory log", () => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/org-items");
+    renderLayout();
+    expect(subtabNames()).toEqual(["All inventory", "Needs a location", "Receive queue", "Locations", "Inventory log"]);
+    expect(screen.getByRole("tab", { name: /All inventory/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("hides the manager-only Needs a location from Board", () => {
+    setSession({ id: 3, isBoardMember: true });
+    setPathname("/inventory/org-items");
+    renderLayout();
+    expect(subtabNames()).toEqual(["All inventory", "Receive queue", "Locations", "Inventory log"]);
+  });
+
+  it("shows a catalog viewer without a receiving role only All inventory and Locations", () => {
+    setSession({ id: 2, ageBand: "youth", isProgramVolunteer: true, isActiveOrgMember: true });
+    setPathname("/inventory/org-items");
+    renderLayout();
+    expect(subtabNames()).toEqual(["All inventory", "Locations"]);
+  });
+
+  it.each([
+    ["/inventory/receive-queue", /Receive queue/],
+    ["/inventory/inventory-log", /Inventory log/],
+    ["/inventory/unlocated", /Needs a location/],
+  ])("selects Org Inventory and its subtab on %s", (path, name) => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname(path);
+    renderLayout();
+    expect(screen.getByRole("tab", { name: /Org Inventory/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("has no top-level Receive queue tab and no Items subtab", () => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/merge-conflicts");
+    renderLayout();
+    expect(screen.queryByRole("tab", { name: /Receive queue/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Items$/ })).not.toBeInTheDocument();
+  });
+
+  it("has no Applied Deltas tab: its applies live in the Inventory log", () => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/inventory-log");
+    renderLayout();
+    expect(screen.queryByRole("tab", { name: /Applied Deltas/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Inventory log/ })).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("part mapping tab", () => {
+  it("names the receipt-mapping queue Part mapping, not Receiving", () => {
+    setSession({ id: 4, isInventoryManager: true });
+    setPathname("/inventory/receiving");
+    renderLayout();
+    expect(screen.getByRole("tab", { name: /Part mapping/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: /^Receiving/ })).not.toBeInTheDocument();
   });
 });

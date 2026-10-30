@@ -42,10 +42,11 @@ then finance's hand bookings can be matched against it.
 - **Withdrawal holds or flags, never undoes.** A gift withdrawn before booking
   never books. One withdrawn after booking is raised for finance to reverse by
   hand; the app never changes QuickBooks.
-- **Posting** is the in-kind clearing pair already sketched in the bulk-donation
-  design (§7 of `1280_BULK_DONATION_INTEGRATION.md`): a Deposit into an in-kind
-  clearing account and a Purchase out of it, same date and amount. It ships with
-  the donations drain, not before.
+- **Posting** is one QuickBooks journal entry per gift: in-kind contribution
+  income credited with the gift's value, and each line debited to in-kind
+  expense, or to fixed assets once capital review makes it an asset. Finance's
+  past bookings went through a clearing account as a Deposit and a Purchase; the
+  drain matches those first and never books a gift twice.
 - **Donated equipment books as an asset** under the same rules as purchased
   assets: the expense library's capital thresholds, capital review and capital
   register.
@@ -132,8 +133,8 @@ three reasons that each stand alone:
    two libraries that cannot import each other. One record cannot drift from
    itself.
 
-So the gift stays the record, and "the expense side" means the Purchase half of
-its booking pair. The app has two in-kind tables today (gifts that arrived with a
+So the gift stays the record, and "the expense side" means the debit lines of
+its journal entry. The app has two in-kind tables today (gifts that arrived with a
 receipt, and gifts recorded without one); both get the same treatment.
 
 ### Value and date
@@ -206,22 +207,25 @@ finance-set value sits beside it.
 
 ### Linking the two sides: apply once
 
-Each gift gets at most two bookings, one per side, kept in one small table keyed
-by the gift and the side: `(org, source, gift id, side)` unique, where `source`
-is *receipt* or *manual* and `side` is *revenue* or *expense*. Each booking
-carries a match state, the same set every QuickBooks lane uses (see the
-closed-books design below), and the QuickBooks entry it claimed, which is unique
-per org.
+Each gift holds its QuickBooks entries in one small table keyed by the gift and
+the side: `(org, source, gift id, side)` unique, where `source` is *receipt* or
+*manual*. The side is *journal* for the app's one journal entry, which books
+both sides at once, or *revenue* and *expense* for the Deposit and Purchase
+finance booked by hand. Each entry is unique per org and QuickBooks entry kind,
+since QuickBooks numbers each kind separately. A second table keeps one row per
+gift for its way to QuickBooks: its match state (the set every lane uses, see
+the closed-books design below), the drain's claim, the first create attempt, a
+note for finance, and the total and date as booked.
 
 That gives apply once without extra code:
 
-- A rerun finds both bookings and does nothing.
-- A run that booked the revenue side and failed on the expense side finishes
-  only the expense side next time.
-- A QuickBooks entry claimed by one side can never be claimed by another.
+- A rerun finds the gift booked and does nothing.
+- A QuickBooks entry one gift holds can never be held by another.
+- A gift is booked whole or not at all: one journal entry, or both halves of
+  finance's pair claimed together.
 
-The retry key written into QuickBooks is the same tuple, so a create that
-succeeded but went unrecorded is found by lookup, not booked twice.
+The retry key written into QuickBooks names the org, source and gift, so a
+create that succeeded but went unrecorded is found by lookup, not booked twice.
 
 ### When a gift is ready to book
 
@@ -296,32 +300,71 @@ expense side does not appear in the expense library's spending screens.
 
 ### Posting to QuickBooks
 
-As sketched in the donations design §7, with the expense side now required, not
-optional:
+Each gift books as one journal entry, dated as the gift, with the bucket's Class
+on every line (owner, 2026-10-25):
 
-- **Revenue side:** a Deposit into the in-kind clearing account, crediting
-  in-kind contribution income.
-- **Expense side:** a Purchase out of the clearing account, one line per gift
-  line. An ordinary line debits the in-kind expense account; a line capital
-  review made an asset debits the fixed-asset account, as a purchased asset's
-  would.
-- Same date, amount and Class (the bucket's), so clearing nets to zero once both exist. A
-  clearing balance that is not zero is a half-booked gift, and the queue shows
-  which.
+- **Credit:** in-kind contribution income, for the gift's value.
+- **Debit:** one line per gift line. An ordinary line debits in-kind expense; a
+  line capital review made an asset debits fixed assets, as a purchased asset's
+  would. A receipt's tax and shipping are spread across its lines by value, the
+  same spread capital review used, so the debits equal the credit and an asset's
+  cost equals its register cost.
 
-Matching follows the donations design: from our records outward, one narrow
-search per booking in the clearing account, each QuickBooks entry claimed once.
-When the app may create entries follows the closed-books model shared by every
-QuickBooks lane, designed separately ("Replace QuickBooks takeover lines with
-closed books + switch-on"), not here. In short: nothing is booked on or before
+Finance names the three accounts, and the clearing account below, in the books
+map. The lane does not run until all four are set, and the clearing account can
+never be a lane's bank account. One entry means the gift can never sit half
+booked. In-kind is the only part of the app that books journal entries, so no
+other lane can claim one; and the app's writer creates a journal entry only
+through an in-kind function that refuses any account outside these roles and
+any entry that does not balance.
+
+**A gift books only when booking is all it waits on.** A gift with a line still
+in capital review, a held bucket, or anything else outstanding waits, however
+long that takes.
+
+**Matching finance's own bookings.** Until now finance booked each gift by hand
+as a Deposit into an in-kind clearing account and a Purchase out of it, same
+amount. Before it creates anything, the drain looks for that pair: one Deposit
+into the clearing account and one Purchase out of it, each for the gift's value,
+within a week of its date, carrying no app key and held by no other gift. Both
+found, and no other unbooked gift of the same value could own them, is a match;
+the gift claims both entries in one transaction, and the unique index is the
+guard. Anything less goes to finance: one half without the other, two
+candidates, or two gifts that could each own the pair. A journal entry finance
+booked by hand is never matched on its amount; finance matches it to the gift by
+its id, and only when it is for the gift's value with every line on an in-kind
+account. The pair's accounts are the clearing account, which no other lane books
+to, so income and expense can never see these entries. The clearing account
+can be no other lane's account in the books map, so no other lane holds a
+Deposit in it.
+
+**Finance's actions.** A gift the drain hands over (unbooked, needs finance, or
+failed) offers three actions, each audited with who did it. *Book* creates the
+entry now, before switch-on if need be, only when booking is all the gift waits
+on and never in closed books. *Skip* needs a reason; the gift leaves the queue
+and the drain for good. *Match* takes a journal entry id, or a Deposit and a
+Purchase id. Skip and match first look for the app's own entry when a create
+may have landed, and link it instead. A gift's bucket cannot change once a
+create has been attempted, since that entry carries the bucket's Class. A gift
+with a QuickBooks note, such as the sweep's stray entry, stays in the queue
+until finance *clears* the note with how it was answered; the stray entries it
+named are recorded as answered, and the sweep never notes them again.
+
+**When the app may create** follows the closed-books model shared by every
+QuickBooks lane (`QB_CLOSED_BOOKS.md`): nothing is booked on or before
 QuickBooks' books closing date; between that date and in-kind's switch-on the
 app only matches, and a gift it cannot match goes to finance to book or skip;
-after switch-on it books on its own. In-kind is its own lane with its own
-switch-on. Until the drain ships, finance books by hand exactly as today and
-nothing in the app changes for them.
+after switch-on a gift books on its own. A gift counts as created when its
+money side arrived (receipt) or when ops recorded it (no receipt). In-kind is
+its own lane with its own switch-on, set the first time its drain runs with
+QuickBooks connected and every in-kind role in the books map. Before each create
+it re-reads the closing date, and a create QuickBooks refuses as closed (fault
+6210) is held for finance, never retried as a failure. A gift whose create may
+have landed looks for its own entry by key before anything else, and a daily
+sweep reports any app entry its gift does not hold.
 
-In-kind already goes through a clearing account when finance books it by hand
-today (owner), so hand bookings are there to match against.
+The app stores the total and date it booked. A check that finance later edited
+a booked entry is not built yet.
 
 ### Donated equipment
 
@@ -368,17 +411,19 @@ In this order, each its own PR off `main`:
    above.
 3. Expense: capital review accepts a donated line, and the register records a
    gift as a source.
-4. Donations: the pair in the drain (after D and the closed-books design), with
-   capital lines booked to the fixed-asset account.
+4. Donations: one journal entry per gift in the drain, matching finance's
+   clearing-account pairs first, with capital lines booked to the fixed-asset
+   account. Finance books, skips (with a reason) or matches by id each gift the
+   drain hands over, through the two in-kind `qb-resolve` routes.
 
 ---
 
 ## Open questions
 
 - **Q1. Valuation.** Resolved: a receipt gift books per the receipt; finance
-  values a gift without one, and ops may suggest. Residual: on a receipt, tax
-  and shipping are not on any one line, but the capital test is per line.
-  Default: spread them across lines by value, as an asset's cost includes them.
+  values a gift without one, and ops may suggest. A receipt's tax and shipping
+  are spread across its lines by value, for capital review and for the journal
+  entry's debit lines alike.
 - **Q2. Sign-off on the value.** Resolved: no spending sign-off; every gift is
   accepted, refused or returned by an independent finance holder (or a Board
   member when finance is conflicted), and accepting sets the value of a gift
@@ -386,9 +431,10 @@ In this order, each its own PR off `main`:
 - **Q3. Which bucket carries the expense.** Resolved: the same bucket as the
   revenue.
 - **Q4. Program approvers.** Resolved: they see, they do not approve.
-- **Q5. QuickBooks setup.** Resolved: in-kind goes through a clearing account
-  today. Residual: finance supplies the clearing, in-kind income, in-kind
-  expense and fixed-asset account references before switch-on.
+- **Q5. QuickBooks setup.** Resolved: finance sets the in-kind income, in-kind
+  expense, fixed-asset and clearing accounts in the books map; the lane does not
+  run until all four are set. The clearing account is only for matching
+  finance's past bookings.
 - **Q6. Donated equipment.** Resolved: books as an asset under the same rules
   as purchased assets.
 - **Q7. Bucket or QuickBooks Class.** Resolved: a budget bucket; buckets and

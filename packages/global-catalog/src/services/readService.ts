@@ -19,7 +19,17 @@ export async function getItem(gtin13: string) {
   return item ? { gtin13: item.gtin13, name: item.name, categoryId: item.categoryId, subcategoryId: item.subcategoryId } : null;
 }
 
-/** Active items whose name or GTIN contains the query; a blank query matches nothing. */
+/** The GTIN and name of each listed item; unknown GTINs are absent. */
+export function getItemNames(gtin13s: string[]) {
+  return gtin13s.length ? catalogRepo.findItemsWithNamesByGtins(gtin13s) : Promise.resolve([]);
+}
+
+/** The approved, non-archived item with this GTIN, or null. */
+export function getActiveItem(gtin13: string) {
+  return catalogRepo.findActiveItemByGtin13(gtin13);
+}
+
+/** Active items whose name, GTIN, category or subcategory name contains the query in any case; a blank query matches nothing. */
 export async function searchItems(query: string) {
   const q = query.trim();
   return q ? catalogRepo.searchItemsActive(q, SEARCH_LIMIT) : [];

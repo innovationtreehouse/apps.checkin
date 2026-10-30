@@ -406,8 +406,7 @@ describe('Admin Participants API Integration Tests', () => {
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
             });
 
-            // A 12-year-old already carrying a stale flag, as a bulk import that writes
-            // a DOB without touching it leaves them. The edit form resubmits the whole
+            // A 12-year-old already carrying a stale flag. The edit form resubmits the whole
             // record, so an unrelated name edit must still save AND heal the pair — a
             // declared-adult flag here would make them match the adults filter in
             // /api/people/search and count as a supervising adult in the safety calc.

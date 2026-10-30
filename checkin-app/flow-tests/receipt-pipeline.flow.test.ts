@@ -5,14 +5,14 @@
  * refuses restarts and edits, and a re-send is answered as a replay. Real HTTP against the
  * running dev server.
  */
-import { api, BASE, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
 
 interface Receipt { id: string; state: string }
 type Received = { id: number; receiptId: string; state: string; validationNotes?: string | null };
-type ExpenseRow = { id: string; vendorName: string | null };
+type ExpenseDetail = { Expense: { id: string; vendorName: string | null } };
 type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id: number; recognitionStatus: string }> };
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -44,9 +44,9 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     const auto = await upload(submitter, `pipeline receipt ${stamp}`);
     expect(auto.status).toBe(200);
     // The OCR mock reads every file as the same receipt, so an earlier mock upload in this run
-    // flags this one as a duplicate; finance clears it.
+    // flags this one as a duplicate; finance records them as different purchases.
     const state = auto.json.state === "duplicate_flagged"
-      ? (await post<Receipt>(finance, `/api/receipts/${auto.json.id}/clear-duplicate`)).json.state
+      ? (await differentPurchases<Receipt>(finance, auto.json.id)).json.state
       : auto.json.state;
     expect(state).toBe("submitter_review");
     expect((await received(submitter, auto.json.id))).toHaveLength(0);
@@ -66,14 +66,14 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     expect((await post(submitter, `/api/workflow-mapping/receipts/${row.id}/lines/${line.id}/non-inventory`)).status).toBe(200);
     const proceeded = (await api<Detail>(submitter, `/api/workflow-mapping/receipts/${row.id}`)).json.ReceivedReceipt;
     expect(proceeded.state).toBe("resolved");
-    const expense = await api<ExpenseRow>(finance, `/api/expense/expenses/${auto.json.id}`);
+    const expense = await api<ExpenseDetail>(finance, `/api/expense/expenses/${auto.json.id}`);
     expect(expense.status).toBe(200);
-    expect(expense.json).toMatchObject({ id: auto.json.id, vendorName: "Fixture Hardware" });
+    expect(expense.json.Expense).toMatchObject({ id: auto.json.id, vendorName: "Fixture Hardware" });
 
     // Received is final on the receipt side: no restart, no edit.
     const restart = await post(finance, `/api/receipts/${auto.json.id}/restart-flow`);
     expect(restart.status).toBe(409);
-    expect(JSON.stringify(restart.json)).toMatch(/already sent to receiving/);
+    expect(JSON.stringify(restart.json)).toMatch(/already sent to part mapping/);
     const edit = await api(submitter, `/api/receipts/${auto.json.id}`, { method: "PATCH", body: JSON.stringify({ retailer: "Changed" }) });
     expect(edit.status).toBe(409);
 

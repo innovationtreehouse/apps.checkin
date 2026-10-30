@@ -26,6 +26,7 @@ export const classifications = {
         donationAppliedAt: 'public',
         applyClaimedAt: 'public',
         applySweepAttempts: 'public',
+        inventoryUnconfirmedAt: 'public',
         createdAt: 'public',
         updatedAt: 'public',
     },

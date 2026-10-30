@@ -6,11 +6,11 @@ export const classifications = {
         orgId: 'internal',
         capitalTotalThresholdCents: 'internal',
         capitalLineItemThresholdCents: 'internal',
-        capitalEquipmentUnitCents: 'internal',
         boardReviewTotalCents: 'internal',
         noteInLieuLimitCents: 'internal',
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
+        qbPostingOnAt: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -60,6 +60,7 @@ export const classifications = {
         qbPostAttempts: 'internal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
+        qbCreateAttemptedAt: 'internal',
         isTestData: 'internal',
         boardAuthorization: 'internal',
         boardAuthorizedByUserId: 'pii',
@@ -71,7 +72,16 @@ export const classifications = {
     },
     ExpenseReceiptReview: {
         expenseId: 'internal',
+        taxReviewRequired: 'internal',
         reasons: 'internal',
+        approvedTaxCents: 'internal',
+        approvedByUserId: 'pii',
+        note: 'personal',
+        approvedAt: 'internal',
+    },
+    ExpenseTaxApproval: {
+        expenseId: 'internal',
+        taxCents: 'internal',
         approvedByUserId: 'pii',
         note: 'personal',
         approvedAt: 'internal',
@@ -89,6 +99,7 @@ export const classifications = {
         totalPriceCents: 'internal',
         gtin13: 'internal',
         isDelayed: 'internal',
+        nonInventory: 'internal',
         isCapital: 'internal',
         capitalOwnerId: 'pii',
         depreciationYears: 'internal',
@@ -114,6 +125,7 @@ export const classifications = {
         decidedAt: 'internal',
         decidedByUserId: 'pii',
         notes: 'personal',
+        bucketFinal: 'internal',
     },
     AccountMapping: {
         id: 'internal',
@@ -140,7 +152,6 @@ export const classifications = {
         id: 'internal',
         orgId: 'internal',
         expenseId: 'internal',
-        payload: 'personal',
         createdAt: 'internal',
     },
     ExpenseQbAccount: {
@@ -221,7 +232,25 @@ export const classifications = {
         sourceLineItemId: 'internal',
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
+        sourceDonatedLineId: 'internal',
         seeded: 'internal',
+        createdAt: 'internal',
+    },
+    DonatedCapitalLine: {
+        id: 'internal',
+        orgId: 'internal',
+        giftSource: 'internal',
+        giftId: 'internal',
+        giftLineId: 'internal',
+        description: 'internal',
+        quantity: 'internal',
+        costCents: 'internal',
+        acquisitionDate: 'internal',
+        budgetOwnerId: 'internal',
+        isCapital: 'internal',
+        depreciationYears: 'internal',
+        reviewedByUserId: 'pii',
+        reviewedAt: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbMatchExclusion: {
@@ -286,8 +315,12 @@ export const relations = {
         auditLog: { model: 'ExpenseAuditLog', isList: true },
         flags: { model: 'ExpenseFlag', isList: true },
         receiptReview: { model: 'ExpenseReceiptReview', isList: false },
+        taxApproval: { model: 'ExpenseTaxApproval', isList: false },
     },
     ExpenseReceiptReview: {
+        expense: { model: 'Expense', isList: false },
+    },
+    ExpenseTaxApproval: {
         expense: { model: 'Expense', isList: false },
     },
     ExpenseLineItem: {
@@ -326,6 +359,8 @@ export const relations = {
     ExpenseReceivedOrgEvent: {
     },
     CapitalAsset: {
+    },
+    DonatedCapitalLine: {
     },
     ExpenseQbMatchExclusion: {
     },

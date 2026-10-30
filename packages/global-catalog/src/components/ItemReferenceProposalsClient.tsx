@@ -8,7 +8,7 @@ import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -41,7 +41,7 @@ export default function ItemReferenceProposalsClient() {
       await api(`/proposals/item-references/${id}/approve`, { method: "POST" });
       notifications.show({ message: "Mapping approved and written to item references", color: "green" });
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setApproving(null); }
   }
 
@@ -55,7 +55,7 @@ export default function ItemReferenceProposalsClient() {
       setRejectReason("");
       setRejectTarget(null);
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setRejecting(false); }
   }
 

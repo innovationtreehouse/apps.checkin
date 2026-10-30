@@ -3,6 +3,7 @@ import { markBgConsent } from "@/lib/membership/external";
 import { notifyReviewers } from "@/lib/membership/review";
 import { bgFreshThreshold } from "@/lib/membership/personBgCheck";
 import { openPersonBg } from "@/lib/membership/personBgTriggers";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 /**
  * Manual "record an external background check → submit for review" — the Phase 3
@@ -28,11 +29,11 @@ export class PersonBgSubmitError extends Error {
 
 export async function submitPersonBgForReview(personId: number, actorId: number) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const months = settings?.bgRecheckMonths ?? 0;
+    const months = settings?.bgRecheckMonths;
     // Open one if the person genuinely needs a check and none is open (dedup-guarded
     // inside openPersonBg). When the policy is unset we can only submit against an
     // obligation a trigger already opened.
-    if (months > 0) {
+    if (isRecheckPolicySet(months)) {
         const now = new Date();
         await openPersonBg(personId, now, bgFreshThreshold(now, months));
     }

@@ -58,3 +58,18 @@ export function substituteTokens(
     out += escape ? escapeHtml(template.slice(last)) : template.slice(last);
     return out;
 }
+
+/**
+ * Turn an already substituted and escaped body into HTML: a blank line starts a
+ * paragraph, a single newline is a `<br>`, and a paragraph left empty by its
+ * tokens is dropped.
+ */
+export function renderBodyHtml(substitutedBody: string): string {
+    return substitutedBody
+        .replace(/\r\n?/g, "\n")
+        .split(/\n\s*\n/)
+        .map((paragraph) => paragraph.trim())
+        .filter((paragraph) => paragraph.length > 0)
+        .map((paragraph) => `<p>${paragraph.split("\n").map((line) => line.trim()).join("<br>")}</p>`)
+        .join("");
+}

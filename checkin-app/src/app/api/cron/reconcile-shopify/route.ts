@@ -4,12 +4,12 @@ import { withCron } from "@/lib/cronAuth";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg } from "@/lib/components/host";
 import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@checkin/receipt";
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -48,13 +48,17 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  * which needs no mirror. Isolated the same way.
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
- * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ * threw during the catalog's post-commit call-out); local-inventory's step also merges stock for
+ * pending provisionals the catalog has since resolved. Each step is isolated; counts only.
  *
  * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying).
  * Isolated the same way; counts only.
  *
  * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
+ *
+ * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
+ * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
  *
  * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
  * same way; counts only.
@@ -63,7 +67,8 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  *
  * Last, it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
- * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set.
+ * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
+ * that could not read the mailbox counts toward the top-level `failed`, so the cron run records it.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -126,6 +131,14 @@ export const GET = withCron(async () => {
         receipt = { status: "error" };
     }
     logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
+    let receiptStuck: Awaited<ReturnType<typeof sweepStuckUploaded>> | { status: "error" };
+    try {
+        receiptStuck = await sweepStuckUploaded();
+    } catch (err) {
+        logger.error("[reconcile] receipt stuck-upload sweep failed:", err);
+        receiptStuck = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt stuck uploads ${JSON.stringify(receiptStuck)}`);
     let receiptPush: Awaited<ReturnType<typeof repushUnpushed>> | { status: "error" };
     try {
         receiptPush = await repushUnpushed();
@@ -150,5 +163,6 @@ export const GET = withCron(async () => {
         receiptMail = { status: "error" };
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptPush, donorSync, receiptMail });
+    const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
+    return NextResponse.json({ success: true, ...result, failed: result.failed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
 });

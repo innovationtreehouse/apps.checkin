@@ -6,13 +6,13 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
-import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
 import { withinEverydayLimits } from "../lib/signoff";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
+import { recordSubmitterSeats } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
 export async function receiveCompletedReceipt(
@@ -102,10 +102,9 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
-  const unresolvedDetail =
-    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     const settings = await readExpenseSettings(tx, receipt.orgId);
+    const review = receiptReviewOf(receipt);
     await tx.expense.create({
       data: {
         id: receipt.receiptId,
@@ -132,19 +131,13 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         ),
         everydayTotalLimitCents: settings.everydayTotalLimitCents,
         everydayItemLimitCents: settings.everydayItemLimitCents,
-        receiptReview: receipt.financeReview && {
-          create: {
-            reasons: receipt.financeReview.reasons,
-            approvedByUserId: receipt.financeReview.decidedByPersonId,
-            note: receipt.financeReview.note,
-            approvedAt: new Date(receipt.financeReview.decidedAt),
-          },
-        },
+        receiptReview: review ? { create: review } : undefined,
       },
     });
 
+    const lineItemIds: number[] = [];
     for (const li of receipt.lineItems) {
-      await tx.expenseLineItem.create({
+      const { id } = await tx.expenseLineItem.create({
         data: {
           expenseId: receipt.receiptId,
           receiptLineItemId: li.receiptLineItemId,
@@ -155,23 +148,35 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           quantity: li.quantity,
           unitPriceCents: li.unitPriceCents,
           totalPriceCents: li.totalPriceCents,
-          gtin13: li.gtin13,
+          // A non-inventory line is no catalog part, so it keeps no GTIN to map an owner by.
+          gtin13: li.nonInventory ? null : li.gtin13,
           isDelayed: li.isDelayed,
+          nonInventory: li.nonInventory ?? false,
         },
       });
+      lineItemIds.push(id);
     }
 
-    await tx.expenseFlag.createMany({
-      data: detectIntakeFlags({ ...receipt, reimburseePersonId }, settings).map((kind) => ({
-        orgId: receipt.orgId,
-        expenseId: receipt.receiptId,
-        kind,
-        audience: FLAG_AUDIENCE[kind],
-        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
-      })),
-      skipDuplicates: true,
-    });
+    // The person reimbursed's confirmation signs every line: theirs, or a Board member's on their behalf.
+    const confirmation = receipt.submitterConfirmation;
+    if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
+      const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt, reason: confirmation.onBehalfReason });
+    }
   });
+}
+
+/** The receipt review to store with the expense, or null when the receipt sent neither part. */
+function receiptReviewOf({ taxReviewRequired, financeReview }: CompletedReceipt) {
+  if (taxReviewRequired === undefined && !financeReview) return null;
+  return {
+    taxReviewRequired: taxReviewRequired ?? null,
+    reasons: financeReview?.reasons ?? [],
+    approvedTaxCents: financeReview?.taxCents ?? null,
+    approvedByUserId: financeReview?.decidedByPersonId ?? null,
+    note: financeReview?.note ?? null,
+    approvedAt: financeReview ? new Date(financeReview.decidedAt) : null,
+  };
 }
 
 /** The receipt's reimbursee when it names a checkin Person; an unresolvable id is held as unknown. */

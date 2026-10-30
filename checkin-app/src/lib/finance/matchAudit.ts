@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { membershipVariantIdSet } from "@/lib/finance/reconcile/membership";
+import { membershipVariantYears } from "@/lib/finance/reconcile/membership";
 import { isPaid, isReversed } from "@/lib/finance/reconcile/orderStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
@@ -133,7 +133,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     const [settings, programs, variantCoverage] = await Promise.all([
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true },
+            select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true },
         }),
         prisma.program.findMany({
             select: { id: true, name: true, shopifyVariantId: true, claimantShopifyVariantId: true },
@@ -143,7 +143,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
 
     // The same set the reconciler's item gate uses — shared, not copied, so the
     // two can't drift (#1074 was exactly that drift).
-    const membershipVariants = membershipVariantIdSet(settings ?? null);
+    const membershipVariants = new Set((await membershipVariantYears(settings ?? null, new Date())).keys());
     const programByVariant = new Map<string, { id: number; name: string }>();
     for (const p of programs) {
         for (const v of programVariantIds(p)) programByVariant.set(v, { id: p.id, name: p.name });

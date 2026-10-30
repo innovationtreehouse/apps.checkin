@@ -197,11 +197,8 @@ model DisbursementHold {
   @@map("disbursement_holds")
 }
 
-// qbMatchState: one of QB_MATCH_STATE in src/lib/qb-match.ts.
-// qbTxnId is the QuickBooks entry this event is tied to (MATCHED or CREATED); an entry is
-// claimed by at most one event per org. qbDepositTotalCents/qbDepositTxnDate are the deposit as
-// booked, which the drift check compares against. On DRIFT, qbTxnId is cleared and the deposit
-// that was booked moves to qbDriftedTxnId, with qbDriftCause saying why.
+// The qb* columns are neither read nor written: income owns every deposit. They stay mapped
+// until no deployed release reads them (QB_ENTRY_OWNERSHIP, the exclusion-table PR drops them).
 model DisbursementEvent {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -302,12 +299,18 @@ model DonationQbMatchExclusion {
   @@map("qb_match_exclusion")
 }
 
-// The lane's QuickBooks settings, one row per org.
+// The in-kind lane's QuickBooks settings, one row per org. qbPostingOnAt and
+// depositsHandedOverAt are neither read nor written, and are dropped with the qb* event columns.
 model DonationOrgSettings {
   /// @sensitivity:internal
   orgId         String    @id @map("org_id")
   /// @sensitivity:internal
   qbPostingOnAt DateTime? @map("qb_posting_on_at")
+  // When the in-kind lane's posting switched on; set once, by its first run with QuickBooks and every in-kind books-map role.
+  /// @sensitivity:internal
+  inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
+  /// @sensitivity:internal
+  depositsHandedOverAt DateTime? @map("deposits_handed_over_at")
 
   @@map("donation_org_settings")
 }
@@ -367,10 +370,27 @@ model InKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
+  // When the expense library took this accepted gift's lines for capital review.
+  /// @sensitivity:internal
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
   lines                      InKindDonationLine[]
 
   @@unique([orgId, receiptId])
   @@map("in_kind_donations")
+}
+
+// The newest X13 donor/withdraw call seen per receipt (the receipt's donorSyncSeq). A call older
+// than this is stale and ignored. Never deleted, so it outlives a withdrawn row; holds no pii.
+model InKindSyncMark {
+  /// @sensitivity:internal
+  orgId     String @map("org_id")
+  /// @sensitivity:internal
+  receiptId String @map("receipt_id")
+  /// @sensitivity:internal
+  seq       Int
+
+  @@id([orgId, receiptId])
+  @@map("in_kind_sync_marks")
 }
 
 // An in-kind donation entered by ops with no receipt (FR5): each line is a catalog item with a
@@ -414,6 +434,9 @@ model ManualInKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
+  // When the expense library took this accepted gift's lines for capital review.
+  /// @sensitivity:internal
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
   lines              ManualInKindDonationLine[]
 
   @@index([orgId, recordedAt])
@@ -469,8 +492,10 @@ model InKindDonationLine {
   @@map("in_kind_donation_lines")
 }
 
-// One booking side of an in-kind gift: `source` is "receipt" or "manual", `side` is "revenue"
-// or "expense". At most one row per side, and each QuickBooks entry is claimed once per org.
+// One QuickBooks entry an in-kind gift holds: `source` is "receipt" or "manual"; `side` is
+// "journal" for the app's one JournalEntry (both sides), or "revenue" and "expense" for the
+// Deposit and Purchase finance booked by hand through the clearing account. QuickBooks numbers
+// each entity kind on its own, so an entry is claimed once per org and entity.
 model InKindBooking {
   /// @sensitivity:internal
   id         Int      @id @default(autoincrement())
@@ -485,6 +510,8 @@ model InKindBooking {
   /// @sensitivity:internal
   matchState String   @map("match_state")
   /// @sensitivity:internal
+  qbEntity   String?  @map("qb_entity")
+  /// @sensitivity:internal
   qbTxnId    String?  @map("qb_txn_id")
   /// @sensitivity:internal
   createdAt  DateTime @default(now()) @map("created_at")
@@ -492,6 +519,39 @@ model InKindBooking {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@unique([orgId, source, giftId, side])
-  @@unique([orgId, qbTxnId])
+  @@unique([orgId, qbEntity, qbTxnId])
   @@map("in_kind_bookings")
+}
+
+// An in-kind gift's way to QuickBooks: its match state, the drain's claim, the first create
+// attempt, finance's note, and the entry as booked. One row per gift, written by the drain.
+model InKindPosting {
+  /// @sensitivity:internal
+  id                  Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId               String    @map("org_id")
+  /// @sensitivity:internal
+  source              String
+  /// @sensitivity:internal
+  giftId              Int       @map("gift_id")
+  /// @sensitivity:internal
+  matchState          String    @map("match_state")
+  /// @sensitivity:internal
+  claimedAt           DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  /// @sensitivity:internal
+  qbNote              String?   @map("qb_note")
+  /// @sensitivity:internal
+  bookedTotalCents    Int?      @map("booked_total_cents")
+  /// @sensitivity:internal
+  bookedTxnDate       String?   @map("booked_txn_date")
+  /// @sensitivity:internal
+  createdAt           DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:internal
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@unique([orgId, source, giftId])
+  @@index([orgId, qbCreateAttemptedAt])
+  @@map("in_kind_postings")
 }

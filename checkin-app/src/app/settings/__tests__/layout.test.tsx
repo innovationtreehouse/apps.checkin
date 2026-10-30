@@ -4,9 +4,11 @@ import SettingsLayout from "../layout";
 
 const push = jest.fn();
 let mockSession: { data: unknown; status: string };
+let mockPathname = "/settings/membership";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  usePathname: () => mockPathname,
 }));
 jest.mock("next-auth/react", () => ({
   useSession: () => mockSession,
@@ -26,6 +28,7 @@ const renderLayout = (session: { data: unknown; status: string }) => {
 
 beforeEach(() => {
   push.mockClear();
+  mockPathname = "/settings/membership";
 });
 
 describe("SettingsLayout role gate", () => {
@@ -58,4 +61,68 @@ describe("SettingsLayout role gate", () => {
     expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
     expect(push).toHaveBeenCalledWith("/");
   });
+});
+
+describe("SettingsLayout on Finance", () => {
+  beforeEach(() => {
+    mockPathname = "/settings/finance";
+  });
+
+  it.each([
+    ["FINANCE", { id: 4, isFinance: true }],
+    ["a board member", { id: 2, isBoardMember: true }],
+  ])("admits %s", (_who, user) => {
+    renderLayout({ data: { user }, status: "authenticated" });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a sysadmin", { id: 1, isSysadmin: true }],
+    ["operations", { id: 5, isOperations: true }],
+  ])("redirects %s", (_who, user) => {
+    renderLayout({ data: { user }, status: "authenticated" });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it("keeps FINANCE off the other settings pages", () => {
+    mockPathname = "/settings/membership";
+    renderLayout({ data: { user: { id: 4, isFinance: true } }, status: "authenticated" });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("SettingsLayout on the bare /settings path", () => {
+  beforeEach(() => {
+    mockPathname = "/settings";
+  });
+
+  it.each([
+    ["FINANCE", { id: 4, isFinance: true }],
+    ["a sysadmin", { id: 1, isSysadmin: true }],
+    ["a board member", { id: 2, isBoardMember: true }],
+    ["operations", { id: 5, isOperations: true }],
+  ])("admits %s so the index page can redirect them", (_who, user) => {
+    renderLayout({ data: { user }, status: "authenticated" });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("redirects a user with no settings role", () => {
+    renderLayout({ data: { user: { id: 3 } }, status: "authenticated" });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it.each(["/settings/membership", "/settings/localization", "/settings/email", "/settings/outreach", "/settings/shopify-webhook"])(
+    "still keeps FINANCE off %s",
+    (path) => {
+      mockPathname = path;
+      renderLayout({ data: { user: { id: 4, isFinance: true } }, status: "authenticated" });
+      expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+      expect(push).toHaveBeenCalledWith("/");
+    },
+  );
 });

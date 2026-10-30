@@ -6,6 +6,11 @@ export function calculateChecksum(partial12: string): number {
   return (10 - (sum % 10)) % 10;
 }
 
+/** Thirteen digits whose last is the GTIN-13 check digit of the first twelve. */
+export function isValidGtin13(value: string): boolean {
+  return /^\d{13}$/.test(value) && calculateChecksum(value.slice(0, 12)) === Number(value[12]);
+}
+
 export function buildGtin13(categoryLetter: string, subcategoryNumber: number, sequence: number): string {
   const catPos = categoryLetter.toUpperCase().charCodeAt(0) - 64; // A=1, B=2...
   const partial = "0200"

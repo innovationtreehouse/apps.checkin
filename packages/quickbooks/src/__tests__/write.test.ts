@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, type FindOrCreateRequest } from "../write";
+import { createVendor, findOrCreate, findOrCreateInKindJournal, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
@@ -487,5 +487,88 @@ describe("createVendor", () => {
   it("rejects a control character in the name before any request", async () => {
     await expect(createVendor(client(), "Ann\nLee", "v-1")).rejects.toThrow(/control character/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("findOrCreateInKindJournal", () => {
+  const IN_KIND_KEY = qbKey("in-kind", "org-1:receipt:42");
+  const accounts = { INKIND_INCOME: "400", INKIND_EXPENSE: "600", FIXED_ASSETS: "150", SHOPIFY_BANK: "35" };
+  const jreq = (over: Partial<InKindJournalRequest> = {}): InKindJournalRequest => ({
+    txnDate: "2025-03-05",
+    lines: [
+      { postingType: "Credit", role: "INKIND_INCOME", amountCents: 150_00, classId: "7" },
+      { postingType: "Debit", role: "INKIND_EXPENSE", amountCents: 50_00, classId: "7", description: "Paper" },
+      { postingType: "Debit", role: "FIXED_ASSETS", amountCents: 100_00, classId: "7", description: "Lathe" },
+    ],
+    memo: "In-kind gift receipt 42",
+    key: IN_KIND_KEY,
+    window: { from: "2025-02-26", to: "2025-03-12" },
+    claimedIds: new Set(),
+    closedThrough: "2025-03-01",
+    mayCreate: true,
+    accounts,
+    ...over,
+  });
+  const journal = (Id: string, TotalAmt: number, PrivateNote?: string) => ({ Id, TxnDate: "2025-03-05", TotalAmt, PrivateNote });
+
+  it("refuses a line booked to any account outside the in-kind roles, before reading QuickBooks", async () => {
+    const lines = jreq().lines.map((l) => (l.role === "INKIND_EXPENSE" ? { ...l, role: "SHOPIFY_BANK" as const } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/may not debit SHOPIFY_BANK/);
+    const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, role: "INKIND_EXPENSE" as const } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may not credit INKIND_EXPENSE/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unbalanced entry, before reading QuickBooks", async () => {
+    const lines = jreq().lines.map((l) => (l.role === "FIXED_ASSETS" ? { ...l, amountCents: 99_99 } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/not balanced/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a role the books map has no account for", async () => {
+    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { INKIND_INCOME: "400", INKIND_EXPENSE: "600" } }))).rejects.toThrow(/no account for FIXED_ASSETS/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a hand JournalEntry of the same amount and creates one balanced, keyed entry", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("JournalEntry", [journal("20", 150)]))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(json({ JournalEntry: { Id: "88" } }));
+    await expect(findOrCreateInKindJournal(client(), jreq())).resolves.toEqual({ kind: "created", id: "88" });
+    expect(queries()[0]).toBe("SELECT * FROM JournalEntry WHERE TxnDate >= '2025-02-26' AND TxnDate <= '2025-03-12' STARTPOSITION 1 MAXRESULTS 1000");
+    const [c] = posts();
+    expect(c.url.pathname).toBe("/v3/company/123/journalentry");
+    expect(c.url.searchParams.get("requestid")).toBe(IN_KIND_KEY);
+    expect(c.body).toEqual({
+      TxnDate: "2025-03-05",
+      Line: [
+        { Amount: 150, DetailType: "JournalEntryLineDetail", JournalEntryLineDetail: { PostingType: "Credit", AccountRef: { value: "400" }, ClassRef: { value: "7" } } },
+        { Amount: 50, DetailType: "JournalEntryLineDetail", JournalEntryLineDetail: { PostingType: "Debit", AccountRef: { value: "600" }, ClassRef: { value: "7" } }, Description: "Paper" },
+        { Amount: 100, DetailType: "JournalEntryLineDetail", JournalEntryLineDetail: { PostingType: "Debit", AccountRef: { value: "150" }, ClassRef: { value: "7" } }, Description: "Lathe" },
+      ],
+      PrivateNote: `In-kind gift receipt 42\n[checkin-test] [checkin:${IN_KIND_KEY}]`,
+    });
+  });
+
+  it("finds its own entry by key and creates nothing", async () => {
+    fetchMock.mockResolvedValueOnce(rows("JournalEntry", [journal("21", 150, `[checkin-test] [checkin:${IN_KIND_KEY}]`)]));
+    await expect(findOrCreateInKindJournal(client(), jreq())).resolves.toEqual({ kind: "found", id: "21", via: "key", txnDate: "2025-03-05" });
+    expect(posts()).toEqual([]);
+  });
+
+  it("goes through the closed-books gate: closed, and needs-finance when it may not create", async () => {
+    fetchMock.mockImplementation(async () => rows("JournalEntry", []));
+    await expect(findOrCreateInKindJournal(client(), jreq({ closedThrough: "2025-03-05" }))).resolves.toEqual({ kind: "closed" });
+    await expect(findOrCreateInKindJournal(client(), jreq({ mayCreate: false }))).resolves.toEqual({ kind: "needs-finance" });
+    expect(posts()).toEqual([]);
+  });
+
+  it("a create QuickBooks refuses as a closed period is closed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("JournalEntry", []))
+      .mockResolvedValueOnce(prefs())
+      .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6210" }] } }, 400));
+    await expect(findOrCreateInKindJournal(client(), jreq())).resolves.toEqual({ kind: "closed" });
   });
 });

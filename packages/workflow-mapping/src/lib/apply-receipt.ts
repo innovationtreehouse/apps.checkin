@@ -5,7 +5,7 @@ import {
   type CompletedReceiptLineItem,
 } from "@checkin/receipt-types";
 import { db } from "../db";
-import type { ReceivedReceipt } from "../db/schema";
+import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
 import { getOrg, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
@@ -13,27 +13,38 @@ import { insertAuditEvent } from "./audit";
 export type ApplyResult =
   | { state: "resolved" }
   | { state: "apply_failed"; error: string }
-  // Inventory committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
+  // A leg committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
   | { state: "applying"; error: string };
 
 /** How long a push's claim holds before another caller may take it over (a crashed push). */
 export const APPLY_CLAIM_TTL_MS = 5 * 60_000;
 
-interface ResolvedGtin13 {
-  gtin13: string;
-  isProvisional?: boolean;
+export type LineResolution = { gtin13: string; isProvisional?: boolean } | { nonInventory: true };
+
+type LineStatusFields = Pick<ReceivedReceiptLineStatusRow, "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13">;
+
+/** What receiving decided for a line, as the money side carries it; undefined while unresolved. */
+export function lineResolution(ls: LineStatusFields | undefined): LineResolution | undefined {
+  if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
+    return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
+  }
+  if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) return { gtin13: ls.assignedGtin13 };
+  if (ls?.recognitionStatus === "non_inventory") return { nonInventory: true };
+  return undefined;
 }
 
-/** Stitch each resolved line's GTIN onto the receipt sent as its money side (S2 / X9). */
+/** Stitch each resolved line's GTIN, or its non-inventory mark, onto the receipt sent as its money side (S2 / X9). */
 export function buildExpenseReceipt(
   receipt: CompletedReceipt,
-  resolve: (lineItem: CompletedReceiptLineItem) => ResolvedGtin13 | undefined,
+  resolve: (lineItem: CompletedReceiptLineItem) => LineResolution | undefined,
 ): CompletedReceipt {
   return {
     ...receipt,
     lineItems: receipt.lineItems.map((li) => {
       const resolved = resolve(li);
       if (!resolved) return li;
+      // A non-inventory line is no catalog part, so any GTIN the receipt arrived with is dropped.
+      if ("nonInventory" in resolved) return { ...li, gtin13: null, isProvisional: undefined, provisionalName: undefined, nonInventory: true };
       return resolved.isProvisional
         ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: li.description }
         : { ...li, gtin13: resolved.gtin13 };
@@ -137,7 +148,10 @@ export async function sweepStuckApplying(): Promise<{
   return counts;
 }
 
-/** Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved. */
+/**
+ * Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved.
+ * Every such attempt ran after the push began, so a give-up marks inventory unconfirmed and the lines stay locked.
+ */
 async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, error: string): Promise<boolean> {
   await db.receivedReceipt.updateMany({
     where: { id: row.id, state: "applying" },
@@ -146,7 +160,7 @@ async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, err
   const validationNotes = `Stopped retrying after ${MAX_SWEEP_APPLY_ATTEMPTS} attempts. Last error: ${error}`;
   const { count } = await db.receivedReceipt.updateMany({
     where: { id: row.id, state: "applying", applySweepAttempts: { gte: MAX_SWEEP_APPLY_ATTEMPTS }, ...unclaimedSince(Date.now()) },
-    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0 },
+    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0, inventoryUnconfirmedAt: new Date() },
   });
   if (count !== 1) return false;
   await insertAuditEvent(db, {
@@ -208,16 +222,7 @@ async function pushAndSettle(
       };
     });
 
-  const moneyReceipt = buildExpenseReceipt(receipt, (li) => {
-    const ls = statusMap.get(li.receiptLineItemId);
-    if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
-      return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
-    }
-    if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) {
-      return { gtin13: ls.assignedGtin13 };
-    }
-    return undefined;
-  });
+  const moneyReceipt = buildExpenseReceipt(receipt, (li) => lineResolution(statusMap.get(li.receiptLineItemId)));
 
   const { expenseSink, donationSink, inventorySink } = ports();
   // A leg that already applied on an earlier attempt is not pushed again.
@@ -228,23 +233,32 @@ async function pushAndSettle(
   const stamp = (data: { inventoryAppliedAt?: Date; expenseAppliedAt?: Date; donationAppliedAt?: Date }) =>
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
-  const pushes: Array<() => Promise<void>> = [];
+  const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
   let inventoryUnstamped = false;
+  let moneyUnstamped = false;
+  const stampMoney = async (data: { expenseAppliedAt?: Date; donationAppliedAt?: Date }) => {
+    try {
+      await stamp(data);
+    } catch (err) {
+      moneyUnstamped = true;
+      throw err;
+    }
+  };
   // An in-kind receipt's money side goes to donations, never to expense.
   if (receipt.isInKind ? !legs.donationAppliedAt : !legs.expenseAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: receipt.isInKind ? "Donation" : "Expense", push: async () => {
       const validated = CompletedReceiptSchema.parse(moneyReceipt);
       if (receipt.isInKind) {
         await donationSink.ingestInKind(validated);
-        await stamp({ donationAppliedAt: new Date() });
+        await stampMoney({ donationAppliedAt: new Date() });
       } else {
         await expenseSink.pushReceipt(validated);
-        await stamp({ expenseAppliedAt: new Date() });
+        await stampMoney({ expenseAppliedAt: new Date() });
       }
-    });
+    } });
   }
   if (applyItems.length > 0 && !legs.inventoryAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: "Inventory", push: async () => {
       await inventorySink.applyDelta(
         ResolvedInventoryDeltaSchema.parse({
           receiptId: receipt.receiptId,
@@ -259,18 +273,19 @@ async function pushAndSettle(
         inventoryUnstamped = true;
         throw err;
       }
-    });
+    } });
   }
 
   // allSettled, so every leg's applied stamp is written before the receipt settles.
-  const failed = (await Promise.allSettled(pushes.map((push) => push()))).find(
-    (r): r is PromiseRejectedResult => r.status === "rejected",
+  const results = await Promise.allSettled(pushes.map(({ push }) => push()));
+  // Each failure names its leg, so the reason says which part of the receipt didn't apply.
+  const failures = results.flatMap((r, i) =>
+    r.status === "rejected" ? [`${pushes[i].leg}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [],
   );
-  if (failed) {
-    const err: unknown = failed.reason;
-    const error = err instanceof Error ? err.message : String(err);
-    // Inventory took the delta but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same delta.
-    if (inventoryUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error);
+  if (failures.length > 0) {
+    const error = failures.join("; ");
+    // A sink took its leg but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same payload, which the sinks dedupe.
+    if (inventoryUnstamped || moneyUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped });
     return settleFailed(receiptId, received.orgId, actor, error);
   }
 
@@ -294,8 +309,12 @@ async function settleUnstamped(
   orgId: string,
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
+  unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
 ): Promise<ApplyResult> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error } });
+  await db.receivedReceipt.update({
+    where: { id: receiptId },
+    data: { validationNotes: error, ...(unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}) },
+  });
   await insertAuditEvent(db, {
     orgId,
     ...actor,
@@ -303,7 +322,7 @@ async function settleUnstamped(
     receivedReceiptId: receiptId,
     fromState: "applying",
     toState: "applying",
-    details: JSON.stringify({ error, inventoryUnstamped: true }),
+    details: JSON.stringify({ error, ...unstamped }),
   });
   return { state: "applying", error };
 }

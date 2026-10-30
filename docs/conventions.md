@@ -183,6 +183,18 @@ missed a row stored at a different time of day.
 
 ---
 
+## A library's pages share one client kit
+
+- **Package UIs take their fetch helpers, `LoadError`, `Pager` and paging from
+  `@checkin/component-ui`, and format money with `@checkin/money`.** Each
+  package binds its route base once with `createClient`.
+- **A package page learns who is looking from `useViewer()`, never from the
+  host's session.** The host maps its session onto `Viewer` once, in
+  `checkin-app/src/components/AuthProvider.tsx`. A new role a package needs is
+  a new `Viewer` field.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never
@@ -194,11 +206,19 @@ missed a row stored at a different time of day.
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
 
-- **A library's runtime fails closed the same way everywhere.** Each library
+- **A library's runtime fails closed.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures
-  it, every accessor throws. A missing principal, or one without an integer id,
-  is a 401. An unbound port or accessor throws `NotWiredError` and never fakes
-  success. A callee that takes an `orgId` from its caller checks it with
+  it, an accessor that needs the configuration throws. `configured()` and
+  `getOrgEventConsumers` return nothing instead, for reads that must not throw,
+  such as one after a commit. A missing principal, or one without an integer id,
+  is a 401. An unbound push or write port throws rather than report success,
+  usually `NotWiredError`. Expense's outbound gateway, workflow-mapping's push
+  ports and the add-person port in expense and receipt throw a plain `Error`.
+  Donations' capital review is the exception that does nothing when unbound, since
+  no line then goes to review. An unbound read port falls back to an inert adapter
+  that returns an empty result, or throws where it has no answer to give: expense's
+  QuickBooks reader throws `QuickBooksNotConnectedError`, and workflow-mapping's
+  `checkReferences` and `getActiveItem` throw a plain `Error`. A callee that takes an `orgId` from its caller checks it with
   `assertOrg` first.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race

@@ -44,6 +44,7 @@ describeDb("financial review", () => {
       outcome: "approved",
       reasons: ["tax"],
       decidedByUserId: FINANCE.id,
+      taxCents: 100,
       note: null,
     });
     expect(ports.calls.pushes).toHaveLength(1);
@@ -52,8 +53,10 @@ describeDb("financial review", () => {
       reasons: ["tax"],
       decidedByPersonId: FINANCE.id,
       note: null,
+      taxCents: 100,
       decidedAt: review!.decidedAt.toISOString(),
     });
+    expect(ports.calls.pushes[0].taxReviewRequired).toBe(true);
   });
 
   it("a receipt that never waited on finance pushes no financeReview", async () => {
@@ -65,6 +68,7 @@ describeDb("financial review", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     expect(r.state).toBe("receipt_finalized");
     expect(ports.calls.pushes[0].financeReview).toBeUndefined();
+    expect(ports.calls.pushes[0].taxReviewRequired).toBe(false);
     expect(await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } })).toBeNull();
   });
 
@@ -99,13 +103,11 @@ describeDb("financial review", () => {
     expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: "personal purchase" });
   });
 
-  it("rejects without a reason", async () => {
+  it("refuses a reject without a reason", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
-    await receiptService.rejectFinancial(r.id, "   ");
-    expect(await stateOf(r.id)).toBe("rejected");
-    const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "reject_financial" } });
-    expect(row).toMatchObject({ userId: FINANCE.id, valueAfter: null });
+    await expect(receiptService.rejectFinancial(r.id, "   ")).rejects.toMatchObject({ status: 400 });
+    expect(await stateOf(r.id)).toBe("financial_review");
   });
 
   it("a submitter's tax correction drops the earlier finance decision", async () => {
@@ -184,5 +186,9 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(2, 1, 1));
     expect(await receiptService.countAwaitingFinance(HOUSEMATE.id)).toEqual(counts(2, 2, 0));
+
+    // The review tabs match the pill for a FINANCE viewer, and stay org-wide for the Board.
+    expect((await receiptService.queueCounts(HOUSEMATE.id)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
+    expect((await receiptService.queueCounts(null)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
   });
 });

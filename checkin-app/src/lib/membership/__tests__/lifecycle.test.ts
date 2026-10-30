@@ -216,13 +216,14 @@ describe('isLegalTransition covers §5', () => {
         expect(isLegalTransition('PENDING_BG_CLEARANCE', 'ACTIVE')).toBe(true);
     });
 
-    test('accepts BLOCKED transitions (reject + override resets/approve)', () => {
+    test('accepts BLOCKED transitions (reject, then back to review by a reset or the rejector changing to approve)', () => {
         expect(isLegalTransition('PENDING_BG_REVIEW', 'BLOCKED')).toBe(true);
         expect(isLegalTransition('PENDING_PAYMENT', 'BLOCKED')).toBe(true);
         expect(isLegalTransition('BLOCKED', 'PENDING_PAYMENT')).toBe(true);
         expect(isLegalTransition('BLOCKED', 'PENDING_BG_CLEARANCE')).toBe(true);
         expect(isLegalTransition('BLOCKED', 'PENDING_BG_REVIEW')).toBe(true);
-        expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(true);
+        // Board ruling B5/B25: nothing clears a blocked review directly.
+        expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(false);
     });
 
     test('close only from the unpaid, long-idle steps — never paid or active; blocked only by a board restore', () => {

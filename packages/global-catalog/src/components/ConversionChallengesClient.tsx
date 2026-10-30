@@ -4,7 +4,7 @@ import { Button, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -32,7 +32,7 @@ export default function ConversionChallengesClient() {
       await api(`/conversion-challenges/${id}/accept`, { method: "POST" });
       notifications.show({ message: "Challenge accepted — conversion factor updated", color: "green" });
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setActing(null); }
   }
 
@@ -42,7 +42,7 @@ export default function ConversionChallengesClient() {
       await api(`/conversion-challenges/${id}/reject`, { method: "POST" });
       notifications.show({ message: "Challenge rejected", color: "orange" });
       await load();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red" }); }
+    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setActing(null); }
   }
 

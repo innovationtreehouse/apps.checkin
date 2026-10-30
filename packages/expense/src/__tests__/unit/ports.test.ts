@@ -1,11 +1,12 @@
 /** Crossing guards and inert adapters — no database. */
 import { describe, it, expect, vi } from "vitest";
+import { isServiceError } from "@checkin/component-kit";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
-import { inertOutbound, inertOwnerDirectory } from "../../contract";
+import { inertOutbound, inertOwnerDirectory, QuickBooksNotConnectedError } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
-import { detectIntakeFlags, FLAG_AUDIENCE } from "../../lib/flags";
+import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
 describe("callerId", () => {
@@ -29,8 +30,11 @@ describe("runtime", () => {
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
-    expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
-    expect(rt.quickbooks.posting).toBeNull();
+    const notConnected = await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31").catch((err: unknown) => err);
+    expect(notConnected).toBeInstanceOf(QuickBooksNotConnectedError);
+    // Branded, so a route in another chunk still answers 503.
+    expect(isServiceError(notConnected) && notConnected.status).toBe(503);
+    await expect(rt.quickbooks.posting()).resolves.toBeNull();
   });
 
   it("the inert outbound gateway sends nothing", async () => {
@@ -57,21 +61,46 @@ describe("X12 reimbursementStatus", () => {
 });
 
 describe("flags", () => {
-  const LIMITS = { boardReviewTotalCents: 200_000, capitalEquipmentUnitCents: 50_000 };
-  const line = (unitPriceCents: number, totalPriceCents = unitPriceCents) => ({ unitPriceCents, totalPriceCents });
+  it("keeps three finance review kinds and retires the rest", () => {
+    expect(FLAG_KINDS).toEqual(["QB_DUPLICATE_TO_VOID", "QB_DRIFT", "QB_POST_HELD"]);
+    expect(Object.values(FLAG_AUDIENCE)).toEqual(["FINANCE", "FINANCE", "FINANCE"]);
+    expect(isFlagKind("QB_DRIFT")).toBe(true);
+    for (const kind of RETIRED_FLAG_KINDS) expect(isFlagKind(kind)).toBe(false);
+  });
+});
 
-  it("raises tax, $2,000 review and $500 equipment flags; threshold and COI go to the board", () => {
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual([]);
-    const reimbursement = { taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)], needsReimbursement: true };
-    expect(detectIntakeFlags(reimbursement, LIMITS)).toEqual(["REIMBURSEE_UNKNOWN"]);
-    expect(detectIntakeFlags({ ...reimbursement, reimburseePersonId: 9 }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ ...reimbursement, backfill: true }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ taxCents: 1, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual(["TAX_ATTACHED"]);
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 199_999, lineItems: [line(49_999)] }, LIMITS)).toEqual([]);
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 200_000, lineItems: [line(100)] }, LIMITS)).toEqual(["THRESHOLD_CROSSED"]);
-    // A line's total does not cross the Board-review total; only the receipt's does.
-    expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 1000, lineItems: [line(50_000, 200_000)] }, LIMITS)).toEqual(["CAPITAL_EQUIPMENT"]);
-    expect(FLAG_AUDIENCE.COI).toBe("BOARD");
-    expect(FLAG_AUDIENCE.THRESHOLD_CROSSED).toBe("BOARD");
+describe("tax waits on finance", () => {
+  const review = (over: Partial<StoredReceiptReview> = {}): StoredReceiptReview => ({
+    taxReviewRequired: true,
+    reasons: ["tax"],
+    approvedTaxCents: 125,
+    ...over,
+  });
+
+  it("not when receipt finance review approved that tax", () => {
+    expect(taxNeedsFinance(125, review())).toBe(false);
+  });
+
+  it("never when the receipt org's settings do not hold tax for review", () => {
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: false, reasons: [], approvedTaxCents: null }))).toBe(false);
+  });
+
+  it("when the tax differs from the amount finance approved", () => {
+    expect(taxNeedsFinance(150, review())).toBe(true);
+    expect(taxNeedsFinance(125, review({ approvedTaxCents: null }))).toBe(true);
+  });
+
+  it("when review applies and no approval covers tax", () => {
+    expect(taxNeedsFinance(125, review({ reasons: [], approvedTaxCents: null }))).toBe(true);
+    expect(taxNeedsFinance(125, review({ reasons: ["old_date"] }))).toBe(true);
+  });
+
+  it("when the receipt did not say whether review applies, unless finance approved that tax", () => {
+    expect(taxNeedsFinance(125, null)).toBe(true);
+    expect(taxNeedsFinance(125, review({ taxReviewRequired: null }))).toBe(false);
+  });
+
+  it("never on a receipt with no tax", () => {
+    expect(taxNeedsFinance(0, review({ reasons: [], approvedTaxCents: null }))).toBe(false);
   });
 });

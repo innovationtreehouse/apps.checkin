@@ -23,7 +23,8 @@ import { calculateAge } from "@/lib/time";
  *  • Consent for the (manual) path is IMPLICIT in the self-initiated external check; the board/
  *    lead submits "a check exists, review it". No in-app consent orchestration was shipped.
  *  • Recheck window = BoardSettings.bgRecheckMonths (same knob as household leads). When 0 the
- *    policy is UNSET — treat as "do not enforce", never as "everyone is stale".
+ *    policy is UNSET and every check counts as expired (isRecheckPolicySet), but the triggers
+ *    open no obligation and the dashboard lists no one until the board sets it.
  * └──────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Per-person background-check verdict for the board compliance dashboard

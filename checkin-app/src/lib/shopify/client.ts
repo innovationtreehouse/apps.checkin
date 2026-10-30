@@ -3,8 +3,7 @@
 // Tokens expire after 24 hours and are cached in-memory.
 
 import prisma from "@/lib/prisma";
-import { sendEmail } from "@/lib/email";
-import { escapeHtml } from "@/lib/email-templates/base";
+import { sendTemplated } from "@/lib/email-templates/send";
 import { logIntegrationError } from "@/lib/logger";
 import { redactSecrets } from "@checkin/utils";
 import { config } from "@/lib/config";
@@ -112,7 +111,7 @@ export async function reportShopifyFailure(
     operation: string,
     error: unknown,
     context: Record<string, unknown>,
-    emailIntroHtml: string,
+    emailIntro: string,
 ): Promise<void> {
     await logIntegrationError("shopify", error, { operation, ...context });
 
@@ -130,11 +129,10 @@ export async function reportShopifyFailure(
             .map(a => a.email)
             .filter((e): e is string => typeof e === 'string' && e.length > 0)
             .map(email =>
-                sendEmail(
-                    email,
-                    "Shopify Integration Error",
-                    `<p>${emailIntroHtml}</p><p>Error details:</p><pre>${escapeHtml(redactSecrets(error instanceof Error ? error.message : String(error)))}</pre>`
-                )
+                sendTemplated("shopify.error", email, {
+                    intro: emailIntro,
+                    errorDetail: redactSecrets(error instanceof Error ? error.message : String(error)),
+                })
             );
 
         if (emailPromises.length > 0) {

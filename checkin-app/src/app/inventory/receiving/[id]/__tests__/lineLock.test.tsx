@@ -16,7 +16,7 @@ const unstamped = { inventoryAppliedAt: null, expenseAppliedAt: null, donationAp
 function load(receipt: Record<string, unknown>) {
   mockLoads = {
     "/receipts/7": {
-      ReceivedReceipt: { id: 7, validationNotes: null, ...unstamped, ...receipt },
+      ReceivedReceipt: { id: 7, validationNotes: null, createdAt: "2026-10-02T15:30:00Z", ...unstamped, ...receipt },
       WorkflowReceiptView: {
         vendorName: "Acme", currency: "USD", receiptTotalCents: 1000, receiptDate: "2026-10-01",
         lineItems: [{ receiptLineItemId: 1, lineNumber: 1, description: "Widget", partNumber: null, manufacturer: null, quantity: 2 }],
@@ -29,23 +29,22 @@ function load(receipt: Record<string, unknown>) {
 }
 
 describe("receipt page line lock", () => {
-  it("offers the line actions while no leg has applied", () => {
-    load({ state: "apply_failed" });
+  it("offers the line actions while the receipt waits for review", () => {
+    load({ state: "pending_review" });
     renderWithProviders(<ReceiptPage />);
     expect(screen.getByRole("button", { name: "Associate" })).toBeInTheDocument();
     expect(screen.queryByText("Lines locked")).not.toBeInTheDocument();
   });
 
-  it.each([["inventoryAppliedAt"], ["expenseAppliedAt"], ["donationAppliedAt"]])(
-    "hides the line actions and says why once %s is stamped, with Retry still offered",
-    (stamp) => {
-      load({ state: "apply_failed", [stamp]: "2026-10-02T00:00:00Z" });
+  it.each([[{}], [{ inventoryAppliedAt: "2026-10-02T00:00:00Z" }]])(
+    "hides the line actions on apply_failed and says why, with Retry still offered (%o)",
+    (stamps) => {
+      load({ state: "apply_failed", ...stamps });
       renderWithProviders(<ReceiptPage />);
       for (const name of ["Associate", "Propose", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.getByText("Lines locked")).toBeInTheDocument();
-      expect(screen.getByText(/Part of this receipt was already applied, so its lines are locked\./)).toBeInTheDocument();
+      expect(screen.getByText(/Retry sends the part that failed with the same lines\./)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Retry apply" })).toBeInTheDocument();
-      expect(screen.queryByText("Needs a manual fix")).not.toBeInTheDocument();
     },
   );
 });

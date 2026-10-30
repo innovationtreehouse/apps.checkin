@@ -89,13 +89,27 @@ describe("receipts — route auth", () => {
 
   it("server-renders the receipt pages (proves the library tsx transpiles)", async () => {
     const finance = await loginAs(FINANCE);
-    for (const path of ["/receipts", "/receipts/upload", "/receipts/review", "/receipts/settings"]) {
+    for (const path of ["/receipts", "/receipts/upload", "/finance/review", "/receipts/settings"]) {
       expect([path, (await api(finance, path)).status]).toEqual([path, 200]);
     }
   });
 });
 
 describe("receipts — submitter journey", () => {
+  // The dev server compiles a route on its first hit; hitting the journey's new routes together
+  // compiles them in parallel instead of one after another inside the test.
+  beforeAll(async () => {
+    const submitter = await loginAs(SUBMITTER);
+    const id = "00000000-0000-0000-0000-000000000000";
+    await Promise.all([
+      api(submitter, `/api/receipts/${id}`),
+      api(submitter, `/api/receipts/${id}/file`),
+      api(submitter, `/api/receipts/${id}/audit-logs`),
+      post(submitter, `/api/receipts/${id}/submitter-confirm`),
+      post(submitter, `/api/receipts/${id}/push-to-inventory`),
+    ]);
+  });
+
   it("auto-reads an upload, finalizes it on confirm, and lists it with the owed one, which stays when completed are hidden", async () => {
     const submitter = await loginAs(SUBMITTER);
 

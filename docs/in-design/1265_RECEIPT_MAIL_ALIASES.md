@@ -35,7 +35,7 @@ attributes mail to anyone.
 - **Not covered:** an address whose domain publishes no DMARC record never
   resolves, so its mail stays in the finance queue (§4).
 - **Cost:** one new table on the checkin side, four routes, one back-office
-  page, and one receipt-library change after the package rename freeze: a stored
+  page, and one receipt-library change: a stored
   DMARC verdict on each mail item, which approval needs (§3, §8).
 
 **Domain rules relied on.** `docs/rules/people-households.md`: an email address
@@ -178,18 +178,14 @@ collapse into "finance's entry is trusted":
 
 Approval writes an audit row naming the mail item it relied on.
 
-**The DMARC verdict is not stored today.** Mail intake decides alignment and
-then keeps only whether a sender resolved, so a held item from an unknown but
-authenticated sender looks the same as a forged one. The receipt library gains a
-verdict column on each mail item (`pass`, `fail` or `none`), shows it in the
-mail queue, and answers "has an item from this address, with a passing verdict,
-been assigned to this person" for the approve route. That is a library change,
-so it waits for the package rename freeze to lift (§8). Until it ships, aliases
-can be added but none can be approved, and so none counts. That is the safe
-direction: mail keeps reaching finance as it does today.
+**The DMARC verdict is stored on each mail item.** Without it, a held item from
+an unknown but authenticated sender would look the same as a forged one. The
+receipt library keeps a verdict column (`pass`, `fail` or `none`), shows it in
+the mail queue, and answers "has an item from this address, with a passing
+verdict, been assigned to this person" for the approve route (§8).
 
-After the freeze, assigning a passing held item from an unapproved alias to that
-alias's person can approve the alias in the same action.
+A later change could let assigning a passing held item from an unapproved alias
+to that alias's person approve the alias in the same action.
 
 **Why a check is needed at all.** Once an alias counts, every mail from that
 address is read automatically as that person's receipt: it spends their daily
@@ -287,12 +283,14 @@ limit keys on that id, not on the address:
 Every add, removal (including one caused by a sign-in email change or a merge),
 refused add, approval and refused approval writes an `AuditLog` row: actor,
 `tableName = PersonMailAlias`, the alias id, the person id as the secondary
-entity, the action, and for an approval the mail item it relied on. New
-`AuditAction` values for these ship with the model in A1. The payload carries
+entity, the action, and for an approval the mail item it relied on. The
+existing `AuditAction` values cover these: an add is `CREATE`, a removal
+`DELETE`, an approval `EDIT`, and a refusal `EDIT` under a refusal table name,
+as the self-grant guard records one. The payload carries
 no address, so the audit trail stays `internal`; the alias id leads back to the row while it exists, and once it is
 removed the audit rows still say whose it was, who added it, and who or what
-removed it. Every view of the alias screen writes a view row, as the mail queue
-does.
+removed it. Views of the alias screen are not audited here; finance views are
+recorded by their own log.
 
 Which address attributed a mailed receipt is already on the mail item and the
 receipt's own audit trail (§4).
@@ -309,23 +307,21 @@ column is `internal`. Only the alias routes return aliases, and only to
 
 ## 8. PR split and phasing
 
-Three checkin PRs, in this order, each based on `main` after the one before it
-merges, plus one receipt-library PR once the package rename freeze lifts. None
-stacks on another's branch.
+The PRs landed in the order A2, A1, a small registry PR, L1, A3, each based on
+`main` after the one before it merged. None stacks on another's branch. The
+registry PR (#2672) added `returns` to the four A2 entries, which could not
+declare it until A1 added the model.
 
 | PR | Contents |
 |---|---|
-| **A1** schema | The `PersonMailAlias` model with its `@sensitivity` annotations, its migration, the new `AuditAction` values, and the regenerated classifications. The merge disposition for `PersonMailAlias.personId` in the repoint drift guard's map, and the merge code that applies it, so A1 merges green. Annotating a new model's fields is not a re-tier, so this is not a boundary PR. The schema drift check needs the model and migration together, and this PR carries both. |
-| **A2** boundary | Registry entries, all `finance-or-board` with an `everyones:pii` view: `GET /api/finance/mail-aliases`, `POST /api/finance/mail-aliases`, `DELETE /api/finance/mail-aliases/[id]`, `POST /api/finance/mail-aliases/[id]/approve`. No scope binding is needed. Nothing else. Maintainers, alone. |
-| **A3** feature | The routes, the service, the resolver change (including `hd` from the sign-in email) and its doc comment in `configure.ts`, the sign-in-email helper and its callers, the back-office page and its nav entry, and tests. The approve route refuses every request until L1 is on `main`. |
-| **L1** library, after the freeze | The DMARC verdict column on `ReceiptMailItem` and its migration; the verdict shown in the mail queue; the "assigned, passing item from this address to this person" query the approve route calls. Doc comments that say "sign-in email": `ReceiptPeople.submitterByEmail` in `contract.ts` and `assign` in `mailQueueService.ts`. Optional: key the deferred retry's "hit the daily limit this run" set on the person id, not the address; today a person over their limit with deferred items under two addresses costs one extra refused retry per run, which spends no cap and no reading. Optional: assigning a passing held item from an unapproved alias to its person approves the alias in the same action. |
+| **A1** schema, after A2 | The `PersonMailAlias` model with its `@sensitivity` annotations, its migration, and the regenerated classifications. The merge disposition for `PersonMailAlias.personId` in the repoint drift guard's map, and the merge code that applies it, so A1 merges green. Annotating a new model's fields is not a re-tier, so this is not a boundary PR. The schema drift check needs the model and migration together, and this PR carries both. |
+| **A2** boundary | Registry entries, all `finance-or-board` with an `everyones:pii` view and `returns: ['PersonMailAlias']` (added in #2672): `GET /api/finance/mail-aliases`, `POST /api/finance/mail-aliases`, `DELETE /api/finance/mail-aliases/[id]`, `POST /api/finance/mail-aliases/[id]/approve`, and `PersonMailAlias` in `OPT_OUT_PENDING_ROUTE`: its `personId` makes it scopable, and the binding check fails A1 without the entry. No scope binding is needed. Nothing else. Maintainers, alone; it merges first, and an entry for a model that does not exist yet is inert. |
+| **A3** feature | The routes, the service, the resolver change (including `hd` from the sign-in email) and its doc comment in `configure.ts`, the sign-in-email helper and its callers, the back-office page and its nav entry, and tests. |
+| **L1** library | The DMARC verdict column on `ReceiptMailItem` and its migration; the verdict shown in the mail queue; the "assigned, passing item from this address to this person" query the approve route calls. Doc comments that say "sign-in email": `ReceiptPeople.submitterByEmail` in `contract.ts` and `assign` in `mailQueueService.ts`. Optional: key the deferred retry's "hit the daily limit this run" set on the person id, not the address; today a person over their limit with deferred items under two addresses costs one extra refused retry per run, which spends no cap and no reading. Optional: assigning a passing held item from an unapproved alias to its person approves the alias in the same action. |
 
 **Migration** (A1): additive only, inside `BEGIN; … COMMIT;`: one `CREATE TABLE`
 for `PersonMailAlias`, a unique index on `address`, an index on `canonicalKey`,
-an index on `personId`, the FK to `Person`, and `ALTER TYPE "AuditAction" ADD
-VALUE IF NOT EXISTS` for each new action. Postgres 12+ allows `ADD VALUE` inside
-the transaction only because nothing in this migration uses the new values; the
-pattern is `20261013120000_program_surplus_payment_kinds`. No
+an index on `personId`, and the FK to `Person`. No
 existing column is touched and no backfill is needed, so old code serving
 through the deploy drain never sees a difference.
 

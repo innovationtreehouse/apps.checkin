@@ -15,16 +15,10 @@ export const receivedReceiptStateEnum = [
 ] as const;
 export type ReceivedReceiptState = (typeof receivedReceiptStateEnum)[number];
 
-/** States whose lines a manager may still edit (and the S5 remap may touch). */
-export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review", "apply_failed"];
+/** Lines are editable only before the receipt is sent to apply; the S5 remap edits only these. */
+export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review"];
 
-/** A receipt's lines are editable in an editable state while no leg has applied. */
-export const EDITABLE_RECEIPT_WHERE = {
-  state: { in: EDITABLE_RECEIPT_STATES },
-  inventoryAppliedAt: null,
-  expenseAppliedAt: null,
-  donationAppliedAt: null,
-};
+export const EDITABLE_RECEIPT_WHERE = { state: { in: EDITABLE_RECEIPT_STATES } };
 
 /** The apply-failed queue: receipts that need a person. `applying` is listed apart, as in progress. */
 export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed"];

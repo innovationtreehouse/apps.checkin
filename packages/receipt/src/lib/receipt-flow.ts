@@ -2,20 +2,24 @@ import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/rec
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
+import { sendDonorSync } from "./donor-sync";
+import { duplicateGroup } from "./duplicateGroup";
 import { resolveNextState } from "../workflows/receipt.invariants";
-import type { ReceiptMachineContext } from "../workflows/receipt.guards";
+import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
+import { receiptMath, type MathLine } from "./lineMath";
+import { missingDetails, missingDetailsNote } from "./missingDetails";
+import { describeCorrection, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
-  lineItems: Array<{ quantity: number; unitPriceCents: number }>,
+  lineItems: MathLine[],
   shippingCents: number,
   taxCents: number,
   discountCents: number,
   receiptTotalCents: number,
 ): boolean {
-  const lineSum = lineItems.reduce((acc, li) => acc + li.quantity * li.unitPriceCents, 0);
-  return lineSum + shippingCents + taxCents - discountCents === receiptTotalCents;
+  return receiptMath(lineItems, shippingCents, taxCents, discountCents, receiptTotalCents).balanced;
 }
 
 export function computeFinancialReviewFlags(
@@ -49,6 +53,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
       fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
     },
     select: { fieldChanged: true, valueBefore: true },
+    orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
   const before = (field: string) =>
     edits.flatMap((e) => (e.fieldChanged === field && e.valueBefore !== null ? [e.valueBefore] : []));
@@ -60,6 +65,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
     taxReview: current.taxReview || before("taxCents").some((t) => flags(Number(t), date).taxReview),
     ageReview: current.ageReview || before("receiptDate").some((d) => flags(row.taxCents, d).ageReview),
     corrected: edits.length > 0,
+    corrections: submitterCorrections(edits, row),
   };
 }
 
@@ -86,41 +92,59 @@ export async function getOrgSettings(orgId: string, client: Db | Prisma.Transact
 export const BODY_COPY_DISCARDED = "body_copy_discarded";
 
 /**
- * The receipt this one duplicates, or null. A body discarded as a copy of its message's other
- * receipt is never a suspect, so that receipt is not flagged against its own copy. The file-hash suspect is the one stored at insert
- * under the per-file lock, so a receipt only ever duplicates one that existed before it. Once a
- * person has cleared the flag, the receipt is never re-flagged.
+ * The earliest live member of this receipt's duplicate group still undecided against it, or
+ * null when it has none and so is not held. Every member counts, earlier or later, open,
+ * finalized or rejected, except one finance rejected as a copy of it, or kept in its place.
  */
 export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
-  if (row.duplicateFlagClearedAt) return null;
-  if (row.duplicateSuspectReceiptId) return row.duplicateSuspectReceiptId;
-  const { orgId, retailer, receiptDate, receiptTotalCents, orderNumber, receiptNumber, id } = row;
-  const notSelf = { id: { not: id }, receipt: { auditLogs: { none: { action: BODY_COPY_DISCARDED } } } };
+  const group = await duplicateGroup(row.orgId, row.id);
+  const copies = await db.receiptPairDecision.findMany({
+    where: { kind: "copy_of", OR: [{ receiptId: row.id }, { otherReceiptId: row.id }] },
+    select: { receiptId: true, otherReceiptId: true },
+  });
+  const decided = new Set(copies.map((p) => (p.receiptId === row.id ? p.otherReceiptId : p.receiptId)));
+  return group?.members.find((m) => m.id !== row.id && m.state !== "discarded" && !decided.has(m.id))?.id ?? null;
+}
 
-  const composite = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptDate, receiptTotalCents, ...notSelf } });
-  if (composite) return composite.id;
-  if (orderNumber) {
-    const byOrder = await db.receiptDetail.findFirst({ where: { orgId, retailer, orderNumber, ...notSelf } });
-    if (byOrder) return byOrder.id;
-  }
-  if (receiptNumber) {
-    const byNumber = await db.receiptDetail.findFirst({ where: { orgId, retailer, receiptNumber, ...notSelf } });
-    if (byNumber) return byNumber.id;
-  }
-  return null;
+/**
+ * The confirmation that signs a reimbursement: the person reimbursed's, given by them or by a Board
+ * member on their behalf. A confirmation with no recorded confirmer was the uploader's, so it counts
+ * only when the uploader is the person reimbursed.
+ */
+function submitterConfirmation(row: ReceiptRow) {
+  if (!row.reviewedAt || !row.needsReimbursement || row.reimburseePersonId == null) return undefined;
+  const confirmer = row.reviewedByUserId ?? (row.uploadedByUserId === row.reimburseePersonId ? row.uploadedByUserId : null);
+  if (confirmer === null) return undefined;
+  return {
+    confirmedByPersonId: row.reimburseePersonId,
+    onBehalfByPersonId: confirmer === row.reimburseePersonId ? undefined : confirmer,
+    onBehalfReason: confirmer === row.reimburseePersonId ? undefined : (row.reviewedOnBehalfReason ?? undefined),
+    confirmedAt: row.reviewedAt.toISOString(),
+  };
 }
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend.
+ * null with an audit row, for the catch-up step or the manual button to resend. A receipt whose
+ * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
+ * any older call still in flight) before the money side reaches it. A receipt that is not
+ * finalized is refused before anything is sent or written.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
     const orgId = (await getOrg()).id;
+    const detail = await db.receiptDetail.findFirst({ where: { id: receiptId, orgId }, select: { state: true } });
+    if (detail?.state !== "receipt_finalized") return false;
+    await sendDonorSync(receiptId, actor);
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
+    if (row.donorSync === "pending") {
+      await audit(db, receiptId, actor, { action: "push_deferred", valueAfter: "donor sync pending" });
+      return false;
+    }
     const lineItems = await receiptRepo.listLineItems(receiptId);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
+    const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);
     const payload = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
       message: "receipt orgId does not match this org",
       path: ["orgId"],
@@ -144,6 +168,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
       // QB-linked ⇒ historical backfill: downstream skips the QB re-post.
       backfill: !!row.qbTxnId,
       isInKind: row.isInKind,
+      submitterConfirmation: submitterConfirmation(row),
       financeReview:
         review?.outcome === "approved"
           ? {
@@ -151,9 +176,11 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
               reasons: review.reasons,
               decidedByPersonId: review.decidedByUserId,
               note: review.note,
+              taxCents: review.taxCents ?? undefined,
               decidedAt: review.decidedAt.toISOString(),
             }
           : undefined,
+      taxReviewRequired: taxReview,
       lineItems: lineItems.map((li) => ({
         receiptLineItemId: li.id,
         lineNumber: li.lineNumber,
@@ -183,7 +210,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
 
 async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<void> {
   await db.$transaction(async (tx) => {
-    await tx.receiptDetail.update({ where: { id: row.id }, data: { state: "receipt_finalized", validationNotes: null } });
+    await receiptRepo.update(row.id, { detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
     await audit(tx, row.id, actor, {
       action: "finalized",
       fieldChanged: "state",
@@ -194,24 +221,55 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
   await pushReceipt(row.id, actor);
 }
 
-/** Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. */
+/**
+ * Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. A
+ * receipt missing its retailer, date or total goes to its submitter before any other check.
+ * Every write is conditional on the state read here: when another step moved the receipt first,
+ * that step stands and the flow writes nothing.
+ */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
   const orgId = (await getOrg()).id;
   const row = await receiptRepo.find(receiptId, orgId);
-  if (!row) return;
-  if (!row.retailer || !row.receiptDate || row.receiptTotalCents === null) return;
+  if (!row || (row.state !== "uploaded" && row.state !== "flow_error")) return;
+
+  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
+    try {
+      await receiptRepo.update(receiptId, { detail }, row.state);
+    } catch (err) {
+      if (err instanceof ReceiptStateConflictError) return;
+      throw err;
+    }
+    await audit(db, receiptId, actor, {
+      action: "pipeline_transition",
+      fieldChanged: "state",
+      valueBefore: row.state,
+      valueAfter,
+    });
+  };
+
+  const total = row.receiptTotalCents;
+  const missing = missingDetails(row);
+  if (total === null || missing.length > 0) {
+    const held = resolveNextState(row.state, { type: "RUN_PIPELINE" }, { ...NEUTRAL_CONTEXT, detailsMissing: true });
+    if (held !== "submitter_review") throw new Error(`Unexpected next state '${held}' from '${row.state}' for a receipt missing details`);
+    await transition({ state: "submitter_review", validationNotes: missingDetailsNote(missing) }, `submitter_review (missing ${missing.join(", ")})`);
+    return;
+  }
 
   const lineItems = await receiptRepo.listLineItems(receiptId);
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
-  const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, row.receiptTotalCents);
-  const { taxReview, ageReview, futureReview, corrected, ageLimitDays, diffDays } = await reviewFlags(row, settings);
+  // A receipt with no lines can balance, but delivery requires at least one line.
+  const noLines = lineItems.length === 0;
+  const valid = !noLines && validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
   // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
   const isQbLinked = !!row.qbTxnId;
 
   const context: ReceiptMachineContext = {
+    detailsMissing: false,
     isDuplicate: !!dupId,
     mathValid: valid,
     needsReimbursement: row.needsReimbursement,
@@ -224,16 +282,6 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
 
   const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
 
-  const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
-    await receiptRepo.update(receiptId, { detail }, row.state);
-    await audit(db, receiptId, actor, {
-      action: "pipeline_transition",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter,
-    });
-  };
-
   try {
     switch (nextState) {
       case "duplicate_flagged":
@@ -244,8 +292,10 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         return;
       case "validation_failed":
         await transition(
-          { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
-          "validation_failed (line items total does not match receipt total)",
+          noLines
+            ? { state: "validation_failed", validationNotes: "The receipt has no line items. Add at least one line." }
+            : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
+          noLines ? "validation_failed (no line items)" : "validation_failed (line items total does not match receipt total)",
         );
         return;
       case "submitter_review":
@@ -256,7 +306,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
           taxReview && "tax review required (tax-exempt org with tax > 0)",
           ageReview && `age limit exceeded (${diffDays}d > ${ageLimitDays}d)`,
           futureReview && "future-dated receipt",
-          corrected && "submitter corrected the tax or date",
+          corrected && corrections.map(describeCorrection).join("; "),
         ]
           .filter(Boolean)
           .join("; ");
@@ -271,7 +321,12 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         throw new Error(`Unexpected next state '${nextState}' from '${row.state}'`);
     }
   } catch (err) {
-    await receiptRepo.update(receiptId, { detail: { state: "flow_error" } });
+    if (err instanceof ReceiptStateConflictError) return;
+    try {
+      await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state);
+    } catch (conflict) {
+      throw conflict instanceof ReceiptStateConflictError ? err : conflict;
+    }
     await audit(db, receiptId, actor, {
       action: "pipeline_failed",
       fieldChanged: "state",

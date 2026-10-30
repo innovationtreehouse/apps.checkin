@@ -1,10 +1,11 @@
-// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER): FINANCE sets a line's
-// account by hand and resubmits. The same resubmit retries a failed QuickBooks post.
+// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a line's
+// account by hand and resubmits. The same resubmit retries a failed QuickBooks post, and books an
+// UNBOOKED one (finance's "book it").
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { checkAndProcessExpense, retryQbPost } from "../lib/expense-qb-processor";
-import { POSTING } from "../lib/expense-qb-poster";
+import { POSTING, UNBOOKED_STATES, bookExpenseToQb } from "../lib/expense-qb-poster";
 import { lockExpense } from "../lib/signoff-facts";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
@@ -48,6 +49,7 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true, qbMatchState: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   // Processing runs as the system actor across its own transactions; the audit row records who asked.
+  if (UNBOOKED_STATES.includes(expense.qbMatchState)) return bookExpenseToQb(orgId, expenseId, actorOf(principal));
   if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
     if (!(await retryQbPost(orgId, expenseId, actorOf(principal)))) {
       throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");

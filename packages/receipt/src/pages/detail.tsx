@@ -1,15 +1,20 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
-import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
+import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
-import { api, BASE, dollars, errorMessage, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
-import { draftProblem, EMPTY_DRAFT, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
-import { returnQueue, reviewHref } from "../components/reviewQueue";
+import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
+import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
+import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
+import type { DuplicateGroup } from "../lib/duplicateGroup";
+import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -29,6 +34,13 @@ interface Receipt extends ReceiptListRow {
   shippingCents: number | null;
   discountCents: number | null;
   reimbursementFor?: string | null;
+  fileHash?: string;
+  receiptNumber?: string | null;
+  orderNumber?: string | null;
+  currency?: string;
+  /** Finance and board views only. */
+  duplicateSuspectReceiptId?: string | null;
+  duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: ServerLine[];
 }
@@ -36,27 +48,74 @@ interface Receipt extends ReceiptListRow {
 interface AuditRow {
   id: number;
   action: string;
+  userId: number | null;
   username: string | null;
+  fieldChanged: string | null;
+  valueBefore: string | null;
   valueAfter: string | null;
   changedAt: string;
+}
+
+/** How a submitter's correction to a field reads beside it: "entered by the submitter", or the earlier value. */
+function correctionNote(c: SubmitterCorrection | undefined): string {
+  if (!c) return "";
+  return c.kind === "entered" ? " (entered by the submitter)" : ` (the submitter changed it from ${c.before})`;
+}
+
+const STEP_COLOR = { done: "green", refused: "red", waiting: "gray" } as const;
+
+/** What happened to a finalized receipt's purchase after it left the receipt system. */
+function PurchaseOutcomePanel({ receipt }: { receipt: Receipt }) {
+  const steps = outcomeSteps(receipt.purchaseOutcome);
+  if (steps.length === 0) return null;
+  return (
+    <Paper withBorder p="sm">
+      <Text fw={500} mb="xs">What happened next</Text>
+      <Stack gap={4}>
+        {steps.map((step) => (
+          <div key={step.label}>
+            <Badge variant="light" color={STEP_COLOR[step.tone]}>{step.label}</Badge>
+            {step.notes.map((note) => (
+              <Text key={note} size="sm" mt={2}>{note}</Text>
+            ))}
+          </div>
+        ))}
+      </Stack>
+    </Paper>
+  );
 }
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 /**
- * /receipts/[id] and /receipts/review/[id] — one receipt: its file, details and lines, and the
- * actions its state allows the caller. Opened from a review queue, a decision returns to that queue.
+ * /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the
+ * caller. Opened from the host's finance queue at `queueBase` (`?queue=` present), a decision
+ * returns to that queue.
  */
-export default function ReceiptDetailPage() {
+export default function ReceiptDetailPage({ queueBase }: { queueBase?: string }) {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queueParam = useSearchParams().get("queue");
-  const fromReview = usePathname().startsWith("/receipts/review/");
-  const { data: session } = useSession();
+  const fromReview = queueParam !== null && queueBase !== undefined;
+  const viewer = useViewer();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
+  const held = (isFinance || isBoard) && receipt.data?.state === "duplicate_flagged";
+  const group = useLoad<DuplicateGroup>(held ? `/${id}/duplicate-group` : null);
+  // The panel compares two receipts, so a group-wide decision is offered only when they are the whole group.
+  const liveIds = group.data?.members.filter((m) => m.state !== "discarded").map((m) => m.id) ?? [];
+  const matchId = liveIds.find((m) => m !== id) ?? null;
+  const comparing = held && matchId !== null;
+  const suspectId = comparing ? matchId : (receipt.data?.duplicateSuspectReceiptId ?? null);
+  const original = useLoad<Receipt>(comparing ? `/${matchId}` : null);
+  useEffect(() => {
+    if (group.error) notifications.show({ title: "Couldn't load the possible copies", message: group.error, color: "red", autoClose: false });
+  }, [group.error]);
+  useEffect(() => {
+    if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
+  }, [original.error]);
   const [note, setNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -69,17 +128,30 @@ export default function ReceiptDetailPage() {
   if (!r) return <Text>Loading…</Text>;
 
   const back = fromReview
-    ? { href: reviewHref(returnQueue(queueParam, r.state)), label: "Receipts review" }
+    ? { href: reviewHref(queueBase, returnQueue(queueParam, r.state)), label: "Finance review" }
     : { href: "/receipts", label: "My receipts" };
 
   const reasons = r.financialReviewReasons;
   const dateFlagged = reasons.includes("old_date") || reasons.includes("future_date");
   const taxFlagged = reasons.includes("tax");
-  const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
-  const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
+  // Finance and the Board read the audit log, so they see whether each correction entered a value or changed one.
+  const corrections = audit.data
+    ? submitterCorrections(
+        audit.data.filter((a) => a.action === "field_edit" && a.userId === r.uploadedByUserId),
+        { taxCents: r.taxCents, receiptDate: r.receiptDate },
+      )
+    : [];
+  const correctionOf = (field: SubmitterCorrection["field"]) => corrections.find((c) => c.field === field);
+  const reasonLabel = (reason: string) =>
+    reason === "submitter_correction" && corrections.length > 0
+      ? corrections.map(describeCorrection).join("; ")
+      : (REVIEW_REASON_LABELS[reason] ?? reason);
+  const own = viewer?.id === r.uploadedByUserId;
+  const isAdult = viewer?.ageBand === "adult";
+  const reimburseeConfirms = confirmedByReimbursee(r);
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
-  const act = async (path: string, method: string, body: unknown, success: string, decides = false) => {
-    if (await send(`/${id}${path}`, method, body, success)) {
+  const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
+    if (await send(`/${id}${path}`, method, body, success, failed)) {
       if (decides && fromReview) {
         router.push(back.href);
         return;
@@ -91,8 +163,29 @@ export default function ReceiptDetailPage() {
       audit.reload();
     }
   };
+  const rejectOriginal = async (reason: string) => {
+    if (!suspectId) return;
+    if (await send(`/${suspectId}/reject`, "POST", { reason }, "The original is rejected", "Couldn't reject the original")) {
+      receipt.reload();
+      group.reload();
+      original.reload();
+      audit.reload();
+    }
+  };
+  /** Not this one: the match is a different purchase, and the panel redraws from the fresh group. */
+  const notThisOne = async (otherId: string) => {
+    if (await send(`/${id}/not-this-one`, "POST", { otherId }, "Dismissed as a different purchase", "Couldn't dismiss this match")) {
+      receipt.reload();
+      group.reload();
+      audit.reload();
+    } else group.reload();
+  };
+  const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
+  const totalsOff = r.state === "validation_failed";
+  // A saved receipt whose lines already add up still needs a way out of Totals off.
+  const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
@@ -135,6 +228,42 @@ export default function ReceiptDetailPage() {
     exclusive(async () => {
       if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
     });
+  const stillOff = (message: string) => notifications.show({ message, color: "yellow", autoClose: false });
+  /** Sends the saved receipt back through the flow and reports where it landed. */
+  const resubmit = async (saved: boolean) => {
+    let after: Receipt;
+    try {
+      after = await api<Receipt>(`/${id}/resubmit`, { method: "POST", body: "{}" });
+    } catch (err) {
+      receipt.reload();
+      audit.reload();
+      notifications.show({ title: saved ? "Saved, but couldn't resubmit" : "Couldn't resubmit this receipt", message: errorMessage(err), color: "red", autoClose: false });
+      return;
+    }
+    window.dispatchEvent(new Event("nav-counts-mutated"));
+    if (after.state === "validation_failed") {
+      stillOff(`${saved ? "Saved. " : ""}The totals still don't add up; stays in Totals off.`);
+    } else {
+      notifications.show({ message: `${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`, color: "green" });
+      if (fromReview) {
+        router.push(back.href);
+        return;
+      }
+    }
+    receipt.reload();
+    audit.reload();
+  };
+  /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
+  const saveTotalsOff = () =>
+    exclusive(async () => {
+      const math = draftMath(r, draft);
+      if (dirty && !(await saveDraft())) return;
+      if (math?.balanced) await resubmit(dirty);
+      else {
+        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        stillOff(`Saved. Still ${off}; stays in Totals off.`);
+      }
+    });
   /** Runs a state change after saving any unsaved edits, so the change acts on what the screen shows. */
   const afterSave = (run: () => Promise<void>) =>
     exclusive(async () => {
@@ -149,12 +278,46 @@ export default function ReceiptDetailPage() {
         <Title order={3}>{r.retailer ?? "Receipt"}</Title>
         <Group gap="xs">
           {r.isInKind && <Badge>Donation</Badge>}
-          <Badge variant="light">{STATE_LABELS[r.state] ?? r.state}</Badge>
+          <Badge variant="light">{receiptStateLabel(r)}</Badge>
         </Group>
       </Group>
-      {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
+      {r.state === "rejected" ? (
+        <Alert color="red" title="Rejected by finance">
+          <Text size="sm">{r.validationNotes ?? "No reason was recorded."}</Text>
+          {own && r.rejectionUnacknowledged && (
+            <Button size="xs" mt="sm" color="red" variant="light" onClick={() => void act("/acknowledge-rejection", "POST", {}, "Acknowledged", "Couldn't acknowledge this rejection")}>
+              Got it
+            </Button>
+          )}
+        </Alert>
+      ) : (
+        r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
+      )}
+      <PurchaseOutcomePanel receipt={r} />
       {r.financialReviewReasons.length > 0 && (
-        <Alert color="blue">Finance review: {r.financialReviewReasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join("; ")}</Alert>
+        <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
+      )}
+      {comparing && (
+        <DuplicateCompare
+          receipt={r}
+          original={original.data}
+          originalHref={originalHref}
+          isFinance={isFinance}
+          own={own}
+          wholeGroup={liveIds.length === 2}
+          onNotThisOne={() => {
+            if (matchId) void notThisOne(matchId);
+          }}
+          onDifferentPurchases={() => void act("/different-purchases", "POST", { shownIds: liveIds }, "Recorded as different purchases", "Couldn't record different purchases", true).then(group.reload)}
+          onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copy is rejected", "Couldn't keep this receipt", true).then(group.reload)}
+          onRejectOriginal={(reason) => void rejectOriginal(reason)}
+        />
+      )}
+      {!comparing && suspectId && (
+        <Text size="sm">
+          This receipt was flagged as a possible duplicate of <Anchor component={Link} href={originalHref}>another receipt</Anchor>
+          {r.duplicateFlagClearedAt ? " and cleared as not a duplicate." : "."}
+        </Text>
       )}
 
       <Group align="flex-start" grow wrap="wrap">
@@ -162,10 +325,10 @@ export default function ReceiptDetailPage() {
           <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
-          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged></Text>
+          <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>
           <Text>
-            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>, shipping {dollars(r.shippingCents)}
-            {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
+            Total: {formatCents(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {formatCents(r.taxCents)}</Flagged>{correctionNote(correctionOf("tax"))}, shipping {formatCents(r.shippingCents)}
+            {r.discountCents ? `, discount ${formatCents(r.discountCents)}` : ""})
           </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}
           {!editing && (
@@ -178,7 +341,7 @@ export default function ReceiptDetailPage() {
                   <Table.Tr key={l.id}>
                     <Table.Td>{l.description}{l.isDelayed && <Badge ml="xs" size="xs" color="orange">Backordered</Badge>}</Table.Td>
                     <Table.Td>{l.quantity}</Table.Td>
-                    <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
+                    <Table.Td>{formatCents(l.totalPriceCents)}</Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -187,7 +350,7 @@ export default function ReceiptDetailPage() {
 
           {editing && (
             <Group gap="xs">
-              <Button size="xs" disabled={!dirty} loading={saving} onClick={() => void save()}>Save changes</Button>
+              <Button size="xs" disabled={!dirty && !savedAddsUp} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : save())}>Save changes</Button>
               {dirty && (
                 <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
@@ -197,24 +360,25 @@ export default function ReceiptDetailPage() {
           <Group gap="xs">
             {own && r.state === "submitter_review" && (
               <>
-                <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed"))}>Confirm</Button>
+                {reimburseeConfirms ? (
+                  <Text size="sm" c="dimmed">The person reimbursed confirms the lines and amounts.</Text>
+                ) : (
+                  <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>
+                    {r.needsReimbursement ? CONFIRM_AS_READ : "Confirm"}
+                  </Button>
+                )}
                 {isAdult && !r.isInKind && (
-                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated")}>
+                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
                   </Button>
                 )}
               </>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", true)}>Read it again</Button>
+              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
             )}
-            {(own || isFinance) && r.state === "validation_failed" && (
-              <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/resubmit", "POST", {}, "Resubmitted", true))}>
-                {dirty ? "Save and resubmit" : "Resubmit"}
-              </Button>
-            )}
-            {(own || isFinance) && !TERMINAL.has(r.state) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", true)}>Discard</Button>
+            {own && !TERMINAL.has(r.state) && (
+              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
 
@@ -223,31 +387,34 @@ export default function ReceiptDetailPage() {
               <Stack gap="xs">
                 <Text fw={500} size="sm">Finance</Text>
                 {r.state === "financial_review" && !own && (
-                  <>
-                    <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", true)}>Approve</Button>
-                    <Group align="end" gap="xs">
-                      <Textarea label="Reason (optional)" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
-                      <Button size="xs" color="red" variant="light" onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() || null }, "Rejected", true)}>Reject</Button>
-                    </Group>
-                  </>
+                  <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
+                )}
+                {!TERMINAL.has(r.state) && !r.pushedAt && !own && (
+                  <Group align="end" gap="xs">
+                    <Textarea label="Reason to reject" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
+                    <Button size="xs" color="red" variant="light" disabled={!rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
+                  </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
-                {r.state === "duplicate_flagged" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/clear-duplicate", "POST", {}, "Cleared", true)}>Not a duplicate</Button>
+                {held && group.data && !comparing && !own && (
+                  <Group gap="xs">
+                    <Text size="sm">No other receipt matches this one now.</Text>
+                    <Button size="xs" w="fit-content" onClick={() => void act("/different-purchases", "POST", { shownIds: [id] }, "Released from the duplicate hold", "Couldn't release this receipt", true)}>Different purchases</Button>
+                  </Group>
                 )}
                 {r.state === "flow_error" && (
-                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", true)}>Restart</Button>
+                  <Button size="xs" w="fit-content" onClick={() => void act("/restart-flow", "POST", {}, "Restarted", "Couldn't restart this receipt", true)}>Restart</Button>
                 )}
-                {r.state === "discarded" && (
+                {(r.state === "discarded" || r.state === "rejected") && (
                   <Group align="end">
                     <TextInput label="Why this file is never a receipt" value={note} onChange={(e) => setNote(e.currentTarget.value)} style={{ flex: 1 }} />
-                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on")}>
+                    <Button size="xs" variant="light" color="red" disabled={!note.trim()} onClick={() => void act("/ignore-file", "POST", { reason: note }, "This file is ignored in mail from now on", "Couldn't ignore this file")}>
                       Ignore this file from now on
                     </Button>
                   </Group>
                 )}
                 {r.state === "receipt_finalized" && !r.pushedAt && (
-                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent")}>Send downstream</Button>
+                  <Button size="xs" w="fit-content" variant="light" onClick={() => void act("/push-to-inventory", "POST", {}, "Sent", "Couldn't send this receipt downstream")}>Send downstream</Button>
                 )}
               </Stack>
             </Paper>

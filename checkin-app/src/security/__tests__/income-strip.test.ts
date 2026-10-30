@@ -76,12 +76,14 @@ describe('income tiering (§7)', () => {
         expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS, SETTINGS_MODEL].sort());
     });
 
-    it('IncomeOrgSettings: the per-run caps, the switch-on stamp and their org key are internal', () => {
+    it('IncomeOrgSettings: the per-run caps, the switch-on stamps and their org key are internal', () => {
         expect(tiersOf(SETTINGS_MODEL)).toEqual({
             orgId: 'internal',
             maxCreatesPerRun: 'internal',
             maxCreateCentsPerRun: 'internal',
+            benevityMaxCreateCentsPerRun: 'internal',
             qbPostingOnAt: 'internal',
+            benevityQbPostingOnAt: 'internal',
         });
     });
 
@@ -124,7 +126,7 @@ describe('income field-stripping', () => {
     });
 
     it('IncomeOrgSettings: the finance view keeps every cap', () => {
-        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 };
+        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000, benevityMaxCreateCentsPerRun: 2_500_000 };
         expect(stripValue(SETTINGS_MODEL, row, FINANCE_TOKENS, ctx())).toEqual(row);
     });
 

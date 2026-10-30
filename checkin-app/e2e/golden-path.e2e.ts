@@ -1,0 +1,146 @@
+/**
+ * The golden path in the browser: the inventory manager uploads a receipt, which the local OCR
+ * mock reads, and reviews it (names its retailer and line, then confirms); Part mapping links
+ * its line to a catalog part (the last line resolved applies it), FINANCE puts
+ * the expense line in a bucket, the bucket's owner approves it, and FINANCE sees the approved
+ * line in its expense review. Every page on the way must show no error.
+ */
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { api, differentPurchases } from "../flow-tests/helpers";
+import { lineAct, lineRow } from "./support/expenseLines";
+import { watchPage, type PageWatch } from "./support/pageErrors";
+import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
+import { signIn } from "./support/session";
+
+const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const RETAILER = `E2E Hardware ${stamp}`;
+const LINE = `Golden path part ${stamp}`;
+/** A seeded catalog item (packages/global-catalog/prisma/seed.ts). */
+const CATALOG_ITEM = "Power Distribution Hub";
+
+const undo: Undo[] = [];
+let bucketName: string;
+
+test.beforeAll(async () => {
+  undo.push(await releaseLibraries());
+  const b = await bucket(`Golden path ${stamp}`, APPROVER);
+  bucketName = b.name;
+  undo.push(b.undo);
+});
+
+test.afterAll(async () => {
+  for (const step of undo.reverse()) await step();
+});
+
+/** Waits for `locator`, reloading for state a page reads once on load; never reloads before a first look. */
+async function eventually(page: Page, locator: Locator): Promise<void> {
+  if (await locator.isVisible()) return;
+  await expect(async () => {
+    await page.reload();
+    await expect(locator).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 60_000 });
+}
+
+
+async function noProblems(watch: PageWatch, where: string): Promise<void> {
+  expect([where, await watch.problems()]).toEqual([where, []]);
+}
+
+const line = (page: Page) => lineRow(page, LINE);
+
+test("a receipt goes from upload to an approved line in finance review", async ({ browser }) => {
+  test.setTimeout(300_000);
+  const submitter = await signIn(browser, INVENTORY_MANAGER);
+  const finance = await signIn(browser, FINANCE);
+  const approver = await signIn(browser, APPROVER);
+  let receiptId = "";
+
+  await test.step("the inventory manager uploads the receipt and reviews it", async () => {
+    const page = await submitter.context.newPage();
+    const watch = watchPage(page);
+    await page.goto("/receipts/upload");
+    await page.locator('input[type="file"]').setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from(`golden path ${stamp}`) });
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    // The upload page's own path also ends in one segment, so wait for the receipt's.
+    await page.waitForURL((url) => /^\/receipts\/[^/]+$/.test(url.pathname) && url.pathname !== "/receipts/upload");
+    receiptId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() ?? "");
+    // The local OCR mock reads every upload as the same purchase, so an earlier upload may flag this one.
+    const read = await api<{ state: string }>(finance.session, `/api/receipts/${encodeURIComponent(receiptId)}`);
+    expect([receiptId, read.status]).toEqual([receiptId, 200]);
+    if (read.json.state === "duplicate_flagged") {
+      expect((await differentPurchases(finance.session, receiptId)).status).toBe(200);
+    }
+
+    // The submitter's review: name the retailer and the line as the receipt reads, then confirm.
+    await eventually(page, page.getByText("Needs your review", { exact: true }));
+    await page.getByLabel("Retailer", { exact: true }).fill(RETAILER);
+    await page.getByRole("textbox", { name: / description$/ }).first().fill(LINE);
+    // Confirm saves the edits first, then confirms; reloading before it answers would abort the save.
+    const confirmed = page.waitForResponse((res) => res.url().endsWith(`/api/receipts/${receiptId}/submitter-confirm`));
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    expect((await confirmed).status()).toBe(200);
+    await eventually(page, page.getByText("Receipt finalized", { exact: true }));
+    await noProblems(watch, "receipt upload and review");
+  });
+
+  await test.step("Part mapping maps its line to a catalog part, which applies it", async () => {
+    const page = await submitter.context.newPage();
+    const watch = watchPage(page);
+    await page.goto("/inventory/receiving?queue=all");
+    await page.getByRole("row").filter({ hasText: RETAILER }).getByRole("link").click();
+    // The list shows other receipts' state badges, so read the badge only once the receipt's own page is up.
+    await page.waitForURL(/\/inventory\/receiving\/\d+(\?|$)/);
+    await expect(page.getByRole("heading", { name: `${RETAILER} · $12.50` })).toBeVisible();
+    await expect(page.getByText("Needs mapping", { exact: true })).toBeVisible();
+
+    await line(page).getByRole("button", { name: "Associate" }).click();
+    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(CATALOG_ITEM);
+    await page.getByRole("option", { name: new RegExp(CATALOG_ITEM) }).click();
+    // Saving the last line applies the receipt; reloading before it answers would abort it.
+    const associated = page.waitForResponse((res) => res.request().method() === "POST" && /\/lines\/\d+\/associate$/.test(new URL(res.url()).pathname));
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await associated).status()).toBe(200);
+    await eventually(page, page.getByText("Resolved", { exact: true }));
+    await noProblems(watch, "Part mapping");
+  });
+
+  await test.step("FINANCE puts the expense line in the bucket", async () => {
+    const page = await finance.context.newPage();
+    const watch = watchPage(page);
+    await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
+    await lineAct(page, LINE, "Assign bucket");
+    const dialog = page.getByRole("dialog");
+    // "Always use this bucket for this part" also carries the word, so take the picker by its role.
+    await dialog.getByRole("textbox", { name: "Bucket", exact: true }).click();
+    await page.getByRole("option", { name: bucketName }).click();
+    await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    // A decision with nothing left for FINANCE returns to the list, so read the line afresh.
+    await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
+    await expect(line(page).getByText("pending", { exact: true })).toBeVisible();
+    await noProblems(watch, "FINANCE assigns the bucket");
+  });
+
+  await test.step("the bucket's owner approves the line", async () => {
+    const page = await approver.context.newPage();
+    const watch = watchPage(page);
+    await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
+    await lineAct(page, LINE, "Approve as Program approver");
+    await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
+    await expect(line(page).getByText("approved", { exact: true })).toBeVisible();
+    await noProblems(watch, "the owner approves");
+  });
+
+  await test.step("FINANCE sees the approved line in its expense review", async () => {
+    const page = await finance.context.newPage();
+    const watch = watchPage(page);
+    await page.goto("/expense/expenses?view=all&page=1");
+    await page.getByRole("row").filter({ hasText: RETAILER }).getByRole("link").first().click();
+    await expect(line(page).getByText("approved", { exact: true })).toBeVisible();
+    await noProblems(watch, "FINANCE review");
+  });
+
+  for (const persona of [submitter, finance, approver]) await persona.context.close();
+});

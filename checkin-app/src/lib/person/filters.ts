@@ -11,6 +11,9 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 export const LIVE_PERSON: Prisma.PersonWhereInput = { mergedIntoId: null };
 
+/** Real merges are one hop; the cap stops a corrupt or cyclic merge chain from looping a lookup. */
+export const MAX_MERGE_HOPS = 5;
+
 /** An enrollment that still counts: a WITHDRAWN row is kept for history only. */
 export const ENROLLED_PARTICIPANT: Prisma.ProgramParticipantWhereInput = { status: { not: "WITHDRAWN" } };
 

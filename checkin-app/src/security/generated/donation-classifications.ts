@@ -132,6 +132,8 @@ export const classifications = {
     DonationOrgSettings: {
         orgId: 'internal',
         qbPostingOnAt: 'internal',
+        inKindQbPostingOnAt: 'internal',
+        depositsHandedOverAt: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -156,6 +158,12 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
+    },
+    InKindSyncMark: {
+        orgId: 'internal',
+        receiptId: 'internal',
+        seq: 'internal',
     },
     ManualInKindDonation: {
         id: 'internal',
@@ -175,6 +183,7 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
     },
     ManualInKindDonationLine: {
         id: 'internal',
@@ -202,7 +211,22 @@ export const classifications = {
         giftId: 'internal',
         side: 'internal',
         matchState: 'internal',
+        qbEntity: 'internal',
         qbTxnId: 'internal',
+        createdAt: 'internal',
+        updatedAt: 'internal',
+    },
+    InKindPosting: {
+        id: 'internal',
+        orgId: 'internal',
+        source: 'internal',
+        giftId: 'internal',
+        matchState: 'internal',
+        claimedAt: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbNote: 'internal',
+        bookedTotalCents: 'internal',
+        bookedTxnDate: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -234,6 +258,8 @@ export const relations = {
     InKindDonation: {
         lines: { model: 'InKindDonationLine', isList: true },
     },
+    InKindSyncMark: {
+    },
     ManualInKindDonation: {
         lines: { model: 'ManualInKindDonationLine', isList: true },
     },
@@ -244,6 +270,8 @@ export const relations = {
         donation: { model: 'InKindDonation', isList: false },
     },
     InKindBooking: {
+    },
+    InKindPosting: {
     },
 } as const;
 

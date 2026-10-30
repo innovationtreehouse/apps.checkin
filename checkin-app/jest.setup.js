@@ -87,6 +87,12 @@ jest.mock('next/server', () => {
   };
 });
 
+// Package pages read the viewer from the host's provider; page tests render them bare and set roles through the next-auth mock.
+jest.mock('@checkin/component-ui', () => ({
+  ...jest.requireActual('@checkin/component-ui'),
+  useViewer: () => require('@/components/AuthProvider').viewerFromSession(require('next-auth/react').useSession().data),
+}));
+
 // Mock next-auth to prevent instantiation errors in App Router imports
 jest.mock('next-auth', () => {
   const mockNextAuth = jest.fn(() => ({}));
@@ -173,11 +179,10 @@ jest.mock('@/lib/prisma', () => {
 // ---------------------------------------------------------------------------
 // Fail any test that logs an UNEXPECTED console.error.
 //
-// Jest only fails on a failed assertion or an uncaught throw, so before this a
-// new error could stack-trace into the log and every check still passed green.
-// jest-fail-on-console flips that: an unallowlisted console.error throws and
-// turns the test red. Runs for BOTH tiers (setupFilesAfterEnv covers unit and
-// integration).
+// Jest only fails on a failed assertion or an uncaught throw, so a logged error
+// alone would leave every check green. With jest-fail-on-console, an
+// unallowlisted console.error throws and turns the test red. Runs for BOTH tiers
+// (setupFilesAfterEnv covers unit and integration).
 //
 // KNOWN_INTENTIONAL is the allowlist: console.error messages that fire on
 // purpose — catch-block/service logs whose negative path a test deliberately
@@ -191,10 +196,9 @@ jest.mock('@/lib/prisma', () => {
 //   2. Match a stable, specific prefix. Never a broad `.*` that would swallow
 //      unrelated future errors.
 //   3. If a flagged error is actually a REAL bug (something logging where it
-//      shouldn't), FIX it — do not allowlist it. (The runPaced mock-drift found
-//      while building this list was fixed, not allowlisted.)
-// The 9 suites that jest.spyOn(console,...) still suppress their own messages
-// before they reach this guard — left as-is on purpose.
+//      shouldn't), FIX it — do not allowlist it.
+// Suites that jest.spyOn(console,...) suppress their own messages before they
+// reach this guard.
 const KNOWN_INTENTIONAL = [
   // React / jsdom test-environment noise (emitted via console.error).
   /Not implemented: navigation/,          // jsdom: window.location navigation
@@ -202,6 +206,7 @@ const KNOWN_INTENTIONAL = [
   /In HTML, .+ cannot be a (child|descendant) of/, // React DOM-nesting validation
   /cannot contain a nested/,               // React DOM-nesting validation (alt phrasing)
   // Bracketed service log namespaces (incidental negative-path logs).
+  /^\[Email Template\]/,                    // sendTemplated falls back to the default under a prisma mock with no emailTemplate
   /^\[Shopify/,                            // [Shopify], [Shopify Error], [Shopify API Error]
   /^\[s-read diagnose\]/,                  // shopify-read diagnostics probes
   /^\[enroll\]/,                           // program enroll compensation logs

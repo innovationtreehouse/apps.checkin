@@ -10,7 +10,6 @@ import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
 import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
-import { QB_MATCH_STATE } from "../../lib/qb-match";
 import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
@@ -90,9 +89,7 @@ describeDb("owner assignment", () => {
 
     const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
     expect(t2.ownerId).toBe(201);
-    const event = await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
-    expect(event.qbMatchState).toBe(QB_MATCH_STATE.UNMATCHED);
-    expect(event.qbTxnId).toBeNull();
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
     expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
   });
 
@@ -282,31 +279,4 @@ describeDb("donor data reads are audited", () => {
     expect(payloads.length).toBeGreaterThan(0);
     for (const p of payloads) for (const f of DONOR_FIELDS) expect(p).not.toContain(f);
   });
-});
-
-describeDb("QuickBooks match pre-seat", () => {
-  const event = (disbursementId: string, date: string, qbMatchState: string, qbTxnId: string | null) =>
-    db.disbursementEvent.create({
-      data: {
-        orgId,
-        disbursementId,
-        qbMatchState,
-        qbTxnId,
-        payload: JSON.stringify({ version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: null, items: [] }),
-      },
-    });
-
-  it("a QuickBooks entry is claimed at most once per org", async () => {
-    await event("D-A", "2026-09-01", QB_MATCH_STATE.MATCHED, "qb-1");
-    await expect(event("D-B", "2026-09-02", QB_MATCH_STATE.MATCHED, "qb-1")).rejects.toMatchObject({ code: "P2002" });
-    await event("D-C", "2026-09-03", QB_MATCH_STATE.UNMATCHED, null);
-    await event("D-D", "2026-09-04", QB_MATCH_STATE.UNMATCHED, null);
-  });
-
-  it("an exclusion is unique per org", async () => {
-    const data = { orgId, qbTxnId: "qb-9", reason: "hand-booked grant", excludedByUserId: 1 };
-    await db.donationQbMatchExclusion.create({ data });
-    await expect(db.donationQbMatchExclusion.create({ data })).rejects.toMatchObject({ code: "P2002" });
-  });
-
 });

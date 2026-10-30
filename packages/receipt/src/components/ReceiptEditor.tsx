@@ -1,20 +1,23 @@
 "use client";
+import { formatCents } from "@checkin/money";
 import { Button, Checkbox, Divider, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   calculatedCents,
   canAddLine,
+  differenceDollars,
   draftHeader,
   EMPTY_LINE,
+  headerMath,
   lineCents,
   lineFromServer,
-  parseCents,
-  signedDollars,
+  roundingAllowed,
   type Draft,
   type DraftLine,
   type Header,
   type ServerReceipt,
 } from "./receiptDraft";
+import type { ReceiptMath } from "../lib/lineMath";
 
 interface Props {
   receipt: ServerReceipt;
@@ -26,8 +29,17 @@ interface Props {
 
 const lineTotal = (line: DraftLine) => {
   const cents = lineCents(line);
-  return cents === null ? "—" : signedDollars(Math.round(cents));
+  return cents === null ? "—" : formatCents(Math.round(cents));
 };
+
+function balanceText(math: ReceiptMath | null): string {
+  if (!math) return "Difference: —";
+  if (math.differenceCents === 0) return "Matches the receipt total";
+  const difference = differenceDollars(math.differenceCents);
+  return math.balanced
+    ? `Matches within rounding: ${difference} off${roundingAllowed(math.allowedCents)}`
+    : `Difference: ${difference}${roundingAllowed(math.allowedCents)}`;
+}
 
 /** Every field of a receipt and its lines, editable, with the sum its total must equal. */
 export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Props) {
@@ -49,8 +61,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
   const subtotal = allLines.map(lineCents).reduce<number | null>((a, b) => (a === null || b === null ? null : a + b), 0);
   const calculated = calculatedCents(allLines, header);
-  const total = parseCents(header.receiptTotal);
-  const difference = calculated === null || total === null ? null : calculated - total;
+  const math = headerMath(allLines, header);
 
   const row = (key: string, line: DraftLine, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
     <Table.Tr key={key}>
@@ -96,7 +107,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
         <Text fw={500} size="sm">Correct the receipt</Text>
         <Group grow wrap="wrap">
           <TextInput label="Retailer" miw={200} value={header.retailer} onChange={(e) => setHeader("retailer", e.currentTarget.value)} />
-          <TextInput label="Date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
+          <TextInput label="Date" type="date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
         </Group>
 
         <Table.ScrollContainer minWidth={820}>
@@ -129,14 +140,14 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
         <Divider />
         <Stack gap={6} align="flex-end">
-          <Text size="sm">Lines subtotal: <Text span ff="monospace">{subtotal === null ? "—" : signedDollars(Math.round(subtotal))}</Text></Text>
+          <Text size="sm">Lines subtotal: <Text span ff="monospace">{subtotal === null ? "—" : formatCents(Math.round(subtotal))}</Text></Text>
           {amount("+ Shipping", "shipping")}
           {amount("+ Tax", "tax")}
           {amount("− Discount", "discount")}
-          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : signedDollars(Math.round(calculated))}</Text></Text>
+          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : formatCents(Math.round(calculated))}</Text></Text>
           {amount("Receipt total", "receiptTotal")}
-          <Text size="sm" fw={600} c={difference === 0 ? "green" : "red"}>
-            {difference === null ? "Difference: —" : difference === 0 ? "Matches the receipt total" : `Difference: ${signedDollars(Math.round(difference))}`}
+          <Text size="sm" fw={600} c={math?.balanced ? "green" : "red"}>
+            {balanceText(math)}
           </Text>
           {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
         </Stack>

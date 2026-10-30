@@ -12,6 +12,8 @@
     "test:flow": "jest --config jest.flow.config.js --ci --runInBand --forceExit",
     "test:shopify-live": "jest --config jest.shopify-live.config.js --ci --runInBand",
     "test:flow:standalone": "docker compose -f ../deploy/docker-compose.flow.yml up -d --wait --wait-timeout 600 && docker compose -f ../deploy/docker-compose.flow.yml exec -T app sh -lc \"cd checkin-app && npm run test:flow -- $FLOW_ARGS\"; ec=$?; docker compose -f ../deploy/docker-compose.flow.yml down -v; exit $ec",
+    "test:e2e": "playwright test",
+    "test:e2e:standalone": "docker compose -f ../deploy/docker-compose.flow.yml up -d --wait --wait-timeout 600 && docker compose -f ../deploy/docker-compose.flow.yml exec -T app sh -lc \"cd checkin-app && npx playwright install --with-deps chromium && npm run test:e2e -- $E2E_ARGS\"; ec=$?; docker compose -f ../deploy/docker-compose.flow.yml down -v; exit $ec",
     "test:integration": "INTEGRATION_DB=1 jest --ci -w ${INTEGRATION_WORKERS:-1} --workerIdleMemoryLimit=1GB --testTimeout=60000 --testEnvironment=node --logHeapUsage --testPathIgnorePatterns=/node_modules/ --testRegex \"\\.integration\\.test\\.[jt]sx?$\"",
     "test:coverage": "INTEGRATION_DB=1 jest --ci --runInBand --coverage --testPathIgnorePatterns \"/node_modules/|/\\.next/|\\.flow\\.test\\.\"",
     "test:coverage:unit": "jest --ci --coverage --testPathIgnorePatterns \"/node_modules/|/\\.next/|\\.flow\\.test\\.|\\.integration\\.test\\.\"",
@@ -38,6 +40,7 @@
     "@checkin/local-inventory": "*",
     "@checkin/money": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/utils": "*",
@@ -66,10 +69,11 @@
     "react-dom": "^19.2.3",
     "react-qr-code": "^2.0.18",
     "resend": "^6.9.3",
-    "svix": "^1.84.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "svix": "^1.84.1"
   },
   "devDependencies": {
+    "@jest/test-sequencer": "^30.3.0",
+    "@playwright/test": "1.63.0",
     "@prisma/generator-helper": "7.8.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

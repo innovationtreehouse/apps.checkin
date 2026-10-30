@@ -30,10 +30,10 @@ export const EXTRACT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    retailer: { type: "string", description: "Store or vendor name" },
+    retailer: { type: "string", description: "Store or vendor name, empty if not shown" },
     receiptNumber: { type: "string", description: "Receipt or invoice number printed on the receipt, if present" },
     orderNumber: { type: "string", description: "Order number or confirmation number, if present" },
-    receiptDate: { type: "string", description: "Date in YYYY-MM-DD format" },
+    receiptDate: { type: "string", description: "Date in YYYY-MM-DD format, empty if not shown" },
     currency: { type: "string", description: "3-letter currency code, default USD" },
     shipping: { type: "number", description: "Shipping cost, 0 if not present" },
     tax: { type: "number", description: "Tax amount, 0 if not present" },
@@ -42,10 +42,10 @@ export const EXTRACT_SCHEMA = {
       type: "string",
       description: 'The receipt/order total copied VERBATIM as printed, e.g. "$69.89" — digits and decimal exactly as shown',
     },
-    receiptTotal: { type: "number", description: "Total amount paid" },
+    receiptTotal: { type: "number", description: "Total amount paid; omit if no total is shown" },
     lineItems: { type: "array", description: "All line items on the receipt", items: lineItemSchema },
   },
-  required: ["retailer", "receiptDate", "currency", "shipping", "tax", "discount", "receiptTotal", "lineItems"],
+  required: ["retailer", "receiptDate", "currency", "shipping", "tax", "discount", "lineItems"],
 };
 
 const INSTRUCTION =
@@ -65,7 +65,7 @@ export function mapRawToOcrData(raw: Record<string, unknown>): OcrData {
     tax: Number(raw.tax ?? 0),
     discount: Number(raw.discount ?? 0),
     receiptTotalText: raw.receiptTotalText ? String(raw.receiptTotalText) : undefined,
-    receiptTotal: totalFromText ?? Number(raw.receiptTotal ?? 0),
+    receiptTotal: totalFromText ?? (raw.receiptTotal == null ? null : Number(raw.receiptTotal)),
     lineItems: lines.map((item: unknown) => {
       const li = (item ?? {}) as Record<string, unknown>;
       return {
@@ -99,8 +99,9 @@ export function buildContent(file: Buffer, mimeType: string): ContentBlock[] {
   throw new Error(`Unsupported MIME type: ${mimeType}`);
 }
 
+/** A reading without its retailer, date or total still lands, for its submitter to fill in; one without lines does not. */
 function complete(data: OcrData): boolean {
-  return !!data.retailer && !!data.receiptDate && data.lineItems.length > 0;
+  return data.lineItems.length > 0;
 }
 
 /** The real provider. Without a key it fails closed into ocr_failed; manual entry keeps working. */
@@ -133,7 +134,7 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
 
         const parsed = OcrDataSchema.safeParse(mapRawToOcrDataSafe(raw as Record<string, unknown>));
         if (!parsed.success || !complete(parsed.data)) {
-          return { success: false, error: "OCR returned incomplete receipt data (missing retailer, date, or line items)" };
+          return { success: false, error: "OCR returned no line items" };
         }
         return { success: true, data: parsed.data };
       } catch (err) {

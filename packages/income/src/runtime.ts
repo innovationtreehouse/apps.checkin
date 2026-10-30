@@ -1,24 +1,18 @@
 import { defineRuntime } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
   IncomePrincipal,
   OrgIdentity,
-  OtherLaneClaims,
   OwnerDirectory,
   PayoutMirror,
   QbClassSource,
   QbDepositSource,
 } from "./contract";
-import type { DepositAccount } from "./lib/deposit-lines";
-
-/** QuickBooks account ids a created deposit's lines book to. */
-export type IncomeQbAccounts = Record<DepositAccount, string>;
 
 /** What the create path needs to write deposits. Unbound, nothing is created. */
 export interface IncomePosting {
   client: QuickBooksClient;
-  accounts: IncomeQbAccounts;
   /**
    * True only on a deploy whose Shopify mirror keeps the newest version of every row, so a
    * replay cannot hand the create path a reverted payout. Anything else creates nothing.
@@ -66,11 +60,10 @@ export interface IncomeConfig {
    * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
    */
   classes?: QbClassSource;
-  /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
-  bankAccountId?: string;
+  /** Finance's books map: role -> QuickBooks account, bucket -> Class. A source whose bank role it leaves unset is not matched. */
+  booksMap?: BooksMap;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;
-  otherLaneClaims?: OtherLaneClaims;
   /** Days after a payout within which its deposit must be booked. */
   windowDays?: number;
   /** Days before a payout a deposit may still be dated, for QuickBooks dates that run early. */

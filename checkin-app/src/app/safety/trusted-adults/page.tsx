@@ -152,7 +152,7 @@ export default function AdminTrustedAdultsPage() {
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
                 if (body.code === "wrong_phase") {
-                    notifications.show({ color: "red", message: body.error ?? "This review is no longer awaiting board review.", autoClose: 4000 });
+                    notifications.show({ color: "red", message: body.error ?? "This review is no longer awaiting board review.", autoClose: false });
                     await load();
                 } else {
                     setNotices((n) => ({ ...n, [reviewId]: { text: body.error ?? "Decision failed.", tone: "error" } }));

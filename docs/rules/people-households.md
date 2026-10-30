@@ -122,10 +122,16 @@ Things the app takes as true because they are handled outside it.
   sysadmin path for adding someone to any household is unaffected.  [Decision]
 
 - Nobody is moved into or out of a denied household, by the board's household
-  move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+  move. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
 - The board and sysadmin path adds nobody to a denied household, and nobody,
   a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
+- Finance, operations or the board may add a non-member adult by name alone,
+  when naming who a receipt reimburses. The person gets a household of their own,
+  with no membership, and leads it. Whoever adds them declares them an adult, and
+  the app records that declaration in place of a date of birth. No email is
+  taken. Finance confirms who the person is before paying them, outside the app.  [Decision — owner]
 
 - Only the board or a sysadmin moves an existing person out to a new household of
   their own. The person becomes its lead, so a youth cannot be moved into one, and the new
@@ -144,6 +150,10 @@ Things the app takes as true because they are handled outside it.
   do here, and it is young enough that someone of 25 is very unlikely to be the
   parent of anyone in our programs.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
 
+- Change history can keep a date of birth past 25. A history record copies the
+  date when a person's details are saved, and nothing removes that copy later.
+  This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21, 2026-10-27]
+
 - Date of birth is the only field with an ageing-out rule. Broader retention is
   deliberately not automated while the organisation is young and little has
   accumulated; the general obligation is met by hand until that stops being true.  [Decision — deliberate limit]
@@ -156,6 +166,11 @@ Things the app takes as true because they are handled outside it.
   without saying whether anyone holds it — only what will happen if they do.  [Decision — *Principle: no existence oracle*]
 
 - Email identity is case-insensitive.  [Decision]
+
+- A person may be identified by extra addresses for receipt mail only. Finance
+  or the Board records them, never for their own household, and each is unique
+  across every person's sign-in address and every other extra address. Setting a
+  sign-in email to such an address removes it.  [Decision — owner]
 
 - Where someone signs in through the outside sign-in service, the address they
   sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
@@ -200,9 +215,12 @@ Things the app takes as true because they are handled outside it.
   is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
 
 - A person's membership standing belongs to their household, and merging two
-  records never alters it as a side effect. A merge that would move a person
-  across a denied-or-revoked boundary, or abandon an active membership, is refused
-  until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+  records never alters it as a side effect, with one exception: a merge that
+  carries in a still-valid background check completes an application already paid
+  for and waiting only on that check, which makes the household a member. It leaves
+  alone an application a reviewer has already acted on or the board has reset. A
+  merge that would move a person across a denied-or-revoked boundary, or abandon an
+  active membership, is refused until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
 
 ### Roles
 
@@ -217,9 +235,7 @@ Things the app takes as true because they are handled outside it.
 
 - A merge moves the merged-away record's roles under the same checks as a hand
   grant. It is refused when either record is in the actor's household, or when
-  the merged-away record holds the board role and the actor is not on the board.
-  An import that updates an existing person is refused for the actor's own
-  household in the same way.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+  the merged-away record holds the board role and the actor is not on the board.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Only a board member removes someone's board role, and the last board member
   cannot be removed. A sysadmin may add a board member but not remove one.  [Decision]
@@ -236,6 +252,15 @@ Things the app takes as true because they are handled outside it.
 - Keyholders hold the board's email and phone as the front desk's emergency
   reference. It is a grant made on purpose, not an over-share to be narrowed.  [Decision]
 
+- A badge or the kiosk shows a person by the name they go by: the nickname set for
+  them, else their given name. Their surname appears only when someone shown with
+  them goes by the same name, and then only shortened: the badge takes as many
+  letters as telling the two apart needs, the kiosk at most two. A shortened
+  surname keeps its particles whole ("van der B.", "Ní B."). A name written in
+  Chinese, Japanese or Korean script shows whole, and so does a surname in a script
+  with no initials — except on the kiosk, which leaves such a surname off rather
+  than show all of it.  [Decision]
+
 ### Emergency contacts
 
 - An emergency contact is someone outside the household; one matching a member
@@ -246,6 +271,9 @@ Things the app takes as true because they are handled outside it.
 
 - An emergency contact's relationship to the household is optional free text,
   with no picklist of types.  [Decision — deliberate limit]
+
+- Only the household lead reads the household's emergency contacts; other
+  members of the household do not.  [Decision]
 
 - A household names at least one emergency contact at intake, and its last valid
   contact cannot be removed.  [Decision]

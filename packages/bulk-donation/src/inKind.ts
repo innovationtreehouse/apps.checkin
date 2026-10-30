@@ -12,6 +12,7 @@ import { inKindService } from "./services/inKindService";
 import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
 const receiptIdSchema = z.string().min(1);
+const syncSeqSchema = z.number().int().nonnegative();
 
 /** Built at call time: the org is only known once the host has configured the runtime. */
 async function thisOrg() {
@@ -45,18 +46,21 @@ export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
   });
 }
 
-/** X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the donor. */
-export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
+/**
+ * X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the
+ * donor. `seq` is the receipt's sync sequence: a call older than one already seen is ignored.
+ */
+export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  await inKindService.recordDonor(orgId, receiptId, InKindDonorSchema.parse(donor));
+  await inKindService.recordDonor(orgId, receiptId, InKindDonorSchema.parse(donor), syncSeqSchema.parse(seq));
 }
 
-/** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt is a no-op. */
-export async function withdrawInKind(orgId: string, receiptId: string): Promise<void> {
+/** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt or a stale `seq` is a no-op. */
+export async function withdrawInKind(orgId: string, receiptId: string, seq: number): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  await inKindService.withdraw(orgId, receiptId);
+  await inKindService.withdraw(orgId, receiptId, syncSeqSchema.parse(seq));
 }
 
 /** The host showed these in-kind receipts with their donor names: one donor-read audit row per receipt. */
@@ -83,4 +87,19 @@ export async function recordInKindWithoutReceipt(input: ManualInKindInput): Prom
 /** Retry the inventory load for a no-receipt donation whose first load failed. */
 export async function loadInKindInventory(id: number): Promise<void> {
   await manualInKindService.loadInventory(await getOrgId(), id);
+}
+
+export type GiftOutcome = "awaiting_decision" | "accepted" | "refused" | "returned";
+
+const GIFT_OUTCOME: Readonly<Record<string, GiftOutcome>> = { ACCEPTED: "accepted", REFUSED: "refused", RETURNED: "returned" };
+
+/** Receipt callee: finance's decision on each named receipt's in-kind gift; a receipt with no gift is left out. */
+export async function giftOutcomes(receiptIds: unknown): Promise<Map<string, GiftOutcome>> {
+  const ids = z.array(receiptIdSchema).parse(receiptIds);
+  if (ids.length === 0) return new Map();
+  const gifts = await db.inKindDonation.findMany({
+    where: { orgId: await getOrgId(), receiptId: { in: ids } },
+    select: { receiptId: true, decisionOutcome: true },
+  });
+  return new Map(gifts.map((g) => [g.receiptId, g.decisionOutcome ? (GIFT_OUTCOME[g.decisionOutcome] ?? "awaiting_decision") : "awaiting_decision"]));
 }

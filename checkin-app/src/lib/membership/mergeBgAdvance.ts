@@ -3,8 +3,9 @@ import type { TxClient } from "@/lib/db-client";
 import { logBackendError } from "@/lib/logger";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
-import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
+import { bgFreshThreshold, householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
 import { applyVolunteerFamilyStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck, reviewTransaction } from "@/lib/membership/review";
+import { carriedComplianceDate } from "@/lib/person/merge/plan";
 
 /**
  * A participant merge moves the newer of the two `lastBackgroundCheck` dates onto
@@ -24,12 +25,37 @@ import { applyVolunteerFamilyStatus, clearBackgroundCheck, notifyClearanceOutcom
 /** A process this carryover may act on. */
 type Candidate = { id: number; orgMembershipId: number | null };
 
+/** The boundary and recheck period in force, from live board settings. */
+async function liveBgPolicy() {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
+    return { boundary, recheckMonths: settings?.bgRecheckMonths };
+}
+
 /** `householdBgIsFresh` against live board settings. Callers need the answer, not the settings row. */
 export async function householdBgFresh(householdId: number | null): Promise<boolean> {
     if (!householdId) return false;
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    return householdBgIsFresh(householdId, boundary, settings?.bgRecheckMonths ?? 0);
+    const { boundary, recheckMonths } = await liveBgPolicy();
+    return householdBgIsFresh(householdId, boundary, recheckMonths);
+}
+
+type BgSubject = { householdId: number | null; isHouseholdLead: boolean; lastBackgroundCheck: Date | null };
+
+/**
+ * What the merge preview tells the operator about the background-check date: the date
+ * the keeper would adopt, and whether adopting it would make the household valid, the
+ * condition under which `advanceHouseholdBgAfterMerge` acts. Null when the keeper's date
+ * stands. A merge never changes the keeper's lead flag, and with no lead fresh today the
+ * carried date on the keeper is the only thing that can make the household fresh.
+ */
+export async function mergeBgNotice(keep: BgSubject, merge: BgSubject): Promise<{ date: Date; makesHouseholdValid: boolean } | null> {
+    const date = carriedComplianceDate(keep.lastBackgroundCheck, merge.lastBackgroundCheck);
+    if (!date) return null;
+    if (!keep.householdId || !keep.isHouseholdLead) return { date, makesHouseholdValid: false };
+    const { boundary, recheckMonths } = await liveBgPolicy();
+    if (await householdBgIsFresh(keep.householdId, boundary, recheckMonths)) return { date, makesHouseholdValid: false };
+    const threshold = bgFreshThreshold(boundary, recheckMonths);
+    return { date, makesHouseholdValid: !!threshold && date.getTime() >= threshold.getTime() };
 }
 
 /**

@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { handler, unauthorized } from "@/security/handler";
-import { eligibleReviewProcessIds, attestedUnclearedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
+import { eligibleReviewProcessIds, attestedUnclearedProcessIds, ownRejectedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
@@ -21,8 +21,9 @@ const STATUS_FOR: Record<ReviewError["code"], number> = {
 };
 
 /**
- * GET /api/membership/reviews — applications this reviewer may attest, or with
- * `?mine=1` the ones they already approved that have not cleared.
+ * GET /api/membership/reviews — applications this reviewer may attest, with
+ * `?mine=1` the ones they already approved that have not cleared, or with
+ * `?rejected=1` the blocked ones they rejected (which they may change to approve).
  *
  * Eligibility is computed in the service; the result is returned as model rows
  * so the security stripper governs field visibility (registry grants reviewers
@@ -45,9 +46,10 @@ const STATUS_FOR: Record<ReviewError["code"], number> = {
  */
 export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();
-    // ?mine=1: reviews this reviewer already approved that have not cleared.
-    const mine = new URL(req.url).searchParams.get("mine") === "1";
-    const ids = mine ? await attestedUnclearedProcessIds(auth.user.id) : await eligibleReviewProcessIds(auth.user.id);
+    const params = new URL(req.url).searchParams;
+    const ids = params.get("mine") === "1" ? await attestedUnclearedProcessIds(auth.user.id)
+        : params.get("rejected") === "1" ? await ownRejectedProcessIds(auth.user.id)
+        : await eligibleReviewProcessIds(auth.user.id);
     const queue = await prisma.orgMembershipProcess.findMany({
         where: { id: { in: ids } },
         orderBy: { stageEnteredAt: "asc" },
@@ -90,9 +92,11 @@ export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) 
 // { processId, result, isMarkedVolunteerFamily, subjectPersonIds }.
 // Board members are implicit reviewers (see canReviewBackgroundChecks); attest()
 // re-checks, and validates the subjects against the household's live leads.
+// An APPROVE from the reviewer whose rejection blocked the application changes
+// their answer: the review starts over with that approval as its first.
 export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
-    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; isMarkedVolunteer?: boolean; note?: string; subjectPersonIds?: number[] };
+    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; note?: string; subjectPersonIds?: number[] };
     try {
         body = await req.json();
     } catch {
@@ -108,8 +112,7 @@ export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMemb
     try {
         const outcome = await attest(auth.user.id, body.processId, {
             result: body.result,
-            // A review page loaded before the rename deploy still sends isMarkedVolunteer; drop the fallback one release later.
-            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily ?? body.isMarkedVolunteer,
+            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily,
             note: note || undefined,
             subjectPersonIds: subjectIds(body.subjectPersonIds),
         });

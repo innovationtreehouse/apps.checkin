@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ActionIcon, Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface QbAccount {
   id: number;

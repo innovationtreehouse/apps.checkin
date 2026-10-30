@@ -1,12 +1,10 @@
 "use client";
 import { useState } from "react";
-import { Badge, Button, Modal, Table, Text, Title } from "@mantine/core";
-import { cents, paged, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { Table, Text, Title } from "@mantine/core";
+import { paged, useLoad, when } from "../components/api";
+import { LoadError, Pager } from "@checkin/component-ui";
 
-interface EventRow { id: number; disbursementId: string; payload: string; createdAt: string; qbMatchState: string; qbTxnId: string | null }
-interface Candidate { id: string; type: string; date: string; amountCents: number; memo: string | null }
+interface EventRow { id: number; disbursementId: string; payload: string; createdAt: string }
 
 /** The booking batch's line count (one per non-zero donation, match and summed fee). */
 function summary(payload: string): string {
@@ -17,12 +15,10 @@ function summary(payload: string): string {
   }
 }
 
-/** /donations/events — completed disbursements (booking batches) and their QuickBooks match state. */
+/** /donations/events — completed disbursements (booking batches); income books each deposit. */
 export default function EventsPage() {
   const [page, setPage] = useState(1);
   const events = useLoad<EventRow[]>(paged("/disbursement-events", page));
-  const [open, setOpen] = useState<string | null>(null);
-  const candidates = useLoad<Candidate[]>(open ? `/disbursement-events/${encodeURIComponent(open)}/qb-candidates` : null);
 
   return (
     <>
@@ -30,7 +26,7 @@ export default function EventsPage() {
       {events.error && <LoadError what="booking batches" message={events.error} onRetry={events.reload} />}
       <Table striped>
         <Table.Thead>
-          <Table.Tr><Table.Th>Completed</Table.Th><Table.Th>Disbursement</Table.Th><Table.Th>Batch</Table.Th><Table.Th>QuickBooks</Table.Th><Table.Th /></Table.Tr>
+          <Table.Tr><Table.Th>Completed</Table.Th><Table.Th>Disbursement</Table.Th><Table.Th>Batch</Table.Th></Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {(events.data ?? []).map((e) => (
@@ -38,20 +34,11 @@ export default function EventsPage() {
               <Table.Td>{when(e.createdAt)}</Table.Td>
               <Table.Td>{e.disbursementId}</Table.Td>
               <Table.Td>{summary(e.payload)}</Table.Td>
-              <Table.Td><Badge variant="light">{e.qbMatchState}</Badge>{e.qbTxnId && <Text size="xs">{e.qbTxnId}</Text>}</Table.Td>
-              <Table.Td><Button size="xs" variant="light" onClick={() => setOpen(e.disbursementId)}>QuickBooks</Button></Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
-      <Modal opened={open !== null} onClose={() => setOpen(null)} title={`QuickBooks match — ${open ?? ""}`}>
-        {candidates.error && <LoadError what="candidates" message={candidates.error} onRetry={candidates.reload} />}
-        {candidates.data?.length === 0 && <Text size="sm" c="dimmed" mb="sm">No QuickBooks candidates.</Text>}
-        {(candidates.data ?? []).map((c) => (
-          <Text key={c.id} size="sm">{c.date} · {c.type} · {cents(c.amountCents)} · {c.memo ?? ""}</Text>
-        ))}
-        <Text size="xs" c="dimmed" mt="md">Held disbursements are resolved on the QB Queue tab.</Text>
-      </Modal>
+      <Text size="xs" c="dimmed" mt="md">Income matches and books each disbursement&apos;s deposit; see each one in income&apos;s reconciliation queue.</Text>
       <Pager page={page} onChange={setPage} rows={events.data} />
     </>
   );

@@ -25,6 +25,7 @@ import * as synthetic from '@/security/shopifyReadSyntheticClassifications';
 import '@/security/registry';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
 const ENDPOINTS = [

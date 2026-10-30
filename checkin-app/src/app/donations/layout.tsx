@@ -1,37 +1,57 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
-import { Box } from "@mantine/core";
+import { usePathname } from "next/navigation";
+import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { CountBadge } from "@/components/ui/CountBadge";
+import { PageContainer } from "@/components/ui/PageContainer";
 import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
-import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
-import RevenueOpsLayout from "../finance-ops/layout";
+import { hasAnyRole, visibleLinks } from "@/lib/nav/gates";
+import { DONATIONS, DONATION_SCREEN_ROLES, donationsRolesFor } from "@/lib/nav/sections/donations";
+import { useRequireRole } from "@/hooks/useRequireRole";
+import { useTodoCounts } from "@/hooks/useTodoCounts";
 
 type NavCounts = { unassignedQueue: number; disbursementHolds: number };
 
-const donationLinks = DONATION_NAV_LINKS.map(({ name, href, icon }) => ({ name, href, icon }));
-
-/** Revenue Ops chrome and gate, with the donation screens as a second tab row. */
+/**
+ * Donations chrome and gate. The donation screens admit FINANCE or BOARD; the
+ * in-kind gift screen also admits OPERATIONS and INVENTORY_MANAGER.
+ */
 export default function DonationsLayout({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession();
-  const authorized = REVENUE_OPS.visible(session?.user, null);
+  const { user, loading, ready } = useRequireRole(donationsRolesFor(usePathname() ?? ""));
+  const todoCounts = useTodoCounts(ready);
+  const countsAllowed = ready && hasAnyRole(user, DONATION_SCREEN_ROLES);
   const [counts, setCounts] = useState<NavCounts | null>(null);
 
   useEffect(() => {
-    if (!authorized) return;
+    if (!countsAllowed) return;
     fetch("/api/donations/nav-counts")
       .then((res) => (res.ok ? res.json() : null))
       .then((data: NavCounts | null) => setCounts(data))
       // Badges are best-effort; a failed fetch just shows none.
       .catch(() => setCounts(null));
-  }, [authorized]);
+  }, [countsAllowed]);
 
+  if (loading) {
+    return (
+      <Center mih="60vh">
+        <Stack align="center">
+          <Loader />
+          <Text>Verifying Donations Access...</Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  if (!ready) return null;
+
+  const links = visibleLinks(DONATIONS, user, todoCounts);
   return (
-    <RevenueOpsLayout>
+    <PageContainer>
       <SectionTabs
-        links={donationLinks}
+        links={links}
+        prefixMatch
         mb="md"
         badgeFor={(href) => {
           const field = DONATION_NAV_LINKS.find((l) => l.href === href)?.badge;
@@ -40,6 +60,6 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
         }}
       />
       <Box style={{ minWidth: 0 }}>{children}</Box>
-    </RevenueOpsLayout>
+    </PageContainer>
   );
 }

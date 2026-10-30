@@ -8,7 +8,7 @@
  * endpoint performs no Shopify op) so they can still pay. Once
  * BoardSettings.scholarshipDenialGraceDays has elapsed since
  * paymentPlanDeniedAt, this sweep auto-withdraws the participant and releases
- * the seat (+1) — reusing the same withdrawAndReleaseHold path self/admin
+ * the seat (+1) — reusing the same deleteAndReleaseHold path self/admin
  * withdrawal uses.
  */
 import { GET } from '@/app/api/cron/scholarship-grace-expiry/route';
@@ -47,7 +47,7 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         await prisma.program.deleteMany({ where: { name: { contains: 'Grace Cron Test' } } });
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-grace-cron' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-grace-cron' },
         });
         programId = program.id;
 

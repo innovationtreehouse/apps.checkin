@@ -190,11 +190,10 @@ export async function isMembershipFeeSettledThrough(personId: number, through: D
 
 /**
  * The date a program's member pricing must be valid through: the boundary that
- * closes the program's stated membership year. Falls back to the end date when no
- * year is stated or the board hasn't set the boundary.
+ * closes the program's stated membership year, or the end date when the board
+ * hasn't set the boundary.
  */
-export async function programCoverageDate(p: { endAt: Date; appliesToYear: number | null }): Promise<Date> {
-    if (p.appliesToYear == null) return p.endAt;
+export async function programCoverageDate(p: { endAt: Date; appliesToYear: number }): Promise<Date> {
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: { orgMembershipYearBoundary: true },

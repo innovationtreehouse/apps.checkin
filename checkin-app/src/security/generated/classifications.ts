@@ -29,6 +29,16 @@ export const classifications = {
         isBackgroundCheckReviewer: 'internal',
         canAccessStaging: 'internal',
     },
+    PersonMailAlias: {
+        id: 'internal',
+        personId: 'internal',
+        address: 'pii',
+        canonicalKey: 'pii',
+        addedById: 'internal',
+        createdAt: 'internal',
+        approvedAt: 'internal',
+        approvedById: 'internal',
+    },
     PersonRole: {
         personId: 'internal',
         role: 'internal',
@@ -276,7 +286,6 @@ export const classifications = {
         programId: 'public',
         personId: 'public',
         isCore: 'internal',
-        isTreasurer: 'internal',
     },
     ProgramParticipant: {
         programId: 'public',
@@ -372,6 +381,18 @@ export const classifications = {
         secondaryAffectedEntity: 'internal',
         oldData: 'internal',
         newData: 'internal',
+    },
+    FinanceViewLog: {
+        id: 'internal',
+        viewedAt: 'internal',
+        actorId: 'internal',
+        role: 'internal',
+        endpoint: 'internal',
+        params: 'internal',
+        recordIds: 'internal',
+        rowCount: 'internal',
+        window: 'internal',
+        viewKey: 'internal',
     },
     Account: {
         id: 'internal',
@@ -493,7 +514,6 @@ export const classifications = {
     BudgetOwner: {
         id: 'internal',
         name: 'internal',
-        programId: 'internal',
         isOrgLevel: 'internal',
         ownerId: 'public',
         archivedAt: 'internal',
@@ -502,6 +522,10 @@ export const classifications = {
     BudgetOwnerTreasurer: {
         budgetOwnerId: 'internal',
         personId: 'public',
+    },
+    BooksMapRoleAccount: {
+        role: 'internal',
+        quickBooksAccountId: 'internal',
     },
 } as const;
 
@@ -524,6 +548,7 @@ export const relations = {
         programVolunteers: { model: 'ProgramVolunteer', isList: true },
         budgetOwnersOwned: { model: 'BudgetOwner', isList: true },
         budgetOwnerTreasurerships: { model: 'BudgetOwnerTreasurer', isList: true },
+        mailAliases: { model: 'PersonMailAlias', isList: true },
         programParticipants: { model: 'ProgramParticipant', isList: true },
         programsLed: { model: 'Program', isList: true },
         instancesLed: { model: 'ProgramInstance', isList: true },
@@ -538,6 +563,9 @@ export const relations = {
         trustedAdultReviewsDecided: { model: 'TrustedAdultReview', isList: true },
         roles: { model: 'PersonRole', isList: true },
         grantedRoles: { model: 'PersonRole', isList: true },
+    },
+    PersonMailAlias: {
+        person: { model: 'Person', isList: false },
     },
     PersonRole: {
         person: { model: 'Person', isList: false },
@@ -613,7 +641,6 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
-        budgetOwners: { model: 'BudgetOwner', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -656,6 +683,8 @@ export const relations = {
     },
     AuditLog: {
     },
+    FinanceViewLog: {
+    },
     Account: {
         user: { model: 'Person', isList: false },
     },
@@ -692,13 +721,14 @@ export const relations = {
     Org: {
     },
     BudgetOwner: {
-        program: { model: 'Program', isList: false },
         owner: { model: 'Person', isList: false },
         treasurers: { model: 'BudgetOwnerTreasurer', isList: true },
     },
     BudgetOwnerTreasurer: {
         budgetOwner: { model: 'BudgetOwner', isList: false },
         person: { model: 'Person', isList: false },
+    },
+    BooksMapRoleAccount: {
     },
 } as const;
 

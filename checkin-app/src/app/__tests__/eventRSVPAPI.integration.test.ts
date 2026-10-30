@@ -53,6 +53,7 @@ describe('Event RSVP API Integration Tests', () => {
 
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: 'RSVP Test Program',
@@ -79,7 +80,7 @@ describe('Event RSVP API Integration Tests', () => {
         });
         foreignLeadId = foreignLead.id;
         const foreignProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'RSVP Test Foreign Program', leadMentorId: foreignLeadId, maxParticipants: 10, minAge: 5, maxAge: 18 }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'RSVP Test Foreign Program', leadMentorId: foreignLeadId, maxParticipants: 10, minAge: 5, maxAge: 18 }
         });
         foreignProgramId = foreignProgram.id;
 

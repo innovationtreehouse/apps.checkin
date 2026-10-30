@@ -2,8 +2,7 @@
 import { useState } from "react";
 import { Button, Table, Text, Title } from "@mantine/core";
 import { act, api, ownerName, paged, useCanWrite, useLoad, useOwners, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface RuleRow { id: number; comment: string; ownerId: number; createdAt: string }
 

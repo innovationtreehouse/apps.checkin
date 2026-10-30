@@ -18,7 +18,8 @@ import { POST as ManualHoldPost } from '@/app/api/finance-ops/payment-plans/manu
 import { POST as PlansPost } from '@/app/api/finance-ops/payment-plans/route';
 import { POST as RefusePost } from '@/app/api/finance-ops/payment-plans/refuse/route';
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
-import { withdrawAndReleaseHold } from '@/lib/program/capacity';
+import { deleteAndReleaseHold, withdrawParticipant } from '@/lib/program/capacity';
+import { POST as EnrollPost } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import * as shopify from '@/lib/shopify/stock';
 
@@ -60,7 +61,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
         boardId = board.id;
         // shopifyVariantId present so the apply-time hold logic engages (single pool).
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
         });
         programId = program.id;
     });
@@ -89,6 +90,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 pendingSince: fields.pendingSince ?? now,
                 shopifyOrderId: null,
                 seatTakenWithoutSaleAt: null,
+                endedAt: null,
             },
             create: {
                 programId, personId: selfId,
@@ -221,12 +223,12 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertState('PENDING_HELD_DENIED');
     });
 
-    // T7/T8/T9 all funnel through the one shared exit (withdrawAndReleaseHold);
+    // T7/T8/T9 all funnel through the one shared exit (deleteAndReleaseHold);
     // their end-state is UNENROLLED (row deleted), with +1 iff the row still held.
     it('T7 non-payment kick: PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const { released } = await withdrawAndReleaseHold(programId, selfId, program);
+        const { released } = await deleteAndReleaseHold(programId, selfId, program);
         expect(released).toBe(false);
         await assertGone();
     });
@@ -234,7 +236,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T8 grace expiry: PENDING_HELD_DENIED → ∅ (held → +1)', async () => {
         await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const { released } = await withdrawAndReleaseHold(programId, selfId, program);
+        const { released } = await deleteAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
         await assertGone();
     });
@@ -242,7 +244,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T9 withdraw: PENDING_HELD → ∅ (held → +1)', async () => {
         await seed({ req: true, held: true, den: false }); // PENDING_HELD
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const { released } = await withdrawAndReleaseHold(programId, selfId, program);
+        const { released } = await deleteAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
         await assertGone();
     });
@@ -256,7 +258,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
         expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
         expect(await stampOf()).not.toBeNull();
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(true);
+        expect((await deleteAndReleaseHold(programId, selfId, program)).released).toBe(true);
         await assertGone();
     });
 
@@ -267,15 +269,96 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertState('ACTIVE');
         expect(await stampOf()).toBeNull();
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        expect((await deleteAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
     });
 
     it('T11 on an ACTIVE place with no record (paid, or enrolled while free) returns nothing', async () => {
         await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        expect((await deleteAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
+    });
+
+    // T12/T13: a withdrawal keeps the row as WITHDRAWN; the status flip is the
+    // exactly-once boundary that delete() is for T9/T11.
+    it('T12 withdraw: ACTIVE → WITHDRAWN with endedAt; a paid place returns nothing; a second call no-ops', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        const exit = await withdrawParticipant(programId, selfId, program);
+        expect(exit?.released).toBe(false);
+        expect(exit?.enrollment.endedAt).not.toBeNull();
+        await assertState('WITHDRAWN');
+        expect(await withdrawParticipant(programId, selfId, program)).toBeNull();
+    });
+
+    it('T12 on an approved held seat returns it (+1)', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawParticipant(programId, selfId, program))?.released).toBe(true);
+        await assertState('WITHDRAWN');
+    });
+
+    it('T13 withdraw(held): PENDING_HELD → WITHDRAWN, the hold released by exactly one of two concurrent callers', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        const exits = await Promise.all([withdrawParticipant(programId, selfId, program), withdrawParticipant(programId, selfId, program)]);
+        const winners = exits.filter((e) => e !== null);
+        expect(winners).toHaveLength(1);
+        expect(winners[0]?.released).toBe(true);
+        await assertState('WITHDRAWN');
+    });
+
+    it('T14 re-enroll(paid): WITHDRAWN → PENDING_UNPAID reactivates the row and clears the last stint', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId, personId: selfId } },
+            data: { shopifyOrderId: 'order-old-stint' },
+        });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        await withdrawParticipant(programId, selfId, program);
+        // Priced and on sale, so a self-enrolment owes a payment.
+        await prisma.program.update({ where: { id: programId }, data: { nonOrgMemberPriceCents: 1000, offSaleAt: new Date('2099-01-01') } });
+        try {
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await EnrollPost(new Request(`http://localhost/api/programs/${programId}/participants`, {
+                method: 'POST', headers: { cookie: 'session=test' }, body: JSON.stringify({ participantId: selfId }),
+            }) as unknown as import('next/server').NextRequest, params());
+            expect(res.status).toBe(200);
+            await assertState('PENDING_UNPAID');
+            const row = await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } });
+            expect(row).toMatchObject({ endedAt: null, shopifyOrderId: null });
+            expect(row.pendingSince?.getTime()).toBeGreaterThan(Date.now() - 60_000);
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { nonOrgMemberPriceCents: null, offSaleAt: null } });
+        }
+    });
+
+    it('T13 withdraw(unpaid): PENDING_UNPAID → WITHDRAWN, nothing held, no +1', async () => {
+        await seed({ req: false, held: false, den: false });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawParticipant(programId, selfId, program))?.released).toBe(false);
+        await assertState('WITHDRAWN');
+    });
+
+    it('T15 re-enroll(comp): WITHDRAWN → ACTIVE reactivates the row and clears the last stint', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId, personId: selfId } },
+            data: { shopifyOrderId: 'order-old-stint', wasOrgMemberAtApproval: true },
+        });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        await withdrawParticipant(programId, selfId, program);
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await EnrollPost(new Request(`http://localhost/api/programs/${programId}/participants`, {
+            method: 'POST', headers: { cookie: 'session=test' }, body: JSON.stringify({ participantId: selfId, override: true }),
+        }) as unknown as import('next/server').NextRequest, params());
+        expect(res.status).toBe(200);
+        await assertState('ACTIVE');
+        const row = await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } });
+        expect(row).toMatchObject({ endedAt: null, shopifyOrderId: null, wasOrgMemberAtApproval: null, isPaymentPlanRequested: false, paymentPlanDeniedAt: null });
     });
 
     it('crash window (activate step 1 committed, release skipped) → I1 violation flagged', async () => {

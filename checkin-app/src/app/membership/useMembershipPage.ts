@@ -300,7 +300,7 @@ export function useMembershipPage() {
       } else if (data.code === "no_process") {
         // Race: the process advanced out from under this stale view. Transient
         // toast + re-hydrate; the `incomplete` field-error path below is untouched.
-        notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: false });
         await load();
       } else {
         // The server may flag fields the client can't check locally (e.g. an
@@ -387,7 +387,7 @@ export function useMembershipPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) { await load(); notifyNavRefresh(); flash("Renewal started."); }
       else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: false });
         await load();
       }
       else flash(apiError(data, "Could not start renewal."), true);

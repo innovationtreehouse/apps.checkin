@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import {
   ActionIcon,
@@ -12,13 +12,15 @@ import {
   NumberInput,
   Paper,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   TextInput,
   Title,
 } from "@mantine/core";
-import { errorMessage, upload } from "../components/api";
+import { api, errorMessage, upload } from "../components/api";
 import { CURRENCY_CODE } from "../lib/schemas";
+import { listWords, missingDetails } from "../lib/missingDetails";
 
 interface Line {
   description: string;
@@ -29,17 +31,44 @@ interface Line {
   isDelayed: boolean;
 }
 
+interface Person {
+  id: number;
+  name: string;
+}
+
 const ACCEPT = "image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain";
 const blankLine = (): Line => ({ description: "", quantity: 1, unitPrice: "", partNumber: "", manufacturer: "", isDelayed: false });
 
+/** People whose name contains the typed text, from the reimbursee options route. */
+function useReimburseeSearch(q: string): Person[] {
+  const [people, setPeople] = useState<Person[]>([]);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) return;
+    let live = true;
+    const t = setTimeout(() => {
+      api<Person[]>(`/reimbursee-options?q=${encodeURIComponent(term)}`)
+        .then((rows) => { if (live) setPeople(rows); })
+        .catch(() => { if (live) setPeople([]); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
+  return people;
+}
+
+const SELF = "self";
+
 /**
  * /receipts/upload — a photo, PDF or text file, with the details typed or read automatically.
- * "I paid for this myself" is offered to adults only; the service enforces the same rule.
+ * Asking for a reimbursement is offered to adults only; the service enforces the same rule. The
+ * uploader names who is reimbursed, themselves unless they pick someone else. Finance, operations
+ * or the board may instead add someone who is not on file, as a non-member adult.
  */
 export default function UploadPage() {
   const router = useRouter();
-  const { data: session } = useSession();
-  const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
+  const user = useViewer();
+  const isAdult = user?.ageBand === "adult";
+  const addsPeople = !!(user?.isFinance || user?.isOperations || user?.isBoardMember);
 
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<"auto" | "manual">("auto");
@@ -52,11 +81,17 @@ export default function UploadPage() {
   const [discount, setDiscount] = useState<number | "">("");
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [needsReimbursement, setNeedsReimbursement] = useState(false);
+  const [reimbursee, setReimbursee] = useState<Person | null>(null);
+  const [reimburseeSearch, setReimburseeSearch] = useState("");
+  const found = useReimburseeSearch(reimburseeSearch);
+  const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
   const [isInKind, setIsInKind] = useState(false);
   const [selfDonor, setSelfDonor] = useState(true);
   const [donor, setDonor] = useState({ firstName: "", lastName: "", companyName: "" });
   const [busy, setBusy] = useState(false);
 
+  const reimbursing = isAdult && !isInKind && needsReimbursement;
+  const newPersonIncomplete = reimbursing && newPerson !== null && (!newPerson.name.trim() || !newPerson.isAdult);
   const currencyCode = currency.trim().toUpperCase() || "USD";
   const currencyError = mode === "manual" && !CURRENCY_CODE.test(currencyCode) ? "Use a 3-letter currency code, like USD" : null;
 
@@ -64,8 +99,15 @@ export default function UploadPage() {
 
   async function submit() {
     if (!file || currencyError) return;
+    const missing = mode === "manual" ? missingDetails({ retailer, receiptDate, receiptTotalCents: total === "" ? null : total }) : [];
+    if (missing.length > 0) {
+      notifications.show({ title: "Receipt not uploaded", message: `Fill in the ${listWords(missing)}.`, color: "red", autoClose: false });
+      return;
+    }
     const data = {
       needsReimbursement: !isInKind && needsReimbursement,
+      ...(reimbursing && newPerson ? { newReimbursee: { name: newPerson.name.trim(), isAdult: true } } : {}),
+      ...(reimbursing && !newPerson && reimbursee ? { reimburseePersonId: reimbursee.id } : {}),
       isInKind,
       ...(isInKind ? { donor: selfDonor ? { self: true } : { ...donor, companyName: donor.companyName || null } } : {}),
       ...(mode === "manual"
@@ -165,9 +207,50 @@ export default function UploadPage() {
             </>
           )}
           {isAdult && !isInKind && (
-            <Checkbox label="I paid for this myself" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
+            <Checkbox label="Someone needs to be reimbursed" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
           )}
-          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError}>Upload</Button>
+          {reimbursing && !newPerson && (
+            <Select
+              label="Reimburse"
+              description="Search by name if someone else paid"
+              searchable
+              searchValue={reimburseeSearch}
+              onSearchChange={setReimburseeSearch}
+              data={[
+                { value: SELF, label: "Me" },
+                ...[reimbursee, ...found]
+                  .filter((p): p is Person => p !== null && p.id !== user?.id)
+                  .filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i)
+                  .map((p) => ({ value: String(p.id), label: p.name })),
+              ]}
+              value={reimbursee ? String(reimbursee.id) : SELF}
+              onChange={(v) => setReimbursee(v === null || v === SELF ? null : (found.find((p) => String(p.id) === v) ?? reimbursee))}
+              filter={({ options }) => options}
+              allowDeselect={false}
+              nothingFoundMessage="No matching people"
+            />
+          )}
+          {reimbursing && addsPeople && (
+            <Checkbox
+              label="Not a member / not in the list"
+              checked={newPerson !== null}
+              onChange={(e) => setNewPerson(e.currentTarget.checked ? { name: "", isAdult: false } : null)}
+            />
+          )}
+          {reimbursing && addsPeople && newPerson && (
+            <>
+              <TextInput
+                label="Their full name"
+                description="Adds them as a non-member, who is reimbursed"
+                maxLength={200}
+                value={newPerson.name}
+                onChange={(e) => setNewPerson({ ...newPerson, name: e.currentTarget.value })}
+                required
+              />
+              <Checkbox label="They are an adult (18 or over)" checked={newPerson.isAdult} onChange={(e) => setNewPerson({ ...newPerson, isAdult: e.currentTarget.checked })} />
+            </>
+          )}
+          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError || newPersonIncomplete}>Upload</Button>
         </Stack>
       </Paper>
     </>

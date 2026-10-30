@@ -3,7 +3,7 @@
  * resolution that arrives before its provisional row keeps the event's conversion factor.
  * Real Postgres; describeDb skips without one.
  */
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
@@ -156,6 +156,39 @@ describeDb("stock write concurrency", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await qty(REAL)).toBe(10);
     expect(await db.inventoryLog.count({ where: { gtin13: REAL } })).toBe(1);
+  });
+
+  describe("after the real item's row was removed", () => {
+    async function conflictOverRemovedRealItem() {
+      await db.orgItem.create({
+        data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4, desiredQuantity: 8 },
+      });
+      return db.inventoryMergeConflict.create({
+        data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 10 },
+      });
+    }
+
+    it.each(["use_provisional", "sum"] as const)("%s closes it and lands the provisional stock on a new real row", async (quantityMethod) => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 1);
+
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toMatchObject({ existingQuantity: 4, desiredQuantity: 8 });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+      expect(await db.inventoryLog.findFirst({ where: { gtin13: REAL } })).toMatchObject({ valueBefore: "0", valueAfter: "4" });
+    });
+
+    it("use_existing closes it without bringing the removed row back", async () => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_existing" }, 1);
+
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toBeNull();
+    });
   });
 });
 
@@ -321,6 +354,50 @@ describeDb("merge after a concurrent resolution", () => {
     await Promise.all([holder, approve, fulfil]);
 
     expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
+  it("a reject that read pending before an approve merged is a 409 and leaves the approve standing", async () => {
+    const { provisional } = services();
+    await provisionalItem(1);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
+
+    // Hold the provisional's row so the approve queues on it first, then the reject's claim behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await rowLocked;
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 23, 1);
+    await someoneBlocked(1);
+    const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
+    await someoneBlocked(2);
+    release();
+    await Promise.all([holder, approve]);
+    await expect(reject).rejects.toMatchObject({ status: 409 });
+
+    expect(await db.inventoryProvisionalItem.findFirst()).toMatchObject({ status: "approved", resolvedToGtin13: REAL });
+    expect(await qty(REAL)).toBe(5);
+    expect(await db.provisionalItemLog.count({ where: { eventType: "rejected" } })).toBe(0);
+  });
+
+  it("an immediate receipt line on a resolved provisional receives under the real GTIN", async () => {
+    const { receipts } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(1)).id },
+      data: { status: "approved", resolvedToGtin13: REAL },
+    });
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 4 } });
+
+    const result = await receipts.applyReceipt(TEST_ORG_ID, "r-1", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 2, isProvisional: true }]);
+
+    expect(result.updatedItems).toEqual([{ gtin13: REAL, newQuantity: 6 }]);
+    expect(await qty(REAL)).toBe(6);
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 });

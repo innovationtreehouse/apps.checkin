@@ -52,19 +52,19 @@ dismisses it (section 6).
 
 ---
 
-## Where the takeover line is used today
+## Where main stands
 
-| Lane | Derivation | Gate | Outcome when not found and too old |
-|---|---|---|---|
-| Shared | `packages/quickbooks/src/match.ts:86` `takeoverLine()`; request field `match.ts:26-27`, checked at `:57`, decided at `:75-76` | `write.ts:8` passes it through (`:69`) | `write.ts:77-80` returns `too-old` or `no-line` |
-| Expense | `packages/expense/src/lib/expense-qb-poster.ts:65-75` (configured `takeoverDate` or newest hand match, whichever is later); `ExpensePosting.takeoverDate` at `src/contract.ts:240`; `qbMatchInputs` repeats it at `src/services/qbMatchService.ts:39,59` | no date → `no_takeover_date` at `expense-qb-poster.ts:253-255` and `:393-395`; line computed at `:332`, passed at `:339` | `:368-369` parks `BEFORE_LINE`; `:372` leaves it waiting |
-| Income | `packages/income/src/lib/outbox.ts:54-66` (newest hand match in the audit log) | drain `:249`, post `:162`; finance retry `src/services/reconciliationService.ts:225`; reconcile matches with no line at `src/lib/reconcile.ts:227` | `outbox.ts:207-209` leaves the payout waiting; once the match window passes, reconcile opens it as `NO_DEPOSIT` (`reconcile.ts:270-274`) |
-| Donation (Benevity) | `packages/bulk-donation/src/lib/qb-match.ts:40-46,71-77` (newest `QB_MATCHED` event) | `src/lib/qb-poster.ts:304,314` | `:340-341` parks `BEFORE_LINE`; `:342-345` leaves it waiting |
+No lane derives a takeover line any more. Expense, income, donation and in-kind each
+work out the books closing date and the lane's switch-on time, and pass
+`closedThrough` and `mayCreate` to the shared `findOrCreate`
+(`packages/quickbooks/src/write.ts`), which runs the match first and then
+applies the gate in section 1. `BEFORE_LINE` survives only as a stored state
+on older expense and donation records, held exactly like `UNBOOKED`.
 
-Expense posting is not bound in the host today (`checkin-app/src/lib/expense/configure.ts:207`
-binds the reader, refs and Vendor picker, not the posting writer), so expense has
-created nothing and its `BEFORE_LINE` rows, if any, came from tests or dev. Donation posting binds when
-`QBO_DONATION_BANK_ACCOUNT_ID` is set (`checkin-app/src/lib/bulkDonation/configure.ts:29-37`).
+Posting is bound in the host for every lane: expense through the books map's
+Organisation card account, income through the books map with the environment
+settings as fallback, in-kind through the books map's four gift-of-goods
+accounts, and donation while `QBO_DONATION_BANK_ACCOUNT_ID` is set.
 
 ---
 
@@ -170,7 +170,7 @@ than the stamp:
 | Expense | `ExpenseOrgSettings` (new column) | `Expense.submittedAt` |
 | Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`, the time the app first saw the payout |
 | Donation, Benevity | new `DonationOrgSettings` row (the package has no settings model) | `DisbursementEvent.createdAt` |
-| Donation, in-kind (#2182) | same row, its own column, added when in-kind posting is built | the in-kind record's creation time |
+| Donation, in-kind (#2182) | same row, its own column | when the gift's money side arrived (receipt) or ops recorded it (no receipt) |
 
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.
@@ -220,9 +220,10 @@ lane already offers. The new actions are "book it" and "skip".
 | Expense | `POST /api/expense/expenses/[id]/qb-match` (match only) | book, skip | new `POST /api/expense/expenses/[id]/qb-resolve`, finance, returns `Expense` |
 | Income | `POST /api/income/reconciliation/[id]/resolve` with match, dismiss, retry | book | same route, new action |
 | Donation | `POST /api/donations/disbursement-events/[disbursementId]/qb-resolve` with match, dismiss, retry (`src/lib/qb-queue.ts:22-25`) | book | same route, new action |
+| Donation, in-kind (#2182) | none | book, skip, match by id, clear a note | new `POST /api/donations/in-kind/{receipt,manual}/[id]/qb-resolve`, finance, returns the queue row |
 
-Only expense needs a new registry entry. The other two add an action to a
-finance-only route whose role and response types stay the same.
+Expense and in-kind need new registry entries. Income and donation add an
+action to a finance-only route whose role and response types stay the same.
 
 - **Book it** runs the lane's own post path with `mayCreate: true`, outside the
   per-run caps, as finance's retry already does. It still matches first and

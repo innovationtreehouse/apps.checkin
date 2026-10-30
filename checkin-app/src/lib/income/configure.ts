@@ -3,7 +3,7 @@
  * instrumentation.ts. Binding touches no database and no network: every port
  * reads lazily inside a request (or the daily cron).
  *
- * - auth/org: the catalog's principal and lazy Org-registry accessor, so every
+ * - auth/org: the host kit's principal and lazy Org-registry accessor, so every
  *   library stamps the same person and org ids.
  * - mirror: the s-read Shopify mirror, bound only where it is wired. Unbound,
  *   a run answers "unbound" instead of reading an empty mirror and reopening
@@ -11,32 +11,40 @@
  * - deposits: QuickBooks deposit reads through checkin's one guarded client,
  *   bound only where QBO_REALM_ID is set. While the guard keeps QuickBooks off,
  *   every read throws, so a run fails and writes nothing.
- * - bankAccountId: the QuickBooks bank account payouts land in, from
- *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
- *   nothing.
+ * - posting: deposit creation through a client built here by checkin's guarded
+ *   builder, bound where QBO_REALM_ID is set and the guard admits the company.
+ *   A row whose roles the books map leaves unset is skipped. Unbound, the drain
+ *   and the orphan sweep answer "unbound".
+ *   Shopify creation stays gated until INCOME_MIRROR_NEWEST_WINS is "true".
  * - owners: checkin's budget-owner buckets.
+ * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class),
+ *   which income resolves every deposit's accounts and Classes through. A source
+ *   whose bank role it leaves unset is not matched.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
- * - otherLaneClaims: deposits bulk donation holds, kept out of income's matching.
  * - alerts: a drain that stops at a cap emails finance (the board when no one
  *   holds FINANCE), so the payouts it left waiting reach a person. A bucket
  *   that becomes unusable emails finance once, so the payouts it holds reach a
  *   person. An orphan sweep that cannot read every new deposit emails finance.
  */
 import {
+  BANK_ROLE,
+  SHOPIFY_LINE_ROLES,
   configureIncome,
   mirrorPayoutStatus,
   mirrorSource,
+  roleAccounts,
   toQbDeposit,
   type MirrorBalanceTxn,
   type IncomeAlerts,
+  type IncomePosting,
   type MirrorPayout,
-  type OwnerDirectory,
   type PayoutMirror,
   type QbClassSource,
   type QbDepositSource,
 } from "@checkin/income";
-import { getOrg, getPrincipal } from "@/lib/catalog/configure";
+import { getOrg, getPrincipal } from "@/lib/components/host";
+import { booksMap, budgetOwners } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -46,7 +54,10 @@ import {
   isConfigured as mirrorConfigured,
   type IncomeMirrorPayoutRow,
 } from "@/lib/shopifyRead/client";
+import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -76,53 +87,40 @@ const payoutMirror: PayoutMirror = {
   },
 };
 
-const owners: OwnerDirectory = {
-  async list() {
-    const { default: prisma } = await import("@/lib/prisma");
-    return prisma.budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
-  },
-};
-
 const alerts: IncomeAlerts = {
   async postCapReached({ cap, created, remaining }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    const limit = cap === "count" ? "number of deposits" : "dollar total";
-    await notifyFinanceAlert(
-      "Income: deposit creation stopped at its per-run cap",
-      `<p>Today's income run created ${created} QuickBooks deposit(s) and stopped at its per-run ${limit} cap; ${remaining} payout(s) are still waiting. Nothing else was posted. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
-      "Income cap alert failed:",
-    );
+    await notifyFinanceAlert("finance.incomePostCap", {
+      created: String(created),
+      limit: cap === "count" ? "number of deposits" : "dollar total",
+      remaining: String(remaining),
+      actionLink: `${config.baseUrl()}/income/reconciliation`,
+    }, "Income cap alert failed:");
   },
   async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
-    const [{ notifyFinanceAlert }, { escapeHtml }] = await Promise.all([import("@/lib/emailRecipients"), import("@/lib/email-templates/base")]);
-    const name = escapeHtml(bucketName ?? `#${budgetOwnerId}`);
-    await notifyFinanceAlert(
-      "Income: a budget-owner bucket can't take sales",
-      `<p>The budget-owner bucket ${name} ${escapeHtml(issue)}. ${itemCount} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. <a href="${config.baseUrl()}/income/items">Open income items</a></p>`,
-      "Income bucket alert failed:",
-    );
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.incomeBucketUnusable", {
+      bucketName: bucketName ?? `#${budgetOwnerId}`,
+      issue,
+      itemCount: String(itemCount),
+      actionLink: `${config.baseUrl()}/income/items`,
+    }, "Income bucket alert failed:");
   },
   async sweepIncomplete({ since }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(
-      "Income: the daily check for stray QuickBooks deposits could not see them all",
-      `<p>QuickBooks returned more deposits created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
-      "Income sweep alert failed:",
-    );
+    await notifyFinanceAlert("finance.incomeSweepIncomplete", {
+      since: since.toISOString().slice(0, 10),
+      actionLink: `${config.baseUrl()}/income/reconciliation`,
+    }, "Income sweep alert failed:");
   },
 };
 
-
-/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
-async function quickBooks() {
-  return (await import("@/lib/quickbooks/client")).getQuickBooks();
-}
 
 function depositSource(): QbDepositSource | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
     async depositsBetween(from, to) {
-      const qb = await quickBooks();
+      const qb = await getQuickBooks();
       if (!qb) throw new Error("QuickBooks is off");
       return (await qb.depositsBetween(from, to)).map(toQbDeposit);
     },
@@ -133,15 +131,40 @@ function classSource(): QbClassSource | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
     async activeClassIds() {
-      const qb = await quickBooks();
+      const qb = await getQuickBooks();
       if (!qb) throw new Error("QuickBooks is off");
       return (await qb.classes()).filter((c) => c.Active !== false).map((c) => c.Id);
     },
   };
 }
 
-async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
-  return (await import("@checkin/bulk-donation")).donationClaimedDepositIds(orgId);
+/** What Shopify income posting lacks, in plain words; empty when it can post. Roles resolve as the drain resolves them. */
+export async function incomePostingMissing(): Promise<string[]> {
+  const accounts = await roleAccounts();
+  const unpicked = [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)].filter((r) => !accounts[r]);
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(mirrorConfigured() ? [] : ["Shopify mirror"]),
+    ...(process.env.INCOME_MIRROR_NEWEST_WINS === "true" ? [] : ["the switch INCOME_MIRROR_NEWEST_WINS=true"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+  ];
+}
+
+/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every Benevity role must be picked. */
+export async function benevityPostingMissing(): Promise<string[]> {
+  const accounts = await roleAccounts();
+  const unpicked = BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
+  return [
+    ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
+    ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
+  ];
+}
+
+function posting(): IncomePosting | undefined {
+  if (!process.env.QBO_REALM_ID) return undefined;
+  const client = buildQuickBooks();
+  if (!client) return undefined;
+  return { client, mirrorNewestWins: process.env.INCOME_MIRROR_NEWEST_WINS === "true" };
 }
 
 export function configureRuntime(): void {
@@ -150,10 +173,10 @@ export function configureRuntime(): void {
     org: getOrg,
     mirror: mirrorConfigured() ? payoutMirror : undefined,
     deposits: depositSource(),
-    bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
-    owners,
+    posting: posting(),
+    owners: budgetOwners,
+    booksMap,
     classes: classSource(),
     alerts,
-    otherLaneClaims: { claimedDepositIds: donationClaimedDepositIds },
   });
 }
