@@ -395,7 +395,6 @@ describe("Merge Participants API", () => {
         expect(newData.keepId).toBe(pKeepId);
         expect(newData.fieldChoices).toEqual({ name: "keep", identity: "keep" });
         expect(newData.moved.visits).toBe(1);
-        // Tallies use migrated/left, not the old `deleted` name.
         expect(newData.moved.programParticipants).toEqual({ migrated: 0, left: 0 });
 
         // Full pre-image of the merged-away Person: every field the merge
