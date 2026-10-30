@@ -391,6 +391,12 @@ export async function beginRenewalForUser(userId: number) {
     return beginRenewal(process.id, userId);
 }
 
+/** The earliest check date still valid at the boundary, or null under an unset policy. */
+export function bgFreshThreshold(boundary: Date | null, recheckMonths: number | null | undefined): Date | null {
+    if (!isRecheckPolicySet(recheckMonths) || !boundary) return null;
+    return monthsBefore(boundary, recheckMonths);
+}
+
 /**
  * True if EITHER guardian (household lead) has a background check still valid at the boundary,
  * i.e. lastBackgroundCheck >= boundary - recheckMonths. Unset policy — recheckMonths 0 or a
@@ -398,8 +404,8 @@ export async function beginRenewalForUser(userId: number) {
  * re-run review rather than measuring freshness against an invented boundary.
  */
 export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number | null | undefined): Promise<boolean> {
-    if (!isRecheckPolicySet(recheckMonths) || !boundary) return false;
-    const threshold = monthsBefore(boundary, recheckMonths);
+    const threshold = bgFreshThreshold(boundary, recheckMonths);
+    if (!threshold) return false;
     const fresh = await prisma.person.findFirst({
         where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold }, ...LIVE_PERSON },
         select: { id: true },
