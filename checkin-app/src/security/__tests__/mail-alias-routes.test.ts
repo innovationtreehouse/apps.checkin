@@ -55,6 +55,7 @@ describe('mail-alias routes', () => {
     it.each(ALIAS_ROUTES)('%s is finance-or-board with the same pii view for both', (endpoint) => {
         const spec = getRoute(endpoint)!;
         expect(spec.authorize).toBe('finance-or-board');
+        expect(spec.returns).toEqual(['PersonMailAlias']);
         expect(spec.orderedView.map(([role]) => role)).toEqual(['isFinance', 'isBoardMember']);
         const views = new Map(spec.orderedView);
         expect(views.get('isFinance')).toContain('everyones:pii');

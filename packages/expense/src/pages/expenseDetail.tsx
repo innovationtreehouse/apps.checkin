@@ -209,6 +209,56 @@ function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee
   );
 }
 
+interface PersonOption {
+  personId: number;
+  name: string;
+}
+
+/**
+ * Finance picks the reimbursee from live adults by name, or adds someone not on file as a
+ * non-member adult, who becomes the reimbursee.
+ */
+function ReimburseePicker({ base, onSet }: { base: string; onSet: () => void }) {
+  const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState<PersonOption | null>(null);
+  const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
+  const term = search.trim();
+  const options = useLoad<PersonOption[]>(term.length >= 2 ? `${base}/reimbursee/options?q=${encodeURIComponent(term)}` : null);
+  const body = newPerson ? { newPerson: { name: newPerson.name.trim(), isAdult: true } } : picked && { personId: picked.personId };
+  const ready = newPerson ? newPerson.name.trim() !== "" && newPerson.isAdult : picked !== null;
+  const people = [picked, ...(options.data ?? [])]
+    .filter((p): p is PersonOption => p !== null)
+    .filter((p, i, all) => all.findIndex((q) => q.personId === p.personId) === i);
+
+  return (
+    <Stack gap="xs">
+      {!newPerson && (
+        <Select
+          label="Reimburse" placeholder="Search by name" searchable w={320}
+          searchValue={search} onSearchChange={setSearch}
+          data={people.map((p) => ({ value: String(p.personId), label: p.name }))}
+          value={picked ? String(picked.personId) : null}
+          onChange={(v) => setPicked(people.find((p) => String(p.personId) === v) ?? null)}
+          filter={({ options: o }) => o}
+          nothingFoundMessage={term.length >= 2 ? "No matching adults" : "Type at least two letters"}
+        />
+      )}
+      {options.error && <Text size="sm" c="red">{options.error}</Text>}
+      <Checkbox label="Not a member / not in the list" checked={newPerson !== null} onChange={(ev) => setNewPerson(ev.currentTarget.checked ? { name: "", isAdult: false } : null)} />
+      {newPerson && (
+        <>
+          <TextInput label="Their full name" description="Adds them as a non-member, who is reimbursed" maxLength={200} w={320} required
+            value={newPerson.name} onChange={(ev) => setNewPerson({ ...newPerson, name: ev.currentTarget.value })} />
+          <Checkbox label="They are an adult (18 or over)" checked={newPerson.isAdult} onChange={(ev) => setNewPerson({ ...newPerson, isAdult: ev.currentTarget.checked })} />
+        </>
+      )}
+      <Button w="fit-content" disabled={!ready}
+        onClick={async () => { if (body && (await send(`${base}/reimbursee`, "PUT", body, "Reimbursee set"))) onSet(); }}
+      >Set reimbursee</Button>
+    </Stack>
+  );
+}
+
 /** A field an open reason is about. */
 function Marked({ on, children }: { on: boolean; children: ReactNode }) {
   return on ? <Mark color="red">{children}</Mark> : <>{children}</>;
@@ -384,7 +434,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [bucket, setBucket] = useState<string | null>(null);
   const [permanent, setPermanent] = useState(false);
   const [final, setFinal] = useState(false);
-  const [reimbursee, setReimbursee] = useState("");
   const [authorization, setAuthorization] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
   const [taxNote, setTaxNote] = useState("");
@@ -657,15 +706,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
             </Marked>
           </Text>
-          {!e.reimburseePersonId && (
-            <Group>
-              <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
-              <Button
-                disabled={!/^\d+$/.test(reimbursee)}
-                onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) await decided(); }}
-              >Set reimbursee</Button>
-            </Group>
-          )}
+          {!e.reimburseePersonId && <ReimburseePicker base={base} onSet={() => void decided()} />}
           {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
             ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
             : <VendorPicker base={base} reimbursee={vendor.data.ExpenseReimburseeView?.name ?? null} onLinked={() => void decided()} />)}

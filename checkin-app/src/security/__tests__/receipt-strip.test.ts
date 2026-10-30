@@ -153,7 +153,7 @@ describe('ReceiptView tiering', () => {
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 

@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
 import type { CompletedReceipt } from "@checkin/receipt-types";
-import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbPosting, NotWiredError, otherLaneClaimedDepositIds } from "../../runtime";
+import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
-import { donationClaimedDepositIds } from "../../lib/qb-poster";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -111,20 +110,12 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
   });
 });
 
-describe("claimedDepositIds (callee)", () => {
-  it("refuses an orgId that is not the injected org", async () => {
-    await expect(donationClaimedDepositIds("other-org")).rejects.toThrow("orgId other-org is not this org");
-  });
-});
-
 describe("caller ports", () => {
   it("unbound ports are inert: empty reads, throwing writes", async () => {
     expect(await searchCatalog("drill")).toEqual([]);
     expect(await getCatalogItem("0000000000000")).toBeNull();
     expect(await getOwnerDirectory().list()).toEqual([]);
     await expect(getInventoryApply().apply({ receiptId: inventorySourceKey(1), orgId: ORG, retailer: null, lineItems: [] })).rejects.toBeInstanceOf(NotWiredError);
-    expect(getQbPosting()).toBeUndefined();
-    expect(await otherLaneClaimedDepositIds(ORG)).toEqual([]);
   });
 
   it("X10 parses what the bound catalog returns", async () => {

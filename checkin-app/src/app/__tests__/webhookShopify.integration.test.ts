@@ -277,6 +277,8 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         const clearExceptions = () => prisma.paymentException.deleteMany({ where: { programId } });
         beforeEach(clearExceptions);
         afterEach(clearExceptions);
+        // Each case starts with nobody enrolled: a row left holding order 555 would count as a seat that order spent.
+        beforeEach(() => prisma.programParticipant.deleteMany({ where: { programId } }));
 
         const orderBody = (id: number, accountIds: string, quantity: number) => JSON.stringify({
             id,

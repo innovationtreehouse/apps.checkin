@@ -218,6 +218,7 @@ model Person {
   programVolunteers   ProgramVolunteer[]
   budgetOwnersOwned   BudgetOwner[]        @relation("BudgetOwnerOwner")
   budgetOwnerTreasurerships BudgetOwnerTreasurer[]
+  mailAliases         PersonMailAlias[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
   instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
@@ -242,6 +243,37 @@ model Person {
   // Person had no householdId index — the old HouseholdLead composite PK provided
   // one; this restores it, extended with isHouseholdLead so lead scans stay index-only.
   @@index([householdId, isHouseholdLead])
+}
+
+/// An extra address a person's receipt mail may come from, recorded by finance
+/// or the Board. It counts only once approved. Nothing but receipt mail intake
+/// reads it; sign-in and contact read Person.email only.
+model PersonMailAlias {
+  /// @sensitivity:internal
+  id           Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  personId     Int
+  /// Lowercased and trimmed; resolution matches it exactly.
+  /// @sensitivity:pii
+  address      String    @unique
+  /// canonicalizeEmail(address): checked across people for uniqueness, never used to resolve.
+  /// @sensitivity:pii
+  canonicalKey String
+  /// The actor who added it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  addedById    Int
+  /// @sensitivity:internal
+  createdAt    DateTime  @default(now())
+  /// @sensitivity:internal
+  approvedAt   DateTime?
+  /// The actor who approved it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  approvedById Int?
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([canonicalKey])
+  @@index([personId])
 }
 
 enum PersonRoleKind {
@@ -1516,6 +1548,45 @@ model AuditLog {
   // Neither actor index serves that; without this it is a full scan of every
   // audit row the org has ever written.
   @@index([tableName, timestamp])
+}
+
+/// One view of finance records other than the viewer's own (Board ruling B11).
+/// Records who looked at which records through which endpoint, never what the
+/// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
+/// read only by the Board. Kept indefinitely.
+model FinanceViewLog {
+  /// @sensitivity:internal
+  id        Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  viewedAt  DateTime
+  /// The viewer's person id. No FK, as on AuditLog: the row outlives the person.
+  /// @sensitivity:internal
+  actorId   Int
+  /// The role the view was chosen under; null only on rows copied from the
+  /// bulk-donation donor-read audit, which did not record it.
+  /// @sensitivity:internal
+  role      String?
+  /// The registry key, e.g. `GET /api/receipts/[id]`.
+  /// @sensitivity:internal
+  endpoint  String
+  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string.
+  /// @sensitivity:internal
+  params    Json
+  /// @sensitivity:internal
+  recordIds String[]
+  /// @sensitivity:internal
+  rowCount  Int
+  /// `viewedAt` rounded down to fifteen minutes (UTC); repeats within it collapse.
+  /// @sensitivity:internal
+  window    DateTime
+  /// Hex SHA-256 of the endpoint, the params with keys sorted, and the sorted record ids.
+  /// @sensitivity:internal
+  viewKey   String
+
+  @@unique([actorId, viewKey, window])
+  @@index([viewedAt])
+  @@index([actorId, viewedAt])
+  @@index([recordIds], type: Gin)
 }
 
 model Account {

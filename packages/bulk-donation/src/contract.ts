@@ -70,27 +70,12 @@ export function inventorySourceKey(inKindDonationId: number): string {
 }
 
 /**
- * What the QuickBooks drain books with: checkin's one guarded client (null while the guard keeps
- * QuickBooks off), the bank account Benevity disbursements land in, and whether this is prod.
- * Outside prod only a disbursement whose id starts with "TEST-" is sent; prod never sends one.
- */
-export interface DonationQbPosting {
-  client(): Promise<QuickBooksClient | null>;
-  bankAccountId: string;
-  prod: boolean;
-  /** Tells finance the daily orphan sweep read a full page, so some Deposits went unchecked. */
-  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
-}
-
-/**
  * What the in-kind drain books with: checkin's one guarded client (null while the guard keeps
  * QuickBooks off) and the books map, which names every account an in-kind journal entry uses.
  */
 export interface InKindQbPosting {
   client(): Promise<QuickBooksClient | null>;
   booksMap: BooksMap;
-  /** Bank accounts other lanes book through outside the books map (environment fallbacks); the clearing account may be none of them. */
-  laneBankAccountIds: string[];
   /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
@@ -101,8 +86,6 @@ export type DonationDepositLine = {
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
-  /** The account map's QuickBooks account name, used while the books map leaves `role` unset. */
-  accountName?: string;
 };
 
 /** The deposit a completed disbursement should land as; income books or matches it. */
@@ -123,31 +106,6 @@ export type DonationDepositStatus =
   | { state: "drifted"; note: string | null }
   | { state: "dismissed"; reason: string | null };
 
-/** Where donation left a disbursement's QuickBooks deposit, as the move hands it to income. */
-export type DonationHeldState = "waiting" | "matched" | "created" | "ambiguous" | "unbooked" | "needs_finance" | "drifted" | "dismissed";
-
-export type DonationHolding = {
-  sourceKey: string;
-  createdAt: Date;
-  txnDate: string;
-  netCents: number;
-  expected: DonationExpectedDeposit | null;
-  state: DonationHeldState;
-  depositId: string | null;
-  depositTxnDate: string | null;
-  depositTotalCents: number | null;
-  driftCause: string | null;
-  createAttemptedAt: Date | null;
-  note: string | null;
-  dismissal: { reason: string; byUserId: number | null; at: Date } | null;
-};
-
-export type DonationHoldingsMove = {
-  holdings: DonationHolding[];
-  exclusions: { qbTxnId: string; reason: string; excludedByUserId: number; excludedAt: Date }[];
-  postingOnAt: Date | null;
-};
-
 /**
  * Income, which books and matches every deposit. Donation hands each completed disbursement over
  * after its own commit, re-sends any income does not know, and reads back what became of it.
@@ -157,16 +115,7 @@ export interface IncomeDeposits {
   expectDeposit(orgId: string, disbursementId: string, expected: DonationExpectedDeposit): Promise<unknown>;
   /** Per disbursement id; an id income has no row for is absent. */
   depositStatus(orgId: string, disbursementIds: string[]): Promise<Record<string, DonationDepositStatus>>;
-  /** The one-off move of donation's holdings; throws, writing nothing, when it must stop. */
-  adoptHoldings(orgId: string, move: DonationHoldingsMove): Promise<unknown>;
   prod: boolean;
-  /** Tells finance the move stopped and why; called once per cause. */
-  moveStopped(event: { orgId: string; cause: string }): Promise<void>;
-}
-
-/** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */
-export interface OtherLaneClaims {
-  claimedDepositIds(orgId: string): Promise<string[]>;
 }
 
 /**
@@ -215,10 +164,8 @@ export interface BulkDonationConfig {
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
-  qb?: DonationQbPosting;
   inKindQb?: InKindQbPosting;
   deposits?: IncomeDeposits;
-  otherLaneClaims?: OtherLaneClaims;
   inKind?: InKindDirectory;
   capital?: InKindCapital;
 }

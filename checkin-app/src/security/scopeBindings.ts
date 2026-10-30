@@ -138,6 +138,7 @@ export const SCOPE_BINDINGS = {
     // The confirmation that signs a reimbursement belongs to the person reimbursed.
     ReceiptConfirmationView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     ReceiptConfirmationLineView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
+    ReceiptReimbursedView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     TrustedAdultReview: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -208,7 +209,9 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // A bucket's treasurer rows. `personId` makes it scopable; read only through
     // BudgetOwnerApprover by finance or board.
     'BudgetOwnerTreasurer',
-    // finance-or-board everyones:pii only; nobody reads their own row.
+    // Receipt mail aliases (registry/receipt.ts). Not pending: `personId` makes it
+    // scopable, but every route is finance-or-board with everyones grants, and the
+    // person an alias belongs to never reads it, so it never earns `their_own`.
     'PersonMailAlias',
     // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never
@@ -254,6 +257,9 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // Its `personId` makes it scopable, but the only route is FINANCE with everyones
     // grants, and the reimbursee never reads their own Vendor link.
     'ExpenseReimburseeView',
+    // The finance view log (B11). Its `actorId` makes it scopable, but it is
+    // Board-only with everyones grants; nobody reads their own view rows.
+    'FinanceViewLog',
 ]);
 
 /**

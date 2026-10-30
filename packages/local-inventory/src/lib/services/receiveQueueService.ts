@@ -51,13 +51,15 @@ export function createReceiveQueueService({
       });
     },
 
-    /** Withdraw an open line. The row stays, stamped with who cancelled it, and the inventory log records it. */
-    async cancel(id: number, orgId: string, userId: number, username?: string) {
+    /** Withdraw an open line. The row stays, stamped with who cancelled it and why, and the inventory log records it. */
+    async cancel(id: number, orgId: string, userId: number, reason: string, username?: string) {
+      const cancelReason = reason.trim();
+      if (!cancelReason) throw new ServiceError(400, "A reason is required to cancel a backorder");
       const now = new Date();
       await db.$transaction(async (tx) => {
         const cancelled = await tx.receiveQueue.updateMany({
           where: { id, orgId, fulfilledAt: null, cancelledAt: null },
-          data: { cancelledAt: now, cancelledBy: userId, cancelledByUsername: username ?? null },
+          data: { cancelledAt: now, cancelledBy: userId, cancelledByUsername: username ?? null, cancelReason },
         });
         if (cancelled.count === 0) await notOpen(id, orgId);
         const item = await tx.receiveQueue.findUniqueOrThrow({ where: { id } });
@@ -65,7 +67,7 @@ export function createReceiveQueueService({
           data: {
             orgId, userId, username: username ?? null, changedAt: now, changeType: "manual",
             gtin13: item.gtin13, fieldChanged: "receiveQueue",
-            valueBefore: String(item.quantity), valueAfter: "cancelled", receiptId: item.receiptId,
+            valueBefore: String(item.quantity), valueAfter: `cancelled: ${cancelReason}`, receiptId: item.receiptId,
             rawQuantity: item.quantity, conversionFactor: item.conversionFactor, conversionVersion: item.conversionVersion,
           },
         });

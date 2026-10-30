@@ -23,8 +23,6 @@ const READS = [
   "/api/donations/disbursement-holds",
   "/api/donations/disbursement-events",
   "/api/donations/nav-counts",
-  "/api/donations/disbursement-events/SEED-D1/qb-candidates",
-  "/api/donations/qb-exclusions",
 ];
 const WRITES: Array<[string, string, unknown?]> = [
   ["POST", "/api/donations/uploaded-files"],
@@ -36,12 +34,7 @@ const WRITES: Array<[string, string, unknown?]> = [
   ["PUT", "/api/donations/account-map/1", { companyName: "Denied" }],
   ["DELETE", "/api/donations/account-map/1"],
   ["POST", "/api/donations/disbursement-holds/SEED-D2/resubmit"],
-  ["POST", "/api/donations/disbursement-events/SEED-D1/qb-resolve", { action: "retry" }],
-  ["POST", "/api/donations/qb-exclusions", { qbTxnId: "denied", reason: "denied" }],
 ];
-// The live QuickBooks read: QuickBooks is unbound in the flow env, so admitted callers get 503.
-const QB_CANDIDATES = "/api/donations/disbursement-events/SEED-D1/qb-candidates";
-const admittedStatus = (path: string) => (path === QB_CANDIDATES ? 503 : 200);
 // Id-bearing reads, filled in from the seeded rows.
 const idReads = (txId: number, fileId: number) => [
   `/api/donations/transactions/${txId}`,
@@ -58,7 +51,7 @@ type GiftRow = {
   isOrganizationalLevel: boolean;
 };
 type HoldRow = { disbursementId: string; reason: string; transaction: { companyName: string | null } | null };
-type EventRow = { disbursementId: string; qbMatchState: string };
+type EventRow = { disbursementId: string };
 type Owner = { id: number; name: string };
 
 const send = (s: Session, method: string, path: string, body?: unknown) =>
@@ -116,7 +109,7 @@ describe("bulk donation — route auth", () => {
     for (const email of [FINANCE, BOARD]) {
       const s = await loginAs(email);
       for (const path of [...READS, ...idReads(txId, fileId)]) {
-        expect([email, path, (await api(s, path)).status]).toEqual([email, path, admittedStatus(path)]);
+        expect([email, path, (await api(s, path)).status]).toEqual([email, path, 200]);
       }
       const gift = await api<GiftRow>(s, `/api/donations/transactions/${txId}`);
       expect(typeof gift.json.donorFirstName).toBe("string");
@@ -135,7 +128,7 @@ describe("bulk donation — route auth", () => {
     const { txId } = await seededIds(finance);
     for (const path of [...READS, `/api/donations/transactions/${txId}`]) {
       const { status, json } = await api(finance, path);
-      expect([path, status]).toEqual([path, admittedStatus(path)]);
+      expect([path, status]).toEqual([path, 200]);
       expect([path, JSON.stringify(json).includes("fileBlob")]).toEqual([path, false]);
     }
   });
@@ -222,7 +215,7 @@ describe("bulk donation — finance journey", () => {
     const after = await api<HoldRow[]>(f, "/api/donations/disbursement-holds");
     expect(after.json.some((h) => h.disbursementId === disbursement)).toBe(false);
     const events = await api<EventRow[]>(f, "/api/donations/disbursement-events");
-    expect(events.json.find((e) => e.disbursementId === disbursement)?.qbMatchState).toBe("UNMATCHED");
+    expect(events.json.some((e) => e.disbursementId === disbursement)).toBe(true);
     expect((await send(f, "POST", `/api/donations/disbursement-holds/${disbursement}/resubmit`)).status).toBe(409);
 
     // A later gift with the same comment takes the rule's owner at upload.
@@ -239,15 +232,5 @@ describe("bulk donation — finance journey", () => {
     const dropped = await send(f, "DELETE", `/api/donations/uploaded-files/${again.json.id}/blob`);
     expect(dropped.json).toMatchObject({ id: again.json.id, blobDeleted: true });
     expect((await api(f, `/api/donations/uploaded-files/${again.json.id}/blob`)).status).toBe(404);
-
-    // Income owns every deposit: donation refuses new exclusions and QuickBooks actions; candidates need QuickBooks.
-    const exclusion = { qbTxnId: `qb-${stamp}`, reason: "hand-booked twice" };
-    expect((await send(f, "POST", "/api/donations/qb-exclusions", exclusion)).status).toBe(409);
-    const candidates = await api(f, `/api/donations/disbursement-events/${disbursement}/qb-candidates`);
-    expect([candidates.status, candidates.json]).toEqual([503, { error: "QuickBooks is not connected" }]);
-    for (const action of ["match", "dismiss", "retry", "book"]) {
-      const body = { action, qbTxnId: `qb-${stamp}`, reason: "hand-booked" };
-      expect((await send(f, "POST", `/api/donations/disbursement-events/${disbursement}/qb-resolve`, body)).status).toBe(409);
-    }
   });
 });

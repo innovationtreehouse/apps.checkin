@@ -26,6 +26,7 @@ const FINANCE_READ_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], 
 defineRoute({ endpoint: 'POST /api/receipts/upload', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/acknowledge-rejection', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 // Only the uploader discards; finance rejects instead, and the Board does neither (expenses.md).
 defineRoute({ endpoint: 'POST /api/receipts/[id]/discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
@@ -44,6 +45,12 @@ defineRoute({ endpoint: 'GET /api/receipts/reimbursee-options', authorize: 'rece
 const CONFIRMATION_VIEW: readonly OrderedViewEntry[] = [['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]];
 defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/confirmation', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
+
+// What became of the reimbursements someone else uploaded for the caller, read
+// by the person reimbursed alone (`their_own` on reimburseePersonId), with the
+// approvers' and finance's reasons. Any signed-in person is admitted because the
+// reimbursee can be anyone named; the library lists only the caller's own.
+defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenticated', envelope: null, returns: ['ReceiptReimbursedView'], orderedView: [['authenticated', ['their_own:personal', 'their_own:internal']]] });
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
@@ -90,10 +97,10 @@ const ALIAS_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', ['everyones:pii', 'everyones:internal', 'public']],
     ['isBoardMember', ['everyones:pii', 'everyones:internal', 'public']],
 ];
-defineRoute({ endpoint: 'GET /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'POST /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'DELETE /api/finance/mail-aliases/[id]', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
-defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize: 'finance-or-board', envelope: null, orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'GET /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'DELETE /api/finance/mail-aliases/[id]', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize: 'finance-or-board', envelope: null, returns: ['PersonMailAlias'], orderedView: ALIAS_VIEW });
 
 // Mailbox ignore list: FINANCE only, kept beside the mail queue. A held mail
 // item joins it through the discard route above (`ignoreFile: true`).

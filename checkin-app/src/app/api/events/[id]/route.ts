@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { rosterPerson } from "@/lib/person/leaderEmail";
+import { emailWithheldParticipants, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import {
     loadEventEditContext,
     confirmAttendance,
@@ -107,7 +107,9 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
     if (!event.program) return { Event: event };
     const viewerIsLeader = auth.type === 'session' && !auth.user.isSysadmin && !auth.user.isBoardMember;
     const participants = event.program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
-    return { Event: { ...event, program: { ...event.program, participants } } };
+    const emailWithheldFrom = emailWithheldParticipants(event.program.participants, viewerIsLeader);
+    const volunteers = event.program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
+    return { Event: { ...event, program: { ...event.program, volunteers, participants } } };
 });
 
 export const PATCH = withAuth({}, async (req: Request, auth, { params }: { params: Promise<{ id: string }> }) => {

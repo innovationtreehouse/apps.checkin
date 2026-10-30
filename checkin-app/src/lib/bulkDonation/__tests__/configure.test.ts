@@ -15,11 +15,9 @@ const getItem = jest.fn();
 jest.mock("@checkin/global-catalog", () => ({ readService: { searchItems, getItem }, referenceMatchingService: {} }));
 const applyDonation = jest.fn();
 jest.mock("@/lib/workflowMapping/inventorySink", () => ({ inventoryReceipts: () => ({ applyDonation }) }));
-const incomeClaimedDepositIds = jest.fn();
 const expectDeposit = jest.fn();
 const depositStatus = jest.fn();
-const adoptBenevityDeposits = jest.fn();
-jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds, expectDeposit, depositStatus, adoptBenevityDeposits }));
+jest.mock("@checkin/income", () => ({ expectDeposit, depositStatus }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
 // local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check is used here.
@@ -123,16 +121,9 @@ describe("bulk-donation wiring", () => {
     expect(applyDonation).not.toHaveBeenCalled();
   });
 
-  it("leaves donation's own QuickBooks posting unbound: income books every deposit", async () => {
-    process.env.QBO_REALM_ID = "123";
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
-    expect((await config()).qb).toBeUndefined();
-  });
-
   it("names what the hand-over to income lacks, for the status page: only the realm; income's books map holds the bank", async () => {
     const { donationPostingMissing } = await import("../configure");
     delete process.env.QBO_REALM_ID;
-    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
     expect(donationPostingMissing()).toEqual(["QuickBooks company (QBO_REALM_ID)"]);
     process.env.QBO_REALM_ID = "123";
     expect(donationPostingMissing()).toEqual([]);
@@ -148,10 +139,9 @@ describe("bulk-donation wiring", () => {
     ]);
     process.env.QBO_REALM_ID = "123";
     booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "35";
     inKindAccountsReady.mockReturnValue(false);
     await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
-    expect(inKindAccountsReady).toHaveBeenLastCalledWith(expect.objectContaining({ INKIND_CLEARING: "35" }), ["35"]);
+    expect(inKindAccountsReady).toHaveBeenLastCalledWith(expect.objectContaining({ INKIND_CLEARING: "35" }));
     inKindAccountsReady.mockReturnValue(true);
     await expect(inKindPostingMissing()).resolves.toEqual([]);
   });
@@ -161,36 +151,19 @@ describe("bulk-donation wiring", () => {
     expect((await config()).deposits).toBeUndefined();
   });
 
-  it("binds income's intake ports for Benevity, and the move to income's adopt", async () => {
+  it("binds income's intake ports for Benevity", async () => {
     process.env.CHECKIN_ENV = "dev";
     process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
     const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ role: "BENEVITY_DONATIONS" as const, budgetOwnerId: null, amountCents: 100 }] };
-    const move = { holdings: [], exclusions: [], postingOnAt: null };
     depositStatus.mockResolvedValue({ D1: { state: "waiting" } });
 
     expect(deposits!.prod).toBe(false);
     await deposits!.expectDeposit(ORG.id, "D1", expected);
     await expect(deposits!.depositStatus(ORG.id, ["D1"])).resolves.toEqual({ D1: { state: "waiting" } });
-    await deposits!.adoptHoldings(ORG.id, move);
 
     expect(expectDeposit).toHaveBeenCalledWith(ORG.id, "benevity", "D1", expected);
     expect(depositStatus).toHaveBeenCalledWith(ORG.id, "benevity", ["D1"]);
-    expect(adoptBenevityDeposits).toHaveBeenCalledWith(ORG.id, move);
-  });
-
-  it("tells finance when the move of donation's holdings stopped, naming the cause", async () => {
-    process.env.QBO_REALM_ID = "123";
-    const { deposits } = await config();
-
-    await deposits!.moveStopped({ orgId: ORG.id, cause: "deposit 77 held by disbursement D1 is already held by payout 5 <b>" });
-
-    expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
-    const [subject, html] = notifyFinanceAlert.mock.calls[0];
-    expect(subject).toContain("handed to income");
-    expect(html).toContain("disbursement D1");
-    expect(html).toContain("&lt;b&gt;");
-    expect(html).toContain("/income/reconciliation");
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {
@@ -211,27 +184,10 @@ describe("bulk-donation wiring", () => {
     expect(notifyFinanceAlert.mock.calls[0][0]).toContain("stray QuickBooks journal entries");
   });
 
-  it("names the environment's lane bank accounts so the in-kind clearing account can be none of them", async () => {
-    process.env.QBO_REALM_ID = "123";
-    process.env.QBO_INCOME_BANK_ACCOUNT_ID = "35";
-    process.env.QBO_DONATION_BANK_ACCOUNT_ID = "36";
-    expect((await config()).inKindQb!.laneBankAccountIds).toEqual(["35", "36"]);
-    delete process.env.QBO_INCOME_BANK_ACCOUNT_ID;
-    delete process.env.QBO_DONATION_BANK_ACCOUNT_ID;
-    expect((await config()).inKindQb!.laneBankAccountIds).toEqual([]);
-  });
-
   it("reads which donated lines became assets from the expense library's capital review", async () => {
     donatedAssetLineIds.mockResolvedValue([3]);
     const { capital } = await config();
     await expect(capital!.assetLineIds(ORG.id, { giftSource: "receipt", giftId: 9 })).resolves.toEqual([3]);
     expect(donatedAssetLineIds).toHaveBeenCalledWith(ORG.id, { giftSource: "receipt", giftId: 9 });
-  });
-
-  it("keeps deposits income holds out of donation matching", async () => {
-    incomeClaimedDepositIds.mockResolvedValue(["501"]);
-    const { otherLaneClaims } = await config();
-    await expect(otherLaneClaims!.claimedDepositIds(ORG.id)).resolves.toEqual(["501"]);
-    expect(incomeClaimedDepositIds).toHaveBeenCalledWith(ORG.id);
   });
 });

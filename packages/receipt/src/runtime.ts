@@ -69,6 +69,9 @@ export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
   byId: async () => null,
   hasAccount: async () => true,
+  addNonMemberAdult: async () => {
+    throw new Error("No people directory is bound to add a person");
+  },
 };
 
 /** Logs the alert: nothing reaches finance until the host binds alerts. */

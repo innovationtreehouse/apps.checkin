@@ -19,6 +19,8 @@ export interface ReceiptPrincipal {
   raisedMailLimit?: boolean;
   /** A Board member, who confirms a reimbursement on behalf of a reimbursee with no account. */
   isBoardMember?: boolean;
+  /** Holds finance, operations or the board, and so may add a non-member as reimbursee. */
+  addsPeople?: boolean;
 }
 
 export interface ReceiptAuth {
@@ -191,6 +193,8 @@ export interface ReceiptReimbursees {
   byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
   /** Whether this person has an account to sign in with, and so confirms for themself. */
   hasAccount(personId: number): Promise<boolean>;
+  /** Adds a non-member adult known only by name, in a household of their own. */
+  addNonMemberAdult(name: string): Promise<ReimburseeOption>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>

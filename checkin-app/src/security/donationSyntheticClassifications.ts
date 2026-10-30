@@ -5,10 +5,6 @@
  * DonationNavCounts — the Finance tab badges: two scalar queue sizes, `public`
  * like every count model (no actor, no donor, no amount).
  *
- * DonationQbCandidateView — one QuickBooks entry offered to finance as a match
- * for a disbursement. id/type/date/amountCents are financial plumbing (`internal`);
- * `memo` is hand-entered QuickBooks free text that may name a donor, so `pii`.
- *
  * InKindQueueItemView — one in-kind gift in the finance queue, from either source
  * (`receipt` or `manual`): waiting on its donor, waiting to be accepted, or
  * withdrawn after its money arrived. It carries what the accept screen shows:
@@ -62,13 +58,6 @@ export const classifications = {
   DonationNavCounts: {
     unassignedQueue: "public",
     disbursementHolds: "public",
-  },
-  DonationQbCandidateView: {
-    id: "internal",
-    type: "internal",
-    date: "internal",
-    amountCents: "internal",
-    memo: "pii",
   },
   InKindQueueItemView: {
     id: "internal",

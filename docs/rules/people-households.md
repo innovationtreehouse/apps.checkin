@@ -127,6 +127,12 @@ Things the app takes as true because they are handled outside it.
 - The board and sysadmin path adds nobody to a denied household, and nobody,
   a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
+- Finance, operations or the board may add a non-member adult by name alone,
+  when naming who a receipt reimburses. The person gets a household of their own,
+  with no membership, and leads it. Whoever adds them declares them an adult, and
+  the app records that declaration in place of a date of birth. No email is
+  taken. Finance confirms who the person is before paying them, outside the app.  [Decision — owner]
+
 - Only the board or a sysadmin moves an existing person out to a new household of
   their own. The person becomes its lead, so a youth cannot be moved into one, and the new
   household starts with no org membership: a membership stays with the household

@@ -47,6 +47,7 @@ export const classifications = {
         cancelledAt: 'public',
         cancelledBy: 'internal',
         cancelledByUsername: 'internal',
+        cancelReason: 'internal',
     },
     InventoryProvisionalItem: {
         id: 'public',

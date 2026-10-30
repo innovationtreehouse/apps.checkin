@@ -77,6 +77,10 @@ export interface SignoffDirectory {
   isOrgMember(personId: number): Promise<boolean>;
   /** Whether the person is a known adult; only an adult is reimbursed. */
   isAdult(personId: number): Promise<boolean>;
+  /** Live known adults whose name contains `query`, by name, at most `limit` of them. */
+  searchAdults(query: string, limit: number): Promise<Array<{ personId: number; name: string }>>;
+  /** Adds a non-member adult known only by name, in a household of their own; returns their Person.id. */
+  addNonMemberAdult(name: string): Promise<number>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
@@ -90,6 +94,10 @@ export const inertSignoffDirectory: SignoffDirectory = {
   livePersonFor: async () => null,
   isOrgMember: async () => false,
   isAdult: async () => false,
+  searchAdults: async () => [],
+  addNonMemberAdult: async () => {
+    throw new Error("No people directory is bound to add a person");
+  },
 };
 
 // ── X3: catalog reads ─────────────────────────────────────────────────────────
@@ -283,8 +291,11 @@ export interface ExpenseIntake {
   receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
 }
 
+/** Who is reimbursed: a Person on file, or a non-member adult added by name. */
+export type ReimburseeChoice = { personId: number } | { newPerson: { name: string } };
+
 /** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
-export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
+export type SetReimbursee = (orgId: string, expenseId: string, choice: ReimburseeChoice, principal: ExpensePrincipal) => Promise<void>;
 
 /**
  * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.

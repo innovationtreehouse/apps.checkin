@@ -1,7 +1,6 @@
 /**
  * @jest-environment node
  */
-import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
 import type { ConfigCheck } from "@/lib/configHealth";
 
 const tryBuildQuickBooks = jest.fn();
@@ -15,8 +14,6 @@ const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const getOrg = jest.fn();
 jest.mock("@/lib/catalog/configure", () => ({ getOrg }));
-const accounts = jest.fn();
-jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts } }));
 // The libraries' root entries pull in their generated Prisma clients, which the jest env does not build.
 const postingOnAt = jest.fn();
 jest.mock("@checkin/income", () => ({ postingOnAt }));
@@ -48,7 +45,6 @@ beforeEach(() => {
     inKindPostingMissing.mockResolvedValue([]);
     expensePostingMissing.mockResolvedValue([]);
     getOrg.mockResolvedValue({ id: "org-1" });
-    accounts.mockResolvedValue(Object.fromEntries(BOOKS_MAP_ROLES.map((r) => [r, "1"])));
     postingOnAt.mockResolvedValue({ shopify: null, benevity: null });
     inKindOnAt.mockResolvedValue(null);
     expenseOnAt.mockResolvedValue(null);
@@ -136,16 +132,6 @@ describe("posting lane rows", () => {
             ok: false,
             detail: "Unbound; missing: QuickBooks company (QBO_REALM_ID), no account picked for: Benevity disbursements: bank account.",
         });
-    });
-
-    it("lists the donation roles with no account, without turning the row red", async () => {
-        accounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2" });
-        const r = await rows();
-        expect(r["quickbooks-lane-donations"]).toMatchObject({
-            ok: true,
-            detail: "Bound. No account picked for: Benevity: employer matches, Benevity: fees.",
-        });
-        expect(r["quickbooks-lane-income"].detail).toBe("Bound.");
     });
 
     it("has a gift-of-goods row with its own switch-on date", async () => {

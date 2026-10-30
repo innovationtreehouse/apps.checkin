@@ -5,7 +5,8 @@ import UploadPage from "@checkin/receipt/pages/upload";
 
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 7, ageBand: "adult" } } }) }));
+let mockUser: Record<string, unknown> = { id: 7, ageBand: "adult" };
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: mockUser } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
@@ -30,7 +31,10 @@ beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = jest.fn();
 });
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockUser = { id: 7, ageBand: "adult" };
+});
 
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label, { exact: false }), { target: { value } });
 
@@ -173,5 +177,26 @@ describe("Naming who is reimbursed", () => {
     expect(screen.queryByRole("option", { name: "Me Myself" })).not.toBeInTheDocument();
     const data = await submittedData();
     expect(data).toMatchObject({ needsReimbursement: true, reimburseePersonId: 42 });
+  });
+
+  it("offers adding someone not on file only to finance, operations or the board", () => {
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    expect(screen.queryByLabelText("Not a member / not in the list")).not.toBeInTheDocument();
+  });
+
+  it("adds a non-member by name, declared an adult, instead of a picked person", async () => {
+    mockUser = { id: 7, ageBand: "adult", isOperations: true };
+    uploadMock.mockResolvedValue({ id: "r6" });
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    fireEvent.click(screen.getByLabelText("Not a member / not in the list"));
+    expect(screen.queryByRole("textbox", { name: /^Reimburse/ })).not.toBeInTheDocument();
+    type("Their full name", " Dana Field ");
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("They are an adult (18 or over)"));
+    const data = await submittedData();
+    expect(data).toMatchObject({ needsReimbursement: true, newReimbursee: { name: "Dana Field", isAdult: true } });
+    expect(data).not.toHaveProperty("reimburseePersonId");
   });
 });

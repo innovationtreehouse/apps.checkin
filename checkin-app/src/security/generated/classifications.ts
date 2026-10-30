@@ -29,6 +29,16 @@ export const classifications = {
         isBackgroundCheckReviewer: 'internal',
         canAccessStaging: 'internal',
     },
+    PersonMailAlias: {
+        id: 'internal',
+        personId: 'internal',
+        address: 'pii',
+        canonicalKey: 'pii',
+        addedById: 'internal',
+        createdAt: 'internal',
+        approvedAt: 'internal',
+        approvedById: 'internal',
+    },
     PersonRole: {
         personId: 'internal',
         role: 'internal',
@@ -372,6 +382,18 @@ export const classifications = {
         oldData: 'internal',
         newData: 'internal',
     },
+    FinanceViewLog: {
+        id: 'internal',
+        viewedAt: 'internal',
+        actorId: 'internal',
+        role: 'internal',
+        endpoint: 'internal',
+        params: 'internal',
+        recordIds: 'internal',
+        rowCount: 'internal',
+        window: 'internal',
+        viewKey: 'internal',
+    },
     Account: {
         id: 'internal',
         userId: 'internal',
@@ -526,6 +548,7 @@ export const relations = {
         programVolunteers: { model: 'ProgramVolunteer', isList: true },
         budgetOwnersOwned: { model: 'BudgetOwner', isList: true },
         budgetOwnerTreasurerships: { model: 'BudgetOwnerTreasurer', isList: true },
+        mailAliases: { model: 'PersonMailAlias', isList: true },
         programParticipants: { model: 'ProgramParticipant', isList: true },
         programsLed: { model: 'Program', isList: true },
         instancesLed: { model: 'ProgramInstance', isList: true },
@@ -540,6 +563,9 @@ export const relations = {
         trustedAdultReviewsDecided: { model: 'TrustedAdultReview', isList: true },
         roles: { model: 'PersonRole', isList: true },
         grantedRoles: { model: 'PersonRole', isList: true },
+    },
+    PersonMailAlias: {
+        person: { model: 'Person', isList: false },
     },
     PersonRole: {
         person: { model: 'Person', isList: false },
@@ -656,6 +682,8 @@ export const relations = {
         visits: { model: 'Visit', isList: true },
     },
     AuditLog: {
+    },
+    FinanceViewLog: {
     },
     Account: {
         user: { model: 'Person', isList: false },
