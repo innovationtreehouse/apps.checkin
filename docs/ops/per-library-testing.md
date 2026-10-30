@@ -146,8 +146,9 @@ for `prisma generate` and about 13 s for a cold checkin tsc.
   `checkin-app/libraries.json` changes.
 - Each flow file logs in through the seeded personas and assumes a fresh seed.
   One file alone on a fresh stack passes.
-- The standalone scripts name the compose project `flow-<worktree directory>`, so
-  `down -v` removes only that worktree's stack and volumes. On failure they print
+- The standalone scripts name the compose project `flow-<worktree directory>`
+  unless `COMPOSE_PROJECT_NAME` is already set, so `down -v` removes only that
+  worktree's stack and volumes. On failure they print
   the app's logs first. The app always binds host port 4000, so only one stack can
   run at a time; a second `up` fails on the port and leaves the first running.
 - **Measured** (catalog, 2026-10-17): `catalog.flow.test.ts` ran its 10 tests
