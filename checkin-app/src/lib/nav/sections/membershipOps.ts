@@ -10,7 +10,8 @@ import { SYSADMIN_OR_BOARD, anyRole } from "@/lib/nav/gates";
 export const MEMBERSHIP_OPS_ROLES: readonly RoleFlag[] = [...SYSADMIN_OR_BOARD, "isBackgroundCheckReviewer", "isOperations"];
 
 /** Sysadmin or board: the full run of the admin tools. */
-export const isMembershipOpsAdmin: NavGate = anyRole(SYSADMIN_OR_BOARD);
+export const MEMBERSHIP_OPS_ADMIN_ROLES = SYSADMIN_OR_BOARD;
+export const isMembershipOpsAdmin: NavGate = anyRole(MEMBERSHIP_OPS_ADMIN_ROLES);
 /** Background-check reviewers and board members (implicit reviewers). */
 export const canReviewMembership: NavGate = anyRole(["isBackgroundCheckReviewer", "isBoardMember"]);
 

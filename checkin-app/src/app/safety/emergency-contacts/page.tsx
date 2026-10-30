@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Badge, Card, Center, Group, List, Paper, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { formatPhone } from "@/lib/phone";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -43,7 +44,7 @@ type EmergencyContactInfo = {
 };
 
 export default function EmergencyContactsPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember', 'isKeyholder']);
+  const { ready, loading: authLoading } = useRequireRole(SAFETY_ROLES);
 
   const [households, setHouseholds] = useState<Household[]>([]);
   const [loading, setLoading] = useState(true);

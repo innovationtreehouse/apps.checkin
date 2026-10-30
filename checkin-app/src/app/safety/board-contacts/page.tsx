@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, Center, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { formatPhone } from "@/lib/phone";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -15,7 +16,7 @@ type BoardMember = {
 };
 
 export default function BoardContactInfoPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember', 'isKeyholder']);
+  const { ready, loading: authLoading } = useRequireRole(SAFETY_ROLES);
 
   const [members, setMembers] = useState<BoardMember[]>([]);
   const [loading, setLoading] = useState(true);
