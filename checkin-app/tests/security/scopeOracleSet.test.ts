@@ -44,6 +44,8 @@ const ORACLES = [
     'expense-strip.test.ts',
     'expense-test-data-route.test.ts',
     'file-route.test.ts',
+    'finance-view-audit-guard.test.ts',
+    'finance-view-audit.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',

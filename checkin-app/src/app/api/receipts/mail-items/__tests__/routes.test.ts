@@ -10,6 +10,7 @@ import { POST as assign } from "../[id]/assign/route";
 import { POST as discard } from "../[id]/discard/route";
 import { GET as file } from "../[id]/file/route";
 
+jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
   mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn() },

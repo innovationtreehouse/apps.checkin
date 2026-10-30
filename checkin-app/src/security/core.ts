@@ -307,6 +307,8 @@ export interface RouteSpec {
      * runtime stripper (that gates per-field regardless of this list).
      */
     returns?: readonly Models[];
+    /** A view of others' rows on this route writes a finance-view row (B11). GET only. */
+    auditedRead?: true;
 }
 
 /**
@@ -484,6 +486,8 @@ export interface FileRouteSpec {
     authorize: Exclude<Authorize, 'public' | 'kiosk'>;
     orderedView: readonly OrderedViewEntry[];
     file: { model: Models; field: string };
+    /** Serving this file to a view of others' rows writes a finance-view row (B11). */
+    auditedRead?: true;
 }
 
 export interface RegisteredFileRoute extends FileRouteSpec {
@@ -495,9 +499,16 @@ const _fileRoutes = new Map<string, RegisteredFileRoute>();
 const _fileOnlyFields = new Set<string>();
 const _outbounds = new Map<string, OutboundSpec>();
 
-function assertValidRegistration(endpoint: string, orderedView: readonly OrderedViewEntry[]): void {
+function assertValidRegistration(
+    endpoint: string,
+    orderedView: readonly OrderedViewEntry[],
+    auditedRead: true | undefined,
+): void {
     if (_routes.has(endpoint) || _fileRoutes.has(endpoint)) {
         throw new Error(`Duplicate route registration: ${endpoint}`);
+    }
+    if (auditedRead && !endpoint.startsWith('GET ')) {
+        throw new Error(`Route ${endpoint}: auditedRead is allowed only on a GET endpoint`);
     }
     const seenRoles = new Set<string>();
     for (const [role, tokens] of orderedView) {
@@ -517,7 +528,7 @@ function assertValidRegistration(endpoint: string, orderedView: readonly Ordered
 }
 
 export function defineRoute(spec: RouteSpec): RouteSpec {
-    assertValidRegistration(spec.endpoint, spec.orderedView);
+    assertValidRegistration(spec.endpoint, spec.orderedView, spec.auditedRead);
     // Derived AFTER validation (deriveCtxNeeds assumes tokens parse). The spread
     // order means an (illegally) author-supplied ctxNeeds is overwritten.
     _routes.set(spec.endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
@@ -532,7 +543,7 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
     if (authorize === ('public' as Authorize) || authorize === ('kiosk' as Authorize)) {
         throw new Error(`File route ${endpoint}: authorize '${authorize}' is not allowed`);
     }
-    assertValidRegistration(endpoint, spec.orderedView);
+    assertValidRegistration(endpoint, spec.orderedView, spec.auditedRead);
     const tiers = classifications[file.model] as Record<string, Tier> | undefined;
     const tier = tiers?.[file.field];
     if (tier === undefined) {

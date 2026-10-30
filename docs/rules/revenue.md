@@ -243,6 +243,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Only finance and the board can see who gave. Each look at a donor is
   recorded.  [Decision — *Principle: least privilege*]
 
+- Every view of finance records other than a person's own is recorded: who looked,
+  which records, through which screen, and when, never what the records said.
+  A person looking at their own receipts is not recorded, and neither is a
+  count. Only the Board reads the record.  [Decision — owner]
+
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 
 - Each gift goes to a program or fund, or is general Treehouse money. A gift
