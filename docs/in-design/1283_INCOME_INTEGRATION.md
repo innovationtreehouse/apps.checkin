@@ -31,7 +31,7 @@ checkin, and every decision is audited.
   the history the API can't reach is loaded into the mirror once, by the
   source's own conversion script (`1283_INCOME_INTEGRATION-migration.md`).
 - **The QuickBooks side is net-new and matches before it creates.** The source
-  has no QuickBooks code. Income uses the same rule as bulk donation (#1280 §7):
+  has no QuickBooks code. Income uses the same rule as bulk donation (#1280):
   line payouts up with existing deposits first. The newest payout finance booked
   by hand marks where the app takes over; the app creates deposits for unmatched
   payouts after it and sends unmatched ones before it to finance. There is no
@@ -144,7 +144,7 @@ whose id the script could not recover has no transactions, so it lands as
 
 Income applies the matching model the owner set for every lane that books to
 QuickBooks (expense, bulk donation and in-kind), first worked out by bulk
-donation for this problem (#1280 §7). Its rules are stated in full here: our
+donation for this problem (#1280). Its rules are stated in full here: our
 own unmatched records drive narrow searches, a QuickBooks entry is claimed by
 one record at most, finance can exclude an entry for good, and more than one
 candidate always goes to a person. Finance
@@ -161,11 +161,12 @@ or skip what it hasn't entered yet. So every payout is **matched first**:
 3. **Not found, first seen after switch-on, dated after the books closing
    date:** create the deposit (QB-2 write),
    keyed so a retry never books twice. **Gated on the mirror being
-   newest-wins.** s-read's `projectOrders` / `projectPayouts` do not keep the
-   newest version today: a backfill, bulk re-ingest or replay can revert a row to
-   older state. A deposit created from a reverted payout would book wrong amounts,
-   so step 3 stays off (the payout waits as `WAITING`) until that fix, owned
-   outside the port, is deployed. Matching (steps 1, 2, 4) does not wait.
+   newest-wins.** s-read's `projectOrders` / `projectPayouts` keep the newest
+   version, so a backfill, bulk re-ingest or replay cannot revert a row to older
+   state. A deposit created from a reverted payout would book wrong amounts, so
+   step 3 stays off (the payout waits as `WAITING`) until
+   `INCOME_MIRROR_NEWEST_WINS` is set, after that projection is deployed.
+   Matching (steps 1, 2, 4) does not wait.
 4. **Not found otherwise:** finance's queue as `NO_DEPOSIT`. Finance books it
    ("book it", which still matches first and never creates in closed books) or
    dismisses it with a reason.
@@ -294,7 +295,7 @@ recovery sweep, no schedule of its own. A `FINANCE` "run now" route and the
 Certain items have to book to their own QuickBooks category (owner decision).
 A QuickBooks category is a **budget-owner bucket**: checkin owns that table, its
 QuickBooks reference is a **Class** id (owner decision), and the expense lane
-builds it (#1280 §6). Income reuses it instead of keeping a second
+builds it (#1280). Income reuses it instead of keeping a second
 list:
 
 - **Bucket list:** income declares the same read port bulk donation does,

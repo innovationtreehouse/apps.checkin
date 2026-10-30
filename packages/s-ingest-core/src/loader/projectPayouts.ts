@@ -1,11 +1,12 @@
 /**
  * Project normalized payouts and balance transactions into the live tables.
- * Idempotent upserts keyed on Shopify GID. Balance-transaction cents are signed,
- * so a payout containing refunds/adjustments yields negative rows whose nets sum
- * back to the payout net — no special casing.
+ * Idempotent upserts keyed on Shopify GID, newest-wins on the raw-log id: Shopify gives
+ * these nodes no version field, so an event the log has a later fetch of is skipped.
+ * Balance-transaction cents are signed, so a payout containing refunds/adjustments
+ * yields negative rows whose nets sum back to the payout net — no special casing.
  */
-import type { DbClient } from "../ingest/rawLog.js";
-import type { EventSource } from "../generated/prisma/client.js";
+import { isSupersededRawEvent, type DbClient } from "../ingest/rawLog.js";
+import { ObjectType, type EventSource } from "../generated/prisma/client.js";
 import type { NormalizedPayout, NormalizedBalanceTxn } from "../shopify/schemas.js";
 
 export async function projectPayout(
@@ -13,7 +14,9 @@ export async function projectPayout(
   storeId: string,
   payout: NormalizedPayout,
   source: EventSource,
+  rawEventId: bigint,
 ): Promise<void> {
+  if (await isSupersededRawEvent(db, storeId, ObjectType.PAYOUT, payout.payoutGid, rawEventId)) return;
   const fields = {
     storeId,
     legacyId: payout.legacyId ?? null,
@@ -44,7 +47,9 @@ export async function projectBalanceTxn(
   storeId: string,
   txn: NormalizedBalanceTxn,
   source: EventSource,
+  rawEventId: bigint,
 ): Promise<void> {
+  if (await isSupersededRawEvent(db, storeId, ObjectType.BALANCE_TXN, txn.txnGid, rawEventId)) return;
   const fields = {
     storeId,
     payoutGid: txn.payoutGid ?? null,

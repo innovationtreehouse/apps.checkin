@@ -6,6 +6,8 @@ import { NEUTRAL_CONTEXT } from './disbursement.guards';
 
 const invariants = makeWorkflowInvariants<DisbursementMachineContext, DisbursementEvent>(disbursementMachine);
 
+export const { assertExpectedState, isLegalTransition, legalEventTypes, isTerminalState } = invariants;
+
 /**
  * Assert the machine defines a handler for `eventType` in `currentState`.
  * Throws WorkflowTransitionError when it does not — turning an event the state
@@ -44,50 +46,10 @@ export function isConsumedTriggerReplay(currentState: string, eventType: string)
   );
 }
 
-/**
- * Assert that sending `event` from `currentState` is a legal transition.
- * Throws WorkflowTransitionError if the machine has no handler.
- * Call BEFORE executing service logic — validates intent.
- */
 export function assertLegalTransition(
   currentState: string,
   event: DisbursementEvent,
   context: DisbursementMachineContext = NEUTRAL_CONTEXT,
 ): void {
   invariants.assertLegalTransition(currentState, event, context);
-}
-
-/**
- * Assert that the machine agrees with the state the service is about to persist.
- * Throws on divergence. Call AFTER computing nextState, BEFORE writing to DB.
- */
-export function assertExpectedState(
-  currentState: string,
-  event: DisbursementEvent,
-  context: DisbursementMachineContext,
-  expectedNext: string,
-): void {
-  invariants.assertExpectedState(currentState, event, context, expectedNext);
-}
-
-/**
- * Topology-only check: does `state` have any handler for `eventType`?
- * Does not evaluate guards — answers "is this event defined for this state?".
- */
-export function isLegalTransition(currentState: string, eventType: string): boolean {
-  return invariants.isLegalTransition(currentState, eventType);
-}
-
-/**
- * Returns the set of event types defined for the given state.
- */
-export function legalEventTypes(state: string): string[] {
-  return invariants.legalEventTypes(state);
-}
-
-/**
- * Returns true if `state` is a terminal state (no outbound transitions).
- */
-export function isTerminalState(state: string): boolean {
-  return invariants.isTerminalState(state);
 }

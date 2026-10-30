@@ -9,6 +9,7 @@ import { it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
 import { injectFixtures } from "../../src/ingest/inject.js";
 import { ingestNode } from "../../src/ingest/ingestNode.js";
+import { projectNode } from "../../src/loader/index.js";
 import { EventSource, ObjectType } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
@@ -114,6 +115,39 @@ describeDb("projection into live tables (real Postgres)", () => {
     expect(payout?.netCents).toBe(7700);
     expect(sum).toBe(payout?.netCents);
     expect(txns.some((t) => t.netCents < 0)).toBe(true); // negative refund stored
+  });
+
+  const PAYOUT_GID = "gid://shopify/ShopifyPaymentsPayout/5001";
+  const payoutNode = (status: string, net: string) => ({ id: PAYOUT_GID, status, net: { amount: net, currencyCode: "USD" }, issuedAt: "2026-02-05T00:00:00Z" });
+  const TXN_GID = "gid://shopify/ShopifyPaymentsBalanceTransaction/9001";
+  const txnNode = (associatedPayout: { id: string } | null) => ({ id: TXN_GID, type: "CHARGE", amount: { amount: "100.00", currencyCode: "USD" }, fee: { amount: "3.00" }, net: { amount: "97.00" }, associatedPayout });
+  const ingest = (objectType: ObjectType, node: unknown) => ingestNode(prisma, { storeId: STORE, objectType, node, source: EventSource.INCREMENTAL });
+  const project = (objectType: ObjectType, node: unknown, rawEventId: bigint) =>
+    prisma.$transaction((tx) => projectNode(tx, STORE, objectType, node, EventSource.INCREMENTAL, rawEventId));
+
+  it("an older payout payload cannot overwrite a newer one, whose own re-projection still applies", async () => {
+    const older = payoutNode("IN_TRANSIT", "50.00");
+    const newer = payoutNode("PAID", "77.00");
+    const { rawEventId: olderId } = await ingest(ObjectType.PAYOUT, older);
+    const { rawEventId: newerId } = await ingest(ObjectType.PAYOUT, newer);
+    const row = () => prisma.shopPayout.findFirst({ where: { storeId: STORE, payoutGid: PAYOUT_GID } });
+
+    await project(ObjectType.PAYOUT, older, olderId);
+    expect(await row()).toMatchObject({ status: "PAID", netCents: 7700 });
+
+    await prisma.shopPayout.updateMany({ where: { storeId: STORE }, data: { netCents: 1 } });
+    await project(ObjectType.PAYOUT, newer, newerId);
+    expect(await row()).toMatchObject({ status: "PAID", netCents: 7700 });
+  });
+
+  it("an older balance transaction payload cannot detach it from its payout", async () => {
+    const older = txnNode(null);
+    const { rawEventId: olderId } = await ingest(ObjectType.BALANCE_TXN, older);
+    await ingest(ObjectType.BALANCE_TXN, txnNode({ id: PAYOUT_GID }));
+
+    await project(ObjectType.BALANCE_TXN, older, olderId);
+    const row = await prisma.shopBalanceTransaction.findFirst({ where: { storeId: STORE, txnGid: TXN_GID } });
+    expect(row?.payoutGid).toBe(PAYOUT_GID);
   });
 
   it("tags injected rows by source in the append-only log", async () => {

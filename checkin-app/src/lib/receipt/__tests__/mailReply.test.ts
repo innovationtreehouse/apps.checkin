@@ -13,6 +13,7 @@ const ack = (over: Partial<MailAcknowledgement> = {}): MailAcknowledgement => ({
     senderAddress: 'pat@example.org',
     receiptId: 'r-1',
     receivedAt: new Date('2026-10-27T12:00:00Z'),
+    refused: [],
     ...over,
 });
 
@@ -22,6 +23,35 @@ const htmlFor = async (over: Partial<MailAcknowledgement> = {}): Promise<string>
     await sendMailReply(ack(over), undefined);
     return mockSendEmail.mock.calls[0][2];
 };
+
+describe('refused files', () => {
+    const refused = [{ file: '<i>big</i>.pdf', reason: 'too_large' as const }];
+    const alone = { receiptId: null, mine: false, creditedName: null, refused };
+
+    it('says only what was refused and why when there is no receipt', async () => {
+        const html = await htmlFor(alone);
+        expect(html).toContain('&lt;i&gt;big&lt;/i&gt;.pdf');
+        expect(html).toContain('10 MB');
+        expect(html).not.toContain('/receipts/');
+        expect(html).not.toContain('credited');
+    });
+
+    it('adds the refused files to an acknowledgement', async () => {
+        const html = await htmlFor({ refused });
+        expect(html).toContain('href="https://app.example.org/receipts/r-1"');
+        expect(html).toContain('10 MB');
+    });
+
+    it('uses its own subject only when nothing was accepted', async () => {
+        await sendMailReply(ack(alone), undefined);
+        await sendMailReply(ack({ refused }), undefined);
+        expect(mockSendEmail.mock.calls.map((c) => c[1])).toEqual(['Receipt not accepted', 'Receipt received']);
+    });
+
+    it('never treats a file name as a template token', async () => {
+        expect(await htmlFor({ ...alone, refused: [{ file: '{{when}}.pdf', reason: 'empty' }] })).toContain('{{when}}.pdf');
+    });
+});
 
 describe('the acknowledgement body', () => {
     it("tells the credited sender it is theirs, links it, and says how to say 'not me'", async () => {

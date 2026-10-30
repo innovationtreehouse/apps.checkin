@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { repushUnpushed, resendDonorSync } from "../../services/catchUp";
+import { importReceipts } from "../../services/importService";
 import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
@@ -70,6 +71,33 @@ describeDb("in-kind mark and donor (X13)", () => {
     expect(ports.calls.withdrawals).toEqual([{ orgId: TEST_ORG_ID, receiptId: r.id, seq: 1 }]);
     const row = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(row).toMatchObject({ isInKind: false, donorFirstName: null, donorSync: "synced" });
+  });
+
+  it("refuses the mark on a receipt already in QuickBooks", async () => {
+    const { results } = await importReceipts([
+      {
+        importSourceId: "held-open",
+        qbTxnId: "qb-1",
+        retailer: "Old Store",
+        receiptDate: "2023-03-01",
+        shippingCents: 0,
+        taxCents: 0,
+        discountCents: 0,
+        receiptTotalCents: 900,
+        mimeType: "text/plain",
+        fileBase64: Buffer.from("held open").toString("base64"),
+        lineItems: [{ lineNumber: 1, description: "Old thing", quantity: 1, unitPriceCents: 500, totalPriceCents: 500, isDelayed: false }],
+      },
+    ]);
+    const id = results[0].id as string;
+    expect(results[0].state).toBe("validation_failed");
+
+    await expect(receiptService.setInKind(id, { isInKind: true, donor: { self: true } })).rejects.toMatchObject({
+      status: 400,
+      message: "This receipt is already in QuickBooks, so it can't be marked as a donation",
+    });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id } })).toMatchObject({ isInKind: false, donorSync: "none" });
+    expect(ports.calls.donors).toEqual([]);
   });
 
   it("a never-in-kind receipt never sends withdrawInKind", async () => {

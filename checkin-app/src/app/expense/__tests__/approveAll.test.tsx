@@ -9,7 +9,6 @@ const mockSend = jest.fn<Promise<boolean>, unknown[]>(async () => true);
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: false, isBoard: false }),
-  useBuckets: () => [],
   send: (...args: unknown[]) => mockSend(...args),
 }));
 

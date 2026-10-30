@@ -18,14 +18,14 @@ export const POST = withAuth(
     async (req, auth) => {
         try {
             const body = await req.json();
-            const { keepId, mergeId, fieldChoices } = body;
+            const { keepId, mergeId, fieldChoices, emailChangeReason } = body;
 
             if (!keepId || !mergeId || keepId === mergeId) {
                 return apiError("Invalid participant IDs provided.", 400);
             }
 
             const actor = auth.type === 'session' ? auth.user : null;
-            const prepared = await prepareMerge(actor, keepId, mergeId, fieldChoices);
+            const prepared = await prepareMerge(actor, keepId, mergeId, fieldChoices, emailChangeReason);
             if ('refused' in prepared) {
                 const { status, error, collisions } = prepared.refused;
                 return collisions

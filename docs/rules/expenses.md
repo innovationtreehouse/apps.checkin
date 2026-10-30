@@ -127,6 +127,9 @@ Things the app takes as true because they are handled outside it.
   finance, name the person reimbursed, or close its reviews.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A person conflicted on an expense may not skip it in QuickBooks.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
   match.
@@ -146,6 +149,15 @@ Things the app takes as true because they are handled outside it.
   auto-reply, a bounce, list mail). Mail that never becomes a receipt gets no
   acknowledgement, and no acknowledgement is sent twice.
   [Decision]
+
+- A person whose emailed file is refused is told which file and why: too large,
+  the wrong type, empty, an email attached as a file, or the holding queue is
+  full. This reaches them even when no receipt was made, and does not wait on
+  the message's other files. If the receipt already exists, one email covers
+  both. Only senders who pass the sender check and may submit receipts are
+  told. Forged, unknown and automatic mail gets nothing. No notice is sent
+  twice.
+  [Decision — owner]
 
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
@@ -182,9 +194,26 @@ Things the app takes as true because they are handled outside it.
   refused automatically.
   [Decision — deliberate limit]
 
-- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
-  needs no spending sign-off.
+- A receipt's file hash is deliberately not unique, so two receipts may hold the
+  same file: the second is stored and flagged for finance. A unique hash would
+  refuse it before a person could look. Reading the same file from the same
+  mailed message again makes no second receipt.
+  [Decision — deliberate limit]
+
+- An automatic reading of a receipt is kept whole or not at all. When a reading
+  fails, is refused, has no lines, or has any value out of bounds, nothing from
+  it is saved, and the receipt waits for a person to retry or discard it. A
+  reading with lines but no retailer, date or total is kept, and its submitter
+  fills those in before any other check runs.
   [Decision]
+
+- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
+  needs no spending sign-off. It is a donation, not an expense record.
+  [Decision]
+
+- Donated equipment goes through the same capital thresholds, review and register
+  as purchased equipment.
+  [Decision — owner]
 
 - Finance may record old receipts for purchases already in the books. Doing so
   never reimburses anyone and never books anything a second time.
@@ -452,3 +481,12 @@ the parts specific to expenses.
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
+
+- Finance may skip an expense that waits on it to reach the books, giving a
+  reason. The record keeps who skipped it and why. The app never books or
+  matches a skipped expense again, even if the expense later goes back to an
+  earlier step. If the app may already have created the entry, it looks for that
+  entry first and links it instead of skipping. A skipped reimbursement shows
+  its payment status as unavailable, because the app holds no entry to read a
+  payment from.
+  [Decision — owner]

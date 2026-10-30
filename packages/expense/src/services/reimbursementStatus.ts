@@ -20,7 +20,7 @@ const latest = (dates: string[]): string | null => (dates.length ? dates.reduce(
 export const reimbursementStatus: ReimbursementStatus = {
   async forReceipts(receipts) {
     const asks = asksSchema.parse(receipts);
-    const paid = new Map<string, { paidOn: string | null }>(asks.map((a) => [a.receiptId, { paidOn: null }]));
+    const paid = new Map<string, { paidOn: string | null; statusUnavailable?: boolean }>(asks.map((a) => [a.receiptId, { paidOn: null }]));
     if (asks.length === 0) return paid;
     const { reader } = getExpenseRuntime().quickbooks;
 
@@ -52,6 +52,11 @@ export const reimbursementStatus: ReimbursementStatus = {
       (a.qbEntity === "Bill" ? billPaidOn : a.qbEntity === "Purchase" ? purchasePaidOn : undefined)?.get(a.qbTxnId as string) ?? null;
     for (const a of handBooked) paid.set(a.receiptId, { paidOn: handPaidOn(a) });
     for (const e of booked) paid.set(e.id, { paidOn: billPaidOn.get(e.qbTxnId as string) ?? null });
+    const skipped = await db.expense.findMany({
+      where: { orgId, id: { in: asks.filter((a) => !a.qbTxnId).map((a) => a.receiptId) }, qbMatchState: "SKIPPED" },
+      select: { id: true },
+    });
+    for (const e of skipped) paid.set(e.id, { paidOn: null, statusUnavailable: true });
     return paid;
   },
 };

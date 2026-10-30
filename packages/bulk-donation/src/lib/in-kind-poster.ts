@@ -1,4 +1,4 @@
-// The in-kind drain (design #2182): each accepted gift books as one QuickBooks JournalEntry,
+// The in-kind drain (docs/rules/revenue.md, Donations): each accepted gift books as one QuickBooks JournalEntry,
 // unless finance already booked it by hand as a Deposit into and a Purchase out of the in-kind
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
 import { dollarsToCents } from "@checkin/money";

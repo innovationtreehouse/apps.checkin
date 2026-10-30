@@ -112,11 +112,21 @@ async function approveLocked(
   });
 }
 
-/** Locks the expense and returns it, refused unless it waits for owner approval with its reimbursee known. */
-async function lockedInOwnerApproval(tx: Prisma.TransactionClient, expenseId: string) {
+/** Locks the expense and returns it. */
+async function lockedExpense(tx: Prisma.TransactionClient, expenseId: string) {
   await lockExpense(tx, expenseId);
   const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
+  return expense;
+}
+
+/** Locks the expense and returns it, refused unless it waits for owner approval with its reimbursee known. */
+async function lockedInOwnerApproval(tx: Prisma.TransactionClient, expenseId: string) {
+  return inOwnerApproval(await lockedExpense(tx, expenseId));
+}
+
+/** The expense, refused unless it waits for owner approval with its reimbursee known. */
+function inOwnerApproval(expense: Awaited<ReturnType<typeof lockedExpense>>) {
   if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
   if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone approves");
   return expense;
@@ -146,7 +156,8 @@ export async function approveLine(
 /**
  * Approve All: approves every listed line under one expense lock, each through the same checks as
  * a single approval, or none of them. A Board stand-in is approved only on a line no bucket
- * approver can approve. A refusal names the line by its number.
+ * approver can approve. A refusal names the line by its number. A line the caller already approved
+ * counts as done, so retrying a batch that committed succeeds without writing anything.
  */
 export async function approveLines(principal: ExpensePrincipal, expenseId: string, approvalIds: number[]): Promise<void> {
   const actor = actorOf(principal);
@@ -154,14 +165,17 @@ export async function approveLines(principal: ExpensePrincipal, expenseId: strin
   if (ids.length === 0) throw new ServiceError(400, "Name at least one line to approve");
 
   await db.$transaction(async (tx) => {
-    const expense = await lockedInOwnerApproval(tx, expenseId);
+    const locked = await lockedExpense(tx, expenseId);
     const approvals = await tx.lineItemOwnerApproval.findMany({
       where: { expenseId, id: { in: ids } },
       include: { lineItem: { select: { lineNumber: true } } },
       orderBy: { lineItem: { lineNumber: "asc" } },
     });
     if (approvals.length !== ids.length) throw new ServiceError(404, "Approval record not found");
-    for (const approval of approvals) {
+    const todo = approvals.filter((a) => a.status !== "approved" || a.decidedByUserId !== actor.userId);
+    if (todo.length === 0) return;
+    const expense = inOwnerApproval(locked);
+    for (const approval of todo) {
       try {
         // No reason: a stand-in line that needs one is refused, as a single approval without it is.
         await approveLocked(tx, actor, expense, approval, null, true);

@@ -16,9 +16,12 @@ import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInE
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+
+class BecameTrustedError extends Error {}
 
 export const PATCH = withAuth(
     {},
@@ -107,7 +110,8 @@ export const PATCH = withAuth(
                 + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
                 || Boolean(targetHouseholdMember.lastBackgroundCheck)
                 || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily);
+                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily)
+                || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
@@ -130,15 +134,17 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
-                        // 26+ DoB is stripped and forces the flag on; an empty DoB honors
-                        // the checkbox. `undefined` dob leaves the field unchanged.
-                        ...(dob !== undefined ? normalizeAdultDob(dob) : {}),
-                        ...(over25 !== undefined && !dob ? { isDeclaredAdult: !!over25 } : {}),
+                        ...normalizeAdultDob(dob, over25),
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,
                 });
+
+                // Read after the write and roll back: a grant this misses commits after
+                // the edit, so it lands on the new address rather than being changed under.
+                if (email !== undefined && !holdsGrant && (await trustStatus(tx, participantId)).isTrusted) {
+                    throw new BecameTrustedError();
+                }
 
                 // Set when the field edits saved but the requested promotion to lead
                 // was declined by the per-household cap (#269). We report this back
@@ -226,6 +232,10 @@ export const PATCH = withAuth(
         } catch (error: unknown) {
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof BecameTrustedError) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
             }
             logger.error("Household Member PATCH Error:", error);
             return apiError("Internal Server Error", 500);

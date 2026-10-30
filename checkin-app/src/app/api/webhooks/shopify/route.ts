@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { activateByProcessId } from "@/lib/membership/payment";
 import { withWebhook } from "@/lib/webhookAuth";
-import { config } from "@/lib/config";
+import { verifyShopifyHmac } from "@/lib/signatureCompare";
 import { activateProgramEnrollment, refuseReversedActivation } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
@@ -26,44 +25,6 @@ interface ShopifyOrder {
     discount_codes?: { code?: string }[];
 }
 
-/**
- * Verify the Shopify HMAC over the EXACT raw bytes. Config-not-set is a server
- * error (500); missing/wrong signature is unauthorized (401). Must run on the raw
- * body before it is parsed — re-serializing JSON would change the bytes.
- *
- * A rejected delivery writes nothing: it gets a rate-limited log line only.
- */
-function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
-    const secret = config.shopifyWebhookSecret();
-    if (!secret) {
-        logger.error("Shopify webhook received but SHOPIFY_WEBHOOK_SECRET is not configured.");
-        return { ok: false, status: 500, error: "Configuration Error" };
-    }
-
-    const headerSignature = req.headers.get("x-shopify-hmac-sha256");
-    if (!headerSignature) {
-        logRejectedShopifyWebhook("missing signature");
-        return { ok: false, status: 401, error: "Missing signature" };
-    }
-
-    const generatedSignature = crypto
-        .createHmac("sha256", secret)
-        .update(rawBody, "utf8")
-        .digest("base64");
-
-    // Hash both signatures to a fixed length before comparison to prevent timing attacks
-    // and avoid leaking the expected signature length, then use crypto.timingSafeEqual.
-    const generatedBuffer = crypto.createHash('sha256').update(generatedSignature).digest();
-    const headerBuffer = crypto.createHash('sha256').update(headerSignature).digest();
-
-    if (!crypto.timingSafeEqual(generatedBuffer, headerBuffer)) {
-        logRejectedShopifyWebhook("signature mismatch");
-        return { ok: false, status: 401, error: "Invalid signature" };
-    }
-
-    return { ok: true };
-}
-
 // Shopify Webhook for `orders/paid`.
 // Verifies HMAC signature, extracts custom attributes, and marks user as ACTIVE.
 //
@@ -72,7 +33,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
 // The HMAC secret differs per env (config.shopifyWebhookSecret). The only env-branched
 // logic is the synthetic dev-mock variant fallback, gated on config.shopifyMockActive()
 // (⇔ CHECKIN_ENV=local) inside membershipVariantYears.
-export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, order: ShopifyOrder) => {
+export const POST = withWebhook({ provider: "shopify", verify: (req, rawBody) => verifyShopifyHmac(req, rawBody, "Shopify webhook", logRejectedShopifyWebhook) }, async (req, order: ShopifyOrder) => {
         // Only a paid, unreversed orders/paid delivery moves anything. A reversed one is
         // left to the reconciler, which raises it against the pending record.
         // A refund moves financial_status off "paid", so no refund total is needed here.

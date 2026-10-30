@@ -48,7 +48,7 @@ export type Access = "submitter" | "finance";
 /** Receipts waiting on one FINANCE viewer: all of them, and per FINANCE_ACTION_STATES state. */
 export type FinanceCounts = { total: number; byState: Record<string, number> };
 
-const EDITABLE: ReadonlySet<string> = new Set(["validation_failed", "submitter_review"]);
+const EDITABLE: ReadonlySet<string> = new Set(["ocr_failed", "validation_failed", "submitter_review"]);
 const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
 
@@ -127,7 +127,7 @@ async function loadForChange(id: string, access: Access, actor: ReceiptPrincipal
   return row;
 }
 
-const EDIT_STATE_MESSAGE = "Receipt can only be edited in validation_failed or submitter_review state";
+const EDIT_STATE_MESSAGE = "Receipt can only be edited in ocr_failed, validation_failed or submitter_review state";
 
 /**
  * Re-check the state under a row lock inside an edit's transaction, so the edit commits before any
@@ -723,7 +723,7 @@ export const receiptService = {
     const actor = await requireActor();
     const line = parse(AddLineItemSchema, rawLine);
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Can only add lines in validation_failed or submitter_review state";
+    const stateMessage = "Can only add lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
     return db.$transaction(async (tx) => {
@@ -743,7 +743,7 @@ export const receiptService = {
     const actor = await requireActor();
     const edit = parse(EditLineItemSchema, rawLine);
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Line items can only be edited in validation_failed or submitter_review state";
+    const stateMessage = "Line items can only be edited in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
 
@@ -793,7 +793,7 @@ export const receiptService = {
   async deleteLine(id: string, access: Access, lineItemId: number): Promise<void> {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
-    const stateMessage = "Can only delete lines in validation_failed or submitter_review state";
+    const stateMessage = "Can only delete lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
     const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
     await db.$transaction(async (tx) => {
@@ -972,7 +972,7 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "resubmit");
-    await step(row, { type: "RESUBMIT" }, "uploaded", {}, actor, "resubmitted");
+    await step(row, { type: "RESUBMIT" }, "uploaded", { detail: { validationNotes: null } }, actor, "resubmitted");
     await runFullFlow(id, actor);
     return load(id, access, actor);
   },
@@ -1097,6 +1097,7 @@ export const receiptService = {
     const updated = await db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, EDIT_STATE_MESSAGE);
       if (input.isInKind && locked.needsReimbursement) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
+      if (input.isInKind && locked.qbTxnId) throw new ServiceError(400, "This receipt is already in QuickBooks, so it can't be marked as a donation");
       if (!input.isInKind && locked.donorSync === "none") return false;
       await tx.receipt.update({ where: { id }, data: { isInKind: input.isInKind, donorSync: "pending", donorSyncSeq: { increment: 1 }, ...donor } });
       await audit(tx, id, actor, {
@@ -1184,7 +1185,7 @@ export const receiptService = {
         r.state === "discarded" ||
         (r.state === "rejected" && !rejectionUnacknowledged(r)) ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
+      const reimbursement = r.needsReimbursement ? (paid && !paid.get(r.id)?.statusUnavailable ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
       return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
@@ -1215,7 +1216,7 @@ export const receiptService = {
       currency: r.currency,
       receiptTotalCents: r.receiptTotalCents,
       rejectionReason: r.state === "rejected" ? r.validationNotes : null,
-      reimbursement: paid ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
+      reimbursement: paid && !paid.get(r.id)?.statusUnavailable ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
       purchaseOutcome: outcomeOf(r, outcomes),
     }));
   },
@@ -1305,7 +1306,9 @@ export const receiptService = {
     if (access !== "finance") return rows.map(toSubmitterView);
     const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
     const records = await pushRecords(orgId, undelivered.map((r) => r.id));
-    return [...rows, ...undelivered.flatMap((r) => (records.get(r.id)?.pushGivenUp ? [{ ...r, ...records.get(r.id) }] : []))];
+    const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
+    const parties = await Promise.all(stopped.map(conflictedParties));
+    return [...rows, ...stopped.flatMap((r, i) => (parties[i].includes(actor.id) ? [] : [{ ...r, ...records.get(r.id) }]))];
   },
 
   /**

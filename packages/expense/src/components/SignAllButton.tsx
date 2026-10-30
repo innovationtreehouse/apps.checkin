@@ -16,7 +16,8 @@ export function treasurerLines(lines: LineStatus[]): number[] {
 /**
  * "Sign all N as Treasurer" on a To sign row: N is the expense's lines whose main act for the
  * viewer is the Treasurer signature, and one all-or-nothing request signs them. A refusal names the
- * line and signs none. Nothing to sign draws no button; a failed read says so in red.
+ * line and signs none, and the lines are read again, since another signer may have taken one. Nothing
+ * to sign draws no button; a failed read says so in red.
  */
 export default function SignAllButton({ expenseId, onSigned }: { expenseId: string; onSigned: () => void }) {
   const base = `/expenses/${encodeURIComponent(expenseId)}`;
@@ -31,6 +32,7 @@ export default function SignAllButton({ expenseId, onSigned }: { expenseId: stri
     const signed = await send(`${base}/sign-lines`, "POST", { lineItemIds }, `Signed ${lineItemIds.length} as Treasurer`);
     setBusy(false);
     if (signed) onSigned();
+    else lines.reload();
   }
 
   return (

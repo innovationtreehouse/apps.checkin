@@ -115,6 +115,9 @@ export const SCOPE_BINDINGS = {
         },
     },
     RawBadgeLog: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    // The caller's own Key Volunteer Agreement status and sign URL.
+    KeyVolunteerSelfStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    KeyVolunteerSigning: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     ToolStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     Account: { their_own: { field: 'userId', eqCtx: 'selfId' } },
     Session: { their_own: { field: 'userId', eqCtx: 'selfId' } },

@@ -18,6 +18,10 @@
     "./nav": {
       "types": "./src/nav.ts",
       "import": "./src/nav.ts"
+    },
+    "./gmail": {
+      "types": "./src/lib/gmail.ts",
+      "import": "./src/lib/gmail.ts"
     }
   },
   "scripts": {

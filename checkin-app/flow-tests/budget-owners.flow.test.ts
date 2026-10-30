@@ -1,5 +1,5 @@
 /**
- * Budget-owner buckets and their approvers (#1280 §6): FINANCE manages buckets,
+ * Budget-owner buckets and their approvers (#1280): FINANCE manages buckets,
  * the BOARD alone sets a bucket's owner and treasurers, nobody sets themself or
  * their own household, an org-level bucket takes no approvers, and archive keeps
  * the row. Real HTTP against the running dev server and the seeded DB.

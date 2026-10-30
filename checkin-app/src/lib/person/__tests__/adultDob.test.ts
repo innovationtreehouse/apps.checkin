@@ -1,6 +1,6 @@
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 
-// #1165: no DoB above the program-age ceiling (25). The boundary is the whole point.
+// No DoB above the program-age ceiling (25). The boundary is the whole point.
 describe("normalizeAdultDob", () => {
   const yearsAgo = (n: number) => {
     const d = new Date();
@@ -10,10 +10,36 @@ describe("normalizeAdultDob", () => {
     return d;
   };
 
-  it("clears the date and leaves the flag alone for empty input", () => {
-    expect(normalizeAdultDob(null)).toEqual({ dateOfBirth: null });
-    expect(normalizeAdultDob(undefined)).toEqual({ dateOfBirth: null });
-    expect(normalizeAdultDob("")).toEqual({ dateOfBirth: null });
+  // toStrictEqual, because an absent key is what leaves the stored field alone.
+  describe.each([
+    { over25: undefined, flag: {} },
+    { over25: true, flag: { isDeclaredAdult: true } },
+    { over25: false, flag: { isDeclaredAdult: false } },
+  ])("over25 $over25", ({ over25, flag }) => {
+    it("writes only the declaration when no date was submitted", () => {
+      expect(normalizeAdultDob(undefined, over25)).toStrictEqual(flag);
+    });
+
+    it.each([null, ""])("clears the date and writes the declaration for dob %j", (dob) => {
+      expect(normalizeAdultDob(dob, over25)).toStrictEqual({ dateOfBirth: null, ...flag });
+    });
+
+    it("lets a date under the ceiling supersede the declaration", () => {
+      const dob = yearsAgo(14);
+      expect(normalizeAdultDob(dob, over25)).toStrictEqual({ dateOfBirth: dob, isDeclaredAdult: false });
+    });
+
+    it("strips a date over the ceiling and declares adult regardless", () => {
+      expect(normalizeAdultDob(yearsAgo(26), over25)).toStrictEqual({ dateOfBirth: null, isDeclaredAdult: true });
+    });
+  });
+
+  it("keeps a declaration when a form with no over-25 box saves a blank date", () => {
+    expect(normalizeAdultDob(null)).not.toHaveProperty("isDeclaredAdult");
+  });
+
+  it("writes nothing when neither field was submitted", () => {
+    expect(normalizeAdultDob(undefined)).toStrictEqual({});
   });
 
   it("keeps a real DoB and un-declares for age <= 25", () => {

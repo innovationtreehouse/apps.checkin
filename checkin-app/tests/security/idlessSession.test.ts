@@ -12,7 +12,7 @@
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { handler } from '@/security/handler';
-import { allFileRoutes, allRoutes, VALID_ROLES, type Authorize, type Role } from '@/security/core';
+import { allFileRoutes, allRoutes, ROLES, type Authorize, type Role } from '@/security/core';
 import { callerHoldsRole, resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
 import '@/security/registry';
@@ -83,7 +83,7 @@ describe('id-less session', () => {
     });
 
     const OPEN_ROLES: Role[] = ['anyone', 'unauthenticated'];
-    test.each([...VALID_ROLES].filter(r => !OPEN_ROLES.includes(r)))('view role %s does not select it', (role) => {
+    test.each(ROLES.filter(r => !OPEN_ROLES.includes(r)))('view role %s does not select it', (role) => {
         expect(callerHoldsRole(role, idless, { id: '1' }, callerContext)).toBe(false);
     });
 

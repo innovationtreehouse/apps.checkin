@@ -63,7 +63,8 @@ export async function replay(prisma: PrismaClient, args: ReplayArgs): Promise<Re
     try {
       // id ASC is NOT newest-first for orders: a bulk snapshot taken before an incremental
       // sync is logged after it. Orders are protected by projectOrder's updatedAt guard;
-      // payouts/balance txns are only fetched live, so for them id order is fetch order.
+      // payouts/balance txns are only fetched live, so for them id order is fetch order and
+      // their projectors skip any event with a later id for its gid.
 
       while (true) {
         const rows = await prisma.shopifyRawEvent.findMany({
@@ -75,7 +76,7 @@ export async function replay(prisma: PrismaClient, args: ReplayArgs): Promise<Re
         });
         if (rows.length === 0) break;
         for (const row of rows) {
-          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload, row.source));
+          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload, row.source, row.id));
           processed++;
           seen.add(row.shopifyGid);
           lastCommittedId = row.id;

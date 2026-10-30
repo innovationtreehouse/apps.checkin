@@ -89,7 +89,7 @@ defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', en
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
-// Mail aliases (1265_RECEIPT_MAIL_ALIASES.md): the extra addresses a person's
+// Mail aliases (docs/rules/people-households.md): the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and
 // approve them, and nobody else reads them, so no `their_own` view. The address
 // is `pii`, like Person.email.

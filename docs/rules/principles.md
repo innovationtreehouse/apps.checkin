@@ -36,6 +36,9 @@ Things every domain takes as true because they are handled outside the app.
   outside the household, and business ties, are a deliberate limit: they are not
   modelled, and people declare them themselves.
   [Decision — *Policy: Ethics Policy, Art. III §III.2*]
+- Background-check review volume is low enough that a person handles mistakes,
+  through a Board reset, rather than a dedicated app feature. So a mistaken
+  rejection has no withdraw of its own.  [Decision — owner ruling 2026-10-30]
 
 ---
 
@@ -174,6 +177,9 @@ however many times it is sent.
 
 - **A retry or catch-up only finishes what is missing.** It never replays what
   already happened.
+
+- **A record whose create may have landed looks for its own entry first,** before
+  anything creates, matches, skips or dismisses it.
 
 - **Where the system cannot tell a repeat from a new event, it holds the event
   for a person.**

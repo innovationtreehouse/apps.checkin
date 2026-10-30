@@ -104,10 +104,11 @@ function callerActs(input: LineActionsInput): LineAction[] {
 }
 
 /**
- * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the part
- * (approve or a seat) with the fewest other people able to take it, ties going approval, then
- * Treasurer, then Board; a bucket fix stands alone when the caller has no part to take. A Board
- * stand-in's approval is the main act only when no bucket approver can approve the line.
+ * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the
+ * caller's part on the line (the approval or a seat); a bucket fix stands alone when the caller has
+ * no part to take. A Board stand-in's approval is the main act only when no bucket approver can
+ * approve the line. The caller has at most one part: the approval, the Treasurer seat and the
+ * Board seat open one after another (`orderRefusal`).
  */
 function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const assign = acts.find((a) => a.act === "assign-bucket" || a.act === "resolve-bucket");
@@ -116,17 +117,9 @@ function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
     return;
   }
   const others = pool(input.facts).filter((id) => id !== input.caller.id);
-  const rivals = (a: LineAction): number =>
-    a.act === "approve"
-      ? others.filter((id) => approvesAsApprover(input, id)).length
-      : others.filter((id) => maySign(input, a.seat!, id)).length;
   const standingIn = approvesAsStandIn(input.facts, input.caller.id) && others.some((id) => approvesAsApprover(input, id));
-  const parts = acts.filter((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
-  const main = parts.reduce<{ act: LineAction; n: number } | null>((best, a) => {
-    const n = rivals(a);
-    return best === null || n < best.n ? { act: a, n } : best;
-  }, null);
-  if (main) main.act.primary = true;
+  const part = acts.find((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
+  if (part) part.primary = true;
   else if (assign) assign.primary = true;
 }
 

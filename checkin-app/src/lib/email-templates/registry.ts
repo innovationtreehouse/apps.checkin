@@ -249,6 +249,14 @@ export const REGISTRY = {
         defaultBody: "We received the receipt you emailed on {{when}}. It is credited to {{creditedName}}, who reviews it.\n\nIf you did not send this email, reply to this message and tell us.",
     },
 
+    // The refused files are listed after this text by the sender, whatever the Board saves here.
+    "receipt.mailRefused": {
+        allowedTokens: { when: text },
+        sampleCtx: { when: "March 7, 2026" },
+        defaultSubject: "Receipt not accepted",
+        defaultBody: "We read the email you sent to the receipt mailbox on {{when}}.",
+    },
+
     // ── shopify ─────────────────────────────────────────────────────────────
     "shopify.error": {
         allowedTokens: { intro: text, errorDetail: text },

@@ -1,11 +1,11 @@
 import { db, type DbOrTx } from "../db";
-import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 import { handOverDeposit, handOverDeposits } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 
-// Owner decisions return the row without donor identity, so the writes need no donor-read audit row.
+// Owner decisions return the row without donor identity.
 const DECISION_SELECT = {
   id: true,
   orgId: true,
@@ -51,7 +51,7 @@ async function claimUndecided(
 }
 
 export const transactionService = {
-  async listTransactions(orgId: string, reader: DonorReadContext, assigned?: "true" | "false", page?: { skip: number; take: number }) {
+  async listTransactions(orgId: string, assigned?: "true" | "false", page?: { skip: number; take: number }) {
     let where;
     if (assigned === "true") {
       where = { orgId, OR: [{ ownerId: { not: null } }, { isOrganizationalLevel: true }] };
@@ -60,26 +60,20 @@ export const transactionService = {
     } else {
       where = { orgId };
     }
-    const rows = await db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: [{ importedAt: "asc" }, { id: "asc" }], ...page });
-    await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { assigned: assigned ?? null }, count: rows.length });
-    return rows;
+    return db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: [{ importedAt: "asc" }, { id: "asc" }], ...page });
   },
 
-  async listUnassignedTransactions(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {
-    const rows = await db.transaction.findMany({
+  async listUnassignedTransactions(orgId: string, page?: { skip: number; take: number }) {
+    return db.transaction.findMany({
       where: { orgId, ownerId: null, isOrganizationalLevel: false },
       select: TRANSACTION_SELECT,
       orderBy: [{ importedAt: "asc" }, { id: "asc" }],
       ...page,
     });
-    await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { unassigned: true }, count: rows.length });
-    return rows;
   },
 
-  async getTransaction(orgId: string, id: number, reader: DonorReadContext) {
-    const row = await db.transaction.findFirst({ where: { id, orgId } });
-    if (row) await recordDonorDataRead(db, orgId, "transaction", reader, { ids: [row.id], count: 1 });
-    return row;
+  async getTransaction(orgId: string, id: number) {
+    return db.transaction.findFirst({ where: { id, orgId } });
   },
 
   async assignOwner(

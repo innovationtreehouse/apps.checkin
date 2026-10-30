@@ -12,7 +12,6 @@ import { POST as differentPurchases } from "../different-purchases/route";
 import { POST as keepThisOne } from "../keep-this-one/route";
 
 jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
-jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
   receiptService: {
     get: jest.fn(),

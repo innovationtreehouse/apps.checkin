@@ -6,11 +6,11 @@ import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
-import { actorOf } from "../lib/caller";
-import { lockExpense, unsignedLines } from "../lib/signoff-facts";
+import { actorOf, callerId } from "../lib/caller";
+import { conflictedParties, lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
-import { checkOffHeldOnPost } from "./flagService";
+import { SKIPPED_CHECK_OFF, checkOffHeldOnPost } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
 
 /** A reimbursement matches a Bill; every other line matches a Purchase. */
@@ -176,18 +176,18 @@ export async function qbCandidates(principal: ExpensePrincipal, expenseId: strin
 
 /**
  * Before finance matches an expense whose create may already have landed, look for the app's own
- * entry. Found → the expense is linked to it as CREATED, in place of the match, and true is
- * returned. Held by another record, or unsure → refused; a failed read answers 503. Nothing found,
- * or never attempted → false, and the match goes ahead.
+ * entry. Found → the expense is linked to it as CREATED, in place of the action, and the entry's id
+ * is returned. Held by another record, or unsure → refused; a failed read answers 503. Nothing
+ * found, or never attempted → null, and the action goes ahead.
  */
-async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, entity: QbMatchEntity, principal: ExpensePrincipal): Promise<boolean> {
-  if (!expense.qbCreateAttemptedAt) return false;
+async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, entity: QbMatchEntity, principal: ExpensePrincipal, action: "match" | "skip"): Promise<string | null> {
+  if (!expense.qbCreateAttemptedAt) return null;
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt);
   switch (own.kind) {
     case "none":
-      return false;
+      return null;
     case "failed":
       throw new ServiceError(503, own.note);
     case "held":
@@ -218,14 +218,14 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
         fieldChanged: "qbMatchState",
         valueBefore: expense.qbMatchState,
         valueAfter: `CREATED:${qbTxnId}`,
-        notes: `the app had already booked this expense as ${entity} ${qbTxnId}; the match was not applied`,
+        notes: `the app had already booked this expense as ${entity} ${qbTxnId}; the ${action} was not applied`,
       });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, `The app's QuickBooks ${entity} ${qbTxnId} is already claimed by another expense`);
     throw err;
   }
-  return true;
+  return qbTxnId;
 }
 
 /**
@@ -243,7 +243,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
     throw new ServiceError(409, "Expense is not in a state that can be matched");
   }
   const entity: QbMatchEntity = expense.needsReimbursement ? "Bill" : "Purchase";
-  if (await linkOwnFirst(expense, entity, principal)) return;
+  if (await linkOwnFirst(expense, entity, principal, "match")) return;
   const { txns } = await candidatesFor(expense);
   const picked = txns.find((t) => t.id === qbTxnId);
   if (!picked) throw new ServiceError(409, "That QuickBooks entry is not a candidate for this expense");
@@ -275,4 +275,58 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
     if (isUniqueConstraintError(err)) throw new ServiceError(409, "That QuickBooks entry is already claimed by another expense");
     throw err;
   }
+}
+
+/** States waiting on finance's decision. POST_FAILED is not one: the drain retries it until NEEDS_FINANCE. */
+const SKIPPABLE_STATES = ["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"];
+
+async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
+  if ((await conflictedParties(expense)).includes(callerId(principal))) {
+    throw new ServiceError(403, "You cannot skip an expense that you or your household submitted or would be reimbursed for");
+  }
+}
+
+/**
+ * Finance skips an expense with a reason: it leaves the queue for good, and the drain never posts or
+ * matches it again. An expense whose create may have landed looks for the app's own entry first;
+ * found, it is linked in place of the skip and the refusal names the entry. A failed post always
+ * moves the state or the attempt count, so any change to those or the attempt stamp since the read
+ * means a create may have landed meanwhile, and the skip is refused.
+ */
+export async function skipExpenseQb(principal: ExpensePrincipal, expenseId: string, reason: string): Promise<void> {
+  requireFinance(principal);
+  const why = reason.trim();
+  if (!why) throw new ServiceError(400, "A reason is required to skip");
+  const expense = await loadExpense(expenseId);
+  if (expense.qbTxnId) throw new ServiceError(409, "Expense is already linked to QuickBooks");
+  if (!SKIPPABLE_STATES.includes(expense.qbMatchState) || expense.state === "rejected" || expense.backfill) {
+    throw new ServiceError(409, "Expense is not in a state that can be skipped");
+  }
+  await refuseConflictedSkip(principal, expense);
+  const entity: QbMatchEntity = expense.needsReimbursement ? "Bill" : "Purchase";
+  const own = await linkOwnFirst(expense, entity, principal, "skip");
+  if (own) throw new ServiceError(409, `Not skipped: the app had already booked this expense as QuickBooks ${entity} ${own}, and it is now linked to that entry`);
+  await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
+    await refuseConflictedSkip(principal, current);
+    if (
+      current.qbTxnId !== null ||
+      current.qbMatchState !== expense.qbMatchState ||
+      current.qbPostAttempts !== expense.qbPostAttempts ||
+      current.qbCreateAttemptedAt?.getTime() !== expense.qbCreateAttemptedAt?.getTime()
+    ) {
+      throw new ServiceError(409, "The app may have tried to book this expense meanwhile; reload and try again");
+    }
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED" } });
+    await checkOffHeldOnPost(tx, expenseId, SKIPPED_CHECK_OFF);
+    await writeAudit(tx, actorOf(principal), {
+      expenseId,
+      action: "qb_skipped",
+      fieldChanged: "qbMatchState",
+      valueBefore: current.qbMatchState,
+      valueAfter: "SKIPPED",
+      notes: why,
+    });
+  });
 }

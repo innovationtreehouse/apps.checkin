@@ -248,7 +248,8 @@ Procedure below is built on them.
   approvals, and the adult that approval named is no longer settled. Once the
   check has cleared, or the application is blocked or closed, the approval
   stands. A rejection is not undone; its reviewer may only change it to an
-  approval, as above.  [Decision]
+  approval, as above. A mistaken rejection goes to the Board's reset; see the
+  review-volume assumption in `principles.md`.  [Decision]
 
 - The duplicate-attestation cleanup is the Board's alone. When a person merge
   finds the same review recorded under two identities, only a board member may

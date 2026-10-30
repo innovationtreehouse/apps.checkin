@@ -216,9 +216,17 @@ Income checks each online-store payout against the deposits in the books.
 - Every payout must match one deposit in the books. Finance settles any the app
   can't match and records why.  [Decision]
 
-- Finance's own bookings come first. The app books only payouts newer than the
-  last one finance booked by hand, and a payout nobody books is raised for
-  finance.  [Decision]
+- The app books nothing dated on or before the closing date finance sets in the
+  books. With no closing date set, it books nothing dated before income's posting
+  was switched on, and when it cannot read the date it books nothing.  [Decision — owner; *Principle: fail closed*]
+
+- Until income's posting is switched on, the app only matches. A payout it cannot
+  match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
+
+- Posting switches on the first time the daily step posts, once and for good.
+  Online-store payouts and giving-platform deposits each have their own switch-on.
+  A payout the app first sees after that books on its own, matching first, however
+  late it arrived.  [Decision — owner]
 
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
@@ -240,21 +248,23 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   who submits a receipt for a gift of goods records its donor, and can say it
   isn't a gift after all.  [Decision]
 
-- Only finance and the board can see who gave. Each look at a donor is
-  recorded.  [Decision — *Principle: least privilege*]
+- Only finance and the board can see who gave.  [Decision — *Principle: least privilege*]
 
-- Every view of finance records other than a person's own is recorded: who looked,
-  which records, through which screen, and when, never what the records said.
+- Every view of finance records other than a person's own is recorded, each look
+  at a donor included: who looked, which records, through which screen, and when,
+  never what the records said.
   A person looking at their own receipts is not recorded, and neither is a
   count. Only the Board reads the record.  [Decision — owner]
 
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 
-- Each gift goes to a program or fund, or is general Treehouse money. A gift
+- A gift of money goes to a program or fund, or is general Treehouse money. One
   that comes with no instructions from the donor is general money.  [Decision — *Policy: Financial Policy, Art. VI §VI.2*]
 
 - Finance allocates each gift as the donor's instructions or policy direct. Once
-  recorded, the allocation can't be changed in the app.  [Decision]
+  a gift of money is recorded, its allocation can't be changed in the app.  [Decision]
+
+- A giving-platform gift is imported at most once per org.  [Decision — *Principle: apply once*]
 
 - A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
@@ -264,11 +274,54 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of
-  the same value.  [Decision]
+  the same value, from one record, in one bucket.  [Decision]
+
+- A gift of goods always goes to a budget bucket, never to general money, because
+  its expense side carries the bucket's Class. Where the donor gave no
+  instructions, finance chooses the bucket, which may be a part of the facility
+  such as Facility or Shop.  [Decision — owner]
+
+- Finance may change a gift of goods' bucket until the gift starts booking, and
+  not after. A bucket that is archived or has no Class can't be assigned. A gift
+  already in such a bucket waits in finance's queue, and the app never reassigns
+  it.  [Decision — owner]
+
+- Every gift of goods is accepted, refused or returned once before it books, by a
+  finance holder, or by a Board member when every finance holder is conflicted
+  with the uploader or recorder. A refused or returned gift never books, and its goods are
+  adjusted out of stock by hand, never by the app.  [Decision — owner]
+
+- Nobody decides a gift of goods that they or their household uploaded or
+  recorded, or where they or their household is the donor. Donors aren't linked to
+  people, so the person deciding confirms they are outside the donor's household,
+  and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
+
+- A gift of goods with a receipt books at the receipt's values. One without a
+  receipt is valued by whoever accepts it; what operations enter is a suggestion.
+  [Decision — owner]
+
+- The accept screen warns about a donor surname shared with the decider's or the
+  recorder's household, a large value and a donor replaced after recording. These
+  never block a decision.  [Decision — *Principle: people decide about people*]
+
+- A program bucket's approvers see the accepted gifts of goods in their bucket:
+  what was given, its value and date, never the donor. They do not approve them.  [Decision — owner]
+
+- Gifts of goods follow the closed-books rules in Income, with their own switch-on.
+  A gift counts from when its money arrived or it was recorded.  [Decision — owner]
+
+- A gift of goods withdrawn after its money arrived is raised for finance, booked
+  or not. Finance reverses it by hand only if it booked; the app changes nothing
+  in the books. When finance settles a withdrawal, the donor's details are cleared
+  and the gift and its money stay.  [Decision — owner]
+
+- The app sends no donor letter for a gift of goods before it is accepted. A letter
+  for a gift of goods describes the goods and states no value; a letter for a gift
+  of money states its amount.  [Decision — owner]
 
 - Only finance, operations and inventory managers record a gift of goods that
-  arrives without a receipt, and only those three and the board see these
-  gifts.  [Decision — owner]
+  arrives without a receipt. Only those three and the board see these gifts,
+  apart from what a program's approvers see.  [Decision — owner]
 
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts

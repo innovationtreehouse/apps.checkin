@@ -16,8 +16,8 @@
  *      unless the view is own-rows-only; a failed write is an opaque 500.
  *   8. Emit row[field] (bytes) with the headers fixed for its content type.
  *
- * Errors thrown from the user fn: `ApiResponseError` → its status; anything
- * else → opaque 500.
+ * Errors thrown from the user fn: `ApiResponseError` → its status, message and
+ * optional code; anything else → opaque 500.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -35,7 +35,7 @@ import {
     type Token,
 } from './core';
 import { buildCallerContext, callerHoldsRole, resolveAccess, scopesHeld } from './access-resolvers';
-import { ApiResponseError, idText, recordAuditedView, viewReachesOthers, type HandlerContext } from './handler';
+import { ApiResponseError, idText, recordAuditedView, renderApiResponseError, viewReachesOthers, type HandlerContext } from './handler';
 // Side-effect import to register routes before fileHandler() is invoked.
 import './registry';
 
@@ -116,7 +116,7 @@ export function fileHandler<P extends Record<string, string> = Record<string, st
         try {
             result = await fn({ req, auth, params, role });
         } catch (err) {
-            if (err instanceof ApiResponseError) return apiError(err.message, err.status);
+            if (err instanceof ApiResponseError) return renderApiResponseError(err);
             console.error(`[${endpoint}] file handler error:`, err);
             return apiError('Internal Server Error', 500);
         }

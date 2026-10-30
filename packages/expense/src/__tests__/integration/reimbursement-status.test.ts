@@ -57,6 +57,13 @@ describeDb("X12 reimbursement status", () => {
     expect([...paid.values()]).toEqual([{ paidOn: null }, { paidOn: null }, { paidOn: null }]);
   });
 
+  it("a reimbursement finance skipped has no status to read", async () => {
+    bindQb([]);
+    const id = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "SKIPPED" } });
+    expect(await reimbursementStatus.forReceipts([ask(id)])).toEqual(new Map([[id, { paidOn: null, statusUnavailable: true }]]));
+  });
+
   it("a backfilled Purchase is paid on its own date", async () => {
     bindQb([], [{ id: "h1", txnDate: "2025-02-03" }]);
     const paid = await reimbursementStatus.forReceipts([

@@ -521,7 +521,7 @@ have landed.
   `no_takeover_date` gate.
 - **#2210** (open)'s "finance's own bookings come first" bullet.
 - The takeover-line passages of `1272_EXPENSE_QB_INTEGRATION.md`
-  (around lines 1140-1149), `1280_BULK_DONATION_INTEGRATION.md` (429-447) and
+  (around lines 1140-1149) and
   `1283_INCOME_INTEGRATION.md` (160-170), which the lane PRs update.
 
 ---

@@ -126,7 +126,7 @@ audited through `setRoleFlag` like every other role, and appears on the existing
 Roles screen (Membership Ops → Roles) and in `RoleBadge`.
 
 It grants no access. No registry entry, nav gate or `withAuth` gate names it; it
-is not a `BusinessRole` and is not added to `VALID_ROLES` in
+is not a `BusinessRole` and is not added to `ROLES` in
 `checkin-app/src/security/core.ts`. It has no legacy mirror column on `Person`.
 
 The Board grants it for any reason the person owes the agreement: ahead of one of

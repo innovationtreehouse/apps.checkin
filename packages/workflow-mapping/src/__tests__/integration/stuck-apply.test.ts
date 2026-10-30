@@ -144,6 +144,22 @@ describeDb("sweepStuckApplying attempt cap", () => {
     expect(JSON.parse(gaveUp[0].details ?? "{}")).toMatchObject({ gaveUp: true, sweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS });
   });
 
+  it.each([
+    { name: "has no inventory leg", recognitionStatus: "unrecognized", assignedGtin13: null, inventoryAppliedAt: null },
+    { name: "already stamped its inventory leg", recognitionStatus: "recognized", assignedGtin13: "0000000000017", inventoryAppliedAt: new Date() },
+  ] as const)("gives up without marking inventory unconfirmed when the receipt $name", async ({ recognitionStatus, assignedGtin13, inventoryAppliedAt }) => {
+    const r = await makeReceipt({ state: "applying" });
+    await makeLineStatus(r.id, { recognitionStatus, assignedGtin13 });
+    await db.receivedReceipt.update({ where: { id: r.id }, data: { inventoryAppliedAt } });
+    await failPushStart(r.id);
+    try {
+      for (let i = 0; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) await sweepStuckApplying();
+    } finally {
+      await restoreWrites("workflow_audit_log");
+    }
+    expect(await row(r.id)).toMatchObject({ state: "apply_failed", inventoryUnconfirmedAt: null });
+  });
+
   it("moves a receipt whose inventory stamp keeps failing to apply_failed at the cap", async () => {
     const r = await stuckReceipt();
     await failInventoryStamp(r.id);

@@ -11,6 +11,8 @@ export async function wipeStore(prisma: PrismaClient, storeId: string): Promise<
   await prisma.shopOrderLine.deleteMany({ where: { storeId } });
   await prisma.shopRefund.deleteMany({ where: { storeId } });
   await prisma.shopOrder.deleteMany({ where: { storeId } });
+  await prisma.shopBalanceTransaction.deleteMany({ where: { storeId } });
+  await prisma.shopPayout.deleteMany({ where: { storeId } });
   await prisma.syncState.deleteMany({ where: { storeId } });
   await prisma.syncRun.deleteMany({ where: { storeId } });
 }

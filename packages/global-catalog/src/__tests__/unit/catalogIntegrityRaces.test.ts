@@ -8,7 +8,7 @@ import { approveItemReferenceProposal, createItemReferenceProposal } from "../..
 import { approveProvisionalProposal, createProvisionalItem, allocateNextProvisionalGtin } from "../../services/provisionalGtinService";
 import { acceptChallenge, lockChallengeSubmission, submitChallenge } from "../../services/conversionChallengeService";
 import { resolveConflict } from "../../services/conflictResolutionService";
-import { lockReferenceKeys, type RefFields } from "../../services/referenceMatchingService";
+import { checkReferences, lockReferenceKeys, lookupMany, type RefFields } from "../../services/referenceMatchingService";
 
 const G1 = "0011111111116";
 const G2 = "0022222222223";
@@ -252,5 +252,27 @@ describeDb("conversion challenges", () => {
     const ref = await seedRef();
     await challenge(ref.id, 2, "org-2");
     await expect(challenge(ref.id, 3)).resolves.toMatchObject({ status: "pending" });
+  });
+});
+
+describeDb("manufacturer + description lookup", () => {
+  const widget = { manufacturer: "Acme", descriptionNormalized: "widget" };
+  const byDescription = () => lookupMany("Shop", [{ index: 0, manufacturer: "Acme", description: "Widget" }]);
+
+  it("doesn't answer with a reference that has a part number", async () => {
+    await prisma.itemReference.create({ data: { ...widget, gtin13: G1, partNumber: "P-1" } });
+
+    expect(await byDescription()).toMatchObject([{ gtin13: null }]);
+    expect(await checkReferences({ manufacturer: "Acme", description: "Widget" })).toMatchObject({
+      mfr_desc: { exists: false },
+      wouldCreateNewReference: true,
+    });
+  });
+
+  it("answers with the description-only reference when a part-number reference shares its description", async () => {
+    await prisma.itemReference.create({ data: { ...widget, gtin13: G1, partNumber: "P-1" } });
+    await prisma.itemReference.create({ data: { ...widget, gtin13: G2 } });
+
+    expect(await byDescription()).toMatchObject([{ gtin13: G2 }]);
   });
 });

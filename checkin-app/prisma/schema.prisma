@@ -284,6 +284,7 @@ enum PersonRoleKind {
   OPERATIONS
   INVENTORY_MANAGER
   FINANCE
+  KEY_VOLUNTEER
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -369,6 +370,10 @@ model Household {
   /// @sensitivity:pii
   intakeNotes String?
 
+  /// When the family left the organisation permanently; null means active.
+  /// @sensitivity:public
+  archivedAt DateTime?
+
   householdMembers  Person[]
   orgMembership     OrgMembership?
   trustedAdults     TrustedAdult[]
@@ -444,6 +449,9 @@ enum OrgMembershipProcessKind {
   // signer is a legal adult and can't be bound by their parent's signature, so they
   // sign their own. Opens at PENDING_EXTERNAL_ACTION; the signature flips it to ACTIVE.
   PERSON_AGREEMENT
+  // Per-person Key Volunteer Agreement. Like PERSON_AGREEMENT, orgMembershipId is
+  // null and subjectPersonId is the signer.
+  KEY_VOLUNTEER_AGREEMENT
 }
 
 enum OrgMembershipProcessStatus {
@@ -564,6 +572,10 @@ model OrgMembershipProcess {
   zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
   /// @sensitivity:internal
   contractSignedAt      DateTime?
+  /// The BoardSettings.keyVolunteerAgreementVersion a KEY_VOLUNTEER_AGREEMENT
+  /// opened at. Null on every other kind.
+  /// @sensitivity:internal
+  agreementVersion      Int?
   /// @sensitivity:internal
   bgConsentAt           DateTime?
   /// When the background-check requirement was satisfied for this cycle — either
@@ -719,6 +731,10 @@ model BoardSettings {
   /// (the board must set the real Treehouse policy value before renewals re-check).
   /// @sensitivity:public
   bgRecheckMonths            Int       @default(0)
+  /// Current version of the Key Volunteer Agreement; a signature counts only at
+  /// this version.
+  /// @sensitivity:public
+  keyVolunteerAgreementVersion Int     @default(1)
   /// DEV-INSTANCE-ONLY override for where contract signing requests go:
   /// 'debug' routes them to the in-app mock interstitial (/dev/zoho-sign) even
   /// when real Zoho creds are set; 'zoho' or NULL uses whatever the env
@@ -1968,7 +1984,7 @@ model Org {
 }
 
 /// An accounting bucket that expense lines and bulk-donation gifts are owned by
-/// (#1280 §6). Not a Person. Its approvers are its owner and its treasurers, set
+/// (#1280). Not a Person. Its approvers are its owner and its treasurers, set
 /// by the Board. An org-level bucket (Facility is one of several) has none,
 /// because finance assigning an item to it is the approval.
 /// Buckets are archived, never deleted — libraries hold `id` as an opaque
