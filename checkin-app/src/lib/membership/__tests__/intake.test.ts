@@ -533,12 +533,11 @@ describe('saveIntake', () => {
     it('a sysadmin who does not lead the household cannot promote a guardian through intake', async () => {
         const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
         jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
-        prisma.person.create.mockResolvedValue({ id: 4 });
-        prisma.person.findUnique.mockResolvedValueOnce({ ...user, isHouseholdLead: false, isSysadmin: true });
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
 
         const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
 
-        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { personId: expect.any(Number), householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { personId: 4, householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
         expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
         expect(addHouseholdLead).not.toHaveBeenCalled();
         expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
@@ -553,6 +552,17 @@ describe('saveIntake', () => {
             { section: 'secondaryParent', code: 'household_denied', message: expect.stringContaining('denied membership') },
         ]);
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, personId: 4 }));
+    });
+
+    it('a refused new second parent is recorded against the household, not the minted id', async () => {
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce({ actorId: 1, affectedEntityId: 7, newData: {} });
+        prisma.person.create.mockResolvedValue({ id: 55 });
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+
+        await saveIntake(1, { secondaryParent: { name: 'New Parent' } });
+
+        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(addHouseholdLead).not.toHaveBeenCalled();
     });
 
     it('a youth second parent is a rejection, kept as a household member', async () => {
