@@ -286,15 +286,15 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   already in such a bucket waits in finance's queue, and the app never reassigns
   it.  [Decision — owner]
 
-- Every gift of goods is accepted, refused or returned once, by a finance holder,
-  before it books. A refused or returned gift never books, and its goods are
+- Every gift of goods is accepted, refused or returned once before it books, by a
+  finance holder, or by a Board member when every finance holder is conflicted
+  with the uploader or recorder. A refused or returned gift never books, and its goods are
   adjusted out of stock by hand, never by the app.  [Decision — owner]
 
 - Nobody decides a gift of goods that they or their household uploaded or
   recorded, or where they or their household is the donor. Donors aren't linked to
   people, so the person deciding confirms they are outside the donor's household,
-  and that is recorded. A Board member decides only when every finance holder is
-  conflicted with the uploader or recorder.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
+  and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
@@ -310,9 +310,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Gifts of goods follow the closed-books rules in Income, with their own switch-on.
   A gift counts from when its money arrived or it was recorded.  [Decision — owner]
 
-- A gift of goods withdrawn after it booked is raised for finance to reverse by
-  hand; the app changes nothing in the books. When finance settles a withdrawal,
-  the donor's details are cleared and the gift and its money stay.  [Decision — owner]
+- A gift of goods withdrawn after its money arrived is raised for finance, booked
+  or not. Finance reverses it by hand only if it booked; the app changes nothing
+  in the books. When finance settles a withdrawal, the donor's details are cleared
+  and the gift and its money stay.  [Decision — owner]
 
 - The app sends no donor letter for a gift of goods before it is accepted. A letter
   for a gift of goods describes the goods and states no value; a letter for a gift

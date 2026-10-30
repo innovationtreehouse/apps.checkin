@@ -1,4 +1,4 @@
-// Capital review of donated equipment (docs/rules/revenue.md, Donations): a gift line at or over the capital thresholds
+// Capital review of donated equipment (docs/rules/expenses.md, Receipts): a gift line at or over the capital thresholds
 // is reviewed by finance like a purchased line, and an asset line mints into the one register.
 import { z } from "zod";
 import { db } from "../db";
