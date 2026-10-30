@@ -36,6 +36,9 @@ Things every domain takes as true because they are handled outside the app.
   outside the household, and business ties, are a deliberate limit: they are not
   modelled, and people declare them themselves.
   [Decision — *Policy: Ethics Policy, Art. III §III.2*]
+- Background-check review volume is low enough that a person handles mistakes,
+  through a Board reset, rather than a dedicated app feature. So a mistaken
+  rejection has no withdraw of its own.  [Decision — owner ruling 2026-10-30]
 
 ---
 
