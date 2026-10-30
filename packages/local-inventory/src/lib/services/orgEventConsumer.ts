@@ -46,17 +46,30 @@ export async function consumeOrgEvent(ev: OrgEventRecord): Promise<ConsumeResult
   const row = { id: ev.id, orgId: ev.orgId, eventType: ev.eventType, payload: ev.payload, receivedAt: ev.createdAt };
   await db.inventoryReceivedOrgEvent.createMany({ data: [{ ...row, status, failureReason }], skipDuplicates: true });
   // An overlapping consumer may have processed this event; its outcome stands.
-  await db.inventoryReceivedOrgEvent.updateMany({
+  const { count } = await db.inventoryReceivedOrgEvent.updateMany({
     where: { id: ev.id, status: { not: "processed" } },
     data: { status, failureReason },
   });
-  return status;
+  return status === "failed" && count === 0 ? "duplicate" : status;
+}
+
+/** Tell a person about events left undone. An alert that fails never fails the caller. */
+async function alertStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
+  try {
+    await getInventoryAlerts()?.orgEventsStuck(event);
+  } catch (err) {
+    console.error("[local-inventory/org-events] alert failed", err);
+  }
 }
 
 /** S5 handler, registered with the catalog's post-commit call-out. */
 export const orgEventConsumer = {
   async onOrgEvents(events: OrgEventRecord[]): Promise<void> {
-    for (const ev of [...events].sort((a, b) => a.id - b.id)) await consumeOrgEvent(ev);
+    let failed = 0;
+    for (const ev of [...events].sort((a, b) => a.id - b.id)) {
+      if ((await consumeOrgEvent(ev)) === "failed") failed++;
+    }
+    if (failed > 0) await alertStuck({ failed, unprocessed: 0, unreadable: false });
   },
 };
 
@@ -107,8 +120,9 @@ async function consumeInSweep(ev: OrgEventRecord): Promise<ConsumeResult> {
  * Catch-up sweep: retries failed events, then pages through all the org's catalog events and
  * consumes those not in the ledger, then reconciles pending provisionals that have a stored
  * resolution. Reading from the start means no event is missed however late it committed or
- * however many later ids were received. What stays undone this run is retried on the next, and
- * alerts a person once. The host's daily reconcile cron step calls it. Capped; counts only.
+ * however many later ids were received. What stays undone is retried on the next run. A person
+ * is alerted once per run for an event newly failed, over the cap or unreadable; a retry that
+ * fails again only stays failed in the ledger and the counts. The host's daily reconcile cron step calls it. Capped; counts only.
  */
 export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
@@ -123,6 +137,7 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   let unprocessed = allPending.length - pending.length;
   let unreadable = false;
   let budget = limit - pending.length;
+  let newlyFailed = 0;
   try {
     // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
     let after = 0;
@@ -134,7 +149,9 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
         if (received.has(ev.id)) continue;
         if (budget > 0) {
           budget--;
-          counts[await consumeInSweep(ev)]++;
+          const result = await consumeInSweep(ev);
+          counts[result]++;
+          if (result === "failed") newlyFailed++;
         } else {
           unprocessed++;
         }
@@ -147,12 +164,6 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   }
 
   const reconciled = await reconcilePendingProvisionals(orgId, limit);
-  if (counts.failed > 0 || unprocessed > 0 || unreadable) {
-    try {
-      await getInventoryAlerts()?.orgEventsStuck({ failed: counts.failed, unprocessed, unreadable });
-    } catch (err) {
-      console.error("[local-inventory/org-events] alert failed", err);
-    }
-  }
+  if (newlyFailed > 0 || unprocessed > 0 || unreadable) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
   return { ...counts, ...reconciled, unprocessed, unreadable };
 }

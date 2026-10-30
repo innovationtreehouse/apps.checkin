@@ -203,6 +203,38 @@ describeDb("S5 catch-up: alerts", () => {
     expect(await db.inventoryReceivedOrgEvent.count({ where: { id: 3 } })).toBe(0);
   });
 
+  it("alerts when an event first fails in the sweep, not on later retries", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(pagedSource([malformed(1)]), { orgEventsStuck });
+
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+
+    expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed" });
+  });
+
+  it("alerts when an event first fails in the call-out, not when the sweep retries it", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(pagedSource([malformed(1)]), { orgEventsStuck });
+
+    await orgEventConsumer.onOrgEvents([malformed(1)]);
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+  });
+
+  it("alerts on every run while the sweep stays over its cap", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(pagedSource([rejected(1), rejected(2)]), { orgEventsStuck });
+
+    await catchUpOrgEvents(0);
+    await catchUpOrgEvents(0);
+    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+  });
+
   it("finishes the run when the alert itself throws", async () => {
     configure(pagedSource([malformed(1)]), { orgEventsStuck: async () => { throw new Error("mail down"); } });
     expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
