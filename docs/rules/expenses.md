@@ -185,6 +185,19 @@ Things the app takes as true because they are handled outside it.
   refused automatically.
   [Decision — deliberate limit]
 
+- A receipt's file hash is deliberately not unique, so two receipts may hold the
+  same file: the second is stored and flagged for finance. A unique hash would
+  refuse it before a person could look. Reading the same file from the same
+  mailed message again makes no second receipt.
+  [Decision — deliberate limit]
+
+- An automatic reading of a receipt is kept whole or not at all. When a reading
+  fails, is refused, has no lines, or has any value out of bounds, nothing from
+  it is saved, and the receipt waits for a person to retry or discard it. A
+  reading with lines but no retailer, date or total is kept, and its submitter
+  fills those in before any other check runs.
+  [Decision]
+
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off.
   [Decision]
