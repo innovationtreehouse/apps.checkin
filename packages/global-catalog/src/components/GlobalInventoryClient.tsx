@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage, lastPage, latestGate, useCanManage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, ItemReferenceRow, ReferenceConflictRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";

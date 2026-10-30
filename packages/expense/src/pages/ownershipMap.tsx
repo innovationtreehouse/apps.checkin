@@ -2,8 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { paged, send, useLoad, useRoles, type Bucket } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface PartOwner {
   id: number;

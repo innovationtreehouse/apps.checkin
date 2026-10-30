@@ -4,7 +4,7 @@ import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, errorMessage, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface ConflictRow {
   id: number;

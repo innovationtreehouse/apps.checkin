@@ -28,9 +28,10 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
     "@checkin/donations": "*",
     "@checkin/money": "*",
-    "@checkin/component-kit": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/receipt-types": "*",

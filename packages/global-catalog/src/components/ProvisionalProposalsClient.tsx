@@ -9,7 +9,7 @@ import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
 

@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
-import { useSession } from "next-auth/react";
+import { useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { act, api, cents, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
+import { act, api, useLoad, when } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface QueueLine {
@@ -57,9 +58,8 @@ const WARNINGS: { key: "warnDonorSurnameMatch" | "warnDonorIsRecorder" | "warnLa
 ];
 
 function useRoles(): { isFinance: boolean; isBoard: boolean } {
-  const { data } = useSession();
-  const u = data?.user as { isFinance?: boolean; isBoardMember?: boolean } | undefined;
-  return { isFinance: u?.isFinance === true, isBoard: u?.isBoardMember === true };
+  const viewer = useViewer();
+  return { isFinance: viewer?.isFinance === true, isBoard: viewer?.isBoardMember === true };
 }
 
 /** The accept screen for one gift: warnings, values for a gift without a receipt, bucket, and the three outcomes. */
@@ -119,10 +119,10 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
                   {needsValues ? (
                     <NumberInput aria-label={`Value of line ${l.id}`} min={0} decimalScale={2} value={values[l.id]} onChange={(v) => setValues({ ...values, [l.id]: v === "" ? "" : Number(v) || 0 })} w={140} />
                   ) : (
-                    cents(l.valueCents)
+                    formatCents(l.valueCents)
                   )}
                 </Table.Td>
-                {needsValues && <Table.Td>{l.suggestedValueCents === null ? "—" : cents(l.suggestedValueCents)}</Table.Td>}
+                {needsValues && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}
               </Table.Tr>
             ))}
           </Table.Tbody>
@@ -265,7 +265,7 @@ export default function InKindQueuePage() {
                   </Table.Td>
                   <Table.Td><Anchor href={`/donations/in-kind/${q.source}/${q.id}`}>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Anchor></Table.Td>
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
-                  <Table.Td>{q.totalValueCents === null ? "—" : cents(q.totalValueCents)}</Table.Td>
+                  <Table.Td>{q.totalValueCents === null ? "—" : formatCents(q.totalValueCents)}</Table.Td>
                   <Table.Td>{q.budgetOwnerName ?? "—"}</Table.Td>
                   <Table.Td>
                     {q.revenueBooking || q.expenseBooking ? `Revenue ${q.revenueBooking ?? "—"}, expense ${q.expenseBooking ?? "—"}` : q.qbState ?? "—"}

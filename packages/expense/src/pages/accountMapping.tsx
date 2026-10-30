@@ -3,8 +3,7 @@ import { useState } from "react";
 import { ActionIcon, Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface Mapping {
   id: number;

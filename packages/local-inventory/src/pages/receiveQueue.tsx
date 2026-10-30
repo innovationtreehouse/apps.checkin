@@ -5,7 +5,7 @@ import { notifications } from "@mantine/notifications";
 import { IconCheck, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface QueueRow {
   id: number;

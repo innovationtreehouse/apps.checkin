@@ -1,6 +1,7 @@
 // Program stock engine: the one writer of a program's Shopify stock, its lease and
 // keyed-delta path, the unconfirmed-write settle, price sync and off-sale.
 
+import { centsToDecimalString } from "@checkin/money";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
@@ -879,7 +880,7 @@ export async function syncProgramPrice(
         );
         return false;
     }
-    const price = (basePriceCents / 100).toFixed(2);
+    const price = centsToDecimalString(basePriceCents);
 
     // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
     if (config.shopifyMockActive()) {
@@ -910,7 +911,7 @@ export async function syncProgramPrice(
         };
         await outboundCall('shopify.product.update', bag, async (stripped) => {
             const sent = stripped.Program as { shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null; nonOrgMemberPriceCents: number };
-            const sentPrice = (sent.nonOrgMemberPriceCents / 100).toFixed(2);
+            const sentPrice = centsToDecimalString(sent.nonOrgMemberPriceCents);
             for (const variantId of programVariantIds(sent)) {
                 const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
                     method: 'PUT',

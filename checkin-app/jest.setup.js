@@ -87,6 +87,12 @@ jest.mock('next/server', () => {
   };
 });
 
+// Package pages read the viewer from the host's provider; page tests render them bare and set roles through the next-auth mock.
+jest.mock('@checkin/component-ui', () => ({
+  ...jest.requireActual('@checkin/component-ui'),
+  useViewer: () => require('@/components/AuthProvider').viewerFromSession(require('next-auth/react').useSession().data),
+}));
+
 // Mock next-auth to prevent instantiation errors in App Router imports
 jest.mock('next-auth', () => {
   const mockNextAuth = jest.fn(() => ({}));

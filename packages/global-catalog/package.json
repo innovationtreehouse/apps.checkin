@@ -32,8 +32,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@checkin/gtin": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/gtin": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",

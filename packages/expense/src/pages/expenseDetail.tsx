@@ -11,7 +11,7 @@ import { REASON_PLACE, reasonText } from "../lib/reasonWords";
 import { backToQueue, lineWaitsOnViewer } from "../lib/backToQueue";
 import { lineCents } from "../qb-write";
 import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 import NonInventoryBadge from "../components/NonInventoryBadge";
 import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
 import ApproveAllButton from "../components/ApproveAllButton";
