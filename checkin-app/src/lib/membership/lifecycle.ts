@@ -45,7 +45,7 @@ export type ProcessStatus =
     | "RENEWAL_PENDING_BG"
     | "ARCHIVED";
 
-export type ProcessKind = "INITIAL" | "RENEWAL" | "PERSON_BG" | "PERSON_AGREEMENT";
+export type ProcessKind = "INITIAL" | "RENEWAL" | "PERSON_BG" | "PERSON_AGREEMENT" | "KEY_VOLUNTEER_AGREEMENT";
 
 // Compile-time parity: these fail to compile if the schema enum drifts from the
 // local union. `import type` keeps the enum out of the client bundle; the
@@ -444,7 +444,7 @@ export function isLegalTransition(from: ProcessStatus, to: ProcessStatus, kind?:
 export const INITIAL_STATES: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "PENDING_BG_REVIEW"];
 
 /** Every declared kind — the second axis of the exhaustive state-space test. */
-export const ALL_KINDS: readonly ProcessKind[] = ["INITIAL", "RENEWAL", "PERSON_BG", "PERSON_AGREEMENT"];
+export const ALL_KINDS: readonly ProcessKind[] = ["INITIAL", "RENEWAL", "PERSON_BG", "PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
 
 /** Every declared status (for reachability's `unreachable` computation). */
 export const ALL_STATUSES: readonly ProcessStatus[] = [
