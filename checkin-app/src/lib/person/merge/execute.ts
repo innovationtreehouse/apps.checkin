@@ -418,30 +418,36 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
  * PersonRole.personId is CASCADE — a role left on the tombstone is a security
  * grant a later delete destroys. Each role moves through setRoleFlag, the role
  * routes' choke point, so it runs their guards and writes one audit row per
- * change: granted to the keeper first (a no-op when the keeper already holds
- * it), then revoked from the tombstone, so a moving BOARD never counts down to
- * zero. A moved row keeps its original grant metadata; the audit rows name the
+ * change: every role is granted to the keeper first (a no-op when the keeper
+ * already holds it), then revoked from the tombstone, so a moving BOARD never
+ * counts down to zero. KEY_VOLUNTEER is granted first and revoked last, the
+ * order its rules need; the move is not a new grant, so the Key Volunteer
+ * agreement check is skipped (the agreements moved with the other relations).
+ * A moved row keeps its original grant metadata; the audit rows name the
  * merging actor. Read in the transaction so a role granted after the pre-tx
  * read still moves.
  */
 async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
-    const tombstoneRoles = await tx.personRole.findMany({
+    const tombstoneRoles = (await tx.personRole.findMany({
         where: { personId: mergeId },
         select: { role: true, grantedById: true, grantedAt: true },
-    });
-    for (const { role, grantedById, grantedAt } of tombstoneRoles) {
-        if (!actor) throw new RoleMatrixError("Forbidden");
-        const flag = KIND_TO_FLAG[role];
-        const granted = await setRoleFlag(tx, keepId, flag, true, actor);
-        await setRoleFlag(tx, mergeId, flag, false, actor);
-        if (granted.changed) {
-            await tx.personRole.update({
-                where: { personId_role: { personId: keepId, role } },
-                data: { grantedById, grantedAt },
-            });
-            moved.roles.migrated++;
-        } else {
-            moved.roles.deduped++;
+    })).sort((a, b) => Number(b.role === "KEY_VOLUNTEER") - Number(a.role === "KEY_VOLUNTEER"));
+    if (tombstoneRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
+    if (actor) {
+        for (const { role, grantedById, grantedAt } of tombstoneRoles) {
+            const granted = await setRoleFlag(tx, keepId, KIND_TO_FLAG[role], true, actor, { move: true });
+            if (granted.changed) {
+                await tx.personRole.update({
+                    where: { personId_role: { personId: keepId, role } },
+                    data: { grantedById, grantedAt },
+                });
+                moved.roles.migrated++;
+            } else {
+                moved.roles.deduped++;
+            }
+        }
+        for (const { role } of [...tombstoneRoles].reverse()) {
+            await setRoleFlag(tx, mergeId, KIND_TO_FLAG[role], false, actor);
         }
     }
     // After the holder pass, so a granter stamp on a deduped row isn't counted.

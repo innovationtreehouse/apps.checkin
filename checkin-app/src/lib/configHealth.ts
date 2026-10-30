@@ -41,6 +41,17 @@ export function getConfigHealth(): ConfigCheck[] {
                   : "NOT configured — set AGREEMENT_PDF_S3_BUCKET (sign endpoint 503s without it).",
         },
         {
+            id: "kva-pdf-s3",
+            label: "Key Volunteer Agreement PDF (S3)",
+            // Presence only: whether the object itself is uploaded shows on the membership settings page.
+            ok: !!config.agreementPdfBucket() || mock,
+            detail: config.agreementPdfBucket()
+                ? `Read from ${config.kvaPdfKey()} in the agreement bucket (KVA_PDF_S3_KEY).`
+                : mock
+                  ? "Not required — Zoho mock skips the S3 PDF load."
+                  : "NOT configured — set AGREEMENT_PDF_S3_BUCKET; the Key Volunteer Agreement is read from KVA_PDF_S3_KEY in it.",
+        },
+        {
             id: "receipt-files-s3",
             label: "Receipt files (S3)",
             // Only a gap once new files go to the bucket; a laptop uses a temp directory.

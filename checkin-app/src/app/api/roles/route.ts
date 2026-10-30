@@ -8,12 +8,17 @@ import {
     type RoleFlag,
     rolesToFlags,
     setRoleFlag,
+    orderRoleChanges,
     RoleMatrixError,
     LastBoardMemberError,
     DeniedHouseholdBoardError,
     OwnHouseholdRoleError,
+    KeyVolunteerAgreementRequiredError,
+    KeyVolunteerRemovalOrderError,
     assertNotOwnHousehold,
 } from "@/lib/roles";
+import { currentKvaVersion, KVA_KIND } from "@/lib/membership/keyVolunteerProcess";
+import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { personActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -31,6 +36,33 @@ const PERSON_SELECT = {
 /** Thrown inside the tx when `targetUserId` does not resolve to a Person. */
 class TargetNotFoundError extends Error {}
 
+/**
+ * Each person's Key Volunteer Agreement standing, for the Roles screen: whether
+ * they have signed the current version and when, and the id of an open, unsigned
+ * agreement the Board can record as signed by hand.
+ */
+async function kvaStandingByPerson(): Promise<Map<number, { kvaSignedCurrent: boolean; kvaSignedAt: Date | null; kvaOpenProcessId: number | null }>> {
+    const version = await currentKvaVersion(prisma);
+    const processes = await prisma.orgMembershipProcess.findMany({
+        where: { kind: KVA_KIND, subjectPersonId: { not: null } },
+        select: { id: true, subjectPersonId: true, status: true, agreementVersion: true, contractSignedAt: true },
+        orderBy: { id: "asc" },
+    });
+    const standing = new Map<number, { kvaSignedCurrent: boolean; kvaSignedAt: Date | null; kvaOpenProcessId: number | null }>();
+    for (const p of processes) {
+        const personId = p.subjectPersonId!;
+        const row = standing.get(personId) ?? { kvaSignedCurrent: false, kvaSignedAt: null, kvaOpenProcessId: null };
+        if (p.status === "ACTIVE") {
+            if ((p.agreementVersion ?? 0) >= version) row.kvaSignedCurrent = true;
+            row.kvaSignedAt = p.contractSignedAt;
+        } else if (p.status === "PENDING_EXTERNAL_ACTION") {
+            row.kvaOpenProcessId = p.id;
+        }
+        standing.set(personId, row);
+    }
+    return standing;
+}
+
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
     async () => {
@@ -43,18 +75,20 @@ export const GET = withAuth(
                     name: true,
                     dateOfBirth: true,
                     roles: { select: { role: true } },
-                    // NOT one of the five ROLE_FLAGS — a plain column exposed alongside them
+                    // NOT one of the ROLE_FLAGS — a plain column exposed alongside them
                     // (sysadmin-only settable; see the PATCH handler below).
                     canAccessStaging: true,
                 },
                 orderBy: { name: "asc" },
             });
+            const kva = await kvaStandingByPerson();
             // Don't leak dob (PII); expose only a youth flag for filtering. isOperations has
             // no column, so every flag is derived through the one `roles` relation.
             const people = rows.map(({ dateOfBirth, roles, ...p }) => ({
                 ...p,
                 ...rolesToFlags(roles),
                 isYouth: isYouth(dateOfBirth),
+                ...(kva.get(p.id) ?? { kvaSignedCurrent: false, kvaSignedAt: null, kvaOpenProcessId: null }),
             }));
             return NextResponse.json({ people });
         } catch (error) {
@@ -77,7 +111,7 @@ export const PATCH = withAuth(
             }
 
             const body = await req.json();
-            // canAccessStaging is pulled out separately: it is NOT one of the five
+            // canAccessStaging is pulled out separately: it is NOT one of the
             // PersonRole-backed ROLE_FLAGS (see lib/roles.ts) and does not go through
             // setRoleFlag's board-symmetric authority matrix. It has its own,
             // stricter rule below — sysadmin-only, full stop, mirroring the pre-
@@ -119,8 +153,10 @@ export const PATCH = withAuth(
                 if (!target) throw new TargetNotFoundError();
 
                 // setRoleFlag writes one PersonRole audit row per changed flag.
-                for (const field of Object.keys(requested) as RoleFlag[]) {
-                    await setRoleFlag(tx, targetUserId, field, requested[field]!, actor);
+                const recallRequestIds: string[] = [];
+                for (const [field, on] of orderRoleChanges(requested)) {
+                    const written = await setRoleFlag(tx, targetUserId, field, on, actor);
+                    recallRequestIds.push(...written.recallRequestIds);
                 }
 
                 // canAccessStaging is a Person column, so it is audited under tableName "Person".
@@ -161,6 +197,7 @@ export const PATCH = withAuth(
                     select: { role: true },
                 });
                 return {
+                    recallRequestIds,
                     user: {
                         id: target.id, email: target.email, name: target.name,
                         ...rolesToFlags(rows),
@@ -170,6 +207,7 @@ export const PATCH = withAuth(
             });
             // isKeyholder drives the roster's keyholder count and the close logic.
             invalidateAttendanceCache();
+            await recallSigningRequests(result.recallRequestIds);
 
             return NextResponse.json({ message: "Roles updated successfully", user: result.user });
         } catch (error) {
@@ -184,6 +222,12 @@ export const PATCH = withAuth(
             }
             if (error instanceof LastBoardMemberError) {
                 return apiError("Cannot remove the last board member", 409);
+            }
+            if (error instanceof KeyVolunteerAgreementRequiredError) {
+                return apiError("Sign the current Key Volunteer agreement first: Board, BG reviewer, Keyholder and Finance are granted only to a Key Volunteer who has signed it.", 409);
+            }
+            if (error instanceof KeyVolunteerRemovalOrderError) {
+                return apiError("Remove Board, BG reviewer, Keyholder and Finance first, then the Key Volunteer role.", 409);
             }
             if (error instanceof DeniedHouseholdBoardError) {
                 return apiError("This person's household has been denied membership. Restore the household's membership before granting the board role.", 409);

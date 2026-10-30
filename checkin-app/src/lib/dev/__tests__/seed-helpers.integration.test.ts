@@ -51,6 +51,19 @@ describe("dev seed-helpers (integration)", () => {
         expect(await prisma.person.findUnique({ where: { email: "boardmember@example.com" } })).not.toBeNull();
     });
 
+    it("seeded holders of the gated roles are Key Volunteers with a signed agreement", async () => {
+        for (const email of ["boardmember@example.com", "keyholder1@example.com", "bg.reviewer@example.com", "finance@example.com"]) {
+            const person = await prisma.person.findUniqueOrThrow({ where: { email }, select: { id: true } });
+            expect(await prisma.personRole.findUnique({ where: { personId_role: { personId: person.id, role: "KEY_VOLUNTEER" } } })).not.toBeNull();
+            expect(await prisma.orgMembershipProcess.count({
+                where: { subjectPersonId: person.id, kind: "KEY_VOLUNTEER_AGREEMENT", status: "ACTIVE" },
+            })).toBe(1);
+        }
+        // Re-seeding opens nothing new.
+        await seedBaseline(prisma);
+        expect(await prisma.orgMembershipProcess.count({ where: { kind: "KEY_VOLUNTEER_AGREEMENT", status: { not: "ACTIVE" } } })).toBe(0);
+    });
+
     it("+ Family adds a household with a lead, a partner, and a youth", async () => {
         const before = await prisma.person.count();
         const summary = await createFamily(prisma);

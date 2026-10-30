@@ -1,9 +1,10 @@
-import { GetObjectCommand, NoSuchKey, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, NoSuchKey, NotFound, S3Client } from "@aws-sdk/client-s3";
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 import { config } from "@/lib/config";
 
 /**
- * Loader for the static membership-agreement PDF that gets uploaded to Zoho Sign.
+ * Loader for the static agreement PDFs that get uploaded to Zoho Sign: the
+ * membership agreement and the Key Volunteer Agreement, two objects in one bucket.
  * We do NOT generate the PDF — Zoho overlays the signature fields onto this file
  * (Printed Name prefilled). Reads the last-page index + dimensions the way the
  * source-of-truth script used pymupdf, but via pdf-lib (pure JS).
@@ -20,6 +21,7 @@ import { config } from "@/lib/config";
 
 /** Filename shown in Zoho for the uploaded document. */
 export const AGREEMENT_FILENAME = "membership-agreement.pdf";
+export const KVA_FILENAME = "key-volunteer-agreement.pdf";
 
 export interface LoadedAgreement {
     pdf: Buffer;
@@ -44,15 +46,36 @@ function s3Client(): S3Client {
     return s3;
 }
 
-/** Read the agreement PDF from S3 and the geometry needed to place the signature fields. */
-export async function loadAgreementPdf(): Promise<LoadedAgreement> {
+/** Read the membership agreement PDF from S3 and the geometry needed to place the signature fields. */
+export function loadAgreementPdf(): Promise<LoadedAgreement> {
+    return loadPdf(config.agreementPdfKey(), "Membership agreement");
+}
+
+/** Read the Key Volunteer Agreement PDF (`KVA_PDF_S3_KEY`) the same way. */
+export function loadKvaPdf(): Promise<LoadedAgreement> {
+    return loadPdf(config.kvaPdfKey(), "Key Volunteer Agreement");
+}
+
+/** True when the Key Volunteer Agreement PDF is in the bucket. */
+export async function kvaDocumentInPlace(): Promise<boolean> {
+    const bucket = config.agreementPdfBucket();
+    if (!bucket) return false;
+    try {
+        await s3Client().send(new HeadObjectCommand({ Bucket: bucket, Key: config.kvaPdfKey() }));
+        return true;
+    } catch (e) {
+        if (e instanceof NotFound || (e as { name?: string })?.name === "NotFound") return false;
+        throw e;
+    }
+}
+
+async function loadPdf(key: string, label: string): Promise<LoadedAgreement> {
     const bucket = config.agreementPdfBucket();
     if (!bucket) {
         throw new AgreementUnavailableError(
-            "Membership agreement bucket is not configured (AGREEMENT_PDF_S3_BUCKET unset).",
+            `${label} bucket is not configured (AGREEMENT_PDF_S3_BUCKET unset).`,
         );
     }
-    const key = config.agreementPdfKey();
 
     let pdf: Buffer;
     try {
@@ -62,9 +85,7 @@ export async function loadAgreementPdf(): Promise<LoadedAgreement> {
         // Missing object (not yet uploaded) → unavailable, not a hard error. The
         // task role has s3:ListBucket so this surfaces as NoSuchKey, not a 403.
         if (e instanceof NoSuchKey || (e as { name?: string })?.name === "NoSuchKey") {
-            throw new AgreementUnavailableError(
-                `Membership agreement PDF not found at s3://${bucket}/${key} (pending issue #289).`,
-            );
+            throw new AgreementUnavailableError(`${label} PDF not found at s3://${bucket}/${key}.`);
         }
         throw e;
     }

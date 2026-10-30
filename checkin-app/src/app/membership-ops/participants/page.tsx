@@ -34,6 +34,7 @@ type PersonRow = {
   isOperations?: boolean;
   isInventoryManager?: boolean;
   isFinance?: boolean;
+  isKeyVolunteer?: boolean;
   emailSuppressed?: boolean;
 };
 
