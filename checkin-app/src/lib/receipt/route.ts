@@ -1,19 +1,37 @@
 /**
- * Glue between checkin's handler() and the receipt library's services (#1265 §6). The routes
- * gate; the library narrows rows by `Access`, filters a submitter by the principal's id, and
- * throws ServiceError for every expected failure, which componentRoute renders.
+ * Mount the receipt library's route factories under checkin's handler() and fileHandler(). The
+ * routes that stamp a line's owner for the stripper stay in the host and use receiptHostRoute.
  */
-import { parseId } from "@checkin/component-kit";
-import type { Access } from "@checkin/receipt";
-import { readCapped } from "@checkin/utils";
+import type { Access, ReceiptFileRouteHandler, ReceiptRouteCtx, ReceiptRouteHandler } from "@checkin/receipt";
 import { componentRoute } from "@/lib/components/route";
-import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
-import type { Role } from "@/security/core";
-import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
+import { FILE_CONTENT_TYPES, type FileContentType, type Role } from "@/security/core";
+import type { FileHandlerFn } from "@/security/fileHandler";
+import { badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
 
-/** A receipt library call under handler(); the library's expected failures render as API errors. */
-export function receiptRoute<P extends Record<string, string>>(fn: HandlerFn<P>): HandlerFn<P> {
+/** A route body in the host; the library's expected failures render as API errors. */
+export function receiptHostRoute<P extends Record<string, string>>(fn: HandlerFn<P>): HandlerFn<P> {
   return componentRoute(fn);
+}
+
+function routeCtx({ req, params, role, auth }: HandlerContext): ReceiptRouteCtx {
+  return { req, params, access: accessOf(role), financeActorId: role === "isFinance" ? sessionId({ auth }) : null };
+}
+
+export function receiptRoute(factory: ReceiptRouteHandler): HandlerFn {
+  return componentRoute((ctx) => factory(routeCtx(ctx)));
+}
+
+function isFileContentType(type: string): type is FileContentType {
+  return (FILE_CONTENT_TYPES as readonly string[]).includes(type);
+}
+
+export function receiptFileRoute(factory: ReceiptFileRouteHandler): FileHandlerFn {
+  return componentRoute(async (ctx) => {
+    const file = await factory(routeCtx(ctx));
+    // The upload and intake magic-byte checks admit only allowlisted types; anything else is a stored-data bug.
+    if (!isFileContentType(file.contentType)) throw new Error(`${ctx.req.nextUrl.pathname} has unservable type ${file.contentType}`);
+    return { ...file, contentType: file.contentType };
+  });
 }
 
 /** The view handler() picked: FINANCE (or BOARD on a read) acts org-wide, anyone else on their own. */
@@ -30,16 +48,10 @@ export async function readJson(ctx: HandlerContext<Record<string, string>>): Pro
 }
 
 /** The caller's Person.id. Admission already required one; anything else is a 401. */
-export function sessionId(ctx: HandlerContext<Record<string, string>>): number {
+export function sessionId(ctx: Pick<HandlerContext, "auth">): number {
   if (ctx.auth.type !== "session" || !Number.isInteger(ctx.auth.user.id)) throw unauthorized();
   return ctx.auth.user.id;
 }
-
-export const mailItemId = (raw: string): number => parseId(raw, "mail item id");
-
-export const lineItemId = (raw: string): number => parseId(raw, "line item id");
-
-export const ignoredFileId = (raw: string): number => parseId(raw, "ignored file id");
 
 /**
  * A line row carries no owner column, and the stripper scopes each nested row by itself, so a
@@ -55,41 +67,4 @@ export function stampLines<T extends object>(lines: T[], uploadedByUserId: numbe
  */
 export function ownLine<T extends object>(ctx: HandlerContext<Record<string, string>>, line: T): T {
   return accessOf(ctx.role) === "submitter" ? { ...line, uploadedByUserId: sessionId(ctx) } : line;
-}
-
-const tooLarge = (message = "Receipt upload is too large") => new ApiResponseError(413, message);
-
-/**
- * The upload's multipart form, read under the API's upload ceiling (a 10 MB file plus framing);
- * the library then holds the file itself to its exact cap.
- */
-export async function readUploadForm(req: Request): Promise<FormData> {
-  const chunks = await readCapped(req.body, req.headers.get("content-length"), MAX_UPLOAD_BODY_BYTES, () => tooLarge());
-  try {
-    return await new Response(new Blob(chunks), { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData();
-  } catch {
-    throw badRequest("Expected multipart/form-data");
-  }
-}
-
-/**
- * The bulk import's whole body, base64 rows included, fits the same upload ceiling, so each
- * row's file does too (about 8 MB raw after base64). A batch over it is refused and must be
- * split; a larger receipt goes through the upload route.
- */
-export const MAX_IMPORT_BODY_BYTES = MAX_UPLOAD_BODY_BYTES;
-
-/** A capped JSON body: 413 (with `tooLargeMessage`) past the cap, 400 when it is not JSON. */
-export async function readJsonCapped(
-  body: AsyncIterable<Uint8Array> | null,
-  declaredLength: string | null,
-  cap: number,
-  tooLargeMessage: string,
-): Promise<unknown> {
-  const chunks = await readCapped(body, declaredLength, cap, () => tooLarge(tooLargeMessage));
-  try {
-    return JSON.parse(await new Blob(chunks).text());
-  } catch {
-    throw badRequest("Invalid JSON body");
-  }
 }
