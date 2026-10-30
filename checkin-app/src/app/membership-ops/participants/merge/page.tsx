@@ -129,6 +129,7 @@ export default function MergeParticipants() {
   // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
   // analysis lands.
   const [fieldChoices, setFieldChoices] = useState<Record<string, "keep" | "merge">>({});
+  const [emailChangeReason, setEmailChangeReason] = useState("");
 
   const mergeParticipant = keepId === analyzedA?.id ? analyzedB : analyzedA;
   const keepParticipant = keepId === analyzedA?.id ? analyzedA : analyzedB;
@@ -228,7 +229,8 @@ export default function MergeParticipants() {
         body: JSON.stringify({
           keepId,
           mergeId: keepId === pA?.id ? pB?.id : pA?.id,
-          fieldChoices
+          fieldChoices,
+          ...(emailChangeReason.trim() && { emailChangeReason }),
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -475,6 +477,14 @@ export default function MergeParticipants() {
             <List.Item>Missing personal info on the kept participant will be filled in from the merged participant.</List.Item>
             <List.Item>Raw badge scans will remain on the tombstoned record for audit purposes.</List.Item>
           </List>
+
+          <TextInput
+            mb="md"
+            label="Reason for the sign-in email change"
+            description="A board member must give one when either person holds a position of trust."
+            value={emailChangeReason}
+            onChange={(e) => setEmailChangeReason(e.currentTarget.value)}
+          />
 
           {error && (
             <Alert color="red" variant="light" mb="md" fw={700}>

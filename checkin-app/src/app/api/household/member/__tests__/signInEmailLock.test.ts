@@ -57,6 +57,11 @@ function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> 
         canAccessStaging: false,
         household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts, ...NO_GRANTS, ...grants },
+        roles: [],
+        budgetOwnerTreasurerships: [],
+        programsLed: [],
+        instancesLed: [],
+        toolStatuses: [],
     };
 }
 
@@ -83,6 +88,13 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         expect((await res.json()).error).toBe(
             "This is the address you sign in with. To change it, email the board at board@example.org.",
         );
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bucket treasurer's email change when they have no sign-in and no other grant", async () => {
+        findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnerTreasurerships: [{ budgetOwnerId: 5 }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 

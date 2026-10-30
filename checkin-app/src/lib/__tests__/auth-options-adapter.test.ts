@@ -203,7 +203,31 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
 
     // The bug from the checkin-dev logs: base linkAccount wrote the string userId
     // straight into Account.userId (Int) → `Expected Int, provided String`.
+    test('linkAccount refuses a trusted person an account with another address, or none', async () => {
+        const idToken = (email: string) => `h.${Buffer.from(JSON.stringify({ email })).toString('base64url')}.s`;
+        const account = { userId: '298', type: 'oauth', provider: 'google', providerAccountId: 'g1' };
+        mockAccount.create.mockResolvedValue({});
+        mockPersonFindUnique.mockResolvedValue({
+            email: 'trusted@example.com',
+            roles: [{ role: 'KEYHOLDER' }], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [],
+        });
+
+        await expect(adapter.linkAccount({ ...account, id_token: idToken('other@example.com') })).rejects.toThrow();
+        await expect(adapter.linkAccount(account)).rejects.toThrow();
+        expect(mockAccount.create).not.toHaveBeenCalled();
+
+        await adapter.linkAccount({ ...account, id_token: idToken('Trusted@Example.com') });
+        expect(mockAccount.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('updateUser never writes an email', async () => {
+        mockPersonUpdate.mockResolvedValue({ id: 12, email: 'u@example.com' });
+        await adapter.updateUser({ id: '12', email: 'new@example.com' } as { id: string });
+        expect(mockPersonUpdate.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
     test('linkAccount coerces the string userId to Int before prisma.account.create', async () => {
+        mockPersonFindUnique.mockResolvedValue(null);
         mockAccount.create.mockResolvedValue({});
         await adapter.linkAccount({
             userId: '298',

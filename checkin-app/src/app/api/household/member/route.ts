@@ -16,6 +16,7 @@ import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInE
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 export const PATCH = withAuth(
@@ -105,7 +106,8 @@ export const PATCH = withAuth(
                 + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
                 || Boolean(targetHouseholdMember.lastBackgroundCheck)
                 || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily);
+                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily)
+                || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
