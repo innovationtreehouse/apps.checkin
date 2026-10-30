@@ -54,17 +54,19 @@ dismisses it (section 6).
 
 ## Where main stands
 
-No lane derives a takeover line any more. Expense, income, donation and in-kind each
-work out the books closing date and the lane's switch-on time, and pass
-`closedThrough` and `mayCreate` to the shared `findOrCreate`
-(`packages/quickbooks/src/write.ts`), which runs the match first and then
+No lane derives a takeover line any more. Expense, income and in-kind each work
+out the books closing date and the lane's switch-on time, and pass
+`closedThrough` and `mayCreate` to the shared gate
+(`packages/quickbooks/src/write.ts`: `findOrCreate`, or
+`findOrCreateInKindJournal` for in-kind), which runs the match first and then
 applies the gate in section 1. `BEFORE_LINE` survives only as a stored state
 on older expense and donation records, held exactly like `UNBOOKED`.
 
-Posting is bound in the host for every lane: expense through the books map's
-Organisation card account, income through the books map with the environment
-settings as fallback, in-kind through the books map's four gift-of-goods
-accounts, and donation while `QBO_DONATION_BANK_ACCOUNT_ID` is set.
+Posting is bound in the host for every lane that books: expense through the books
+map's Organisation card account, income through the books map, and in-kind through
+the books map's gift-of-goods accounts. Donation books no deposit itself. Where
+`QBO_REALM_ID` is set it hands each completed disbursement to income, which books
+it to the `BENEVITY_BANK` role.
 
 ---
 
@@ -282,10 +284,8 @@ retried or posted, and nothing would report it.
    rewrites every `BEFORE_LINE` row to `UNBOOKED`, then drops `BEFORE_LINE` from
    the code. By then no task running old code is left to write it.
 
-Donation needs this, since its posting is bound wherever
-`QBO_DONATION_BANK_ACCOUNT_ID` is set. Expense posting is unbound today, so old
-code cannot write `BEFORE_LINE` there, but expense follows the same two steps so
-the lanes stay alike and the safety does not depend on a deploy setting.
+Expense and donation both take these two steps, so the lanes stay alike and the
+safety does not depend on a deploy setting.
 
 No row is re-armed to `UNMATCHED` at any point, because an old drain could then
 create it against the old line.
