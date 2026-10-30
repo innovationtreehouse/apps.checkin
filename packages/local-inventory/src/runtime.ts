@@ -15,7 +15,7 @@ import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryAlerts, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
 
 export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
 const requireRuntime = localInventoryRuntime.require;
@@ -36,6 +36,11 @@ export const getOrgId = localInventoryRuntime.getOrgId;
 /** The S5 replay read the host bound, or the inert one. */
 export function getCatalogEventSource(): CatalogEventSource {
   return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
+}
+
+/** The alerts the host bound, if any. */
+export function getInventoryAlerts(): InventoryAlerts | undefined {
+  return requireRuntime().alerts;
 }
 
 function buildServices() {
