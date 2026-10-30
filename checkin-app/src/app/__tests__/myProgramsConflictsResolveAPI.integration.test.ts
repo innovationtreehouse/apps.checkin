@@ -55,7 +55,7 @@ describe('My-programs conflicts resolve API', () => {
         });
         participantId = participant.id;
 
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: leadId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: leadId } });
         programId = program.id;
         const event = await prisma.event.create({
             data: { programId, name: `Event ${TAG}`, startAt: hoursAgo(5), endAt: hoursAgo(2) },

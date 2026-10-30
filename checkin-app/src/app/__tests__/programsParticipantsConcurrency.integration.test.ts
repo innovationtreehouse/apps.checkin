@@ -75,6 +75,7 @@ describe('POST /api/programs/[id]/participants concurrency (capacity lock)', () 
 
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: `${TAG} program`,

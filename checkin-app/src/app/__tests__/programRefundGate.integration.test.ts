@@ -59,7 +59,7 @@ describe('a refunded order never activates a program place', () => {
         // A board member to receive the CRITICAL email.
         await prisma.person.create({ data: { name: `Board ${TAG}`, email: `board-${TAG}@example.com`, isBoardMember: true, householdId } });
         programId = (await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
         })).id;
     });
 
