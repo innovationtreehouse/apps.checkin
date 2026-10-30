@@ -49,9 +49,6 @@ describe('requireCronSecret', () => {
     });
 
     it('returns 401 on a mismatch of a different length (hashes both to fixed length)', () => {
-        // timingSafeEqual throws on unequal-length buffers, but since we now hash both
-        // inputs using SHA-256 before comparing, we can safely compare strings of
-        // differing lengths without leaking length information or crashing.
         const res = requireCronSecret(req('Bearer short'));
         expect(res?.status).toBe(401);
     });

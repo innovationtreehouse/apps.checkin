@@ -3,7 +3,8 @@ import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { KEYHOLDER_IN_BUILDING, LIVE_KEYHOLDER } from "@/lib/visit/filters";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { constantTimeEqual } from "@/lib/signatureCompare";
 import { logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import type { AuthenticatedUser } from "@/types/auth";
@@ -33,13 +34,9 @@ export const FORCE_CLOSE_CONFIRM_SECONDS = 15;
  *  shown against a building that may have changed since. */
 export const WEB_CLOSE_CHOICE_TTL_MS = 5 * 60_000;
 
-/** Timing-safe force-close token compare: hash both sides to a fixed length so
- *  timingSafeEqual can't throw on a length mismatch and no length leaks. */
+/** Timing-safe force-close token compare. */
 export function forceCloseTokenMatches(stored: string | null | undefined, given: string | null | undefined): boolean {
-    return stored != null && given != null && timingSafeEqual(
-        createHash("sha256").update(stored).digest(),
-        createHash("sha256").update(given).digest()
-    );
+    return stored != null && given != null && constantTimeEqual(stored, given);
 }
 
 /** A web caller's answer to the last-keyholder choice; cancel sends nothing. */

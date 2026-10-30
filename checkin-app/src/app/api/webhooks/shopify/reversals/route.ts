@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { logger } from "@/lib/logger";
 import { withWebhook } from "@/lib/webhookAuth";
-import { config } from "@/lib/config";
+import { verifyShopifyHmac, type ShopifyHmacRejection } from "@/lib/signatureCompare";
 import type { PaymentExceptionKind } from "@/lib/finance/reconcile/exceptions";
 import { raiseReversalByOrderId, type RestockedLine } from "@/lib/finance/reconcile/reversals";
 import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
@@ -55,23 +54,8 @@ function restockedLines(payload: ReversalPayload): RestockedLine[] {
         }));
 }
 
-function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
-    const secret = config.shopifyWebhookSecret();
-    if (!secret) {
-        logger.error("Shopify reversal webhook received but SHOPIFY_WEBHOOK_SECRET is not configured.");
-        return { ok: false, status: 500, error: "Configuration Error" };
-    }
-    const headerSignature = req.headers.get("x-shopify-hmac-sha256");
-    if (!headerSignature) return { ok: false, status: 401, error: "Missing signature" };
-
-    const generated = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
-    const a = crypto.createHash("sha256").update(generated).digest();
-    const b = crypto.createHash("sha256").update(headerSignature).digest();
-    if (!crypto.timingSafeEqual(a, b)) {
-        logger.error("Shopify reversal webhook signature mismatch.");
-        return { ok: false, status: 401, error: "Invalid signature" };
-    }
-    return { ok: true };
+function logRejectedReversal(reason: ShopifyHmacRejection): void {
+    if (reason === "signature mismatch") logger.error("Shopify reversal webhook signature mismatch.");
 }
 
 /**
@@ -97,7 +81,7 @@ const TOPIC_KIND: Record<string, PaymentExceptionKind> = {
     "disputes/update": "CHARGEBACK",
 };
 
-export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, payload: ReversalPayload) => {
+export const POST = withWebhook({ provider: "shopify", verify: (req, rawBody) => verifyShopifyHmac(req, rawBody, "Shopify reversal webhook", logRejectedReversal) }, async (req, payload: ReversalPayload) => {
     const topic = req.headers.get("x-shopify-topic") ?? "";
     const kind = TOPIC_KIND[topic];
     // orders/cancelled sends the order (id); refunds/disputes send order_id.
