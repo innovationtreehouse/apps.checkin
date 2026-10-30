@@ -119,6 +119,7 @@ describeDb("catch-up steps", () => {
     expect(await receiptService.countAwaitingFinance(ALICE.id)).toMatchObject({ total: 0 });
     expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true })]);
     actAs(ALICE);
+    expect(await receiptService.listNeedsAttention("finance")).toEqual([]);
     expect(await receiptService.listNeedsAttention("submitter")).toEqual([]);
   });
 
@@ -147,8 +148,8 @@ describeDb("catch-up steps", () => {
       const { id } = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: `Store ${i}` }) });
       await db.receiptDetail.update({ where: { id }, data: { state: "auto_upload", ocrStartedAt: started } });
     }
-    expect(await sweepInterruptedOcr()).toEqual({ swept: CATCH_UP_CAP });
-    expect(await sweepInterruptedOcr()).toEqual({ swept: 1 });
+    expect(await sweepInterruptedOcr()).toEqual({ swept: CATCH_UP_CAP, failed: 0 });
+    expect(await sweepInterruptedOcr()).toEqual({ swept: 1, failed: 0 });
   });
 
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {
@@ -157,9 +158,22 @@ describeDb("catch-up steps", () => {
     const fresh = await receiptService.upload(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: fresh.id }, data: { state: "auto_upload", ocrStartedAt: new Date() } });
 
-    expect(await sweepInterruptedOcr()).toEqual({ swept: 1 });
+    expect(await sweepInterruptedOcr()).toEqual({ swept: 1, failed: 0 });
     expect(await stateOf(stuck.id)).toBe("ocr_failed");
     expect(await stateOf(fresh.id)).toBe("auto_upload");
+  });
+
+  it("keeps sweeping interrupted OCR when the oldest row's move fails", async () => {
+    const oldest = await receiptService.upload(textFile(), "text/plain", {});
+    const newer = await receiptService.upload(textFile(), "text/plain", {});
+    await db.receiptDetail.update({ where: { id: oldest.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 12 * 60_000) } });
+    await db.receiptDetail.update({ where: { id: newer.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });
+    const tx = vi.spyOn(getPrisma(), "$transaction").mockRejectedValueOnce(new Error("row lock timeout"));
+
+    expect(await sweepInterruptedOcr()).toEqual({ swept: 1, failed: 1 });
+    tx.mockRestore();
+    expect(await stateOf(oldest.id)).toBe("auto_upload");
+    expect(await stateOf(newer.id)).toBe("ocr_failed");
   });
 
   it("moves a receipt resting in uploaded for over an hour to flow_error, once", async () => {

@@ -566,12 +566,26 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     });
   }
 
-  /** One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent. */
-  async function alertAtRisk(): Promise<void> {
-    const rows = await db.receiptMailAtRisk.findMany({
+  /**
+   * One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent.
+   * Overlapping runs can each send it. One duplicate email is accepted: claiming rows before the send would lose the alert if the run died in between.
+   */
+  async function alertAtRisk(reader: MailboxReader): Promise<void> {
+    const due = await db.receiptMailAtRisk.findMany({
       where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
-      select: { id: true, receivedAt: true },
+      select: { id: true, gmailMessageId: true, receivedAt: true },
     });
+    // A capped run stores only a lower bound, so each due row is re-dated from its own message; one that cannot be fetched keeps its stored date.
+    const dated = await Promise.all(
+      due.map(async (row) => {
+        const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
+        if (!message) return row;
+        const receivedAt = new Date(Number(message.internalDate));
+        await db.receiptMailAtRisk.update({ where: { id: row.id }, data: { receivedAt } });
+        return { ...row, receivedAt };
+      }),
+    );
+    const rows = dated.filter((r) => !r.receivedAt || r.receivedAt.getTime() < lastChance);
     if (rows.length === 0) return;
     const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
     try {
@@ -599,7 +613,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     }
   }
   if (ids) await readListed(ids, reader);
-  await alertAtRisk();
+  await alertAtRisk(reader);
 
   let replies = { sent: 0, failed: 0 };
   try {

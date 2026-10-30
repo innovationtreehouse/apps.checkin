@@ -10,7 +10,7 @@ export const OCR_INTERRUPTED_AFTER_MS = 10 * 60 * 1000;
 export const CATCH_UP_CAP = 50;
 
 /** A receipt left in `auto_upload` by a process that died mid-OCR moves to `ocr_failed`. */
-export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: number }> {
+export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: number; failed: number }> {
   const orgId = (await getOrg()).id;
   const stuck = await db.receiptDetail.findMany({
     where: { orgId, state: "auto_upload", ocrStartedAt: { lt: new Date(now.getTime() - OCR_INTERRUPTED_AFTER_MS) } },
@@ -19,18 +19,22 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
     take: CATCH_UP_CAP,
   });
   let swept = 0;
+  let failed = 0;
   for (const { id } of stuck) {
-    await db.$transaction(async (tx) => {
-      const moved = await tx.receiptDetail.updateMany({
-        where: { id, state: "auto_upload" },
-        data: { state: "ocr_failed", validationNotes: "OCR failed: interrupted" },
-      });
-      if (moved.count === 0) return;
-      await audit(tx, id, null, { action: "ocr_failed", valueAfter: "interrupted" });
-      swept++;
-    });
+    // One row failing leaves it for the next run; the rest still move.
+    await db
+      .$transaction(async (tx) => {
+        const moved = await tx.receiptDetail.updateMany({
+          where: { id, state: "auto_upload" },
+          data: { state: "ocr_failed", validationNotes: "OCR failed: interrupted" },
+        });
+        if (moved.count === 0) return;
+        await audit(tx, id, null, { action: "ocr_failed", valueAfter: "interrupted" });
+        swept++;
+      })
+      .catch(() => failed++);
   }
-  return { swept };
+  return { swept, failed };
 }
 
 export const STUCK_UPLOADED_AFTER_MS = 60 * 60 * 1000;

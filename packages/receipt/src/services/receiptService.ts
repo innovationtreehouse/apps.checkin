@@ -1305,7 +1305,9 @@ export const receiptService = {
     if (access !== "finance") return rows.map(toSubmitterView);
     const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
     const records = await pushRecords(orgId, undelivered.map((r) => r.id));
-    return [...rows, ...undelivered.flatMap((r) => (records.get(r.id)?.pushGivenUp ? [{ ...r, ...records.get(r.id) }] : []))];
+    const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
+    const parties = await Promise.all(stopped.map(conflictedParties));
+    return [...rows, ...stopped.flatMap((r, i) => (parties[i].includes(actor.id) ? [] : [{ ...r, ...records.get(r.id) }]))];
   },
 
   /**
