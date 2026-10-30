@@ -378,6 +378,25 @@ describe('saveIntake', () => {
         expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
+    it('refuses a taken email for new people without confirming anyone holds it; other unique violations stay unexpected', async () => {
+        const violation = (target: string[]) => new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0', meta: { target } });
+        const input = {
+            secondaryParent: { name: 'New Parent', email: 'parent@example.com' },
+            children: [{ name: 'Kid', email: 'kid@example.com' }, { name: 'Kid Two', email: 'two@example.com' }, { name: 'No Email' }],
+        };
+
+        prisma.person.create.mockRejectedValueOnce(violation(['email']));
+        await expect(saveIntake(1, input)).rejects.toMatchObject({
+            code: 'email_in_use',
+            fields: ['secondaryParent', 'children'],
+            message: expect.stringContaining('If they already have an account'),
+        });
+
+        const other = violation(['id']);
+        prisma.person.create.mockRejectedValueOnce(other);
+        await expect(saveIntake(1, input)).rejects.toBe(other);
+    });
+
     it('no_household when the caller has no participant row', async () => {
         prisma.person.findUnique.mockResolvedValue(null);
         await expect(saveIntake(1, {})).rejects.toBeInstanceOf(IntakeError);
