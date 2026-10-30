@@ -1,6 +1,6 @@
 import { sendEmail } from "@/lib/email";
 import prisma from "@/lib/prisma";
-import { baseEmailLayout } from "./base";
+import { baseEmailLayout, escapeHtml } from "./base";
 import { REGISTRY, type TemplateCtx, type TemplateKey, type TemplateSpec } from "./registry";
 import { renderBodyHtml, substituteTokens } from "./tokens";
 
@@ -21,15 +21,17 @@ async function findOverride(key: TemplateKey) {
  * Send the email `key` to `to`: the Board's row if it has one, else the registry
  * default, field by field, so neither subject nor body is ever blank. Resolves
  * to the `sendEmail` result and never rejects. Callers still check the
- * recipient's notification preferences before calling.
+ * recipient's notification preferences before calling. `appendix` is plain text
+ * added after the body, outside token substitution and the Board's edits.
  */
-export async function sendTemplated<K extends TemplateKey>(key: K, to: string, ctx: TemplateCtx<K>, headers?: Record<string, string>): Promise<boolean>;
-export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<string, string>, headers?: Record<string, string>): Promise<boolean> {
+export async function sendTemplated<K extends TemplateKey>(key: K, to: string, ctx: TemplateCtx<K>, headers?: Record<string, string>, appendix?: string): Promise<boolean>;
+export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<string, string>, headers?: Record<string, string>, appendix?: string): Promise<boolean> {
     const spec: TemplateSpec = REGISTRY[key];
     const row = await findOverride(key);
     const subject = row?.subject.trim() ? row.subject : spec.defaultSubject;
     const body = row?.body.trim() ? row.body : spec.defaultBody;
     const renderedSubject = substituteTokens(subject, ctx, spec.allowedTokens, { escape: false });
-    const html = baseEmailLayout(renderBodyHtml(substituteTokens(body, ctx, spec.allowedTokens, { escape: true })));
+    const substituted = substituteTokens(body, ctx, spec.allowedTokens, { escape: true });
+    const html = baseEmailLayout(renderBodyHtml(appendix ? `${substituted}\n\n${escapeHtml(appendix)}` : substituted));
     return headers ? sendEmail(to, renderedSubject, html, headers) : sendEmail(to, renderedSubject, html);
 }
