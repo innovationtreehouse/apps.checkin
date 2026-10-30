@@ -491,7 +491,7 @@ describe('saveIntake', () => {
         await saveIntake(1, { secondaryParent: { name: 'New Parent', email: 'NEW@X.com' } });
 
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', dateOfBirth: null, isDeclaredAdult: false, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', allergies: null },
         });
         expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 55);
     });
@@ -627,7 +627,7 @@ describe('saveIntake', () => {
             data: { name: 'Existing Kid' },
         });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', allergies: null },
         });
     });
 
@@ -644,7 +644,7 @@ describe('saveIntake', () => {
         prisma.person.create.mockResolvedValue({ id: 56 });
         await saveIntake(1, { children: [{ name: '  John  ' }] });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'John', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'John', allergies: null },
         });
     });
 

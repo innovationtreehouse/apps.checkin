@@ -371,11 +371,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
-                        // 26+ DoB is stripped and forces the flag on; an empty DoB honors
-                        // the checkbox.
-                        ...(input.primaryParent.dob !== undefined && normalizeAdultDob(input.primaryParent.dob)),
-                        ...(input.primaryParent.over25 !== undefined && !input.primaryParent.dob && { isDeclaredAdult: !!input.primaryParent.over25 }),
+                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
@@ -396,8 +392,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...(sp.dob !== undefined && normalizeAdultDob(sp.dob)),
-                            ...(sp.over25 !== undefined && !sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            ...normalizeAdultDob(sp.dob, sp.over25),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -412,8 +407,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newSpName,
                             ...(sp.email && { email: sp.email.toLowerCase() }),
-                            ...normalizeAdultDob(sp.dob),
-                            ...(!sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            ...normalizeAdultDob(sp.dob, sp.over25),
                             allergies: sp.allergies ?? null,
                         },
                     });
@@ -442,7 +436,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: child.id },
                         data: {
                             ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                            ...(child.dob !== undefined && normalizeAdultDob(child.dob)),
+                            ...normalizeAdultDob(child.dob),
                             ...(child.allergies !== undefined && { allergies: child.allergies }),
                         },
                     });

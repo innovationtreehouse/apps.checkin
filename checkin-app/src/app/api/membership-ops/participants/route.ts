@@ -125,7 +125,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         id: await mintPersonId(tx),
                         name: nameWrite(name),
                         ...(email && { email }),
-                        // #1165: 26+ participants are stored declared-adult with no DoB.
                         ...normalizeAdultDob(dob),
                         householdId: targetHouseholdId
                     }
@@ -137,7 +136,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 return createInOwnHousehold(tx, {
                     name: nameWrite(name)!,
                     ...(email && { email }),
-                    // #1165: 26+ participants are stored declared-adult with no DoB.
                     ...normalizeAdultDob(dob),
                 });
             });

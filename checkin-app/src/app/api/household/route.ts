@@ -138,11 +138,8 @@ export const PATCH = withAuth(
                         id: await mintPersonId(tx),
                         name: memberName,
                         ...(memberEmail && { email: memberEmail.toLowerCase() }),
-                        // #1165: strip DoB + declare adult when the entered date is 26+.
-                        // When no DoB is given, the over-25 checkbox owns the flag.
-                        ...normalizeAdultDob(memberDob || null),
+                        ...normalizeAdultDob(memberDob, memberOver25),
                         ...(memberPhone && { phone: formatPhone(memberPhone) }),
-                        ...(memberDob ? {} : { isDeclaredAdult: !!memberOver25 }),
                         allergies: memberAllergies || null,
                         householdId,
                     },
