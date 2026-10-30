@@ -719,6 +719,27 @@ defineRoute({
     ],
 });
 
+// Finance view log (B11) — who viewed finance records. Board only: finance
+// holders are most of the people it records, and sysadmins are kept out by
+// least privilege (FV-4); anyRole has no sysadmin auto-admit. Not
+// `auditedRead`: the log holds no finance content, so reading it is not logged.
+//
+// FinanceViewLog has no relation to Person, so viewer names travel as a second
+// bag key of { id, name } rows, both public-tier. The handler always emits both
+// keys, even empty, since a single-key bag unwraps to a bare value. No
+// total/page in the body: the stripper drops non-model keys, so the handler
+// over-fetches by one to signal another page.
+defineRoute({
+    endpoint: 'GET /api/system-status/finance-views',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    // Bag: { FinanceViewLog, Person }.
+    returns: ['FinanceViewLog', 'Person'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
 // Parked kiosk scans awaiting review (docs/rules/attendance-checkin.md, kiosk
 // resilience) — the
 // RawBadgeLog rows a replay parked instead of toggling (reviewReason set,
