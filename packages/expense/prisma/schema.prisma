@@ -534,7 +534,7 @@ model ReceivedExpensePayload {
   @@map("received_expense_payloads")
 }
 
-// Audit record of every catalog S5 event received; max(id) is this consumer's cursor.
+// Audit record of every catalog S5 event received; catch-up consumes any event not in it.
 model ExpenseReceivedOrgEvent {
   /// @sensitivity:internal
   id            Int      @id

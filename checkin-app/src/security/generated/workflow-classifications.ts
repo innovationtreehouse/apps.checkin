@@ -6,6 +6,10 @@ export const classifications = {
         id: 'public',
         orgEventCursor: 'internal',
     },
+    WorkflowAppliedOrgEvent: {
+        id: 'public',
+        appliedAt: 'public',
+    },
     WorkflowFailedOrgEvent: {
         id: 'public',
         orgId: 'internal',
@@ -58,6 +62,8 @@ export const classifications = {
 
 export const relations = {
     WorkflowSystemData: {
+    },
+    WorkflowAppliedOrgEvent: {
     },
     WorkflowFailedOrgEvent: {
     },

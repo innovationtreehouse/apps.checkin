@@ -214,6 +214,8 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
 | `board.programAgeMisfit` | program date/age edit (`programs/update.ts`) | board | programName, count, people, `actionLink` ("Open the program") |
 | `board.inventoryEventsStuck` | inventory catch-up finds stuck catalog events | board | problem |
+| `board.expenseEventsStuck` | expense catch-up finds stuck catalog events | board | problem |
+| `board.receiptMappingEventsStuck` | receipt mapping catch-up finds stuck catalog events | board | problem |
 
 > See sub-decision B (blurb) below.
 

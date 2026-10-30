@@ -112,9 +112,15 @@ export interface OrgEventConsumer {
   onOrgEvents(events: OrgEventRecord[]): Promise<void>;
 }
 
-/** Replay read: the org's events with id greater than `cursor`, ascending. */
+/** Replay read: a page of the org's events with id greater than `afterId`, ascending. */
 export interface CatalogEventSource {
-  eventsSince(orgId: string, cursor: number): Promise<OrgEventRecord[]>;
+  eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
+}
+
+/** Alerts the host binds to reach a person. */
+export interface WorkflowAlerts {
+  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
+  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
 }
 
 // ── Inert adapters ───────────────────────────────────────────────────────────
@@ -164,4 +170,5 @@ export interface WorkflowRuntimeConfig {
   donationSink?: DonationSink;
   inventorySink?: InventorySink;
   catalogEventSource?: CatalogEventSource;
+  alerts?: WorkflowAlerts;
 }
