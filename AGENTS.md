@@ -329,9 +329,10 @@ Read these before changing the relevant area — start here, then follow links.
 - `GEMINI.md`, `.jules/sentinel.md` — instructions for other agents (Gemini, Jules); keep cross-consistent with this file.
 - `TRADEMARKS.md` — naming/brand constraints.
 
-**Design & product** (`docs/designs/`)
+**Operations** (`docs/ops/`)
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
-- `PRODUCTION_PLAN.md` — the production launch runbook.
+- `docs/ops/production-runbook.md` — how to deploy to production and roll back.
+- `docs/ops/shopify-dev-store.md` — the Shopify dev store and its webhooks in dev and local.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).
