@@ -5,19 +5,21 @@ import type { TxClient } from "@/lib/db-client";
  * id is printed on a badge, and Aurora's sequence prefetch burns ~32 of them
  * per auto-pause.
  *
- * Never rewrite this as `MAX(id) + 1`: that REUSES ids, and the adapter's
- * `deleteUser` hard-deletes a Person, so a new sign-up would inherit a deleted
- * person's number and every badge printed for the first would scan as the
- * second. `mintId.integration` case 1 is the test that stops that.
+ * Never rewrite this as `MAX(id) + 1`: that REUSES ids. The adapter's `deleteUser`
+ * hard-deletes a Person (not invoked today), and a new sign-up would then inherit
+ * the deleted person's number, so every badge printed for the first would scan as
+ * the second. `mintId.integration` case 1 is the test that stops that.
  *
  * The three clauses of the one statement: `ON CONFLICT` self-seeds (a `db push`
- * DB and the dev-reset TRUNCATE have no seed row); `GREATEST` absorbs whatever
- * the sequence has already written (fixtures, unconverted sites) without ever
- * winding the counter back; `setval` pushes the sequence up to the minted value
- * so the reverse collision can't happen either. Postgres requires UPDATE on
- * the sequence for `setval` (USAGE/SELECT is not enough). `setval` is
- * non-transactional on purpose — a rollback leaves the gap in the sequence,
- * not in the counter.
+ * DB and the dev-reset TRUNCATE have no seed row); `GREATEST` absorbs a
+ * sequence-written id (fixtures) without ever winding the counter back, but only
+ * while that row exists, so a sequence-written id above the counter is reissued
+ * once its row is deleted. `personIdMintGuard` keeps production creates off the
+ * sequence, which is what keeps production off that path. `setval` pushes the
+ * sequence up to the minted value so the reverse collision can't happen either.
+ * Postgres requires UPDATE on the sequence for `setval` (USAGE/SELECT is not
+ * enough). `setval` is non-transactional on purpose — a rollback leaves the gap
+ * in the sequence, not in the counter.
  *
  * `TxClient`, not `DbClient`, so the mint is always paired with its `create`:
  * minting on the root client autocommits the increment on its own, and a failed
