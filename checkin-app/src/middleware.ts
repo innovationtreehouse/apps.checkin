@@ -77,7 +77,7 @@ export async function middleware(req: NextRequest) {
 
     if (appConfig.isStaging()) {
         // getToken() decodes the cookie without the jwt callback, so these claims can be stale;
-        // see "Accepted risks" and "Known gaps" in docs/security/SECURITY-POLICY.md.
+        // see "Accepted risks" in docs/security/SECURITY-POLICY.md.
         if (isStagingAccessAllowed(token)) {
             return NextResponse.next();
         }
