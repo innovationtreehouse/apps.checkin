@@ -230,9 +230,9 @@ Things the app takes as true because they are handled outside it.
   records never alters it as a side effect, with one exception: a merge that
   carries in a still-valid background check completes an application already paid
   for and waiting only on that check, which makes the household a member. It leaves
-  alone an application a reviewer has already acted on or the board has reset. A
+  alone an application with a standing rejection or one the board has reset. A
   merge that would move a person across a denied-or-revoked boundary, or abandon an
-  active membership, is refused until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+  active membership, is refused until the household side is settled by hand.  [Decision — owner ruling 2026-10-30; *Principle: identity is not authorisation*]
 
 ### Roles
 

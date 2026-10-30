@@ -33,7 +33,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
 }));
 import { runMatchAudit } from "@/lib/finance/matchAudit";
 import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
-import { canReviewBackgroundChecks } from "@/lib/membership/review";
+import { attestedUnclearedProcessIds, canReviewBackgroundChecks } from "@/lib/membership/review";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 
 // Base fixture participants differ on name+email by design (realistic collision
@@ -1908,14 +1908,82 @@ describe("Merge Participants API", () => {
             expect(after.status).toBe("PENDING_PAYMENT");
         });
 
-        it("leaves a PENDING_BG_REVIEW row a reviewer has already attested", async () => {
-            const process = await makeApplication("PENDING_BG_REVIEW", { contractSignedAt: new Date() });
-            await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId: actorId, result: "APPROVE", subjectPersonId: pKeepId } });
+        async function makeReviewer() {
+            const reviewer = await prisma.person.create({ data: { name: "Approving Reviewer", isBackgroundCheckReviewer: true, householdId: await makeHousehold("Reviewer Household") } });
+            extraPersonIds.push(reviewer.id);
+            return reviewer.id;
+        }
+
+        it.each([
+            { status: "PENDING_BG_REVIEW", cleared: "PENDING_PAYMENT", extra: {} },
+            { status: "PENDING_BG_CLEARANCE", cleared: "ACTIVE", extra: { bgConsentAt: new Date(), paidAt: new Date() } },
+        ] as const)("clears a held $status row that has an approval only, keeping the approval as a record", async ({ status, cleared, extra }) => {
+            const process = await makeApplication(status, { contractSignedAt: new Date(), ...extra });
+            const reviewerId = await makeReviewer();
+            await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId } });
+            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
             const after = await reload(process.id);
-            expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status: "PENDING_BG_REVIEW", cleared: null });
+            expect(after.bgClearedAt).not.toBeNull();
+            expect(after.status).toBe(cleared);
+            expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
+            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
+            const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: process.id, newData: { path: ["via"], equals: "merge" } } });
+            expect(log?.newData).toMatchObject({ clearedPersonIds: [], reason: "still-valid background check carried in by participant merge" });
+        });
+
+        it("stamps a PENDING_PAYMENT row that has an approval only, keeping the approval and its volunteer mark", async () => {
+            const process = await makeApplication("PENDING_PAYMENT", { contractSignedAt: new Date(), bgConsentAt: new Date() });
+            const reviewerId = await makeReviewer();
+            await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId, isMarkedVolunteerFamily: true } });
+            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const after = await reload(process.id);
+            expect(after.bgClearedAt).not.toBeNull();
+            expect(after.status).toBe("PENDING_PAYMENT");
+            expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
+            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
+            expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: membershipId } })).isVolunteerFamily).toBe(true);
+        });
+
+        // Status alone would keep a BLOCKED row out; the other three reach the attestation guard itself.
+        it.each(["BLOCKED", "PENDING_PAYMENT", "PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row with a standing rejection", async (status) => {
+            const process = await makeApplication(status, { contractSignedAt: new Date(), bgConsentAt: new Date() });
+            const reviewerId = await makeReviewer();
+            await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "REJECT" } });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const after = await reload(process.id);
+            expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
+        });
+
+        it("clears a row whose rejection was changed to approve and then undone", async () => {
+            const process = await makeApplication("PENDING_PAYMENT", { contractSignedAt: new Date(), bgConsentAt: new Date() });
+            await prisma.auditLog.create({
+                data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: process.id, oldData: { status: "BLOCKED" }, newData: { status: "PENDING_PAYMENT", action: "rejector changed to approve" } },
+            });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            expect((await reload(process.id)).bgClearedAt).not.toBeNull();
+        });
+
+        it.each(["PENDING_PAYMENT", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row a board reset sent back, even with one new approval", async (status) => {
+            const process = await makeApplication(status, { contractSignedAt: new Date(), bgConsentAt: new Date(), ...(status === "PENDING_BG_CLEARANCE" ? { paidAt: new Date() } : {}) });
+            await prisma.auditLog.create({
+                data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: process.id, oldData: { status: "BLOCKED" }, newData: { status, action: "board reset" } },
+            });
+            await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId: await makeReviewer(), result: "APPROVE", subjectPersonId: pKeepId } });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const after = await reload(process.id);
+            expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
         });
 
         it.each(["PENDING_PAYMENT", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row a board reset sent back for two new approvals", async (status) => {
