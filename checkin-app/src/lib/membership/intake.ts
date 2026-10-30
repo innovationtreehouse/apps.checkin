@@ -19,7 +19,7 @@ import type { TxClient } from "@/lib/db-client";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -280,11 +280,11 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const rejections: IntakeRejection[] = [];
     const refusals: SelfGrantRefusal[] = [];
     const deniedPromotions: HouseholdLeadDeniedError[] = [];
-    const addLeadOrRecord = async (tx: TxClient, participantId: number) => {
+    const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
         // A sysadmin manages their household's intake without leading it, so making
         // someone its lead that way is a grant to their own household.
         const alreadyLead = (user.household?.householdMembers ?? []).some((p) => p.id === participantId && p.isHouseholdLead);
-        const refusal = !user.isHouseholdLead && !alreadyLead ? await findSelfGrantRefusal(tx, userId, { personId: participantId, householdId }, {
+        const refusal = !user.isHouseholdLead && !alreadyLead ? await findSelfGrantRefusal(tx, userId, refusalSubject, {
             table: "Person",
             attempted: { isHouseholdLead: true },
         }) : null;
@@ -400,7 +400,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         },
                     });
                     // A second guardian is a household lead (parent).
-                    await addLeadOrRecord(tx, sp.id);
+                    await addLeadOrRecord(tx, sp.id, { personId: sp.id, householdId });
                 } else if ((spName = nameWrite(sp.name)) !== undefined) {
                     const newSpName: string = spName;
                     const created = await tx.person.create({
@@ -414,7 +414,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             allergies: sp.allergies ?? null,
                         },
                     });
-                    await addLeadOrRecord(tx, created.id);
+                    // A rollback returns this id for reuse, so the refusal row names the household.
+                    await addLeadOrRecord(tx, created.id, { householdId });
                 } else if (sp.email) {
                     rejections.push({
                         section: "secondaryParent",
