@@ -182,6 +182,22 @@ The file route is registered and migrated like any route: the route-coverage lin
 - **Per-row scope correctness in the generic contract test.** The generic contract asserts every visible field has a grantable tier, but doesn't verify per-row scope-holding (that would require route-specific personas). Route-specific tests (e.g. `programsIdAPI.test.ts`) cover those.
 - **Inbound webhook signature verification.** Already handled at `src/app/api/webhooks/shopify/route.ts`.
 
+## Accepted risks
+
+### Page navigation can admit a revoked staging exception
+
+Accepted 2026-07-21. After a sysadmin revokes someone's staging exception (`canAccessStaging`), their browser can keep opening ops-stg pages for up to 8 hours after its session cookie was last refreshed. That can run past 8 hours from sign-in, because each refresh gives the cookie a new 8-hour lifetime.
+
+This happens because the middleware gates pages by decoding the cookie, which holds the claims from the last refresh, and never consults the database. API routes do not share this window for the exception: they rebuild the session from the database on every request, so the revocation applies to the next API call. A page that opens during the window therefore has its data calls refused.
+
+## Known gaps, not accepted
+
+### Lost org standing keeps API access on ops-stg
+
+No one has accepted this gap; the owner is deciding what to do about it. Someone admitted to ops-stg as a verified org member (`hd`, `emailVerified`) keeps that admission after losing org standing at Google, on API routes as well as pages.
+
+Both claims are written to the token only at sign-in or at a dev persona mint, and the rebuild on each API request does not refresh them. API access therefore lasts until the session ends, at most 8 hours from sign-in. Page access lasts until the cookie's own expiry, which the refreshes described above can push past that point.
+
 ## What to do if you hit a wall
 
 You found a case the policy doesn't fit cleanly. Don't disable it — open an issue or message a maintainer. The cost of refining the framework is small; the cost of routing around it is the next #129.
