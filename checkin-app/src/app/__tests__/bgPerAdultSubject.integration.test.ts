@@ -88,7 +88,7 @@ describe('Per-adult background-check subjects', () => {
         await prisma.$disconnect();
     });
 
-    // ── The regression itself ────────────────────────────────────────────────
+    // ── Only the named adult is stamped ──────────────────────────────────────
     it('stamps only the adult both reviewers named — the household-mate stays unchecked', async () => {
         const hh = await twoLeadHousehold('Regression');
 

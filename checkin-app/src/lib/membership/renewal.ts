@@ -28,11 +28,6 @@ import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 const RENEWAL_LEAD_MONTHS = 2;
 
-// The in-flight-renewal status list now lives ONCE in lib/membership/lifecycle
-// (`IN_FLIGHT_RENEWAL`, fix #2) — the single source the
-// `membership_one_inflight_renewal` partial index is verified against (index-parity
-// integration test), replacing the hand-sync comment that used to live here.
-
 /**
  * A household application that stops another from starting: one in flight (one
  * open household application at a time), or a BLOCKED one, which only the board
