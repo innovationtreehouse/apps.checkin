@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
 import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
-import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolation";
+import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
@@ -42,7 +43,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -466,6 +467,13 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // existing emergency contact — re-evaluate and flag (direction B).
             await reconcileHouseholdConflicts(tx, householdId);
         }, { maxWait: 5_000, timeout: 15_000 });
+    } catch (e) {
+        // Which new person collided stays unsaid: every one given an email is marked.
+        if (uniqueViolationFields(e)?.includes("email")) {
+            const fields = [...new Set(newPeople.filter((p) => p.email).map((p) => p.field))];
+            throw new IntakeError("email_in_use", EMAIL_IN_USE_REFUSAL, fields);
+        }
+        throw e;
     } finally {
         // A refused attempt stays on record even when the save rolls back.
         for (const refusal of refusals) await recordSelfGrantRefusal(prisma, refusal);
