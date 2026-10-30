@@ -217,7 +217,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
 
     let line: MembershipLine | null;
     if (lineVariantIds.length > 0) {
-        // Post-#1048 order: variant ids are mirrored, so the item check is authoritative.
+        // Variant ids are mirrored, so the item check is authoritative.
         line = findMembershipLine(variantYears, lineVariantIds);
         if (!line) {
             // Attributed to a pending process, paid, but no membership product on it —
@@ -226,11 +226,8 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
             return true;
         }
     } else {
-        // TRANSITIONAL (remove once the #1048 backfill re-pull is universal): rows
-        // synced before #1048 carry no line variant ids, so the item check is
-        // impossible — fall back to the old membership fee amount gate, made discount-aware by
-        // adding the coupon back so a couponed pre-backfill order compares its GROSS
-        // figure to the gross membership fee and no longer false-raises AMOUNT_MISMATCH.
+        // No mirrored variant ids (a row synced before variant mirroring, or only custom or
+        // deleted products), so the item check can't run: compare the gross total to the fee.
         const expected = membership?.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
         if (expected > 0 && order.totalCents + order.discountCents + AMOUNT_TOLERANCE_CENTS < expected) {
             await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: order.legacyId, processId: proc.id });

@@ -119,13 +119,8 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // checkout link is built from), never by total. Every outcome other than
         // settling or a redelivery is raised for the board.
         //
-        // TODO(#278) still open: we still trust the customer-controlled
-        // Membership_Process_ID cart attribute for WHICH process to credit (no
-        // per-process checkout token yet), and the volunteer discount code is still
-        // a self-serve code on a public cart link rather than gated to a Shopify
-        // customer segment. Neither enables over-activation on its own now that the
-        // membership item is checked, but both remain honor-system until a real
-        // token / Shopify-side segment exists.
+        // Membership_Process_ID is customer-controlled: it names the process to credit and
+        // proves nothing about who paid. The volunteer code isn't checked here; reconciliation flags it.
         let membershipOutcome: string | null = null;
         if (membershipProcessIdStr) {
             const processId = parseInt(membershipProcessIdStr, 10);
