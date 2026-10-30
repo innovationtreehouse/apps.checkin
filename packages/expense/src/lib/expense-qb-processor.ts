@@ -499,7 +499,8 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
  * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
  * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
- * post that books closes the exhausted QB_POST_FAILED flag as answered by the retry.
+ * post that books leaves NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that
+ * state), and checks off any open QB_POST_HELD flag; one that fails counts as attempt one again.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
 export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {

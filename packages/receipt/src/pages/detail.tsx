@@ -9,7 +9,7 @@ import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
-import { api, BASE, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
@@ -60,6 +60,29 @@ interface AuditRow {
 function correctionNote(c: SubmitterCorrection | undefined): string {
   if (!c) return "";
   return c.kind === "entered" ? " (entered by the submitter)" : ` (the submitter changed it from ${c.before})`;
+}
+
+const STEP_COLOR = { done: "green", refused: "red", waiting: "gray" } as const;
+
+/** What happened to a finalized receipt's purchase after it left the receipt system. */
+function PurchaseOutcomePanel({ receipt }: { receipt: Receipt }) {
+  const steps = outcomeSteps(receipt.purchaseOutcome);
+  if (steps.length === 0) return null;
+  return (
+    <Paper withBorder p="sm">
+      <Text fw={500} mb="xs">What happened next</Text>
+      <Stack gap={4}>
+        {steps.map((step) => (
+          <div key={step.label}>
+            <Badge variant="light" color={STEP_COLOR[step.tone]}>{step.label}</Badge>
+            {step.notes.map((note) => (
+              <Text key={note} size="sm" mt={2}>{note}</Text>
+            ))}
+          </div>
+        ))}
+      </Stack>
+    </Paper>
+  );
 }
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
@@ -258,7 +281,19 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           <Badge variant="light">{receiptStateLabel(r)}</Badge>
         </Group>
       </Group>
-      {r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>}
+      {r.state === "rejected" ? (
+        <Alert color="red" title="Rejected by finance">
+          <Text size="sm">{r.validationNotes ?? "No reason was recorded."}</Text>
+          {own && r.rejectionUnacknowledged && (
+            <Button size="xs" mt="sm" color="red" variant="light" onClick={() => void act("/acknowledge-rejection", "POST", {}, "Acknowledged", "Couldn't acknowledge this rejection")}>
+              Got it
+            </Button>
+          )}
+        </Alert>
+      ) : (
+        r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
+      )}
+      <PurchaseOutcomePanel receipt={r} />
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
       )}

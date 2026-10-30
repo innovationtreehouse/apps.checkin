@@ -10,6 +10,7 @@
 import { orgEventService } from "@checkin/global-catalog";
 import type { CatalogPrincipal, OrgEventRecord, OrgIdentity } from "@checkin/global-catalog";
 import type { Session } from "next-auth";
+import { isAcceptedSession } from "@/lib/session/acceptedSession";
 
 /**
  * checkin is inherently single-org (#1286 §6). The org identity is a row in
@@ -33,7 +34,7 @@ export async function sessionUser(): Promise<Session["user"] | null> {
     import("@/lib/config"),
   ]);
   const user = (await getServerSession(authOptions))?.user;
-  if (!user || !Number.isInteger(user.id) || user.id <= 0 || user.denied) return null;
+  if (!user || !isAcceptedSession(user)) return null;
   if (config.isStaging() && !isStagingAccessAllowed(user)) return null;
   return user;
 }

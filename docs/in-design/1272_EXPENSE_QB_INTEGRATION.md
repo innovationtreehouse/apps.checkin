@@ -74,7 +74,7 @@ keyword** (design-doc rule); #1314 tracks only the residual sub-actor detail
 **third in a series** and **reuses the base architecture** established by the
 global-catalog design
 ([#1286](https://github.com/innovationtreehouse/checkin/issues/1286),
-now distilled to `docs/designs/COMPONENT_ARCHITECTURE.md`) and the local-inventory
+now distilled to `docs/architecture/COMPONENT_ARCHITECTURE.md`) and the local-inventory
 design
 ([#1287](https://github.com/innovationtreehouse/checkin/issues/1287),
 now distilled to `docs/rules/inventory.md` and the same architecture doc) —
@@ -1537,7 +1537,7 @@ and invariants only, no mechanism:
   the lines in their bucket) but do not make them. Assignment is owned by
   the org, not the program (§6).
 
-**(2) Architecture/ops reference that stays true → `docs/designs/EXPENSE_QB.md`**
+**(2) Architecture/ops reference that stays true → `docs/architecture/EXPENSE_QB.md`**
 (§4 "operational reference → move, don't delete"). Later finance/QB work (FE6–FE8,
 GC-DONOR, GC-PROGRAM-FINANCE) relies on it: the library-isolation + `configureExpense`
 injection seam; own-DB / fourth-Prisma-client packaging; **the QuickBooks
@@ -1556,10 +1556,10 @@ handler-endpoint gotcha, pagination/count mechanics, outbox-drain wiring, test
 tiers) — a reader derives it from the source (§3).
 
 **Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first into
-the unified `docs/rules/inventory.md` and `docs/designs/COMPONENT_ARCHITECTURE.md`, which exist
+the unified `docs/rules/inventory.md` and `docs/architecture/COMPONENT_ARCHITECTURE.md`, which exist
 by the time expense merges. The finance rules here **reference** the shared
 decisions (org identity, the crossing rule, the security regime) rather than
-restating them; `EXPENSE_QB.md` references `docs/designs/COMPONENT_ARCHITECTURE.md` for the
+restating them; `EXPENSE_QB.md` references `docs/architecture/COMPONENT_ARCHITECTURE.md` for the
 shared library-isolation and DB-topology substrate.
 
 ---

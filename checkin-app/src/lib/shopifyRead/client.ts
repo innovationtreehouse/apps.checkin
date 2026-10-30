@@ -110,6 +110,8 @@ export interface MirrorOrder {
      */
     discountCodes: string[];
     cancelledAt: Date | null;
+    /** When Shopify processed the order; a membership line without its own year row sells the live year at this moment. */
+    processedAt: Date | null;
     updatedAt: Date | null;
     /**
      * The cart attributes we set on the checkout link (Membership_Process_ID,
@@ -130,6 +132,7 @@ const ORDER_SELECT = {
     discountCents: true,
     discountCodes: true,
     cancelledAt: true,
+    processedAt: true,
     updatedAt: true,
     noteAttributes: true,
 } as const;

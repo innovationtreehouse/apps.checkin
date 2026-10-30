@@ -39,7 +39,7 @@ under the Finance area, with donor names visible only to the finance role.
 The base architecture is settled; this doc restates none of it. Read in order:
 the parallel port plan (`INVENTORY_PARALLEL_PORT_PLAN.md`, on branch
 `claude/inventory-checkin-parallel-plan-c44a41`), then
-`docs/designs/COMPONENT_ARCHITECTURE.md` (the distilled catalog and local-inventory
+`docs/architecture/COMPONENT_ARCHITECTURE.md` (the distilled catalog and local-inventory
 architecture), and `1272_EXPENSE_QB_INTEGRATION.md`
 §5–§6 and §9. Everything below is a
 difference from those, or a decision they leave open.

@@ -36,6 +36,13 @@ export interface InventoryRuntimeConfig {
   org: () => Promise<OrgIdentity>;
   /** S5 replay read; inert (no events) until the host binds it to the catalog. */
   catalogEventSource?: CatalogEventSource;
+  alerts?: InventoryAlerts;
+}
+
+/** Alerts the host binds to reach a person. */
+export interface InventoryAlerts {
+  /** Catalog events a catch-up run left undone: newly failed, stalled over its cap, or the catalog unreadable. */
+  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
 }
 
 /** One catalog OrgEvent row; `payload` is its stored JSON body without `eventType`. */

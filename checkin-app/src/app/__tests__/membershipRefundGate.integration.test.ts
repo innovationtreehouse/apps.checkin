@@ -94,7 +94,7 @@ describe('a refunded order never activates', () => {
         expect(await raiseReversalByOrderId(oid, 'REFUND', [], `${oid}-r1`)).toBe(false);
 
         // A retried orders/paid carries the original paid payload.
-        const { outcome } = await activateByProcessId(processId, oid, true);
+        const { outcome } = await activateByProcessId(processId, oid, { appliesToYear: 2026 });
         await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId: oid, processId });
 
         expect(outcome).toBe('refunded');
@@ -212,7 +212,7 @@ describe('a refunded order never activates', () => {
 
     it('an unrefunded order still activates, on either path', async () => {
         const payFirst = await makeApplicant({ status: 'PENDING_PAYMENT', bgCleared: true });
-        const { outcome } = await activateByProcessId(payFirst.processId, orderId('C1'), true);
+        const { outcome } = await activateByProcessId(payFirst.processId, orderId('C1'), { appliesToYear: 2026 });
         expect(outcome).toBe('active');
         expect(await membershipStatusOf(payFirst.orgMembershipId)).toBe('ACTIVE');
 

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth-options';
 import { getKioskPublicKeys, verifyKioskSignature } from './verify-kiosk';
 import { config, isStagingAccessAllowed } from './config';
 import { apiError } from './api-response';
+import { isAcceptedSession } from './session/acceptedSession';
 import type { AuthenticatedUser, BusinessRole, AuthResult } from '@/types/auth';
 
 /**
@@ -50,19 +51,12 @@ async function resolveAuthResult(
     // 2. Try session
     const session = await getServerSession(authOptions);
     if (session?.user) {
-        // No positive integer id = no live person behind the session (the jwt re-sync
-        // emptied the token, or the dev guest persona). Downstream `where: { x: user.id }`
-        // filters would drop an undefined id and match every row, so this must not be a
-        // session.
-        const id: unknown = session.user.id;
-        if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
-            return { type: 'unauthenticated' };
-        }
-        // A denied household is locked out of the whole app. Treat it as unauthenticated
-        // so every route — including authenticated-only ones — fails closed, regardless of
-        // each route's role list. The jwt callback already strips role flags; this is the
-        // belt-and-suspenders that also denies plain member endpoints.
-        if ((session.user as AuthenticatedUser).denied) {
+        // No live person behind the session (the jwt re-sync emptied the token, or the
+        // dev guest persona), or a denied household locked out of the whole app. Either
+        // way every route fails closed, regardless of its role list. The jwt callback
+        // already strips a denied household's role flags; this also denies plain member
+        // endpoints.
+        if (!isAcceptedSession(session.user)) {
             return { type: 'unauthenticated' };
         }
         return { type: 'session', user: session.user as AuthenticatedUser };
