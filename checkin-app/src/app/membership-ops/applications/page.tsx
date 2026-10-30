@@ -37,6 +37,7 @@ interface ProcessRow {
   bgClearedAt: string | null;
   paidAt: string | null;
   attestations: Attestation[];
+  subjectPerson: { id: number; name: string | null } | null;
   orgMembership: {
     householdId: number;
     isVolunteerFamily: boolean;
@@ -54,6 +55,14 @@ const STATUS_COLORS: Record<string, string> = {
   PENDING_RENEWAL: "teal",
   RENEWAL_PENDING_BG: "grape",
 };
+
+const KIND_LABELS: Record<string, string> = {
+  PERSON_AGREEMENT: "Membership agreement",
+  PERSON_BG: "Background check",
+  KEY_VOLUNTEER_AGREEMENT: "Key Volunteer agreement",
+};
+
+const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
 const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
@@ -199,7 +208,7 @@ function ApplicationsBoard() {
       title: "Start this background-check review over?",
       children: (
         <Text size="sm">
-          This discards the {approvals(r)} approval(s) recorded for <strong>{householdLabel(r)}</strong>{" "}
+          This discards the {approvals(r)} approval(s) recorded for <strong>{processLabel(r)}</strong>{" "}
           and asks the reviewers to start again. Use it when an approval was recorded by
           mistake — the check itself has not cleared yet, so nothing else changes.
         </Text>
@@ -216,7 +225,7 @@ function ApplicationsBoard() {
       title: "Close this application?",
       children: (
         <Text size="sm">
-          This removes <strong>{householdLabel(r)}</strong> (application #{r.id}) from the board list.
+          This removes <strong>{processLabel(r)}</strong> (application #{r.id}) from the board list.
           A record is kept in the audit log, and the board can reopen it. Only do this for
           applications that have sat idle and unpaid.
         </Text>
@@ -337,7 +346,9 @@ function ApplicationsBoard() {
   };
 
 
-  const householdLabel = (r: ProcessRow) => {
+  // A per-person process has no household; it is named for its subject person.
+  const processLabel = (r: ProcessRow) => {
+    if (!r.orgMembership && r.subjectPerson) return r.subjectPerson.name || `Person #${r.subjectPerson.id}`;
     const hh = r.orgMembership?.household;
     if (!hh) return `Household #${r.orgMembership?.householdId ?? "?"}`;
     const parents = (hh.householdMembers || []).filter((p) => p.isHouseholdLead).map((p) => p.name || p.email).filter(Boolean);
@@ -411,9 +422,9 @@ function ApplicationsBoard() {
             <Card key={r.id} withBorder radius="md" padding="lg">
               <Group justify="space-between" align="center" wrap="wrap">
                 <div>
-                  <Text fw={700} fz="lg">{householdLabel(r)}</Text>
+                  <Text fw={700} fz="lg">{processLabel(r)}</Text>
                   <Text size="xs" c="dimmed">
-                    {r.kind} · application #{r.id}
+                    {kindLabel(r.kind)} · application #{r.id}
                     {r.orgMembership?.isVolunteerFamily && <Text component="span" c="green"> · volunteer</Text>}
                   </Text>
                 </div>

@@ -121,6 +121,30 @@ describe("AdminMembershipPage", () => {
         expect(screen.getByText(/This household already paid/)).toBeInTheDocument();
     });
 
+    it("names a per-person process for its subject person, with a readable kind", async () => {
+        const perPerson = (id: number, kind: string, name: string) => ({
+            ...rows[0], id, kind, orgMembership: null, subjectPerson: { id: 100 + id, name },
+        });
+        mockFetchJson({
+            "/api/membership-ops/applications": {
+                processes: [
+                    perPerson(11, "PERSON_AGREEMENT", "Adult Child"),
+                    perPerson(12, "PERSON_BG", "Checked Volunteer"),
+                    perPerson(13, "KEY_VOLUNTEER_AGREEMENT", "Key Volunteer"),
+                ],
+            },
+        });
+        renderPage();
+
+        expect(await screen.findByText("Adult Child")).toBeInTheDocument();
+        expect(screen.getByText("Checked Volunteer")).toBeInTheDocument();
+        expect(screen.getByText("Key Volunteer")).toBeInTheDocument();
+        expect(screen.getByText(/Membership agreement · application #11/)).toBeInTheDocument();
+        expect(screen.getByText(/Background check · application #12/)).toBeInTheDocument();
+        expect(screen.getByText(/Key Volunteer agreement · application #13/)).toBeInTheDocument();
+        expect(screen.queryByText(/Household #/)).not.toBeInTheDocument();
+    });
+
     it("shows an empty state when there are no in-flight applications", async () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: [] } });
         renderPage();
