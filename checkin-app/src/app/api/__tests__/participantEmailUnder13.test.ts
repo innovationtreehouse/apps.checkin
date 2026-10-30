@@ -48,7 +48,7 @@ const UNKNOWN_DOB = kid(3, null);
 const KIDS = [UNDER_13, EXACTLY_13, UNKNOWN_DOB];
 const PARENT = { id: 50, householdId: HOUSEHOLD_ID, isHouseholdLead: true, name: "Parent", email: "parent@example.com", phone: "5125551234" };
 
-function programRow() {
+function programRow(householdMembers: object[] = [PARENT]) {
     return {
         id: PROGRAM_ID, name: "Robotics", leadMentorId: LEAD_ID,
         startAt: new Date("2026-09-01T00:00:00Z"), endAt: new Date("2026-12-31T00:00:00Z"),
@@ -59,7 +59,7 @@ function programRow() {
         volunteers: [],
         participants: KIDS.map(({ householdId, ...k }) => ({
             programId: PROGRAM_ID, personId: k.id, status: "ACTIVE", pendingSince: null,
-            person: { ...k, householdId, household: { id: HOUSEHOLD_ID, householdMembers: [PARENT], emergencyContacts: [] } },
+            person: { ...k, householdId, household: { id: HOUSEHOLD_ID, householdMembers, emergencyContacts: [] } },
         })),
         events: [],
         leadMentor: { id: LEAD_ID, name: "Lead", email: "lead@example.com" },
@@ -102,7 +102,7 @@ beforeEach(() => {
         where.leadMentorId === LEAD_ID ? [{ id: PROGRAM_ID, participants: KIDS.map(k => ({ personId: k.id })) }] : []);
 });
 
-type RosterRow = { personId: number; person: { email?: string | null; dateOfBirth?: unknown; household?: { householdMembers: { email?: string }[] } } };
+type RosterRow = { personId: number; person: { email?: string | null; dateOfBirth?: unknown; household?: { householdMembers: { id: number; email?: string | null }[] } } };
 
 async function programRoster(): Promise<RosterRow[]> {
     const res = await programGET(new Request(`http://localhost/api/programs/${PROGRAM_ID}`) as never, { params: Promise.resolve({ id: String(PROGRAM_ID) }) });
@@ -151,4 +151,105 @@ it("keeps the parent's email on the program roster for the lead mentor", async (
     const rows = await programRoster();
     const under13 = rows.find(r => r.personId === UNDER_13.id);
     expect(under13?.person.household?.householdMembers[0].email).toBe(PARENT.email);
+});
+
+describe("an enrolled participant who is also a household lead", () => {
+    const lead = ({ id, email }: { id: number; email: string }) => ({ id, householdId: HOUSEHOLD_ID, isHouseholdLead: true, name: `Kid ${id}`, email, phone: "5125551234" });
+    const leadList = async () => {
+        const rows = await programRoster();
+        const members = rows[0].person.household?.householdMembers ?? [];
+        return Object.fromEntries(members.map(m => [m.id, m.email ?? null]));
+    };
+
+    beforeEach(() => {
+        db.program.findUnique.mockResolvedValue(programRow([lead(UNDER_13), lead(EXACTLY_13), lead(UNKNOWN_DOB), PARENT]));
+    });
+
+    it("follows the participant rule in the household's lead list for the lead mentor; guardians keep theirs", async () => {
+        asLead();
+        expect(await leadList()).toEqual({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+            [PARENT.id]: PARENT.email,
+        });
+    });
+
+    it("leaves the lead list whole for the board", async () => {
+        asBoard();
+        expect(await leadList()).toEqual({
+            [UNDER_13.id]: UNDER_13.email,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: UNKNOWN_DOB.email,
+            [PARENT.id]: PARENT.email,
+        });
+    });
+});
+
+describe("an enrolled participant who also volunteers on the program", () => {
+    const ADULT_VOLUNTEER = { id: 60, name: "Adult", email: "adult@example.com" };
+    const volunteerRow = ({ id, name, email }: { id: number; name: string; email: string }) => ({ programId: PROGRAM_ID, personId: id, isCore: false, person: { id, name, email } });
+    const volunteerEmails = async () => {
+        const res = await programGET(new Request(`http://localhost/api/programs/${PROGRAM_ID}`) as never, { params: Promise.resolve({ id: String(PROGRAM_ID) }) });
+        const { volunteers } = await res.json() as { volunteers: { personId: number; person: { email?: string | null } }[] };
+        return Object.fromEntries(volunteers.map(v => [v.personId, v.person.email ?? null]));
+    };
+
+    beforeEach(() => {
+        db.program.findUnique.mockResolvedValue({
+            ...programRow(),
+            volunteers: [UNDER_13, EXACTLY_13, UNKNOWN_DOB, ADULT_VOLUNTEER].map(volunteerRow),
+        });
+    });
+
+    it("follows the participant rule on the volunteer list for the lead mentor", async () => {
+        asLead();
+        expect(await volunteerEmails()).toMatchObject({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+        });
+    });
+
+    it("leaves the volunteer list whole for the board", async () => {
+        asBoard();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: UNDER_13.email,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: UNKNOWN_DOB.email,
+            [ADULT_VOLUNTEER.id]: ADULT_VOLUNTEER.email,
+        });
+    });
+});
+
+describe("an enrolled participant who also volunteers on the event's program", () => {
+    const volunteerRow = ({ id, name, email }: { id: number; name: string; email: string }) => ({ programId: PROGRAM_ID, personId: id, isCore: false, person: { id, name, email } });
+    const volunteerEmails = async () => {
+        const res = await eventGET(new Request(`http://localhost/api/events/${EVENT_ID}`) as never, { params: Promise.resolve({ id: String(EVENT_ID) }) });
+        const { program } = await res.json() as { program: { volunteers: { personId: number; person: { email?: string | null } }[] } };
+        return Object.fromEntries(program.volunteers.map(v => [v.personId, v.person.email ?? null]));
+    };
+
+    beforeEach(() => {
+        const row = eventRow();
+        db.event.findUnique.mockResolvedValue({ ...row, program: { ...row.program, volunteers: KIDS.map(volunteerRow) } });
+    });
+
+    it("follows the participant rule on the volunteer list for the lead mentor", async () => {
+        asLead();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+        });
+    });
+
+    it("leaves the volunteer list whole for the board", async () => {
+        asBoard();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: UNDER_13.email,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: UNKNOWN_DOB.email,
+        });
+    });
 });

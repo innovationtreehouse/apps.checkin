@@ -19,3 +19,33 @@ export function rosterPerson<P extends { email: string | null; dateOfBirth: Date
 ): Omit<P, "dateOfBirth"> {
     return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
 }
+
+/** The enrolled participants whose email the viewer may not see, wherever the response lists them. */
+export function emailWithheldParticipants(
+    participants: { personId: number; person: { dateOfBirth: Date | null } }[],
+    viewerIsLeader: boolean,
+): Set<number> {
+    return new Set(viewerIsLeader
+        ? participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth)).map(p => p.personId)
+        : []);
+}
+
+/** Nulls the email of a person the rule hides, wherever the response lists them. */
+export function withholdEmail<P extends { id: number; email: string | null }>(person: P, emailWithheldFrom: ReadonlySet<number>): P {
+    return emailWithheldFrom.has(person.id) ? { ...person, email: null } : person;
+}
+
+/**
+ * A roster household as the route ships it: an enrolled participant listed among
+ * its leads keeps the same email rule as on their own roster row. Everyone else
+ * listed is a guardian and keeps their email.
+ */
+export function rosterHousehold<M extends { id: number; email: string | null }, H extends { householdMembers: M[] }>(
+    household: H,
+    emailWithheldFrom: ReadonlySet<number>,
+): H {
+    return {
+        ...household,
+        householdMembers: household.householdMembers.map(m => withholdEmail(m, emailWithheldFrom)),
+    };
+}
