@@ -74,6 +74,8 @@ describe('receipt file bytes', () => {
     it.each([
         ['Receipt', 'fileBlob'],
         ['ReceiptMailItem', 'fileBlob'],
+        ['Receipt', 'fileKey'],
+        ['ReceiptMailItem', 'fileKey'],
     ] as const)('%s.%s is pii, never secret', (model, field) => {
         const tiers = receiptGenerated.classifications[model] as Record<string, string>;
         expect(tiers[field]).toBe('pii');
@@ -148,8 +150,8 @@ describe('receipt donor and reimbursee names', () => {
 
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
-        // ReceiptRow omits these two columns (repositories/receipt.ts listShape).
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'donorSyncSeq');
+        // ReceiptRow omits these columns (repositories/receipt.ts listShape).
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');

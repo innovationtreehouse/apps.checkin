@@ -9,6 +9,7 @@ import { sessionUser } from '@/lib/components/host';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
+jest.mock('@aws-sdk/client-s3', () => ({ S3Client: jest.fn() }));
 jest.mock('@checkin/receipt', () => ({
     configureReceipt: jest.fn(),
     createAnthropicOcr: jest.fn(),

@@ -48,6 +48,7 @@ describeDb("submitter scope", () => {
     actAs(FINANCE);
     for (const v of [await receiptService.get(r.id, "finance"), ...(await receiptService.listForOrg())]) {
       expect(v).not.toHaveProperty("fileBlob");
+      expect(v).not.toHaveProperty("fileKey");
     }
   });
 });

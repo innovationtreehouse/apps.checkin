@@ -8,7 +8,8 @@ import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
-import { getOrg, mailbox, ports } from "../runtime";
+import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
+import { fileStore, storesNewFilesInBucket, getOrg, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -326,7 +327,7 @@ async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise
  * receipt's own insert, so a concurrent retry or release leaves no second receipt (409).
  */
 export async function intakeDeferred(
-  item: { id: number; fileBlob: Uint8Array; mimeType: string },
+  item: { id: number; fileBlob: Uint8Array; fileKey: string | null; mimeType: string },
   sender: ReceiptPrincipal,
   { uploadLimits, onClaim }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown> },
 ): Promise<string> {
@@ -337,12 +338,12 @@ export async function intakeDeferred(
     async (tx, receiptId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id: item.id, status: "deferred" },
-        data: { status: "assigned", receiptId, fileBlob: null },
+        data: { status: "assigned", receiptId, fileBlob: null, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await onClaim?.(tx, receiptId);
     },
-    { uploadLimits },
+    { uploadLimits, heldFileKey: item.fileKey },
   );
   // A deferred text item is a body; its message's attachments are retried first, oldest first.
   if (item.mimeType === "text/plain") {
@@ -456,12 +457,19 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        await db.$transaction([
-          db.receiptMailItem.create({
-            data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType },
-          }),
-          oweReply(db),
-        ]);
+        const fileKey = storesNewFilesInBucket() ? newMailItemFileKey() : null;
+        if (fileKey) await fileStore().put(fileKey, bytes, key.attachmentHash);
+        try {
+          await db.$transaction([
+            db.receiptMailItem.create({
+              data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: fileKey ? null : new Uint8Array(bytes), fileKey, fileSize: bytes.length, mimeType: check.mimeType },
+            }),
+            oweReply(db),
+          ]);
+        } catch (err) {
+          await deleteStoredFiles([fileKey]);
+          throw err;
+        }
         counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
@@ -493,9 +501,15 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
-        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, mimeType: true } });
-        if (!item?.fileBlob || !item.mimeType) continue;
-        await intakeDeferred({ ...item, fileBlob: item.fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
+        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, fileKey: true, mimeType: true } });
+        if (!item?.mimeType) continue;
+        const fileBlob = await readStoredFile(item);
+        if (!fileBlob) {
+          counts.failed++;
+          console.error("[receipt] a deferred mail item's file is missing");
+          continue;
+        }
+        await intakeDeferred({ ...item, fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
         counts.receipts++;
       } catch (err) {
         if (err instanceof OrgUploadLimitError) return;

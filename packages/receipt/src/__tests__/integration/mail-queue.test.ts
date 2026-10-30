@@ -48,6 +48,7 @@ describeDb("finance mail queue", () => {
     const [shown] = await mailQueueService.listHeld();
     expect(shown).toMatchObject({ id, senderAddress: "stranger@elsewhere.test", mimeType: "application/pdf" });
     expect(shown).not.toHaveProperty("fileBlob");
+    expect(shown).not.toHaveProperty("fileKey");
     const rows = await db.receiptAuditLog.findMany({ where: { action: "mail_item_viewed" } });
     expect(rows).toEqual([expect.objectContaining({ receiptId: null, userId: FINANCE.id, valueBefore: String(id) })]);
   });
