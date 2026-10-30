@@ -140,12 +140,18 @@ export const CatalogOrgEventSchema = z.object({
 });
 export type CatalogOrgEvent = z.infer<typeof CatalogOrgEventSchema>;
 
-/** Catalog events after a cursor, oldest first; read by the catch-up sweep. */
+/** A page of the org's catalog events after an id, oldest first; read by the catch-up sweep. */
 export interface CatalogEventSource {
   eventsAfter(afterId: number): Promise<unknown[]>;
 }
 
 export const inertCatalogEventSource: CatalogEventSource = { eventsAfter: async () => [] };
+
+/** Alerts the host binds to reach a person. */
+export interface ExpenseAlerts {
+  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
+  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
+}
 
 // ── QuickBooks (QB-1 readers, QB-2 writer) ────────────────────────────────────
 

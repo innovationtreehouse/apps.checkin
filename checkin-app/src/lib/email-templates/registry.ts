@@ -175,6 +175,22 @@ export const REGISTRY = {
         defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
     },
 
+    "board.expenseEventsStuck": {
+        // problem: what the catch-up found, in code because it depends on the failure.
+        allowedTokens: { problem: text },
+        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
+        defaultSubject: "Expense: catalog events need attention",
+        defaultBody: "The expense catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending, and their budget buckets don't carry over to the real items. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    },
+
+    "board.receiptMappingEventsStuck": {
+        // problem: what the catch-up found, in code because it depends on the failure.
+        allowedTokens: { problem: text },
+        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
+        defaultSubject: "Receipt mapping: catalog events need attention",
+        defaultBody: "The receipt mapping catch-up {{problem}}. Until they apply, lines on receipts in review can stay on items the catalog has already reviewed. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },

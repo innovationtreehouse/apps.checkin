@@ -33,8 +33,8 @@ async function apply(tx: Db, ev: CatalogOrgEvent, payload: unknown): Promise<voi
   }
 }
 
-/** Handler the catalog's post-commit call-out invokes in-process. A failed reaction is recorded, not thrown. */
-export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> {
+/** Apply one event and record the outcome. A failed reaction is recorded, not thrown. */
+async function recordCatalogEvent(raw: unknown): Promise<ConsumeResult> {
   const ev = CatalogOrgEventSchema.parse(raw);
   await assertOrg(ev.orgId);
   const payloadText = typeof ev.payload === "string" ? ev.payload : JSON.stringify(ev.payload);
@@ -56,40 +56,100 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
   } catch (err) {
     const failureReason = err instanceof Error ? err.message : String(err);
     logError("catalog_event_failed", { eventId: ev.id, eventType: ev.eventType }, err);
-    await db.expenseReceivedOrgEvent.upsert({
-      where: { id: ev.id },
-      create: { id: ev.id, ...row, status: "failed", failureReason },
-      update: { status: "failed", failureReason },
+    await db.expenseReceivedOrgEvent.createMany({ data: [{ id: ev.id, ...row, status: "failed", failureReason }], skipDuplicates: true });
+    // An overlapping consumer may have processed this event; its outcome stands.
+    const { count } = await db.expenseReceivedOrgEvent.updateMany({
+      where: { id: ev.id, status: { not: "processed" } },
+      data: { status: "failed", failureReason },
     });
+    return count === 0 ? "duplicate" : "failed";
+  }
+}
+
+/** Tell a person about events left undone. An alert that fails never fails the caller. */
+async function alertStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
+  try {
+    await getExpenseRuntime().alerts?.orgEventsStuck(event);
+  } catch (err) {
+    logError("catalog_event_alert_failed", {}, err);
+  }
+}
+
+/** Handler the catalog's post-commit call-out invokes in-process. A failed event is recorded and alerted, not thrown. */
+export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> {
+  const result = await recordCatalogEvent(raw);
+  if (result === "failed") await alertStuck({ failed: 1, unprocessed: 0, unreadable: false });
+  return result;
+}
+
+/** An event that can't be recorded counts as failed; with no ledger row, the next sweep reads it again. */
+async function consumeInSweep(raw: unknown): Promise<ConsumeResult> {
+  try {
+    return await recordCatalogEvent(raw);
+  } catch (err) {
+    logError("catalog_event_unrecorded", {}, err);
     return "failed";
   }
 }
 
-/**
- * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
- * commit, so an event with a lower id can commit after a higher one was consumed.
- * Assumes no catalog transaction stays open while more than this many others commit; make it
- * time-based if bulk catalog edits arrive.
- */
-export const CATALOG_EVENT_LOOKBACK = 100;
+/** The share of the cap retried before new events, so failures that persist can't starve them. */
+const RETRY_FIRST_SHARE = 0.1;
 
 /**
- * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
- * window behind the cursor (max received id), skipping ids already in the ledger. The host's
- * daily reconcile cron step calls it. Capped; counts only.
+ * Catch-up sweep: retries a small share of the failed events, pages through all the org's catalog
+ * events and consumes those not in the ledger, then retries more failed events with the cap left.
+ * Reading from the start means no event is missed however late it committed or however many later
+ * ids were received. What stays undone is retried on the next run. A person is alerted once per
+ * run for an event newly failed, an unreadable catalog, or a capped run that processed nothing; a
+ * capped run that made progress drains itself on later runs. The host's daily reconcile cron step
+ * calls it. Capped; counts only.
  */
-export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult, number>> {
+export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult | "unprocessed", number> & { unreadable: boolean }> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0 };
   const repo = createOrgEventsRepository(db);
-  const failed = (await repo.findPending(await getOrgId())).slice(0, limit);
-  for (const r of failed) {
-    counts[await consumeCatalogEvent({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
+  const allFailed = await repo.findPending(await getOrgId());
+  const retry = async (rows: typeof allFailed) => {
+    for (const r of rows) {
+      counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
+    }
+  };
+  const firstRetries = allFailed.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
+
+  let unprocessed = 0;
+  let unreadable = false;
+  let budget = limit - firstRetries.length;
+  let newlyFailed = 0;
+  try {
+    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
+    let after = 0;
+    for (;;) {
+      const page = await getExpenseRuntime().catalogEvents.eventsAfter(after);
+      if (page.length === 0) break;
+      const ids = page.map((raw) => CatalogOrgEventSchema.pick({ id: true }).parse(raw).id);
+      const received = new Set(await repo.idsIn(ids));
+      for (const [i, raw] of page.entries()) {
+        if (received.has(ids[i])) continue;
+        if (budget > 0) {
+          budget--;
+          const result = await consumeInSweep(raw);
+          counts[result]++;
+          if (result === "failed") newlyFailed++;
+        } else {
+          unprocessed++;
+        }
+      }
+      after = ids[ids.length - 1];
+    }
+  } catch (err) {
+    unreadable = true;
+    logError("catalog_events_unreadable", {}, err);
   }
-  const from = Math.max(0, (await repo.getMaxId()) - CATALOG_EVENT_LOOKBACK);
-  const received = new Set(await repo.idsAfter(from));
-  const fresh = (await getExpenseRuntime().catalogEvents.eventsAfter(from)).filter(
-    (raw) => !received.has(CatalogOrgEventSchema.pick({ id: true }).parse(raw).id),
-  );
-  for (const raw of fresh.slice(0, Math.max(0, limit - failed.length))) counts[await consumeCatalogEvent(raw)]++;
-  return counts;
+
+  const laterRetries = allFailed.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += allFailed.length - firstRetries.length - laterRetries.length;
+
+  if (newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0)) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
+  return { ...counts, unprocessed, unreadable };
 }

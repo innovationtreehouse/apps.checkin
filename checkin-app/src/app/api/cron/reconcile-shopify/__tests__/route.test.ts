@@ -32,7 +32,7 @@ const SALE_SWEEP = { salesEnded: 0, productsHidden: 0, unpaidNotified: 0 };
 const INCOME = { status: 'unbound' as const };
 const PROGRAM_STOCK = { checked: 0, settled: 0 };
 const INVENTORY_EVENTS = { processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0, unprocessed: 0, unreadable: false };
-const WORKFLOW_EVENTS = { applied: 1, failed: 0 };
+const WORKFLOW_EVENTS = { applied: 1, failed: 0, unprocessed: 0, unreadable: false };
 const RECEIVING_APPLY = { resolved: 1, failed: 0, applying: 0, skipped: 0, errored: 0, gaveUp: 0 };
 const RECEIPT = { swept: 2, failed: 0 };
 const RECEIPT_STUCK = { swept: 1, failed: 0 };
@@ -42,7 +42,7 @@ const RECEIPT_MAIL = { status: 'unbound' as const };
 // The one expense result every case uses; a new catch-up step adds its key here.
 const EXPENSE: Awaited<ReturnType<typeof runExpenseCatchUp>> = {
     intake: { applied: 0, failed: 0 },
-    catalogEvents: { processed: 0, duplicate: 0, failed: 0 },
+    catalogEvents: { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false },
 };
 const req = () =>
     new Request('http://localhost/api/cron/reconcile-shopify', { headers: { authorization: `Bearer ${SECRET}` } });
