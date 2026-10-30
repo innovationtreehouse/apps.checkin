@@ -1,6 +1,7 @@
 "use client";
 import { createClient, errorMessage, notifyNavCounts, useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
+import { bucketChoices, type Bucket } from "../lib/buckets";
 
 /**
  * Client fetch helpers. Every expense read and write goes through the host's routes under
@@ -41,14 +42,10 @@ export function useRoles(): { isFinance: boolean; isBoard: boolean } {
 
 export { errorMessage, PAGE_SIZE, paged, type Loaded } from "@checkin/component-ui";
 
-export interface Bucket {
-  id: number;
-  name: string;
-  archivedAt: string | null;
-}
+export type { Bucket } from "../lib/buckets";
 
 /** Bucket picker options from the registered local-owners route (FINANCE and Board). */
 export function useBuckets(enabled: boolean): { value: string; label: string }[] {
   const { data } = useLoad<Bucket[]>(enabled ? "/local-owners" : null);
-  return (data ?? []).filter((b) => !b.archivedAt).map((b) => ({ value: String(b.id), label: b.name }));
+  return bucketChoices(data);
 }

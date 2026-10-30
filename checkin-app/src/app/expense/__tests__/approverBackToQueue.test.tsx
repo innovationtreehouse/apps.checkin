@@ -11,7 +11,6 @@ const mockGoTo = jest.fn<void, [string]>();
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: false, isBoard: false }),
-  useBuckets: () => [],
   send: (...args: [string, string, unknown, string]) => mockSend(...args),
   api: (path: string) => mockApi(path),
   goTo: (href: string) => mockGoTo(href),

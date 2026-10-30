@@ -164,6 +164,38 @@ describeDb("approveLines (Approve All)", () => {
     expect(await state(id)).toBe("qb_pending");
   });
 
+  it("a retry of a batch that committed succeeds and writes nothing", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [2], 102: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101, 102]);
+    const batch = approvalIds.slice(0, 2);
+
+    await approveLines(LEADER, id, batch);
+    await approveLines(LEADER, id, batch);
+
+    expect(await statuses(approvalIds)).toEqual(["approved", "approved", "pending"]);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved" } })).toBe(2);
+  });
+
+  it("a retry succeeds after the batch moved the expense on", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101]);
+
+    await approveLines(LEADER, id, approvalIds);
+    await approveLines(LEADER, id, approvalIds);
+
+    expect(await state(id)).toBe("qb_pending");
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved" } })).toBe(2);
+  });
+
+  it("a line someone else approved still refuses the batch", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2, 9], 101: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101]);
+    await db.lineItemOwnerApproval.update({ where: { id: approvalIds[0] }, data: { status: "approved", decidedByUserId: 9 } });
+
+    await expect(approveLines(LEADER, id, approvalIds)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Line 1: Item is not in pending status/) });
+    expect(await statuses(approvalIds)).toEqual(["approved", "pending"]);
+  });
+
   it("approves none when one line is refused, and the error names that line", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [7] } }) });
     const { id, approvalIds } = await linesInApproval([100, 101]);

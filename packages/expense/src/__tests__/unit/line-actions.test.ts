@@ -187,7 +187,7 @@ describe("acts per role", () => {
     }
   });
 
-  it("offers at most one part per line, so parts never tie for the main act", () => {
+  it("offers at most one part per line, which is the main act", () => {
     // 4 is a bucket approver, FINANCE and Board at once.
     const everything = { approvers: [2, 4], finance: [3, 4], board: [4, 5, 6] };
     for (const caller of [2, 3, 4, 5]) {

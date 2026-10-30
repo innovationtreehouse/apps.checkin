@@ -8,7 +8,6 @@ const mockSend = jest.fn(async () => true);
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  useBuckets: () => [{ value: "3", label: "Robotics" }, { value: "7", label: "Woodshop" }],
   send: (...args: unknown[]) => mockSend(...(args as [])),
 }));
 
@@ -45,6 +44,7 @@ function load(capitalOwnerId: number | null) {
       }],
     },
     "/expenses/e1/line-item-approvals": [],
+    "/local-owners": [{ id: 3, name: "Robotics", archivedAt: null }, { id: 7, name: "Woodshop", archivedAt: null }],
     "/expenses/e1/signoffs": [],
   };
 }
