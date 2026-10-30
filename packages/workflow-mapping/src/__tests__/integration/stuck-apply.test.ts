@@ -147,7 +147,7 @@ describeDb("sweepStuckApplying attempt cap", () => {
   it.each([
     { name: "has no inventory leg", recognitionStatus: "unrecognized", assignedGtin13: null, inventoryAppliedAt: null },
     { name: "already stamped its inventory leg", recognitionStatus: "recognized", assignedGtin13: "0000000000017", inventoryAppliedAt: new Date() },
-  ])("gives up without marking inventory unconfirmed when the receipt $name", async ({ recognitionStatus, assignedGtin13, inventoryAppliedAt }) => {
+  ] as const)("gives up without marking inventory unconfirmed when the receipt $name", async ({ recognitionStatus, assignedGtin13, inventoryAppliedAt }) => {
     const r = await makeReceipt({ state: "applying" });
     await makeLineStatus(r.id, { recognitionStatus, assignedGtin13 });
     await db.receivedReceipt.update({ where: { id: r.id }, data: { inventoryAppliedAt } });
