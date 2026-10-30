@@ -81,6 +81,7 @@ Grep `programId`, `leadMentorId` and `programsLed` repo-wide before each phase; 
 | `leadMentorId` (program leader) | instance | yes | Different runs have different leaders; this re-tiers the security claim (§5). |
 | `leadMentorNotificationSettings` | instance | **no** | Follows the leader. |
 | `startAt`, `endAt` | instance | yes | Run dates. Age eligibility is measured at the run's start. |
+| `appliesToYear` | instance | yes | The membership year a run counts in, which summarises its dates. A definition has no year. Its read phase moves `programCoverageDate`'s callers to the run. |
 | `phase`, `enrollmentStatus` | instance | yes | A run's lifecycle. |
 | `maxParticipants` | instance | yes | Capacity is a room for one run; the capacity lock moves to the instance row. |
 | `shopifyProductId`, `shopifyVariantId` (public item) | instance | yes | Each run is sold separately; an order must map to a run. |

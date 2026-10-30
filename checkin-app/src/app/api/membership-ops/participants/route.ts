@@ -8,6 +8,8 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 import { withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -84,7 +86,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
                 }
-                parent = await createInOwnHousehold(prisma, { email: parentEmail, name: parentName.trim() });
+                parent = await withTx(prisma, async (tx) => {
+                    await removeAliasesForSignInEmail(tx, parentEmail, personActor(auth.user.id), "participant_add");
+                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim() });
+                });
             } else {
                 joinsExistingHousehold = true;
             }
@@ -114,6 +119,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (await lockAndFindDeniedHousehold(tx, [targetHouseholdId]) !== null) {
                     throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
+                if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
                 return tx.person.create({
                     data: {
                         id: await mintPersonId(tx),
@@ -126,11 +132,14 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 });
             });
         } else {
-            newParticipant = await createInOwnHousehold(prisma, {
-                name: nameWrite(name)!,
-                ...(email && { email }),
-                // #1165: 26+ participants are stored declared-adult with no DoB.
-                ...normalizeAdultDob(dob),
+            newParticipant = await withTx(prisma, async (tx) => {
+                if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
+                return createInOwnHousehold(tx, {
+                    name: nameWrite(name)!,
+                    ...(email && { email }),
+                    // #1165: 26+ participants are stored declared-adult with no DoB.
+                    ...normalizeAdultDob(dob),
+                });
             });
         }
 

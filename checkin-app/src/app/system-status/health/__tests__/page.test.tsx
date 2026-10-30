@@ -11,7 +11,7 @@ beforeEach(() => resetRtl());
 describe("SystemStatusHealthPage", () => {
     it("renders the quick-stats and system health cards", async () => {
         mockFetchJson({
-            "/api/system-status/kiosk-version": { version: "unknown-in-test" },
+            "/api/system-status/kiosk-version": { version: "dev" },
             "/api/system-status/health": { days: [] },
             "/api/system-status/kiosk-heartbeat": { heartbeat: [] },
         });

@@ -7,9 +7,7 @@ import {
   catalogReferenceConflictSchema,
 } from "@checkin/receipt-types";
 import { z } from "zod";
-import { db } from "../db";
 import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
-import { insertAuditEvent } from "../lib/audit";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { ports, requireActor } from "../runtime";
 import { loadEditableLine, updateEditableLine } from "./receiptLookup";
@@ -153,9 +151,7 @@ export const lineItemService = {
       provisionalItemGtin13: null,
       conversionFactor,
       conversionVersion: 1,
-    });
-
-    await insertAuditEvent(db, {
+    }, {
       orgId: received.orgId,
       actorUserId: actor.id,
       actorUsername: actor.name,
@@ -206,9 +202,7 @@ export const lineItemService = {
       provisionalItemGtin13: provisionalGtin13,
       conversionFactor,
       conversionVersion: 1,
-    });
-
-    await insertAuditEvent(db, {
+    }, {
       orgId: received.orgId,
       actorUserId: actor.id,
       actorUsername: actor.name,
@@ -228,9 +222,7 @@ export const lineItemService = {
     const edit = await loadEditableLine(receiptId, lineId);
     const { received } = edit;
 
-    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
-
-    await insertAuditEvent(db, {
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null }, {
       orgId: received.orgId,
       actorUserId: actor.id,
       actorUsername: actor.name,

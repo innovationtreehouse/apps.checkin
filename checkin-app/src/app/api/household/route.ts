@@ -17,6 +17,8 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { membershipValidThrough } from "@/lib/orgMembership";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 
 export const GET = withAuth(
     {},
@@ -126,6 +128,7 @@ export const PATCH = withAuth(
             const householdId = hh.householdId;
 
             const { member, warning } = await prisma.$transaction(async (tx) => {
+                if (memberEmail) await removeAliasesForSignInEmail(tx, memberEmail, personActor(userId), "household_add_member");
                 // Always create a fresh member — never reparent an existing account by
                 // email. Real account linking happens at Google sign-in via
                 // allowDangerousEmailAccountLinking (see lib/auth-options.ts). Attaching

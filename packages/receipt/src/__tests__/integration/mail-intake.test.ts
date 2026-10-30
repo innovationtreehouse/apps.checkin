@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
+import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
   MAIL_CAP,
@@ -13,10 +13,12 @@ import {
   INLINE_FLOOR_BYTES,
   readMailbox,
 } from "../../services/mailIntake";
+import { createMemoryFileStore } from "../../lib/fileStorage";
+import { mailQueueService } from "../../services/mailQueueService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { actAs, ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -41,6 +43,7 @@ function fakeMailbox() {
 let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
 let agingAlerts: MailAgingOutEvent[];
+let listingAlerts: MailListingFailedEvent[];
 const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
@@ -75,6 +78,7 @@ function send(
 const testAlerts = () => ({
   mailHoldCeilingReached: async (event: MailHoldCeilingEvent) => void alerts.push(event),
   mailAgingOut: async (event: MailAgingOutEvent) => void agingAlerts.push(event),
+  mailListingFailed: async (event: MailListingFailedEvent) => void listingAlerts.push(event),
 });
 
 beforeEach(async () => {
@@ -82,6 +86,7 @@ beforeEach(async () => {
   mail = fakeMailbox();
   alerts = [];
   agingAlerts = [];
+  listingAlerts = [];
   configure({
     ocr: okOcr(),
     mailbox: mail.reader,
@@ -97,7 +102,7 @@ describeDb("mail intake", () => {
 
     const [receipt] = await db.receipt.findMany();
     expect(receipt).toMatchObject({ intakeSource: "email", uploadedByUserId: ALICE.id, mimeType: "application/pdf" });
-    expect(Buffer.from(receipt.fileBlob).toString()).toBe(pdf("m1"));
+    expect(Buffer.from(receipt.fileBlob ?? []).toString()).toBe(pdf("m1"));
     expect(await stateOf(receipt.id)).toBe("submitter_review");
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "assigned", receiptId: receipt.id, senderAddress: "alice@example.org", fileBlob: null });
@@ -131,7 +136,7 @@ describeDb("mail intake", () => {
     send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5.00") } }] });
     send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43 total 7.50</p>") } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
-    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob).toString()]);
+    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob ?? []).toString()]);
     expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5.00"], ["text/plain", "<p>Order 43 total 7.50</p>"]]));
   });
 
@@ -387,6 +392,145 @@ describeDb("mail intake ageing alert", () => {
     expect(await readMailbox()).toMatchObject({ failed: 1 });
     expect(agingAlerts).toMatchObject([{ messages: 1 }]);
   });
+
+  /** A run where reading any message fails, as with a people lookup that is down. */
+  const failingReads = () =>
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: {
+        submitterByEmail: async () => {
+          throw new Error("people lookup down");
+        },
+      },
+    });
+  const healthyReads = () =>
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ALICE } });
+  const age = (days: number) => vi.setSystemTime(Date.now() + days * DAY_MS);
+
+  it("alerts on a later run for a message that failed earlier and has since left the listing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1");
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+
+    // The runs on the last days of the window never happened; the listing no longer has the message.
+    age(MAIL_WINDOW_DAYS + 1);
+    mail.messages.delete("m1");
+    healthyReads();
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("retries an alert whose send failed, then does not repeat it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { ageMs: old });
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: { ...testAlerts(), mailAgingOut: async () => { throw new Error("send failed"); } },
+      people: { submitterByEmail: async () => { throw new Error("people lookup down"); } },
+    });
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+
+    failingReads();
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+  });
+
+  it("alerts once, not daily, for a message that cannot be fetched", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const listRecent = mail.reader.listRecent;
+    mail.reader.listRecent = async (days) => [...(await listRecent(days)), "gone"];
+    await readMailbox();
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1, oldestReceivedAt: null }]);
+  });
+
+  it("clears a stored message once it reads clean, so it never alerts", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1");
+    await readMailbox();
+    expect(await db.receiptMailAtRisk.count()).toBe(1);
+
+    healthyReads();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(await db.receiptMailAtRisk.count()).toBe(0);
+    expect(agingAlerts).toEqual([]);
+  });
+
+  it("drops an alerted message once the listing no longer has it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1", { ageMs: old });
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    expect(await db.receiptMailAtRisk.count()).toBe(1);
+
+    mail.messages.delete("m1");
+    await readMailbox();
+    expect(await db.receiptMailAtRisk.count()).toBe(0);
+    expect(agingAlerts).toHaveLength(1);
+  });
+});
+
+describeDb("mail intake listing failure", () => {
+  const failListing = () => {
+    mail.reader.listRecent = async () => {
+      throw new Error("Gmail request failed: 401");
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  };
+
+  it("alerts finance on each failing run and reports the failure", async () => {
+    failListing();
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID }, { orgId: TEST_ORG_ID }]);
+  });
+
+  it("still reports the failure when the alert send fails", async () => {
+    failListing();
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: { ...testAlerts(), mailListingFailed: async () => { throw new Error("send failed"); } },
+      people: { submitterByEmail: async () => ALICE },
+    });
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+  });
+
+  it("still sends the stored ageing alert and the replies owed", async () => {
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - 3 * DAY_MS) } });
+    send("m1");
+    await readMailbox();
+    const sent: string[] = [];
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: { submitterByEmail: async () => ALICE },
+      replies: {
+        contactOf: async () => ({ email: "alice@example.org", name: "Alice" }),
+        send: async (ack) => {
+          sent.push(ack.to);
+          return true;
+        },
+      },
+    });
+    failListing();
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", replied: 1 });
+    expect(sent).toEqual(["alice@example.org"]);
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+  });
 });
 
 describeDb("mail intake sender authentication", () => {
@@ -596,5 +740,114 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     send("m1");
     send("m2");
     expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+  });
+
+  it("stores the sender check's verdict on every item", async () => {
+    send("passed");
+    send("spf-only", { auth: ["mx.google.com; spf=pass smtp.mailfrom=alice@example.org; dmarc=pass header.from=example.org"] });
+    send("no-record", { auth: ["mx.google.com; spf=pass; dmarc=none header.from=example.org"] });
+    send("no-from", { from: ["a@example.org, b@example.org"] });
+    await readMailbox();
+    const items = await db.receiptMailItem.findMany();
+    expect(Object.fromEntries(items.map((i) => [i.gmailMessageId, [i.status, i.dmarcVerdict]]))).toEqual({
+      passed: ["assigned", "pass"],
+      "spf-only": ["held", "fail"],
+      "no-record": ["held", "none"],
+      "no-from": ["held", "fail"],
+    });
+  });
+});
+
+describeDb("mail intake with files in the store", () => {
+  let store: ReturnType<typeof createMemoryFileStore>;
+
+  function configureStore(limits: Partial<ReceiptLimits> = {}): void {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      limits,
+      fileStore: store,
+      storeNewFilesInBucket: true,
+      people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
+    });
+  }
+
+  const stored = (key: string | null) => Buffer.from(store.objects.get(key ?? "") ?? []).toString();
+
+  /** Mails two files from Alice under a limit of one: one receipt, and one item deferred in the store. */
+  async function deferOne() {
+    configureStore({ mailUploadsPerPersonPerDay: 1 });
+    send("m1");
+    send("m2");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow({ where: { status: "deferred" } });
+    expect(item).toMatchObject({ fileBlob: null, fileSize: pdf("m2").length });
+    expect(item.fileKey).toMatch(/^mail-items\//);
+    expect(stored(item.fileKey)).toBe(pdf("m2"));
+    mail.messages.clear();
+    return item;
+  }
+
+  beforeEach(() => {
+    store = createMemoryFileStore();
+    configureStore();
+  });
+
+  it("stores a mailed receipt's file, leaving no mail object", async () => {
+    send("m1");
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const receipt = await db.receipt.findFirstOrThrow();
+    expect(receipt).toMatchObject({ fileBlob: null, fileKey: `receipts/${receipt.id}` });
+    expect([...store.objects.keys()]).toEqual([receipt.fileKey]);
+  });
+
+  it("holds an unknown sender's file in the store and not in the row", async () => {
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow();
+    expect(item).toMatchObject({ status: "held", fileBlob: null, fileSize: pdf("m1").length });
+    expect(stored(item.fileKey)).toBe(pdf("m1"));
+  });
+
+  it("a held file the store refuses leaves no row", async () => {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      storeNewFilesInBucket: true,
+      fileStore: { ...store, put: async () => Promise.reject(new Error("s3 down")) },
+      people: { submitterByEmail: async () => null },
+    });
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 0, failed: 1 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("a retried deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const after = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(after).toMatchObject({ status: "assigned", fileKey: null, fileBlob: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${after.receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a released deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    actAs(FINANCE);
+    const { receiptId } = await mailQueueService.assign(item.id, { release: true });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "assigned", fileKey: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a deferred item whose object is gone counts as failed and stays deferred", async () => {
+    const item = await deferOne();
+    store.objects.delete(item.fileKey ?? "");
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, failed: 1 });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "deferred" });
   });
 });

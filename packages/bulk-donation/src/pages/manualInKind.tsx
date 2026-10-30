@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { act, api, cents, errorMessage, paged, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { act, api, errorMessage, paged, useLoad, when } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface LineRow { id: number; gtin13: string; description: string | null; quantity: number; valueCents: number | null; suggestedValueCents: number | null }
 interface DonationRow {
@@ -28,13 +28,11 @@ const today = () => new Date().toLocaleDateString("en-CA");
 
 /**
  * Whether the session may record. Mirrors the write routes' gate (FINANCE,
- * OPERATIONS or INVENTORY_MANAGER; BOARD reads only), read through a narrow
- * cast because the library does not type the host's session user.
+ * OPERATIONS or INVENTORY_MANAGER; BOARD reads only).
  */
 function useCanRecord(): boolean {
-  const { data } = useSession();
-  const u = data?.user as { isFinance?: boolean; isOperations?: boolean; isInventoryManager?: boolean } | undefined;
-  return !!u?.isFinance || !!u?.isOperations || !!u?.isInventoryManager;
+  const viewer = useViewer();
+  return !!viewer?.isFinance || !!viewer?.isOperations || !!viewer?.isInventoryManager;
 }
 
 /** Catalog items matching the typed text, from the catalog's own search route. */
@@ -208,9 +206,9 @@ export default function ManualInKindPage() {
               <Table.Td>{r.lines.reduce((n, l) => n + l.quantity, 0)} across {r.lines.length} line{r.lines.length === 1 ? "" : "s"}</Table.Td>
               <Table.Td>
                 {r.lines.every((l) => l.valueCents !== null)
-                  ? cents(r.lines.reduce((n, l) => n + (l.valueCents ?? 0), 0))
+                  ? formatCents(r.lines.reduce((n, l) => n + (l.valueCents ?? 0), 0))
                   : r.lines.some((l) => l.suggestedValueCents !== null)
-                    ? `${cents(r.lines.reduce((n, l) => n + (l.suggestedValueCents ?? 0), 0))} suggested`
+                    ? `${formatCents(r.lines.reduce((n, l) => n + (l.suggestedValueCents ?? 0), 0))} suggested`
                     : "—"}
               </Table.Td>
               <Table.Td>{when(r.recordedAt)}{r.recordedByUsername ? ` by ${r.recordedByUsername}` : ""}</Table.Td>

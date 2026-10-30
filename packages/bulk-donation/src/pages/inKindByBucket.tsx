@@ -1,7 +1,8 @@
 "use client";
 import { Table, Text, Title } from "@mantine/core";
-import { cents, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { useLoad } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 
 interface BucketGiftLine { id: number; gtin13: string | null; description: string | null; quantity: number; valueCents: number | null }
 interface BucketGift {
@@ -33,7 +34,7 @@ export default function InKindByBucketPage() {
               <Table.Tr key={`${g.source}:${g.id}`}>
                 <Table.Td>{g.donationDate ?? "—"}</Table.Td>
                 <Table.Td>{g.lines.map((l) => `${l.quantity} × ${l.description ?? l.gtin13 ?? "item"}`).join(", ")}</Table.Td>
-                <Table.Td>{g.totalValueCents === null ? "—" : cents(g.totalValueCents)}</Table.Td>
+                <Table.Td>{g.totalValueCents === null ? "—" : formatCents(g.totalValueCents)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

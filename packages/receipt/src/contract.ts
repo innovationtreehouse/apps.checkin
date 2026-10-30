@@ -78,6 +78,28 @@ export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
+// ── Purchase outcome ← receiving, expense, donations ───────────────────────
+
+/** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
+export const purchaseOutcomeSchema = z.object({
+  receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  money: z
+    .object({
+      status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
+      /** The approver's reason on each rejected line; empty otherwise. */
+      notes: z.array(z.string()),
+    })
+    .nullable(),
+  gift: z.enum(["awaiting_decision", "accepted", "refused", "returned"]).nullable(),
+});
+export type PurchaseOutcome = z.infer<typeof purchaseOutcomeSchema>;
+export const purchaseOutcomesSchema = z.map(z.string(), purchaseOutcomeSchema);
+
+/** The host's answer for finalized receipts; a receipt missing from it has not reached any downstream library. */
+export interface PurchaseOutcomes {
+  forReceipts(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>>;
+}
+
 // ── Submitter confirmations ← expense ──────────────────────────────────────
 
 /** A reimbursement whose expense waits for the person reimbursed to confirm its receipt. */
@@ -153,7 +175,7 @@ export interface OcrProvider {
 
 /** The host's people, for attributing a mailed receipt to its sender. */
 export interface ReceiptPeople {
-  /** The one live person allowed to submit receipts whose sign-in email is exactly this address, else null. */
+  /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
 }
 
@@ -217,10 +239,14 @@ export interface MailHoldCeilingEvent {
 /** Mail the run did not fully read that will be out of the window by the next daily run. */
 export interface MailAgingOutEvent {
   orgId: string;
-  /** Messages at risk: partly read or failed ones, and every message the run did not reach. One that cannot be fetched counts, since its age is unknown. */
+  /** Messages at risk: partly read or failed ones, and every message a run did not reach. One that cannot be fetched counts, since its age is unknown. */
   messages: number;
   /** When the oldest dated at-risk message arrived; null when none could be dated. */
   oldestReceivedAt: Date | null;
+}
+
+export interface MailListingFailedEvent {
+  orgId: string;
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
@@ -247,6 +273,16 @@ export interface ReceiptReplies {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
+  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
+}
+
+/** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */
+export interface ReceiptFileStore {
+  /** Writes once; refuses a key already written and a body not matching `sha256` (hex). */
+  put(key: string, bytes: Uint8Array, sha256: string): Promise<void>;
+  /** The object's bytes, or null when it does not exist. */
+  get(key: string): Promise<Uint8Array | null>;
+  delete(key: string): Promise<void>;
 }
 
 export interface ReceiptConfig {
@@ -257,6 +293,7 @@ export interface ReceiptConfig {
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
   submitterConfirmations?: SubmitterConfirmations;
+  purchaseOutcomes?: PurchaseOutcomes;
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
@@ -268,4 +305,8 @@ export interface ReceiptConfig {
   replies?: ReceiptReplies;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
+  /** Unset means no row may have a key: reading or writing one throws. */
+  fileStore?: ReceiptFileStore;
+  /** New files go to the store instead of the database. */
+  storeNewFilesInBucket?: boolean;
 }

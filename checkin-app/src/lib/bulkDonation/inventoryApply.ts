@@ -5,9 +5,8 @@
  * `donation:` key is accepted, so a donation can never load under a receipt's key.
  */
 import { ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
-import { isProvisionalGtin13 } from "@checkin/local-inventory";
+import { inventoryApply, isProvisionalGtin13 } from "@checkin/local-inventory";
 import type { InventoryApply, OrgIdentity } from "@checkin/bulk-donation";
-import { inventoryReceipts } from "@/lib/workflowMapping/inventorySink";
 
 const DONATION_KEY = /^donation:(\d+)$/;
 
@@ -19,7 +18,7 @@ export function createLocalInventoryApply(org: () => Promise<OrgIdentity>): Inve
       if (delta.orgId !== orgId) throw new Error("inventory delta orgId does not match this org");
       const donationId = DONATION_KEY.exec(delta.receiptId)?.[1];
       if (!donationId) throw new Error("in-kind inventory loads must be keyed donation:<id>");
-      await inventoryReceipts().applyDonation(
+      await inventoryApply.applyDonation(
         orgId,
         donationId,
         delta.lineItems.map(({ gtin13, quantityDelta, conversionFactor, conversionVersion, provisionalName }) => ({

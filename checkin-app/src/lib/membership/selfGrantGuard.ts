@@ -9,7 +9,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
  * confer volunteer standing: the household volunteer flag, a volunteer designation,
  * a background-check date, a program volunteer row or its core flag, plus acting
  * on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts
- * enforces that). Setting a tool certification level calls it too.
+ * enforces that). Setting a tool certification level, and adding or approving a receipt
+ * mail alias, call it too.
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
  * the actor's household can't be resolved (fail closed). No role is exempt. Every
@@ -24,7 +25,7 @@ export type GrantSubject =
     | { email: string };
 
 /** What the actor tried: the table the grant writes and the fields it would have set. */
-export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus"; attempted: Prisma.InputJsonObject };
+export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus" | "PersonMailAlias"; attempted: Prisma.InputJsonObject };
 
 export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 

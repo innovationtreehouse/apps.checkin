@@ -5,7 +5,7 @@ import { Anchor, Badge, Checkbox, Group, Pagination, SegmentedControl, Table, Te
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 import { EXPENSE_LIST_VIEWS } from "../nav";
 
 interface ExpenseRow {

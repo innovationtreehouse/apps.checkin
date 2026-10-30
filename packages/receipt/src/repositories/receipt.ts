@@ -12,11 +12,12 @@ export class ReceiptStateConflictError extends Error {
 }
 
 /** A receipt and its details, flattened, without the file. */
-export type ReceiptRow = Omit<Receipt, "fileBlob" | "donorSyncSeq"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
+type FileColumns = "fileBlob" | "fileKey" | "fileSize";
+export type ReceiptRow = Omit<Receipt, FileColumns | "donorSyncSeq"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
 
-const listShape = { omit: { fileBlob: true, donorSyncSeq: true }, include: { details: true } } as const;
+const listShape = { omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true }, include: { details: true } } as const;
 
-function flatten(r: Omit<Receipt, "fileBlob" | "donorSyncSeq"> & { details: ReceiptDetail | null }): ReceiptRow {
+function flatten(r: Omit<Receipt, FileColumns | "donorSyncSeq"> & { details: ReceiptDetail | null }): ReceiptRow {
   const { details, ...core } = r;
   if (!details) throw new Error(`receipt ${r.id} has no details row`);
   const { id: _id, orgId: _orgId, ...rest } = details;
@@ -30,8 +31,8 @@ export interface ReceiptUpdate {
 
 export const receiptRepo = {
   /** Org-scoped; `uploadedByUserId` narrows to one submitter's receipts. */
-  async find(id: string, orgId: string, uploadedByUserId?: number): Promise<ReceiptRow | undefined> {
-    const r = await db.receipt.findFirst({
+  async find(id: string, orgId: string, uploadedByUserId?: number, tx?: Prisma.TransactionClient): Promise<ReceiptRow | undefined> {
+    const r = await (tx ?? db).receipt.findFirst({
       where: { id, orgId, ...(uploadedByUserId === undefined ? {} : { uploadedByUserId }) },
       ...listShape,
     });
@@ -46,12 +47,12 @@ export const receiptRepo = {
   count: (where: Prisma.ReceiptWhereInput) => db.receipt.count({ where }),
 
   /** Each matching receipt's uploader, reimbursee and state, for counts that apply the conflict rule. */
-  async listParties(where: Prisma.ReceiptWhereInput): Promise<Array<Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId" | "state">>> {
+  async listParties(where: Prisma.ReceiptWhereInput): Promise<Array<Pick<ReceiptRow, "id" | "uploadedByUserId" | "reimburseePersonId" | "state">>> {
     const rows = await db.receipt.findMany({
       where,
-      select: { uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
+      select: { id: true, uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
     });
-    return rows.flatMap((r) => (r.details ? [{ uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
+    return rows.flatMap((r) => (r.details ? [{ id: r.id, uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
   },
 
   /**

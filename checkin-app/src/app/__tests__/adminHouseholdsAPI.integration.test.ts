@@ -118,7 +118,7 @@ describe('Admin Households API Integration Tests', () => {
         // Enroll the household-2 member in a program so the single-household
         // (?id=) branch has an enrollment to surface for the detail view.
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Households API Test Program' }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Households API Test Program' }
         });
         testProgramId = program.id;
         await prisma.programParticipant.create({

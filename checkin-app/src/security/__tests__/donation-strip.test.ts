@@ -72,19 +72,12 @@ describe('bulk-donation field-stripping (Transaction)', () => {
     });
 });
 
-describe('bulk-donation field-stripping (comment rules and QB candidates)', () => {
+describe('bulk-donation field-stripping (comment rules)', () => {
     it('an internal-only view strips the comment-rule text', () => {
         const rule = { id: 1, comment: 'for the robotics team', ownerId: 3 };
         const out = stripValue('TransactionCommentRule', rule, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.ownerId).toBe(3);
         expect(out.comment).toBeUndefined();
-    });
-
-    it('an internal-only view keeps the candidate amount and strips the memo', () => {
-        const candidate = { id: 'qb-7', type: 'Deposit', date: '2026-10-01', amountCents: 5000, memo: 'Pat Doe gift' };
-        const out = stripValue('DonationQbCandidateView', candidate, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
-        expect(out.amountCents).toBe(5000);
-        expect(out.memo).toBeUndefined();
     });
 
     it('nav counts are public', () => {

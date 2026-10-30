@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { rosterPerson } from "@/lib/person/leaderEmail";
+import { emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -31,10 +31,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const auth = await authenticateRequest(req);
     if (auth.type !== 'session') return res;
 
-    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number | null };
+    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number };
     const coverageDate = await programCoverageDate({
         endAt: new Date(body.endAt),
-        appliesToYear: body.appliesToYear ?? null,
+        appliesToYear: body.appliesToYear,
     });
     // viewerIsMember answers "is this household a Treehouse Member" (ACTIVE only);
     // viewerMemberPricingEligible answers the pricing question, which also covers a
@@ -153,7 +153,11 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
-    const roster = program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
+    const emailWithheldFrom = emailWithheldParticipants(program.participants, viewerIsLeader);
+    const roster = program.participants.map(p => ({
+        ...p,
+        person: { ...rosterPerson(p.person, viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+    }));
 
     // A members-only program is hidden unless its leader opted it into the public
     // catalogue (publiclyVisible) — then anyone may view its detail, but the
@@ -198,7 +202,10 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         delete metadata.participants;
         return { Program: metadata };
     }
-    if (isPrivileged) return { Program: { ...program, participants: roster } };
+    if (isPrivileged) {
+        const volunteers = program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
+        return { Program: { ...program, volunteers, participants: roster } };
+    }
 
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
     // lead's for their own household. The stripper can't express "own household",

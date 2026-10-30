@@ -2,8 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Modal, Stack, Table, TextInput, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface RuleRow {
   id: number;

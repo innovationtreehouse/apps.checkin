@@ -1,11 +1,12 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
-import { MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
+import { CATCH_UP_CAP, MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
 import { insertReceiptsTogether } from "../../lib/insert";
+import { DEFAULT_LIMITS } from "../../lib/limits";
 import { importReceipts } from "../../services/importService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -102,6 +103,52 @@ describeDb("catch-up steps", () => {
     expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 0 });
     for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
     expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 2, pushGivenUp: 2 });
+  });
+
+  it("puts a receipt catch-up gave up on in finance's list and pill, unless the viewer is conflicted", async () => {
+    ports.fail.push = true;
+    actAs(ALICE);
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    expect((await receiptService.countAwaitingFinance(FINANCE.id)).total).toBe(0);
+    expect(await receiptService.listNeedsAttention("finance")).toEqual([]);
+
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+
+    expect(await receiptService.countAwaitingFinance(FINANCE.id)).toMatchObject({ total: 1, byState: { flow_error: 0 } });
+    expect(await receiptService.countAwaitingFinance(ALICE.id)).toMatchObject({ total: 0 });
+    expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true })]);
+    actAs(ALICE);
+    expect(await receiptService.listNeedsAttention("submitter")).toEqual([]);
+  });
+
+  it("audits a late OCR result it refuses, and keeps the receipt where it went", async () => {
+    let id = "";
+    configure({
+      receiptSink: ports.receiptSink,
+      ocr: {
+        extract: async (...args) => {
+          id = (await db.receipt.findFirstOrThrow({ select: { id: true } })).id;
+          await db.receiptDetail.update({ where: { id }, data: { state: "discarded" } });
+          return okOcr().extract(...args);
+        },
+      },
+    });
+    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 409 });
+    expect(await stateOf(id)).toBe("discarded");
+    expect(await actions(id)).toContain("ocr_result_refused");
+    expect(await actions(id)).not.toContain("ocr_complete");
+  });
+
+  it("caps one OCR sweep", async () => {
+    configure({ receiptSink: ports.receiptSink, limits: { ...DEFAULT_LIMITS, uploadsPerPersonPerDay: CATCH_UP_CAP + 1 } });
+    const started = new Date(Date.now() - 11 * 60_000);
+    for (let i = 0; i <= CATCH_UP_CAP; i++) {
+      const { id } = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: `Store ${i}` }) });
+      await db.receiptDetail.update({ where: { id }, data: { state: "auto_upload", ocrStartedAt: started } });
+    }
+    expect(await sweepInterruptedOcr()).toEqual({ swept: CATCH_UP_CAP });
+    expect(await sweepInterruptedOcr()).toEqual({ swept: 1 });
   });
 
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {

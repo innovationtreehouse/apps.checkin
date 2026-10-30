@@ -3,6 +3,7 @@ import type {
   OcrProvider,
   OrgIdentity,
   ReceiptConfig,
+  ReceiptFileStore,
   MailboxReader,
   ReceiptHouseholds,
   ReceiptAlerts,
@@ -11,6 +12,7 @@ import type {
   ReceiptReimbursees,
   ReceiptPrincipal,
   ReceiptSink,
+  PurchaseOutcomes,
   ReimbursementStatus,
   SubmitterConfirmations,
 } from "./contract";
@@ -38,6 +40,11 @@ export const inertDonorSink: DonorSink = {
 /** Never claims a payment: every receipt reads "not yet paid" until X12 is bound. */
 export const inertReimbursementStatus: ReimbursementStatus = {
   forReceipts: async (receipts) => new Map(receipts.map((r) => [r.receiptId, { paidOn: null }])),
+};
+
+/** Knows nothing downstream: every finalized receipt reads as not yet received. */
+export const inertPurchaseOutcomes: PurchaseOutcomes = {
+  forReceipts: async () => new Map(),
 };
 
 /** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
@@ -76,10 +83,25 @@ export const inertAlerts: ReceiptAlerts = {
   mailAgingOut: async (event) => {
     console.warn("[receipt] mail is leaving the window unread; finance alerts are not bound:", event);
   },
+  mailListingFailed: async (event) => {
+    console.warn("[receipt] the mailbox could not be listed; finance alerts are not bound:", event);
+  },
 };
 
 export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, error: "OCR is not configured" }),
+};
+
+export const inertFileStore: ReceiptFileStore = {
+  put: async () => {
+    throw new NotWiredError("ReceiptFileStore.put");
+  },
+  get: async () => {
+    throw new NotWiredError("ReceiptFileStore.get");
+  },
+  delete: async () => {
+    throw new NotWiredError("ReceiptFileStore.delete");
+  },
 };
 
 export const receiptRuntime = defineRuntime<ReceiptConfig, ReceiptPrincipal>("receipt");
@@ -95,19 +117,28 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
     donorSink: r.donorSink ?? inertDonorSink,
     reimbursementStatus: r.reimbursementStatus ?? inertReimbursementStatus,
     submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
+    purchaseOutcomes: r.purchaseOutcomes ?? inertPurchaseOutcomes,
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
   };
+}
+
+export function fileStore(): ReceiptFileStore {
+  return requireRuntime().fileStore ?? inertFileStore;
+}
+
+export function storesNewFilesInBucket(): boolean {
+  return requireRuntime().storeNewFilesInBucket === true;
 }
 
 /** The receipt mailbox, or null when mail intake is unbound. */

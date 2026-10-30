@@ -1,13 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ConfirmReceiptsPage from "@checkin/receipt/pages/confirm";
 
 let mockConfirmations: unknown[] = [];
+let mockReimbursed: unknown[] = [];
 const mockSend = jest.fn<Promise<boolean>, unknown[]>();
 
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
-  useLoad: () => ({ data: mockConfirmations, error: null, reload: jest.fn() }),
+  useLoad: (path: string) => ({ data: path === "/reimbursements" ? mockReimbursed : mockConfirmations, error: null, reload: jest.fn() }),
   send: (...args: unknown[]) => mockSend(...args),
 }));
 
@@ -29,6 +30,7 @@ const confirmation = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  mockReimbursed = [];
   mockSend.mockReset();
   mockSend.mockResolvedValue(true);
 });
@@ -61,5 +63,34 @@ describe("Receipts to confirm", () => {
     fireEvent.change(screen.getByLabelText(/Why the Board confirms on their behalf/), { target: { value: "No email address" } });
     fireEvent.click(confirm);
     expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", { reason: "No email address" }, "Confirmed", "Couldn't confirm this receipt");
+  });
+});
+
+describe("Reimbursements others uploaded for you", () => {
+  const reimbursed = (over: Record<string, unknown> = {}) => ({
+    id: "g", state: "receipt_finalized", retailer: "Glue Depot", receiptDate: "2026-10-02", receiptTotalCents: 2500,
+    rejectionReason: null, reimbursement: { paidOn: null }, purchaseOutcome: null, ...over,
+  });
+  const rowOf = (retailer: string) => screen.getByText(retailer).closest("tr") as HTMLElement;
+
+  it("shows the person reimbursed an approver's rejection of a line, with its note", () => {
+    mockConfirmations = [];
+    mockReimbursed = [reimbursed({ purchaseOutcome: { receiving: "received", money: { status: "line_rejected", notes: ["Not a program cost"] }, gift: null } })];
+    wrap();
+    expect(within(rowOf("Glue Depot")).getByText("Line rejected: Not a program cost")).toBeInTheDocument();
+    expect(within(rowOf("Glue Depot")).getByText("Not yet paid")).toBeInTheDocument();
+  });
+
+  it("shows finance's reason on a rejected receipt", () => {
+    mockConfirmations = [];
+    mockReimbursed = [reimbursed({ state: "rejected", rejectionReason: "Duplicate of a card charge" })];
+    wrap();
+    expect(within(rowOf("Glue Depot")).getByText("Rejected: Duplicate of a card charge")).toBeInTheDocument();
+  });
+
+  it("says when nobody else has uploaded a reimbursement for the caller", () => {
+    mockConfirmations = [];
+    wrap();
+    expect(screen.getByText("No one else has uploaded a receipt reimbursing you.")).toBeInTheDocument();
   });
 });

@@ -108,8 +108,8 @@ describe('Nav todo-counts API', () => {
 
         // Two pending program enrollments for household members. One has a payment
         // plan requested (the board's approval queue), one does not.
-        const program1 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog1 ${TAG}` } });
-        const program2 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog2 ${TAG}` } });
+        const program1 = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog1 ${TAG}` } });
+        const program2 = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog2 ${TAG}` } });
         program1Id = program1.id;
         program2Id = program2.id;
         await prisma.programParticipant.create({ data: { programId: program1Id, personId: leadId, status: 'PENDING' } });
@@ -120,7 +120,7 @@ describe('Nav todo-counts API', () => {
         // The lead also *runs* a program (leadMentorId). Three events: one ended
         // and unconfirmed (the inbox item), one ended but already confirmed, one
         // still in the future. Only the first should surface in the lead bucket.
-        const ledProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Led ${TAG}`, leadMentorId: leadId } });
+        const ledProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Led ${TAG}`, leadMentorId: leadId } });
         ledProgramId = ledProgram.id;
         const pendingEvent = await prisma.event.create({
             data: { programId: ledProgramId, name: `Pending ${TAG}`, startAt: daysFromNow(-1), endAt: daysFromNow(-1) },

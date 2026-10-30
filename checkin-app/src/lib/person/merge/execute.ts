@@ -46,7 +46,8 @@ export type MergePlan = {
 /**
  * A trusted person's login email changes only by Board action, with a reason. A
  * merge changes it when the trusted person is the merged-away side, whose roles
- * land on the keeper's login, or when a trusted keeper takes the other side's identity.
+ * land on the keeper's login, or when a trusted keeper takes the other side's identity
+ * or its linked sign-in accounts, which then sign in as the keeper.
  */
 async function trustedLoginRefusal(
     db: DbClient,
@@ -54,7 +55,8 @@ async function trustedLoginRefusal(
     actor: AuthenticatedUser | null,
 ): Promise<MergeRefusal | null> {
     const changesTrustedLogin = (await trustStatus(db, plan.mergeId)).isTrusted
-        || ("email" in plan.keeperUpdate && (await trustStatus(db, plan.keepId)).isTrusted);
+        || (("email" in plan.keeperUpdate || await db.account.count({ where: { userId: plan.mergeId } }) > 0)
+            && (await trustStatus(db, plan.keepId)).isTrusted);
     if (!changesTrustedLogin) return null;
     if (!actor?.isBoardMember) {
         return { status: 403, error: "This merge changes the sign-in email of someone in a position of trust. Only a board member can do that." };

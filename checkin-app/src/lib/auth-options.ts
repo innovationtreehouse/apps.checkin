@@ -17,6 +17,8 @@ import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { systemActor } from "@/lib/auditActor";
 
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
@@ -78,6 +80,7 @@ export async function createParticipantWithHousehold(data: {
     emailVerified?: Date | null;
 }) {
     return prisma.$transaction(async (tx) => {
+        if (data.email) await removeAliasesForSignInEmail(tx, data.email, systemActor("system:google-sign-in"), "first_sign_in");
         const household = await tx.household.create({
             data: { name: data.name?.trim() || data.email?.trim() || "Household" },
         });

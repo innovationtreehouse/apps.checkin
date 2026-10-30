@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useEffect, useState } from "react";
+import { createClient, useViewer } from "@checkin/component-ui";
 
 /**
  * Client fetch helpers. Every inventory read and write goes through the host's
@@ -9,81 +9,19 @@ import { useSession } from "next-auth/react";
  */
 const BASE = "/api/inventory";
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(path.startsWith("/api/") ? path : `${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const text = await res.text();
-  let data: unknown = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // A proxy error page or a sign-in redirect is HTML, not the route's JSON.
-    throw new Error(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`);
-  }
-  if (!res.ok) {
-    const message = (data as { error?: unknown } | null)?.error;
-    throw new Error(typeof message === "string" ? message : `HTTP ${res.status}`);
-  }
-  return data as T;
-}
+export const { api, useLoad } = createClient(BASE);
 
-/** Tells the host nav to refetch its count pills after a write that opens or closes a backorder. */
-export function notifyNavCounts(): void {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("nav-counts-mutated"));
-}
+export { errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, type Loaded } from "@checkin/component-ui";
 
-export function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : "Error";
-}
-
-/**
- * Whether the current session may write inventory. Mirrors the routes'
- * INVENTORY_MANAGER gate; the flag rides on the host's augmented session user,
- * which the library does not type, so it is read through a narrow cast.
- */
+/** Whether the viewer may write inventory. Mirrors the routes' INVENTORY_MANAGER gate. */
 export function useCanManage(): boolean {
-  const { data } = useSession();
-  const user = data?.user as { isInventoryManager?: boolean } | undefined;
-  return user?.isInventoryManager === true;
+  return useViewer()?.isInventoryManager === true;
 }
 
 /** INVENTORY_MANAGER, FINANCE or BOARD: the receiving read gate, which also covers the inventory log (#2384). */
 export function useCanSeeReceiving(): boolean {
-  const { data } = useSession();
-  const user = data?.user as { isInventoryManager?: boolean; isFinance?: boolean; isBoardMember?: boolean } | undefined;
-  return user?.isInventoryManager === true || user?.isFinance === true || user?.isBoardMember === true;
-}
-
-export interface Loaded<T> {
-  data: T | null;
-  error: string | null;
-  reload: () => void;
-}
-
-/** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
-export function useLoad<T>(path: string | null): Loaded<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  const seq = useRef(0);
-  useEffect(() => {
-    if (!path) return;
-    const mine = ++seq.current;
-    api<T>(path)
-      .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
-      .catch((e: unknown) => { if (mine === seq.current) setError(errorMessage(e)); });
-  }, [path, tick]);
-  const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, error, reload };
-}
-
-export const PAGE_SIZE = 50;
-
-/** The last page number for `total` rows, never below 1. */
-export function lastPage(total: number, pageSize = PAGE_SIZE): number {
-  return Math.max(1, Math.ceil(total / pageSize));
+  const viewer = useViewer();
+  return viewer?.isInventoryManager === true || viewer?.isFinance === true || viewer?.isBoardMember === true;
 }
 
 /**

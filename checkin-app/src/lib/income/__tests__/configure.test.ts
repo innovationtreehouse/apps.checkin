@@ -15,7 +15,7 @@ jest.mock("@checkin/income", () => ({
   mirrorSource: () => "api",
   toQbDeposit: jest.fn(),
 }));
-jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn(), getPrincipal: jest.fn() }));
+jest.mock("@/lib/components/host", () => ({ getOrg: jest.fn(), getPrincipal: jest.fn() }));
 jest.mock("@/lib/shopifyRead/client", () => ({ isConfigured: () => false }));
 const getQuickBooks = jest.fn();
 const buildQuickBooks = jest.fn();

@@ -4,18 +4,10 @@
 import { parseOrgEvent } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { OrgEventRecord } from "../../contract";
-import { getCatalogEventSource, getOrgId, getServices } from "../../runtime";
+import { getCatalogEventSource, getInventoryAlerts, getOrgId, getServices } from "../../runtime";
 import { createOrgEventsRepository } from "../repositories/orgEventsRepository";
 
 export type ConsumeResult = "processed" | "duplicate" | "failed" | "skipped";
-
-/**
- * How far behind the cursor (max received id) catch-up re-reads. Catalog ids are assigned at
- * insert, not at commit, so an event with a lower id can commit after a higher one was received.
- * Assumes no catalog transaction stays open while more than this many others commit; make it
- * time-based if bulk catalog edits arrive.
- */
-export const ORG_EVENT_LOOKBACK = 100;
 
 async function react(ev: OrgEventRecord): Promise<void> {
   const service = getServices().provisionalItemService;
@@ -51,19 +43,33 @@ export async function consumeOrgEvent(ev: OrgEventRecord): Promise<ConsumeResult
     failureReason = err instanceof Error ? err.message : String(err);
     console.error(`[local-inventory/org-events] event ${ev.id} failed`, err);
   }
-  const row = { orgId: ev.orgId, eventType: ev.eventType, payload: ev.payload, receivedAt: ev.createdAt };
-  await db.inventoryReceivedOrgEvent.upsert({
-    where: { id: ev.id },
-    create: { id: ev.id, ...row, status, failureReason },
-    update: { status, failureReason },
+  const row = { id: ev.id, orgId: ev.orgId, eventType: ev.eventType, payload: ev.payload, receivedAt: ev.createdAt };
+  await db.inventoryReceivedOrgEvent.createMany({ data: [{ ...row, status, failureReason }], skipDuplicates: true });
+  // An overlapping consumer may have processed this event; its outcome stands.
+  const { count } = await db.inventoryReceivedOrgEvent.updateMany({
+    where: { id: ev.id, status: { not: "processed" } },
+    data: { status, failureReason },
   });
-  return status;
+  return status === "failed" && count === 0 ? "duplicate" : status;
+}
+
+/** Tell a person about events left undone. An alert that fails never fails the caller. */
+async function alertStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
+  try {
+    await getInventoryAlerts()?.orgEventsStuck(event);
+  } catch (err) {
+    console.error("[local-inventory/org-events] alert failed", err);
+  }
 }
 
 /** S5 handler, registered with the catalog's post-commit call-out. */
 export const orgEventConsumer = {
   async onOrgEvents(events: OrgEventRecord[]): Promise<void> {
-    for (const ev of [...events].sort((a, b) => a.id - b.id)) await consumeOrgEvent(ev);
+    let failed = 0;
+    for (const ev of [...events].sort((a, b) => a.id - b.id)) {
+      if ((await consumeOrgEvent(ev)) === "failed") failed++;
+    }
+    if (failed > 0) await alertStuck({ failed, unprocessed: 0, unreadable: false });
   },
 };
 
@@ -100,23 +106,66 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   return { reconciled, reconcileFailed };
 }
 
+/** A ledger write that throws counts as failed; with no ledger row, the next sweep reads the event again. */
+async function consumeInSweep(ev: OrgEventRecord): Promise<ConsumeResult> {
+  try {
+    return await consumeOrgEvent(ev);
+  } catch (err) {
+    console.error(`[local-inventory/org-events] event ${ev.id} could not be recorded`, err);
+    return "failed";
+  }
+}
+
 /**
- * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
- * window behind the cursor, skipping ids already in the ledger, then reconciles pending
- * provisionals that have a stored resolution. The host's daily reconcile cron step calls it.
- * Capped; counts only.
+ * Catch-up sweep: retries failed events, then pages through all the org's catalog events and
+ * consumes those not in the ledger, then reconciles pending provisionals that have a stored
+ * resolution. Reading from the start means no event is missed however late it committed or
+ * however many later ids were received. What stays undone is retried on the next run. A person
+ * is alerted once per run for an event newly failed, an unreadable catalog, or a capped run that
+ * processed nothing; a capped run that made progress drains itself on later runs, and a retry that
+ * fails again only stays failed in the ledger and the counts. The host's daily reconcile cron step calls it. Capped; counts only.
  */
-export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed", number>> {
+export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
-  const pending = (await repo.findPending(orgId)).slice(0, limit);
+  const allPending = await repo.findPending(orgId);
+  const pending = allPending.slice(0, limit);
   for (const r of pending) {
-    counts[await consumeOrgEvent({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
+    counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
   }
-  const from = Math.max(0, (await repo.getMaxId()) - ORG_EVENT_LOOKBACK);
-  const received = new Set(await repo.idsAfter(from));
-  const fresh = (await getCatalogEventSource().eventsSince(orgId, from)).filter((e) => !received.has(e.id));
-  for (const ev of fresh.slice(0, Math.max(0, limit - pending.length))) counts[await consumeOrgEvent(ev)]++;
-  return { ...counts, ...(await reconcilePendingProvisionals(orgId, limit)) };
+
+  let unprocessed = allPending.length - pending.length;
+  let unreadable = false;
+  let budget = limit - pending.length;
+  let newlyFailed = 0;
+  try {
+    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
+    let after = 0;
+    for (;;) {
+      const page = await getCatalogEventSource().eventsSince(orgId, after);
+      if (page.length === 0) break;
+      const received = new Set(await repo.idsIn(page.map((e) => e.id)));
+      for (const ev of page) {
+        if (received.has(ev.id)) continue;
+        if (budget > 0) {
+          budget--;
+          const result = await consumeInSweep(ev);
+          counts[result]++;
+          if (result === "failed") newlyFailed++;
+        } else {
+          unprocessed++;
+        }
+      }
+      after = page[page.length - 1].id;
+    }
+  } catch (err) {
+    unreadable = true;
+    console.error("[local-inventory/org-events] catalog events could not be read", err);
+  }
+
+  const reconciled = await reconcilePendingProvisionals(orgId, limit);
+  const stalled = unprocessed > 0 && counts.processed === 0;
+  if (newlyFailed > 0 || stalled || unreadable) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
+  return { ...counts, ...reconciled, unprocessed, unreadable };
 }

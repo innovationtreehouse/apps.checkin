@@ -6,7 +6,7 @@ import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
 import { errorMessage, lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface LogRow {
   id: number;

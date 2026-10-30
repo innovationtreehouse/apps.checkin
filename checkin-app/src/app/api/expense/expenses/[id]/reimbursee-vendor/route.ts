@@ -1,8 +1,8 @@
 // Re-export stub (#1272): mounts an expense route factory under /api/expense/* through
 // checkin's handler(). The endpoint string MUST match its src/security/registry/expense.ts entry.
 import { handler } from "@/security/handler";
-import { componentRoute } from "@/lib/components/route";
+import { expenseRoute } from "@/lib/expense/route";
 import { routes } from "@checkin/expense";
 
-export const GET = handler("GET /api/expense/expenses/[id]/reimbursee-vendor", componentRoute(routes.expenses.reimburseeVendor));
-export const PUT = handler("PUT /api/expense/expenses/[id]/reimbursee-vendor", componentRoute(routes.expenses.linkVendor));
+export const GET = handler("GET /api/expense/expenses/[id]/reimbursee-vendor", expenseRoute(routes.expenses.reimburseeVendor));
+export const PUT = handler("PUT /api/expense/expenses/[id]/reimbursee-vendor", expenseRoute(routes.expenses.linkVendor));

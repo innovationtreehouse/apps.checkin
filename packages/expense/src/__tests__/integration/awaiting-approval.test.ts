@@ -27,12 +27,15 @@ const ROLES: [string, ExpensePrincipal][] = [
   ["a Board member", BOARD],
 ];
 
+let caller: ExpensePrincipal;
+
 function as(p: ExpensePrincipal) {
-  bindPorts({ auth: { getPrincipal: async () => p }, signoff: directory(DIRECTORY) });
+  caller = p;
+  bindPorts({ signoff: directory(DIRECTORY) });
 }
 
 function call(route: ExpenseRouteHandler, path: string) {
-  return route({ req: new Request(`http://test/api/expense${path}`), params: {} });
+  return route({ req: new Request(`http://test/api/expense${path}`), params: {}, principal: caller });
 }
 
 async function viewIds(p: ExpensePrincipal): Promise<string[]> {

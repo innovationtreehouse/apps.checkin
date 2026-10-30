@@ -72,10 +72,10 @@ describe('Programs API Integration Tests', () => {
         // Create mock programs
         await prisma.program.createMany({
             data: [
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true }
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true }
             ]
         });
     });

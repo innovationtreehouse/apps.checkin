@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Badge, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
 import { useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface ProvisionalRow {
   id: number;

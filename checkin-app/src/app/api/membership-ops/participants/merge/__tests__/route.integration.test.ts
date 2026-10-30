@@ -395,7 +395,6 @@ describe("Merge Participants API", () => {
         expect(newData.keepId).toBe(pKeepId);
         expect(newData.fieldChoices).toEqual({ name: "keep", identity: "keep" });
         expect(newData.moved.visits).toBe(1);
-        // Tallies use migrated/left, not the old `deleted` name.
         expect(newData.moved.programParticipants).toEqual({ migrated: 0, left: 0 });
 
         // Full pre-image of the merged-away Person: every field the merge
@@ -466,7 +465,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 1a (#1456): decision-bearing collisions refuse the merge.
     it("409s on decision-bearing collisions, naming every collision in the response", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Merge Conflict Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Merge Conflict Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Conflict Tool" } });
         createdToolId = tool.id;
@@ -501,7 +500,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 1b (#1456): bare-join collisions auto-dedupe — merge succeeds, duplicates deleted.
     it("auto-dedupes bare-join collisions (ProgramVolunteer, CorporationLead, CorporationMember)", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Dedupe Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Dedupe Program" } });
         createdProgramId = program.id;
         const corp = await prisma.corporation.create({ data: {} });
         createdCorporationId = corp.id;
@@ -568,9 +567,41 @@ describe("Merge Participants API", () => {
         expect(newData.moved.mailAliases).toEqual({ migrated: [work.id], deduped: [sameAsKeeper.id] });
     });
 
+    it("keeps a moved alias's approval", async () => {
+        const approvedAt = new Date("2026-10-01T00:00:00Z");
+        const alias = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "approved@example.com", canonicalKey: "approved@example.com", addedById: actorId, approvedAt, approvedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.findUnique({ where: { id: alias.id }, select: { personId: true, approvedAt: true, approvedById: true } }))
+            .toEqual({ personId: pKeepId, approvedAt, approvedById: actorId });
+    });
+
+    it("deletes an alias already on the keeper that equals the keeper's sign-in address", async () => {
+        const onKeeper = await prisma.personMailAlias.create({ data: { personId: pKeepId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.count({ where: { id: onKeeper.id } })).toBe(0);
+    });
+
+    it("reads the keeper's sign-in address after a field choice swaps it", async () => {
+        const keeperOld = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
+        const keeperNew = await prisma.personMailAlias.create({ data: { personId: pKeepId, address: "merge@example.com", canonicalKey: "merge@example.com", addedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId, { name: "keep", identity: "merge" }));
+        expect(res.status).toBe(200);
+
+        expect((await prisma.person.findUnique({ where: { id: pKeepId } }))?.email).toBe("merge@example.com");
+        expect(await prisma.personMailAlias.findMany({ where: { id: { in: [keeperOld.id, keeperNew.id] } }, select: { id: true, personId: true } }))
+            .toEqual([{ id: keeperOld.id, personId: pKeepId }]);
+    });
+
     // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.
     it("auto-dedupes past RSVP collisions, refuses future RSVP collisions", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });
         createdProgramId = program.id;
 
         const pastEvent = await prisma.event.create({
@@ -595,7 +626,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 2: non-collision move — the row relinks to the keeper, not duplicated.
     it("moves a tombstone-only enrollment/tool/rsvp to the keeper (no collision)", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Tool" } });
         createdToolId = tool.id;
@@ -897,6 +928,29 @@ describe("Merge Participants API", () => {
             expect(await stillLive(pMergeId)).toBe(true);
         });
 
+        describe("when the merged-away record has a linked sign-in account", () => {
+            beforeEach(async () => {
+                await prisma.personRole.create({ data: { personId: pKeepId, role: "KEYHOLDER" } });
+                await prisma.account.create({ data: { userId: pMergeId, type: "oauth", provider: "google", providerAccountId: `trusted-keeper-${pMergeId}` } });
+            });
+
+            it("refuses a sysadmin moving it onto a trusted keeper", async () => {
+                mockGetServerSession.mockResolvedValue({ user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: false } });
+                expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(403);
+                expect(await stillLive(pMergeId)).toBe(true);
+            });
+
+            it("refuses a board member with no reason", async () => {
+                expect((await POST(mergeReq(pKeepId, pMergeId, undefined, ""))).status).toBe(400);
+                expect(await stillLive(pMergeId)).toBe(true);
+            });
+
+            it("lets a board member move it with a reason", async () => {
+                expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+                expect(await prisma.account.count({ where: { userId: pKeepId } })).toBe(1);
+            });
+        });
+
         it("lets a trusted keeper keep their identity with no reason", async () => {
             await prisma.personRole.create({ data: { personId: pKeepId, role: "KEYHOLDER" } });
             expect((await POST(mergeReq(pKeepId, pMergeId, undefined, ""))).status).toBe(200);
@@ -985,7 +1039,7 @@ describe("Merge Participants API", () => {
 
     // #1456: analyze reports collisions up front so the UI can warn before the operator commits.
     it("analyze returns collisions for decision-bearing overlaps", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Collision Analysis Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Collision Analysis Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Collision Analysis Tool" } });
         createdToolId = tool.id;
@@ -1242,7 +1296,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 12
     it("zero-rows-deleted invariant across every join table + moved relation", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Invariant Program", leadMentorId: pMergeId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Invariant Program", leadMentorId: pMergeId } });
         createdProgramId = program.id;
         const corp = await prisma.corporation.create({ data: {} });
         createdCorporationId = corp.id;
@@ -2054,7 +2108,7 @@ describe("Merge Participants API", () => {
 
         // #1456: ProgramParticipant collision now refuses the merge entirely.
         it("enrollment collision refuses instead of leaving a tombstone seat", async () => {
-            const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
+            const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
             createdProgramId = program.id;
             await prisma.programParticipant.create({ data: { programId: program.id, personId: pKeepId } });
             await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId } });
@@ -2068,7 +2122,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 17 (#1456): collision-bearing merge refused, no tombstone residue to audit.
     it("match-audit: a non-colliding enrollment migrates to the keeper normally", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
         createdProgramId = program.id;
         await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId, status: "ACTIVE" } });
 

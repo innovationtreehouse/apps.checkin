@@ -108,7 +108,7 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
     });
 
     it('includes covered+opted-in live members, excludes uncovered/opted-out/tombstoned, with no date boundary configured', async () => {
-        await notifyNewProgramAnnounced({ name: 'Robotics Recip Test', endAt: new Date('2026-12-01'), appliesToYear: null });
+        await notifyNewProgramAnnounced({ name: 'Robotics Recip Test', endAt: new Date('2026-12-01'), appliesToYear: 2026 });
 
         const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
         expect(recipients).toContain(`covered-${TAG}@example.com`);
@@ -163,13 +163,13 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
         });
 
         it('excludes the covered household when the program ends AFTER the boundary (unrenewed)', async () => {
-            await notifyNewProgramAnnounced({ name: 'Robotics Past Boundary', endAt: ENDS_AFTER_BOUNDARY, appliesToYear: null });
+            await notifyNewProgramAnnounced({ name: 'Robotics Past Boundary', endAt: ENDS_AFTER_BOUNDARY, appliesToYear: boundary.getUTCFullYear() });
             const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
             expect(recipients).not.toContain(`covered-${TAG}@example.com`);
         });
 
         it('includes the SAME covered household when the program ends BEFORE the boundary', async () => {
-            await notifyNewProgramAnnounced({ name: 'Robotics Before Boundary', endAt: ENDS_BEFORE_BOUNDARY, appliesToYear: null });
+            await notifyNewProgramAnnounced({ name: 'Robotics Before Boundary', endAt: ENDS_BEFORE_BOUNDARY, appliesToYear: boundary.getUTCFullYear() - 1 });
             const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
             expect(recipients).toContain(`covered-${TAG}@example.com`);
         });

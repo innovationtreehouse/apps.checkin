@@ -18,6 +18,10 @@ describe("submitterCorrections", () => {
     expect(submitterCorrections([edit("taxCents", "100")], now)).toEqual([{ field: "tax", kind: "changed", before: "$1.00", after: "$1.50" }]);
   });
 
+  it("groups thousands in a tax amount", () => {
+    expect(submitterCorrections([edit("taxCents", "123456")], now)).toEqual([{ field: "tax", kind: "changed", before: "$1,234.56", after: "$1.50" }]);
+  });
+
   it("compares the value before the first edit with the value now", () => {
     const edits = [edit("taxCents", "100"), edit("taxCents", "120"), edit("receiptDate", "null"), edit("receiptDate", "2026-09-30")];
     expect(submitterCorrections(edits, now)).toEqual([

@@ -53,7 +53,7 @@ const writes = endpoints.filter(e => !e.startsWith('GET '));
 const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
-const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve') && e.includes('/in-kind/'));
+const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve'));
 const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
 const financeWrites = writes.filter(e => !DECISIONS.includes(e));
 const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e));
@@ -67,6 +67,7 @@ async function callJson(endpoint: string) {
     return { status: res.status, impl, body: res.status === 200 ? await res.json() : undefined };
 }
 
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 let approvedBuckets: number[];
@@ -79,10 +80,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 34 JSON routes (16 reads, 18 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(34);
-        expect(reads).toHaveLength(16);
-        expect(writes).toHaveLength(18);
+    it('registers 30 JSON routes (14 reads, 16 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(30);
+        expect(reads).toHaveLength(14);
+        expect(writes).toHaveLength(16);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -92,6 +93,7 @@ describe('donation registry — shape', () => {
             'POST /api/donations/in-kind/manual/[id]/qb-resolve',
         ]);
         expect(IN_KIND_MANUAL).toHaveLength(3);
+        expect(endpoints.filter(e => e.includes('/qb-candidates') || e.includes('/qb-exclusions'))).toEqual([]);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
     });
 

@@ -8,7 +8,8 @@ import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
-import { getOrg, mailbox, ports } from "../runtime";
+import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
+import { fileStore, storesNewFilesInBucket, getOrg, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -25,7 +26,7 @@ export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
 /** Held and deferred items past which nothing more is stored; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
 // ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
-// budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
+// budget's worth of fetches can still push a later receipt past the window, with an alert; widen the budget then.
 /** Wall time per run; messages not reached wait for the next run. */
 export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -33,7 +34,8 @@ const DAY_MS = 24 * 60 * 60_000;
 export type MailIntakeResult =
   | { status: "unbound" }
   | {
-      status: "ok";
+      /** `listing_failed`: the mailbox could not be listed, so no message was read this run. */
+      status: "ok" | "listing_failed";
       messages: number;
       receipts: number;
       held: number;
@@ -184,16 +186,43 @@ const envelopeSafe = (headers: Headers | undefined, authResults: string): boolea
  * results, two header.from properties) fails closed too.
  */
 export function dmarcAligned(headers: Headers | undefined, address: string): boolean {
-  const topmost = headerValues(headers, "Authentication-Results")[0];
-  if (topmost === undefined || !envelopeSafe(headers, topmost)) return false;
-  const parsed = parseAuthResults(topmost);
-  if (!parsed || parsed.authservId.toLowerCase() !== "mx.google.com") return false;
-  const dmarc = parsed.results.filter((r) => r.method.toLowerCase() === "dmarc");
-  if (dmarc.length !== 1 || dmarc[0].result.toLowerCase() !== "pass") return false;
+  const results = googleResults(headers);
   const domain = address.split("@")[1];
+  return (
+    !!results &&
+    dmarcResultFor(results, domain) === "pass" &&
+    results.some((r) => r.method.toLowerCase() === "dkim" && r.result.toLowerCase() === "pass" && signedBy(r, domain))
+  );
+}
+
+/** The method results of the topmost `Authentication-Results`, when Google wrote it and it parses; else null. */
+function googleResults(headers: Headers | undefined): ResInfo[] | null {
+  const topmost = headerValues(headers, "Authentication-Results")[0];
+  if (topmost === undefined || !envelopeSafe(headers, topmost)) return null;
+  const parsed = parseAuthResults(topmost);
+  return parsed && parsed.authservId.toLowerCase() === "mx.google.com" ? parsed.results : null;
+}
+
+/** The lowercased result of the single dmarc clause naming exactly this `From` domain; else null. */
+function dmarcResultFor(results: ResInfo[], domain: string): string | null {
+  const dmarc = results.filter((r) => r.method.toLowerCase() === "dmarc");
+  if (dmarc.length !== 1) return null;
   const from = dmarc[0].props.filter(([key]) => key.toLowerCase() === "header.from");
-  if (from.length !== 1 || from[0][1].toLowerCase() !== domain) return false;
-  return parsed.results.some((r) => r.method.toLowerCase() === "dkim" && r.result.toLowerCase() === "pass" && signedBy(r, domain));
+  return from.length === 1 && from[0][1].toLowerCase() === domain ? dmarc[0].result.toLowerCase() : null;
+}
+
+/** The sender check's outcome, stored on each mail item. */
+export type DmarcVerdict = "pass" | "fail" | "none";
+
+/**
+ * `pass` is exactly `dmarcAligned`. `none` means Google found no DMARC record for the `From`
+ * domain. Everything else fails, including a DMARC pass on SPF alone and mail with no single `From`.
+ */
+export function dmarcVerdict(headers: Headers | undefined, address: string | null): DmarcVerdict {
+  if (!address) return "fail";
+  if (dmarcAligned(headers, address)) return "pass";
+  const results = googleResults(headers);
+  return results && dmarcResultFor(results, address.split("@")[1]) === "none" ? "none" : "fail";
 }
 
 /**
@@ -298,7 +327,7 @@ async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise
  * receipt's own insert, so a concurrent retry or release leaves no second receipt (409).
  */
 export async function intakeDeferred(
-  item: { id: number; fileBlob: Uint8Array; mimeType: string },
+  item: { id: number; fileBlob: Uint8Array; fileKey: string | null; mimeType: string },
   sender: ReceiptPrincipal,
   { uploadLimits, onClaim }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown> },
 ): Promise<string> {
@@ -309,12 +338,12 @@ export async function intakeDeferred(
     async (tx, receiptId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id: item.id, status: "deferred" },
-        data: { status: "assigned", receiptId, fileBlob: null },
+        data: { status: "assigned", receiptId, fileBlob: null, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await onClaim?.(tx, receiptId);
     },
-    { uploadLimits },
+    { uploadLimits, heldFileKey: item.fileKey },
   );
   // A deferred text item is a body; its message's attachments are retried first, oldest first.
   if (item.mimeType === "text/plain") {
@@ -373,8 +402,9 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     counts.ignored += ignored;
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
-    const aligned = !!address && dmarcAligned(headers, address);
-    const sender: ReceiptPrincipal | null = aligned ? await ports().people.submitterByEmail(address) : null;
+    const verdict = dmarcVerdict(headers, address);
+    const aligned = verdict === "pass";
+    const sender: ReceiptPrincipal | null = address && aligned ? await ports().people.submitterByEmail(address) : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
     const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
@@ -397,7 +427,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         counts.skipped++;
         continue;
       }
-      const item = { orgId, ...key, receivedAt: new Date(Number(msg.internalDate)), senderAddress: address ?? "" };
+      const item = { orgId, ...key, receivedAt: new Date(Number(msg.internalDate)), senderAddress: address ?? "", dmarcVerdict: verdict };
       const check = ignoredHashes.has(key.attachmentHash) ? null : checkReceiptFile(bytes, file.declaredType);
       if (check && !check.ok) {
         counts.rejected++;
@@ -427,12 +457,19 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        await db.$transaction([
-          db.receiptMailItem.create({
-            data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType },
-          }),
-          oweReply(db),
-        ]);
+        const fileKey = storesNewFilesInBucket() ? newMailItemFileKey() : null;
+        if (fileKey) await fileStore().put(fileKey, bytes, key.attachmentHash);
+        try {
+          await db.$transaction([
+            db.receiptMailItem.create({
+              data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: fileKey ? null : new Uint8Array(bytes), fileKey, fileSize: bytes.length, mimeType: check.mimeType },
+            }),
+            oweReply(db),
+          ]);
+        } catch (err) {
+          await deleteStoredFiles([fileKey]);
+          throw err;
+        }
         counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
@@ -464,9 +501,15 @@ export async function readMailbox(): Promise<MailIntakeResult> {
           await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
-        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, mimeType: true } });
-        if (!item?.fileBlob || !item.mimeType) continue;
-        await intakeDeferred({ ...item, fileBlob: item.fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
+        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, fileKey: true, mimeType: true } });
+        if (!item?.mimeType) continue;
+        const fileBlob = await readStoredFile(item);
+        if (!fileBlob) {
+          counts.failed++;
+          console.error("[receipt] a deferred mail item's file is missing");
+          continue;
+        }
+        await intakeDeferred({ ...item, fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
         counts.receipts++;
       } catch (err) {
         if (err instanceof OrgUploadLimitError) return;
@@ -484,50 +527,79 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   // Mail received before this is out of the window by the next daily run.
   const lastChance = started - (MAIL_WINDOW_DAYS - 1) * DAY_MS;
-  let agingOut = 0;
-  const agingDates: number[] = [];
-  /** Counts messages left unread as ageing out when they arrived before lastChance, or when their arrival is unknown. */
-  const leftUnread = (receivedAt: number | null, messages = 1) => {
-    if (receivedAt !== null && receivedAt >= lastChance) return;
-    agingOut += messages;
-    if (receivedAt !== null) agingDates.push(receivedAt);
-  };
+  /** Stored as soon as it happens, so a run that dies later still leaves the message to alert on. */
+  const leftUnread = (gmailMessageId: string, receivedAt: Date | null) =>
+    db.receiptMailAtRisk.upsert({
+      where: { gmailMessageId },
+      create: { orgId, gmailMessageId, receivedAt },
+      update: receivedAt ? { receivedAt } : {},
+    });
 
-  const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
-  for (const [i, id] of ids.entries()) {
-    if ((capped() && holdsSpent()) || outOfTime()) {
-      counts.unread = ids.length - i;
-      // Oldest first, so the first unread message dates them all.
-      leftUnread(await reader.getMessage(id).then((m) => Number(m.internalDate), () => null), counts.unread);
-      break;
+  async function readListed(ids: string[], reader: MailboxReader): Promise<void> {
+    const readClean: string[] = [];
+    for (const [i, id] of ids.entries()) {
+      if ((capped() && holdsSpent()) || outOfTime()) {
+        const unread = ids.slice(i);
+        counts.unread = unread.length;
+        // Oldest first, so the first unread message dates them all.
+        const receivedAt = await reader.getMessage(id).then((m) => new Date(Number(m.internalDate)), () => null);
+        await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+        break;
+      }
+      counts.messages++;
+      const deferredBefore = counts.deferred;
+      let msg: MailMessage | null = null;
+      try {
+        msg = await reader.getMessage(id);
+        await readMessage(msg, reader);
+      } catch (err) {
+        counts.failed++;
+        console.error("[receipt] mail intake failed for one message:", err);
+        await leftUnread(id, msg && new Date(Number(msg.internalDate)));
+        continue;
+      }
+      if (counts.deferred > deferredBefore) await leftUnread(id, new Date(Number(msg.internalDate)));
+      else readClean.push(id);
     }
-    counts.messages++;
-    const deferredBefore = counts.deferred;
-    let msg: MailMessage | null = null;
-    try {
-      msg = await reader.getMessage(id);
-      await readMessage(msg, reader);
-    } catch (err) {
-      counts.failed++;
-      console.error("[receipt] mail intake failed for one message:", err);
-      leftUnread(msg && Number(msg.internalDate));
-      continue;
-    }
-    if (counts.deferred > deferredBefore) leftUnread(Number(msg.internalDate));
+    await db.receiptMailAtRisk.deleteMany({
+      where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: ids } }] },
+    });
   }
 
-  // ponytail: one alert per run; a message sits in the last day of the window for one daily run, so it alerts once. A same-day rerun alerts again.
-  if (agingOut > 0) {
+  /** One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent. */
+  async function alertAtRisk(): Promise<void> {
+    const rows = await db.receiptMailAtRisk.findMany({
+      where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
+      select: { id: true, receivedAt: true },
+    });
+    if (rows.length === 0) return;
+    const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
     try {
       await ports().alerts.mailAgingOut({
         orgId,
-        messages: agingOut,
-        oldestReceivedAt: agingDates.length > 0 ? new Date(Math.min(...agingDates)) : null,
+        messages: rows.length,
+        oldestReceivedAt: dates.length > 0 ? new Date(Math.min(...dates)) : null,
       });
+      await db.receiptMailAtRisk.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { alertedAt: new Date() } });
     } catch (err) {
       console.error("[receipt] mail ageing alert failed:", err);
     }
   }
+
+  let ids: string[] | null = null;
+  try {
+    ids = await reader.listRecent(MAIL_WINDOW_DAYS);
+  } catch (err) {
+    console.error("[receipt] mailbox listing failed:", err);
+    // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
+    try {
+      await ports().alerts.mailListingFailed({ orgId });
+    } catch (alertErr) {
+      console.error("[receipt] mailbox listing alert failed:", alertErr);
+    }
+  }
+  if (ids) await readListed(ids, reader);
+  await alertAtRisk();
 
   let replies = { sent: 0, failed: 0 };
   try {
@@ -543,5 +615,5 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       console.error("[receipt] mail hold ceiling alert failed:", err);
     }
   }
-  return { status: "ok", ...counts, replied: replies.sent, replyFailed: replies.failed };
+  return { status: ids ? "ok" : "listing_failed", ...counts, replied: replies.sent, replyFailed: replies.failed };
 }

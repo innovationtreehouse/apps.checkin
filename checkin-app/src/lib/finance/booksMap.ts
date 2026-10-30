@@ -3,6 +3,7 @@ import { badRequest, ApiResponseError } from "@/security/handler";
 import { personActor } from "@/lib/auditActor";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
+import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
 import { BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
 
@@ -84,7 +85,7 @@ export const LOCAL_QUICKBOOKS_ACCOUNTS = [
 /** Every QuickBooks account by its full name, inactive ones flagged, for the role picker. */
 export async function listQuickBooksAccounts() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_ACCOUNTS.map((a) => ({ ...a }));
-    const qb = await (await import("@/lib/quickbooks/client")).getQuickBooks();
+    const qb = await quickBooks();
     if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
     const accounts = await qb.accounts().catch((error: unknown) => {
         logger.error("QuickBooks account list failed:", error);

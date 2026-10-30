@@ -136,6 +136,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         // handles; two price tiers so it computes a non-zero discount amount.
         const covered = await prisma.program.create({
             data: {
+                appliesToYear: boundary.getUTCFullYear() - 1,
                 startAt: new Date('2026-01-01'),
                 name: `Covered Prog ${TAG}`, phase: 'UPCOMING', endAt: coveredEndAt,
                 shopifyVariantId: 'dev-mock-variant-discount-code-covered',
@@ -146,6 +147,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
 
         const uncovered = await prisma.program.create({
             data: {
+                appliesToYear: boundary.getUTCFullYear(),
                 startAt: new Date('2026-01-01'),
                 name: `Uncovered Prog ${TAG}`, phase: 'UPCOMING', endAt: uncoveredEndAt,
                 shopifyVariantId: 'dev-mock-variant-discount-code-uncovered',

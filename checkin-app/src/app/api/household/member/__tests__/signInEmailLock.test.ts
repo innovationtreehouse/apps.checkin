@@ -16,6 +16,7 @@ import { signInEmailHelp } from "@/lib/person/signInEmail";
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
+jest.mock("@/lib/person/mailAliases", () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/leads", () => ({
@@ -101,6 +102,13 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
     it("refuses a bucket owner's email change when they have no sign-in and no other grant", async () => {
         findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnersOwned: [{ id: 5 }] });
         const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a trusted member with no sign-in editing their own email", async () => {
+        findPerson.mockResolvedValue({ ...target(LEAD, 0), budgetOwnerTreasurerships: [{ budgetOwnerId: 5 }] });
+        const res = await patch({ participantId: LEAD, email: "new@example.com" });
         expect(res.status).toBe(400);
         expect(tx.person.update).not.toHaveBeenCalled();
     });

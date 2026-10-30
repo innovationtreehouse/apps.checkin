@@ -398,8 +398,10 @@ Procedure below is built on them.
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
-- Renewals start only when the board presses its "open renewals" button; no
-  scheduled run opens them.  [Decision — *Board ruling B6, 2026-10-27*]
+- Renewals start only from the board's own actions: its "open renewals" button
+  opens them for every household due, and granting the current year opens one
+  for that single household. No scheduled run opens them.  [Decision — *Board
+  ruling B6, 2026-10-27*]
 
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
@@ -436,6 +438,12 @@ Procedure below is built on them.
 
 - Nobody is removed for falling out of compliance. The view reports and sends
   nothing, so a violation waits until a person looks.  [Decision — deliberate limit; *Principle: people decide about people*]
+
+### Adding a contact
+
+- "Add contact", which creates a person from a name and email address alone, is
+  for the Board and operations. The person gets a household of their own, with no
+  membership, and leads it.  [Decision — deliberate limit]
 
 ### Background checks for individual adults
 

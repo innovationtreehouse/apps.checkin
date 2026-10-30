@@ -1,7 +1,6 @@
 # Receipt files: moving from the receipt database to a private S3 bucket
 
-**Status: rulings recorded 2026-10-27; Board B17 (who holds the encryption key)
-is still open.** Amends #1265 §3 ("File storage").
+**Status: all Board rulings recorded (B17, B18, B19).** Amends #1265 §3 ("File storage").
 
 Receipt files and held mail-item files move out of the receipt database, where
 they sit as `bytea` on the Postgres server checkin shares, into one private S3
@@ -46,9 +45,10 @@ existing presigned-URL pattern to follow.
   written again with different bytes. That stops overwrites only; it doesn't stop
   deletes, which are governed by the role and lifecycle rules in §6. Every put also
   carries **`ChecksumSHA256`** set to the hash the row
-  already stores (`Receipt.fileHash`, `ReceiptMailItem.attachmentHash`). S3
-  refuses a body that does not match, so every stored object is verified at the
-  moment it is written.
+  already stores (`Receipt.fileHash`, `ReceiptMailItem.attachmentHash`). The rows
+  store hex and S3 takes base64 of the raw digest, so the S3 adapter re-encodes it
+  on put. S3 refuses a body that does not match, so every stored object is
+  verified at the moment it is written.
 
 New columns on both `receipts` and `receipt_mail_items`:
 
@@ -63,8 +63,11 @@ New columns on both `receipts` and `receipt_mail_items`:
 - `file_size INT NULL`, tier `internal`. The daily byte limits sum
   `octet_length(file_blob)` today; with the bytes gone they sum this instead.
 
-`file_key IS NULL` means "the bytes are still in `file_blob`". That one column is
-the per-row switch the migration turns (§4).
+On a receipt, and on a held or deferred mail item, `file_key IS NULL` means "the
+bytes are still in `file_blob`". That one column is the per-row switch the
+migration turns (§4). A mail item that became a receipt has neither a key nor
+bytes, and neither has one discarded before this move or ignored at intake: its
+status says no file is kept.
 
 ## 2. Writes
 
@@ -95,11 +98,14 @@ nothing in the common case.
 
 **Mail items.** Holding an item puts `mail-items/<uuid>`. Assigning one
 runs the normal receipt insert, which puts `receipts/<newId>` from the same
-bytes, and clears the item's `file_key` in the claim. Discarding clears it too.
+bytes, and clears the item's `file_key` in the claim. Discarding leaves `file_key`
+on the row, because it is the only record naming the object an admin would
+restore; the row is never served, since reads take only held and deferred items.
 After either commits, the app deletes the `mail-items/` object. In prod,
 versioning keeps the deleted object for 30 days (§6), which is the window in
 which an admin can restore a mistaken discard. Dev and staging keep it for 1 day;
-nothing there is worth restoring.
+nothing there is worth restoring. The key stays on the row after that window: it
+is opaque, and PR 5's retention step (§7) clears it when it deletes the object.
 
 **Cleaning up spam.** Mail from a sender the app can't attribute never becomes a
 receipt; it's held in `mail-items/` until finance acts, so spam stays in the one
@@ -218,8 +224,7 @@ intake refuse there with 503, as any deployed instance without a bucket does
 **Bucket.**
 - S3 Block Public Access: all four settings on.
 - Object Ownership: bucket owner enforced (ACLs disabled).
-- Default encryption: SSE-S3, matching the agreement bucket. Proposed, pending
-  Board B17; if the Board chooses its own key, this becomes SSE-KMS (§10).
+- Default encryption: SSE-S3, matching the agreement bucket (Board B17, §10).
 - Versioning: on.
 - Bucket policy: deny any request without TLS (`aws:SecureTransport` false);
   deny object reads, writes and deletes to every principal except that
@@ -325,7 +330,9 @@ moves the IRS limit 6 months later, which the extra year still covers.
 **Who deletes.** A daily retention step in the app, not an S3 lifecycle rule: the
 deletion depends on the receipt's state and dates, which live in the database and
 not on the object. For each receipt past its date, the step deletes the
-`receipts/` object, clears `file_key`, and writes an audit row. The receipt row
+`receipts/` object, clears `file_key`, and writes an audit row. A discarded mail
+item's leftover key is cleared by the same step when its object's window has
+closed. The receipt row
 itself stays: it is part of the books. The file route then answers 404, as for
 any missing file (§3). The step computes the date from the receipt's current
 state each run, so a receipt that is reopened stops counting down.
@@ -368,20 +375,12 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
 
 ## 10. Questions
 
-**For the Board.**
-
-- **Q-S3-1 (Board B17). How the stored receipt files are encrypted.** Under
-  technical review. Every file is encrypted on disk either way. The choice is who
-  holds the key. Option A: AWS manages it invisibly; this is what the
-  membership-agreement file uses, and it costs nothing. Option B: the
-  organization has its own key in AWS, with its own access list; anyone reading a
-  file then needs permission on both the files and the key, and every use of the
-  key is logged. It costs about a dollar a month per environment.
-  Recommendation: A, unless the Board wants personal data held to the stricter
-  standard.
-
 **Decided.**
 
+- **Who holds the encryption key** (Board B17; was Q-S3-1): AWS manages it
+  (Option A), as for the membership-agreement file, at no cost. Every file is
+  encrypted on disk. The Board did not take Option B, the organization's own key
+  with its own access list. Designed in §6.
 - **Network-only reads** (Board B18, 2026-10-27; was Q-S3-6): receipt files are
   readable only from inside the organization's network. Designed in §6.
 - **Retention** (Board B19, 2026-10-27, with the owner choosing the 6-year limit;

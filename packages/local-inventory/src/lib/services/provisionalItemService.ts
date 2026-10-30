@@ -350,10 +350,8 @@ export function createProvisionalItemService({
         const { provisionalRow, existingRow: realRow } = await lockOrgItemPair(
           tx, orgId, conflict.provisionalGtin13, conflict.realGtin13,
         );
-        if (!realRow) throw new ServiceError(400, "Real GTIN org item not found");
-
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
-        const existingQty = realRow.existingQuantity;
+        const existingQty = realRow?.existingQuantity ?? 0;
 
         let finalQuantity: number;
         if (resolution.quantityMethod === "use_provisional") finalQuantity = provisionalQty;
@@ -368,10 +366,28 @@ export function createProvisionalItemService({
         });
         if (closed.count === 0) throw new ServiceError(400, "Conflict is already resolved");
 
-        await tx.orgItem.update({
-          where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
-          data: { existingQuantity: finalQuantity },
-        });
+        let valueBefore = existingQty;
+        let valueAfter = finalQuantity;
+        if (realRow) {
+          await tx.orgItem.update({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            data: { existingQuantity: finalQuantity },
+          });
+        } else if (finalQuantity > 0) {
+          // A missing real row is unlocked, so a first receipt can insert it concurrently; the
+          // increment folds that receipt in. Nothing to land means the removed row stays removed.
+          ({ existingQuantity: valueAfter } = await tx.orgItem.upsert({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            create: {
+              orgId, gtin13: conflict.realGtin13, existingQuantity: finalQuantity,
+              desiredQuantity: provisionalRow?.desiredQuantity,
+              locationId: provisionalRow?.locationId,
+              backstockLocationId: provisionalRow?.backstockLocationId,
+            },
+            update: { existingQuantity: { increment: finalQuantity } },
+          }));
+          valueBefore = valueAfter - finalQuantity;
+        }
 
         if (provisionalRow) {
           await tx.orgItem.delete({
@@ -383,7 +399,7 @@ export function createProvisionalItemService({
           data: {
             orgId, userId, username: username ?? null, changedAt: now, changeType: "manual",
             gtin13: conflict.realGtin13, fieldChanged: "existingQuantity",
-            valueBefore: String(existingQty), valueAfter: String(finalQuantity), receiptId: null,
+            valueBefore: String(valueBefore), valueAfter: String(valueAfter), receiptId: null,
           },
         });
 

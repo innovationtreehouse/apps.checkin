@@ -14,7 +14,7 @@
 import { markContractSigned, markBgConsent } from '@/lib/membership/external';
 import { normalizeAuditData } from '@/lib/auditPayload';
 import { attest, boardResetReview } from '@/lib/membership/review';
-import { certifyPaymentPlan, activate } from '@/lib/membership/payment';
+import { certifyPaymentPlan, activate, activateByProcessId } from '@/lib/membership/payment';
 import { submitIntake } from '@/lib/membership/intake';
 import { beginRenewal } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
@@ -157,6 +157,17 @@ describe('background check is non-blocking', () => {
         const lead = await prisma.person.findUnique({ where: { id: leadId } });
         expect(lead?.lastBackgroundCheck).not.toBeNull();
         expect(householdId).toBeGreaterThan(0);
+    });
+
+    it('a payment keeps its year when the check clears later', async () => {
+        const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        await activateByProcessId(processId, `year-${processId}`, { appliesToYear: 2026 });
+        expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE');
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: 'ACTIVE', appliesToYear: 2026 });
     });
 
     it('check clears before payment → stays PENDING_PAYMENT, then paying activates', async () => {

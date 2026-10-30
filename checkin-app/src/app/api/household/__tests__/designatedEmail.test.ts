@@ -15,6 +15,7 @@ import { PATCH as memberPATCH } from "@/app/api/household/member/route";
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
+jest.mock("@/lib/person/mailAliases", () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/person/mintId", () => ({ mintPersonId: jest.fn().mockResolvedValue(99) }));

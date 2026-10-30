@@ -42,8 +42,14 @@ model Receipt {
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
+  // Null once the file lives in the store under fileKey.
   /// @sensitivity:pii
-  fileBlob           Bytes    @map("file_blob")
+  fileBlob           Bytes?   @map("file_blob")
+  // The object holding the file; null means the bytes are in fileBlob.
+  /// @sensitivity:pii
+  fileKey            String?  @map("file_key")
+  /// @sensitivity:internal
+  fileSize           Int?     @map("file_size")
   /// @sensitivity:internal
   fileHash           String   @map("file_hash")
   /// @sensitivity:internal
@@ -142,6 +148,9 @@ model ReceiptDetail {
   /// The Board member's reason for confirming on behalf of a reimbursee with no account; free text.
   /// @sensitivity:personal
   reviewedOnBehalfReason     String?   @map("reviewed_on_behalf_reason")
+  /// When the uploader acknowledged finance's rejection; until then the receipt counts in their pill.
+  /// @sensitivity:internal
+  rejectionAcknowledgedAt    DateTime? @map("rejection_acknowledged_at")
 
   // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
   /// @sensitivity:internal
@@ -304,9 +313,18 @@ model ReceiptMailItem {
   // Why a held item was held: unverified_sender | not_a_submitter. Null on items held before it was recorded.
   /// @sensitivity:internal
   holdReason     String?   @map("hold_reason")
+  // The sender check's outcome: pass | fail | none. Null on items stored before it was recorded.
+  /// @sensitivity:internal
+  dmarcVerdict   String?   @map("dmarc_verdict")
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")
+  // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
+  // to name the object for an admin restore. Null with no fileBlob means no file is kept.
+  /// @sensitivity:pii
+  fileKey        String?   @map("file_key")
+  /// @sensitivity:internal
+  fileSize       Int?      @map("file_size")
   /// @sensitivity:internal
   mimeType       String?   @map("mime_type")
   /// @sensitivity:internal
@@ -352,6 +370,28 @@ model ReceiptMailReply {
 
   @@index([orgId, doneAt])
   @@map("receipt_mail_replies")
+}
+
+// A message a mail run could not finish: failed, put off or not reached. Removed once read
+// clean, or once alerted and no longer listed; a stored row is how the alert survives a bad day.
+model ReceiptMailAtRisk {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @unique @map("gmail_message_id")
+  // Null when the message could not be fetched, so its age is unknown.
+  /// @sensitivity:internal
+  receivedAt     DateTime? @map("received_at")
+  // Set only after the alert was sent, so a failed send retries on the next run.
+  /// @sensitivity:internal
+  alertedAt      DateTime? @map("alerted_at")
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orgId, alertedAt])
+  @@map("receipt_mail_at_risk")
 }
 
 // Files the organization has said are never receipts (#1265 §2a). Mail intake skips a

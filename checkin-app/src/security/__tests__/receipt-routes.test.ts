@@ -36,6 +36,7 @@ import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } fro
 import { stripValue } from '@/security/stripper';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
 interface Flags {

@@ -2,8 +2,9 @@
 import { Fragment, useState } from "react";
 import { Anchor, Badge, Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, money, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 
 interface ReconRow {
   id: number;
@@ -96,7 +97,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
               {candidates.data.map((d) => (
                 <Table.Tr key={d.id}>
                   <Table.Td>{d.txnDate}</Table.Td>
-                  <Table.Td>{money(d.totalCents)}</Table.Td>
+                  <Table.Td>{formatCents(d.totalCents)}</Table.Td>
                   <Table.Td><Code>{d.id}</Code></Table.Td>
                   <Table.Td>
                     <Group gap="xs">
@@ -190,7 +191,7 @@ export default function ReconciliationPage() {
                 <Fragment key={row.id}>
                   <Table.Tr>
                     <Table.Td>{row.payoutDate}</Table.Td>
-                    <Table.Td>{money(row.payoutNetCents)}</Table.Td>
+                    <Table.Td>{formatCents(row.payoutNetCents)}</Table.Td>
                     <Table.Td>
                       <Badge size="sm" color="orange">{row.kind ?? row.status}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>

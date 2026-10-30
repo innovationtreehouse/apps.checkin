@@ -249,15 +249,26 @@ export async function attestedUnclearedProcessIds(reviewerId: number): Promise<n
     return rows.map((r) => r.id);
 }
 
-/** IDs of blocked applications whose rejection is this reviewer's — the ones they may change to an approval. */
+/** IDs of blocked applications whose rejection is this reviewer's and whose household is not denied — the ones they may change to an approval. */
 export async function ownRejectedProcessIds(reviewerId: number): Promise<number[]> {
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) return [];
     const rows = await prisma.orgMembershipProcess.findMany({
         where: { status: "BLOCKED", attestations: { some: { reviewerId, result: "REJECT" } } },
-        select: { id: true },
+        select: {
+            id: true,
+            subjectPersonId: true,
+            subjectPerson: { select: { household: { select: { orgMembership: { select: { status: true } } } } } },
+            orgMembership: { select: { status: true } },
+        },
     });
-    return rows.map((r) => r.id);
+    return rows
+        .filter((p) => {
+            // Same applicant household as applicantHousehold(), which the switch refuses on when denied.
+            const applicantMembership = p.subjectPersonId ? p.subjectPerson?.household?.orgMembership : p.orgMembership;
+            return applicantMembership?.status !== "DENIED";
+        })
+        .map((p) => p.id);
 }
 
 /**
@@ -508,8 +519,7 @@ export async function clearBackgroundCheck(
 
     // PERSON_BG: subject-scoped. Stamp ONLY the subject person and resolve — there is
     // no household membership to activate/pay, so skip the payment/activation
-    // convergence entirely, and do NOT touch the household-lead blanket stamp (that's
-    // the household path below, whose lead-stamp change is Phase 5).
+    // convergence entirely. The household path below stamps the adults its review covered.
     if (process.subjectPersonId) {
         const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
         await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });

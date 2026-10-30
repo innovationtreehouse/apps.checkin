@@ -137,8 +137,6 @@ export const GET = withAuth(
                     signing,
                     household: {
                         ...withFlatContact(withIntakeNotesFor(household, viewer)),
-                        // isVolunteer mirrors isVolunteerFamily for edit modals loaded before the rename deploy; drop it one release later.
-                        orgMembership: household.orgMembership && { ...household.orgMembership, isVolunteer: household.orgMembership.isVolunteerFamily },
                         householdMembers: membersWithBg,
                         householdLeads,
                         bgValidUntil: householdBgValidUntil,

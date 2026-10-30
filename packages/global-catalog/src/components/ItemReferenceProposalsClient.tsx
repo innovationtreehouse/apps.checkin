@@ -8,7 +8,7 @@ import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;

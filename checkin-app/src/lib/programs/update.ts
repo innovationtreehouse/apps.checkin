@@ -79,7 +79,7 @@ export async function resolveProgramYear(input: {
     startAt: Date;
     endAt: Date;
     supplied: unknown;
-    current: { appliesToYear: number | null; startAt: Date; endAt: Date } | null;
+    current: { appliesToYear: number; startAt: Date; endAt: Date } | null;
     isBoardMember: boolean;
 }): Promise<ProgramYearResult> {
     const { startAt, endAt, supplied, current, isBoardMember } = input;
@@ -95,9 +95,8 @@ export async function resolveProgramYear(input: {
     if (years.length === 1) return { ok: true, appliesToYear: years[0] };
 
     const askTheBoard = refuse("forbidden", "These dates cross the membership year boundary, so the program's membership year comes from its budget approval. Ask the Board to set it.");
-    const currentYear = current?.appliesToYear;
-    const keptYear = current && currentYear != null && years.includes(currentYear)
-        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? currentYear : null;
+    const keptYear = current && years.includes(current.appliesToYear)
+        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? current.appliesToYear : null;
     const stated = supplied as number | null | undefined;
     if (stated != null && stated !== keptYear) {
         if (!isBoardMember) return askTheBoard;

@@ -2,10 +2,7 @@ name: Deploy staging
 
 # Deploy a rel/** branch to the shared, disposable ops-stg environment: a
 # scrubbed, reseeded-per-deploy copy of prod's schema+data whose entire job is
-# catching a bad migration before it ever reaches a real release. See
-# STAGING_PLAN_v2.md for the full design (this workflow + the build-footer
-# branch plumbing in checkin-app/Dockerfile / BuildInfoFooter.tsx is PR-C;
-# the infra module and the checkin-app auth gate are separate, sibling PRs).
+# catching a bad migration before it ever reaches a real release.
 #
 # Trigger 1 — push to a rel/** branch, NOT workflow_run. A workflow_run always
 # executes with github.ref pinned to the DEFAULT branch (confirmed against
@@ -34,9 +31,9 @@ name: Deploy staging
 # would) is the only way back in.
 #
 # Does NOT deploy s-read: staging has no mirror database to sync (SHOPIFY_READ_DB
-# is unset for stg — see the infra PR), so there is nothing for s-read to read.
+# is unset for stg), so there is nothing for s-read to read.
 #
-# Infra preconditions (NOT done here — delivered by the sibling infra PR):
+# Infra preconditions (NOT done here — owned by the infra repo):
 #   - Terraform applied: OIDC role checkin-deploy-stg (ECS/ECR/logs only — no
 #     Secrets Manager access; matches the existing checkin_deploy convention of
 #     keeping the deploy role narrow), ECR repo, ECS cluster/service, the app +
@@ -54,8 +51,8 @@ name: Deploy staging
 #     $STG_DB — this keeps the ability to write either secret confined to this
 #     one narrowly-scoped task role instead of handing the deploy role any
 #     Secrets Manager write access. This is this workflow's assumption about
-#     the sibling PR's contract; confirm it lines up with what that PR actually
-#     ships and adjust the "Repoint app DML secret" step below if not.
+#     the entrypoint the infra repo owns; if they differ, adjust the "Repoint
+#     app DML secret" step below.
 #   - Secret VALUES set in Secrets Manager (checkin-stg/database-url*, ...).
 #   - GitHub Environment "staging": deployment branches = rel/*, required
 #     reviewers configured (approval gate) — this also pins the OIDC sub to
@@ -297,7 +294,7 @@ jobs:
           # The shared Aurora cluster is Serverless v2, min-capacity 0, with
           # auto-pause: the first connection after idle P1001s for ~30s (same
           # as the migrate steps below and in deploy-dev.yml). This task's own
-          # entrypoint belongs to the sibling infra PR, so — unlike the migrate
+          # entrypoint belongs to the infra repo, so — unlike the migrate
           # step, whose command this workflow owns and can retry internally —
           # the retry has to wrap the whole run-task/wait/check-exit sequence.
           EXIT_CODE=1
@@ -458,8 +455,8 @@ jobs:
           # checkin-stg/database-url* — both secrets); REPOINT_ONLY tells its
           # entrypoint to only flip checkin-stg/database-url (the DML secret)
           # to $STG_DB, without repeating the pg_dump/restore. See the header
-          # comment: this is this workflow's assumption about the sibling
-          # infra PR's contract — confirm it against what that PR actually ships.
+          # comment: this is this workflow's assumption about the entrypoint
+          # the infra repo owns.
           cat > "$RUNNER_TEMP/repoint-overrides.json" <<EOF
           {
             "containerOverrides": [{

@@ -11,6 +11,7 @@ import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { GET } from '../route';
 
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const prismaMock = {

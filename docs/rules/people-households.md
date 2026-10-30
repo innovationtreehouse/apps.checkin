@@ -150,6 +150,10 @@ Things the app takes as true because they are handled outside it.
   do here, and it is young enough that someone of 25 is very unlikely to be the
   parent of anyone in our programs.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
 
+- Change history can keep a date of birth past 25. A history record copies the
+  date when a person's details are saved, and nothing removes that copy later.
+  This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21, 2026-10-27]
+
 - Date of birth is the only field with an ageing-out rule. Broader retention is
   deliberately not automated while the organisation is young and little has
   accumulated; the general obligation is met by hand until that stops being true.  [Decision — deliberate limit]
@@ -163,6 +167,11 @@ Things the app takes as true because they are handled outside it.
 
 - Email identity is case-insensitive.  [Decision]
 
+- A person may be identified by extra addresses for receipt mail only. Finance
+  or the Board records them, never for their own household, and each is unique
+  across every person's sign-in address and every other extra address. Setting a
+  sign-in email to such an address removes it.  [Decision — owner]
+
 - Where someone signs in through the outside sign-in service, the address they
   sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
 
@@ -173,8 +182,9 @@ Things the app takes as true because they are handled outside it.
 
 - A trusted person's sign-in email changes only by a board member's action, with a
   written reason the record keeps. A merge counts: it needs the same when the trusted
-  person is the merged-away side or a trusted keeper takes the other side's identity.
-  Keeping a trusted person's record and identity needs neither. A sign-in account with
+  person is the merged-away side, or a trusted keeper takes the other side's identity
+  or its linked sign-in accounts. Keeping a trusted person's record and identity, with
+  no account coming across, needs neither. A sign-in account with
   a different address cannot be linked to them.  [Decision — Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27; bucket owners per owner decision 2026-10-30]
 
 - A member's email is not edited from the household card, by them or by a lead,

@@ -1,24 +1,27 @@
 import prisma from "@/lib/prisma";
+import { personActor } from "@/lib/auditActor";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
-import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
-import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
+import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
-import { withTx } from "@/lib/db-client";
+import type { TxClient } from "@/lib/db-client";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -55,7 +58,7 @@ export class IntakeError extends Error {
  */
 export type IntakeRejection = {
     section: "secondaryParent";
-    code: "lead_limit" | "name_required" | "household_denied" | "not_lead";
+    code: "lead_limit" | "name_required" | "household_denied" | "not_lead" | "youth";
     message: string;
 };
 
@@ -248,7 +251,10 @@ async function startRefusal(code: StartRefusal, householdId: number, userId: num
     }
 }
 
-/** Persist intake form data onto the caller's household + participants. Resumable; never deletes. */
+/**
+ * Persist intake form data onto the caller's household + participants, all or
+ * nothing: a thrown error means nothing was saved. Resumable; never deletes.
+ */
 export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const user = await loadUserWithHousehold(userId);
     if (!user) throw new IntakeError("no_household", "User not found.");
@@ -256,7 +262,6 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const householdId = user.householdId!;
     const householdMemberIds = new Set((user.household?.householdMembers ?? []).map((p) => p.id));
 
-    // Checked before any write: the save is a sequence of autocommit statements.
     // Only a newly created person takes an email here.
     const isNew = (p: { id?: number }) => !(p.id && householdMemberIds.has(p.id));
     const newPeople = [
@@ -275,14 +280,18 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     // collect the skipped promotion and hand it back so the form can say exactly
     // what happened, instead of failing the whole save with a single error.
     const rejections: IntakeRejection[] = [];
-    const addLeadOrRecord = async (participantId: number) => {
+    const refusals: SelfGrantRefusal[] = [];
+    const deniedPromotions: HouseholdLeadDeniedError[] = [];
+    const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
         // A sysadmin manages their household's intake without leading it, so making
         // someone its lead that way is a grant to their own household.
         const alreadyLead = (user.household?.householdMembers ?? []).some((p) => p.id === participantId && p.isHouseholdLead);
-        if (!user.isHouseholdLead && !alreadyLead && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId }, {
+        const refusal = !user.isHouseholdLead && !alreadyLead ? await findSelfGrantRefusal(tx, userId, refusalSubject, {
             table: "Person",
             attempted: { isHouseholdLead: true },
-        })) {
+        }) : null;
+        if (refusal) {
+            refusals.push(refusal);
             rejections.push({
                 section: "secondaryParent",
                 code: "not_lead",
@@ -291,7 +300,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             return;
         }
         try {
-            await addHouseholdLead(prisma, householdId, participantId);
+            await addHouseholdLead(tx, householdId, participantId);
         } catch (e) {
             if (e instanceof HouseholdLeadLimitError) {
                 rejections.push({
@@ -302,152 +311,172 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                 return;
             }
             if (e instanceof HouseholdLeadDeniedError) {
-                await raiseDeniedHouseholdActivity({ householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" });
+                deniedPromotions.push(e);
                 rejections.push({ section: "secondaryParent", code: "household_denied", message: `We saved this person's details, but ${e.message.charAt(0).toLowerCase()}${e.message.slice(1)}` });
+                return;
+            }
+            if (e instanceof HouseholdLeadYouthError) {
+                rejections.push({
+                    section: "secondaryParent",
+                    code: "youth",
+                    message: "We saved this person's details, but someone under 18 can't be a parent/guardian on the household, so they were added as a household member instead.",
+                });
                 return;
             }
             throw e;
         }
     };
 
-    if (input.household) {
-        // Address + the optional "anything else we should know?" note share one
-        // household.update. Note is trimmed to null so an empty box clears it.
-        const householdData = {
-            ...normalizeAddressInput(input.household),
-            ...(input.household.notes !== undefined && { intakeNotes: input.household.notes?.trim() || null }),
-        };
-        if (Object.keys(householdData).length > 0) {
-            await prisma.household.update({ where: { id: householdId }, data: householdData });
-        }
-        // Emergency contact lives in its own table now; the single-field intake
-        // form maps onto the household's primary contact. Tolerant of partial
-        // saves; rejects (direction A) a contact that is a household member.
-        if (
-            input.household.emergencyContactName !== undefined ||
-            input.household.emergencyContactPhone !== undefined ||
-            input.household.emergencyContactEmail !== undefined
-        ) {
-            await upsertPrimaryContact(prisma, householdId, {
-                name: input.household.emergencyContactName,
-                phone: input.household.emergencyContactPhone,
-                email: input.household.emergencyContactEmail,
-            });
-        }
-    }
+    try {
+        await prisma.$transaction(async (tx) => {
+            // Lead promotion locks OrgMembership then Household, the order every
+            // writer takes them in; the household update below would invert it.
+            await lockAndFindDeniedHousehold(tx, [householdId]);
 
-    // Primary parent is always the caller.
-    if (input.primaryParent) {
-        // A submitted-but-blank name is rejected rather than silently dropped
-        // (Decision 5) — this is the caller's own name, always required.
-        if (input.primaryParent.name !== undefined && !nameWrite(input.primaryParent.name)) {
-            throw new IntakeError("name_required", "Your name is required.", ["primaryName"]);
-        }
-        // The primary applicant is already a household lead (set at startIntake).
-        await prisma.person.update({
-            where: { id: userId },
-            data: {
-                ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
-                // 26+ DoB is stripped and forces the flag on; an empty DoB honors
-                // the checkbox.
-                ...(input.primaryParent.dob !== undefined && normalizeAdultDob(input.primaryParent.dob)),
-                ...(input.primaryParent.over25 !== undefined && !input.primaryParent.dob && { isDeclaredAdult: !!input.primaryParent.over25 }),
-                ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
-            },
-        });
-    }
-
-    // Secondary parent: update if it belongs to this household, else create.
-    if (input.secondaryParent) {
-        const sp = input.secondaryParent;
-        let spName: string | undefined;
-        if (sp.id && householdMemberIds.has(sp.id)) {
-            // A submitted (non-null) but blank name is rejected, not silently
-            // dropped (Decision 5) — same rule as the primary parent/children
-            // updates. `null` stays a no-op (#1688's existing carve-out).
-            if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
-                throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
+            if (input.household) {
+                // Address + the optional "anything else we should know?" note share one
+                // household.update. Note is trimmed to null so an empty box clears it.
+                const householdData = {
+                    ...normalizeAddressInput(input.household),
+                    ...(input.household.notes !== undefined && { intakeNotes: input.household.notes?.trim() || null }),
+                };
+                if (Object.keys(householdData).length > 0) {
+                    await tx.household.update({ where: { id: householdId }, data: householdData });
+                }
+                // Emergency contact lives in its own table now; the single-field intake
+                // form maps onto the household's primary contact. Tolerant of partial
+                // saves; rejects (direction A) a contact that is a household member.
+                if (
+                    input.household.emergencyContactName !== undefined ||
+                    input.household.emergencyContactPhone !== undefined ||
+                    input.household.emergencyContactEmail !== undefined
+                ) {
+                    await upsertPrimaryContact(tx, householdId, {
+                        name: input.household.emergencyContactName,
+                        phone: input.household.emergencyContactPhone,
+                        email: input.household.emergencyContactEmail,
+                    });
+                }
             }
-            await prisma.person.update({
-                where: { id: sp.id },
-                data: {
-                    ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                    ...(sp.dob !== undefined && normalizeAdultDob(sp.dob)),
-                    ...(sp.over25 !== undefined && !sp.dob && { isDeclaredAdult: !!sp.over25 }),
-                    ...(sp.allergies !== undefined && { allergies: sp.allergies }),
-                },
-            });
-            // A second guardian is a household lead (parent).
-            await addLeadOrRecord(sp.id);
-        } else if ((spName = nameWrite(sp.name)) !== undefined) {
-            const newSpName: string = spName;
-            // saveIntake is a bare sequence of autocommit statements, so the mint
-            // gets its own two-statement transaction — an id minted outside one
-            // would be burned if the create failed. #1688's name_required
-            // rejection is the sibling branch below, so a nameless (or
-            // whitespace-only) second parent never opens a transaction at all.
-            const created = await withTx(prisma, async (tx) =>
-                tx.person.create({
-                    data: {
-                        id: await mintPersonId(tx),
-                        householdId,
-                        name: newSpName,
-                        ...(sp.email && { email: sp.email.toLowerCase() }),
-                        ...normalizeAdultDob(sp.dob),
-                        ...(!sp.dob && { isDeclaredAdult: !!sp.over25 }),
-                        allergies: sp.allergies ?? null,
-                    },
-                }),
-            );
-            await addLeadOrRecord(created.id);
-        } else if (sp.email) {
-            rejections.push({
-                section: "secondaryParent",
-                code: "name_required",
-                message: "A name is required for the second parent / guardian.",
-            });
-        }
-    }
 
-    // Children are non-lead household members. Update existing (own household
-    // only), create the rest. Never delete; never add a HouseholdLead row.
-    for (const child of input.children ?? []) {
-        let childName: string | undefined;
-        if (child.id && householdMemberIds.has(child.id)) {
-            // Same rejection as the primary parent (Decision 5): an existing
-            // child's name can't be blanked through an update.
-            if (child.name !== undefined && !nameWrite(child.name)) {
-                throw new IntakeError("name_required", "A name is required for each child.", ["children"]);
+            // Primary parent is always the caller.
+            if (input.primaryParent) {
+                // A submitted-but-blank name is rejected rather than silently dropped
+                // (Decision 5) — this is the caller's own name, always required.
+                if (input.primaryParent.name !== undefined && !nameWrite(input.primaryParent.name)) {
+                    throw new IntakeError("name_required", "Your name is required.", ["primaryName"]);
+                }
+                // The primary applicant is already a household lead (set at startIntake).
+                await tx.person.update({
+                    where: { id: userId },
+                    data: {
+                        ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
+                        // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
+                        // 26+ DoB is stripped and forces the flag on; an empty DoB honors
+                        // the checkbox.
+                        ...(input.primaryParent.dob !== undefined && normalizeAdultDob(input.primaryParent.dob)),
+                        ...(input.primaryParent.over25 !== undefined && !input.primaryParent.dob && { isDeclaredAdult: !!input.primaryParent.over25 }),
+                        ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
+                    },
+                });
             }
-            await prisma.person.update({
-                where: { id: child.id },
-                data: {
-                    ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                    ...(child.dob !== undefined && normalizeAdultDob(child.dob)),
-                    ...(child.allergies !== undefined && { allergies: child.allergies }),
-                },
-            });
-        } else if ((childName = nameWrite(child.name)) !== undefined) {
-            const newChildName: string = childName;
-            await withTx(prisma, async (tx) =>
-                tx.person.create({
-                    data: {
-                        id: await mintPersonId(tx),
-                        householdId,
-                        name: newChildName,
-                        ...(child.email && { email: child.email.toLowerCase() }),
-                        ...normalizeAdultDob(child.dob),
-                        allergies: child.allergies ?? null,
-                    },
-                }),
-            );
-        }
+
+            // Secondary parent: update if it belongs to this household, else create.
+            if (input.secondaryParent) {
+                const sp = input.secondaryParent;
+                let spName: string | undefined;
+                if (sp.id && householdMemberIds.has(sp.id)) {
+                    // A submitted (non-null) but blank name is rejected, not silently
+                    // dropped (Decision 5) — same rule as the primary parent/children
+                    // updates. `null` stays a no-op (#1688's existing carve-out).
+                    if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
+                        throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
+                    }
+                    await tx.person.update({
+                        where: { id: sp.id },
+                        data: {
+                            ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
+                            ...(sp.dob !== undefined && normalizeAdultDob(sp.dob)),
+                            ...(sp.over25 !== undefined && !sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            ...(sp.allergies !== undefined && { allergies: sp.allergies }),
+                        },
+                    });
+                    // A second guardian is a household lead (parent).
+                    await addLeadOrRecord(tx, sp.id, { personId: sp.id, householdId });
+                } else if ((spName = nameWrite(sp.name)) !== undefined) {
+                    const newSpName: string = spName;
+                    if (sp.email) await removeAliasesForSignInEmail(tx, sp.email, personActor(userId), "intake_add_member");
+                    const created = await tx.person.create({
+                        data: {
+                            id: await mintPersonId(tx),
+                            householdId,
+                            name: newSpName,
+                            ...(sp.email && { email: sp.email.toLowerCase() }),
+                            ...normalizeAdultDob(sp.dob),
+                            ...(!sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            allergies: sp.allergies ?? null,
+                        },
+                    });
+                    // A rollback returns this id for reuse, so the refusal row names the household.
+                    await addLeadOrRecord(tx, created.id, { householdId });
+                } else if (sp.email) {
+                    rejections.push({
+                        section: "secondaryParent",
+                        code: "name_required",
+                        message: "A name is required for the second parent / guardian.",
+                    });
+                }
+            }
+
+            // Children are non-lead household members. Update existing (own household
+            // only), create the rest. Never delete; never add a HouseholdLead row.
+            for (const child of input.children ?? []) {
+                let childName: string | undefined;
+                if (child.id && householdMemberIds.has(child.id)) {
+                    // Same rejection as the primary parent (Decision 5): an existing
+                    // child's name can't be blanked through an update.
+                    if (child.name !== undefined && !nameWrite(child.name)) {
+                        throw new IntakeError("name_required", "A name is required for each child.", ["children"]);
+                    }
+                    await tx.person.update({
+                        where: { id: child.id },
+                        data: {
+                            ...(child.name !== undefined && { name: nameWrite(child.name) }),
+                            ...(child.dob !== undefined && normalizeAdultDob(child.dob)),
+                            ...(child.allergies !== undefined && { allergies: child.allergies }),
+                        },
+                    });
+                } else if ((childName = nameWrite(child.name)) !== undefined) {
+                    const newChildName: string = childName;
+                    if (child.email) await removeAliasesForSignInEmail(tx, child.email, personActor(userId), "intake_add_member");
+                    await tx.person.create({
+                        data: {
+                            id: await mintPersonId(tx),
+                            householdId,
+                            name: newChildName,
+                            ...(child.email && { email: child.email.toLowerCase() }),
+                            ...normalizeAdultDob(child.dob),
+                            allergies: child.allergies ?? null,
+                        },
+                    });
+                }
+            }
+
+            // Members added in this save (children / second parent) may collide with an
+            // existing emergency contact — re-evaluate and flag (direction B).
+            await reconcileHouseholdConflicts(tx, householdId);
+        }, { maxWait: 5_000, timeout: 15_000 });
+    } finally {
+        // A refused attempt stays on record even when the save rolls back.
+        for (const refusal of refusals) await recordSelfGrantRefusal(prisma, refusal);
     }
 
-    // Members added in this save (children / second parent) may collide with an
-    // existing emergency contact — re-evaluate and flag (direction B).
-    await reconcileHouseholdConflicts(prisma, householdId);
+    // These write through the root client, so they wait for the commit: a person
+    // created above isn't visible to another connection until then.
+    for (const e of deniedPromotions) {
+        await raiseDeniedHouseholdActivity({ householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" });
+    }
+    invalidateAttendanceCache();
 
     return { state: await getIntakeState(userId), rejections };
 }

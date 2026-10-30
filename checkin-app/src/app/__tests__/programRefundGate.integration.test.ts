@@ -48,7 +48,7 @@ describe('a refunded order never activates a program place', () => {
     const refundedMirrorOrder = (oid: string, children: number[]): MirrorOrder => ({
         orderGid: `gid://shopify/Order/${oid}`, legacyId: oid, customerEmail: null, financialStatus: 'REFUNDED',
         totalCents: 10000, subtotalCents: 10000, totalRefundedCents: 10000, discountCents: 0, discountCodes: [],
-        cancelledAt: null, updatedAt: new Date(),
+        processedAt: null, cancelledAt: null, updatedAt: new Date(),
         noteAttributes: [{ key: 'Program_ID', value: String(programId) }, { key: 'CheckMeIn_Account_ID', value: children.join(',') }],
     });
     const statusOf = async (personId: number) =>
@@ -59,7 +59,7 @@ describe('a refunded order never activates a program place', () => {
         // A board member to receive the CRITICAL email.
         await prisma.person.create({ data: { name: `Board ${TAG}`, email: `board-${TAG}@example.com`, isBoardMember: true, householdId } });
         programId = (await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
         })).id;
     });
 

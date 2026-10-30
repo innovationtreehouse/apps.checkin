@@ -127,6 +127,62 @@ describeDb("two edits of one line", () => {
   });
 });
 
+describeDb("an edit queued behind another reads the row under the lock", () => {
+  const touch = (id: string) => Prisma.sql`UPDATE receipt_details SET state = state WHERE id = ${id}`;
+  const audits = (id: string, action: string) => db.receiptAuditLog.findMany({ where: { receiptId: id, action }, orderBy: { id: "asc" } });
+
+  it("two concurrent edits each audit the true prior value", async () => {
+    const id = await receiptIn("validation_failed");
+    const { taxCents } = await db.receiptDetail.findUniqueOrThrow({ where: { id } });
+    await racing([touch(id)], () =>
+      Promise.all([receiptService.edit(id, "submitter", { tax: 11 }), receiptService.edit(id, "submitter", { tax: 22 })]),
+    );
+    const trail = await audits(id, "field_edit");
+    expect(trail).toHaveLength(2);
+    expect(trail[0].valueBefore).toBe(String(taxCents));
+    expect(trail[1].valueBefore).toBe(trail[0].valueAfter);
+  });
+
+  it("a finance edit voids a confirmation that committed while it waited", async () => {
+    const id = await receiptIn("validation_failed");
+    await db.receipt.update({ where: { id }, data: { needsReimbursement: true } });
+    actAs(FINANCE);
+    await racing([Prisma.sql`UPDATE receipt_details SET reviewed_at = now() WHERE id = ${id}`], () => receiptService.edit(id, "finance", { tax: 11 }));
+    expect(await db.receiptDetail.findUniqueOrThrow({ where: { id } })).toMatchObject({ reviewedAt: null });
+    expect(await actions(id)).toContain("submitter_confirmation_voided");
+  });
+
+  it("setReimbursement audits the value a held write committed", async () => {
+    const id = await receiptIn("submitter_review");
+    await racing([touch(id), Prisma.sql`UPDATE receipts SET needs_reimbursement = true WHERE id = ${id}`], () =>
+      receiptService.setReimbursement(id, { needsReimbursement: false }),
+    );
+    expect((await audits(id, "reimbursement_updated"))[0].valueBefore).toBe("true");
+  });
+
+  it("setInKind audits the value a held write committed", async () => {
+    const id = await receiptIn("submitter_review");
+    await racing([touch(id), Prisma.sql`UPDATE receipts SET is_in_kind = true, donor_sync = 'pending' WHERE id = ${id}`], () =>
+      receiptService.setInKind(id, { isInKind: false }),
+    );
+    expect((await audits(id, "in_kind_updated"))[0].valueBefore).toBe("true");
+  });
+
+  it("reimbursement and in-kind stay exclusive when each commits while the other waits", async () => {
+    const reimbursed = await receiptIn("submitter_review");
+    const toInKind = await racing([touch(reimbursed), Prisma.sql`UPDATE receipts SET needs_reimbursement = true WHERE id = ${reimbursed}`], () =>
+      receiptService.setInKind(reimbursed, { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } }),
+    );
+    expect(toInKind).toMatchObject({ status: "rejected", reason: { status: 400 } });
+
+    const inKind = await receiptIn("submitter_review");
+    const toReimbursed = await racing([touch(inKind), Prisma.sql`UPDATE receipts SET is_in_kind = true WHERE id = ${inKind}`], () =>
+      receiptService.setReimbursement(inKind, { needsReimbursement: true }),
+    );
+    expect(toReimbursed).toMatchObject({ status: "rejected", reason: { status: 400 } });
+  });
+});
+
 describeDb("an edit racing the freeze", () => {
   const lineOf = async (id: string) => db.receiptLineItem.findFirstOrThrow({ where: { receiptId: id } });
   const snapshot = async (id: string) => ({

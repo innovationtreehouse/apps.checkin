@@ -4,7 +4,7 @@ import { withCron } from "@/lib/cronAuth";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg } from "@/lib/components/host";
 import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
@@ -67,7 +67,8 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, swee
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  *
  * Last, it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
- * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set.
+ * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
+ * that could not read the mailbox counts toward the top-level `failed`, so the cron run records it.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -162,5 +163,6 @@ export const GET = withCron(async () => {
         receiptMail = { status: "error" };
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
+    const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
+    return NextResponse.json({ success: true, ...result, failed: result.failed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
 });

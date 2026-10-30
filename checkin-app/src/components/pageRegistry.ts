@@ -141,6 +141,7 @@ export const PAGES: PageEntry[] = [
   { href: '/receipts/confirm', label: 'Receipts to Confirm', section: 'My Receipts', keywords: 'receipt reimbursement confirm sign', visible: linkGate(MY_RECEIPTS, '/receipts/confirm') },
   { href: FINANCE_REVIEW_PATH, label: 'Finance Review', section: 'Finance', keywords: 'receipt expense finance tax duplicate queue flags holds quickbooks board sign treasurer', visible: FINANCE_REVIEW },
   { href: '/receipts/mail', label: 'Incoming Receipt Queue', section: 'Finance', keywords: 'receipt email gmail mail held assign discard incoming', visible: linkGate(FINANCE, '/receipts/mail') },
+  { href: '/finance/mail-aliases', label: 'Mail Aliases', section: 'Finance', keywords: 'receipt email address alias sender approve', visible: linkGate(FINANCE, '/finance/mail-aliases') },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Finance', keywords: 'tax exempt age limit', visible: linkGate(FINANCE, '/receipts/settings') },
   { href: '/receipt-flow', label: 'Receipt Flow Status', section: 'Finance', keywords: 'receipt receiving expense state count applying status', visible: RECEIPT_FLOW },
 

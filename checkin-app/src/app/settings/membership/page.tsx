@@ -1,5 +1,6 @@
 "use client";
 
+import { centsToDecimalString } from "@checkin/money";
 import { useState, useEffect, useCallback } from "react";
 import { Alert, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
@@ -19,15 +20,11 @@ interface Settings {
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
   volunteerFamilyDiscountCode: string | null;
-  // Sent by a server still on the pre-rename release during a deploy.
-  volunteerDiscountCode?: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
 }
-
-const dollars = (cents: number) => (cents / 100).toFixed(2);
 
 // Next occurrence (>= now) of the stored boundary's month/day, as a label.
 // ponytail: mirrors nextBoundary() in lib/membership/renewal.ts — can't import, it pulls in prisma.
@@ -78,14 +75,14 @@ export default function MembershipSettingsPage() {
       if (sRes.ok) {
         const { settings } = (await sRes.json()) as { settings: Settings };
         const snap = {
-          standardFee: dollars(settings.standardMembershipFeeCents),
-          volunteerFee: dollars(settings.volunteerMembershipFeeCents),
+          standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
+          volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
           bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
           scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
           variantId: settings.orgMembershipVariantId ?? "",
           productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerFamilyDiscountCode ?? settings.volunteerDiscountCode ?? "",
+          discountCode: settings.volunteerFamilyDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
         setStandardFee(snap.standardFee);

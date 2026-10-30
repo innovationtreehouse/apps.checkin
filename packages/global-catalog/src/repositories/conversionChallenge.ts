@@ -1,6 +1,6 @@
-import type { PrismaClient, Prisma } from "../generated/prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 
-export function createConversionChallengeRepository(db: PrismaClient) {
+export function createConversionChallengeRepository(db: Prisma.TransactionClient) {
   return {
     findById: (id: number) =>
       db.conversionChallenge.findFirst({ where: { id } }),

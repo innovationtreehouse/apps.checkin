@@ -79,7 +79,7 @@ describe('New-program announce notification trigger', () => {
     it('fires once when a program crosses INTO UPCOMING + OPEN (announceOnOpen: true)', async () => {
         const name = `${PROGRAM_NAME_TAG} cross`;
         const program = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
         });
         await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -92,7 +92,7 @@ describe('New-program announce notification trigger', () => {
     it('does NOT fire when crossing INTO UPCOMING + OPEN with announceOnOpen left at its false default', async () => {
         const name = `${PROGRAM_NAME_TAG} default-off`;
         const program = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED' },
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED' },
         });
         await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -104,7 +104,7 @@ describe('New-program announce notification trigger', () => {
     it('does NOT re-fire on a later edit while already UPCOMING + OPEN', async () => {
         const name = `${PROGRAM_NAME_TAG} already`;
         const program = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'UPCOMING', enrollmentStatus: 'OPEN', announceOnOpen: true },
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'UPCOMING', enrollmentStatus: 'OPEN', announceOnOpen: true },
         });
 
         const res = await patch(program.id, { name: `${name} renamed` });
@@ -115,7 +115,7 @@ describe('New-program announce notification trigger', () => {
     it('does NOT fire when only phase flips to UPCOMING (enrollment still CLOSED)', async () => {
         const name = `${PROGRAM_NAME_TAG} phaseonly`;
         const program = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
         });
         await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -127,7 +127,7 @@ describe('New-program announce notification trigger', () => {
     it('does NOT fire when only enrollment flips to OPEN (phase still PLANNING)', async () => {
         const name = `${PROGRAM_NAME_TAG} enrollonly`;
         const program = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
         });
 
         const res = await patch(program.id, { enrollmentStatus: 'OPEN' });
@@ -140,7 +140,7 @@ describe('New-program announce notification trigger', () => {
         it('sets announcedAt on the first fire, and closing + reopening enrollment does NOT re-fire (F2)', async () => {
             const name = `${PROGRAM_NAME_TAG} reopen`;
             const program = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -163,7 +163,7 @@ describe('New-program announce notification trigger', () => {
         it('two callers with the same stale pre-state send only once (F3 — conditional-write contract)', async () => {
             const name = `${PROGRAM_NAME_TAG} race`;
             const program = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
             });
             const after = await prisma.program.update({
                 where: { id: program.id },
@@ -181,7 +181,7 @@ describe('New-program announce notification trigger', () => {
         it('writes an AuditLog row for the blast with the triggering actor (F6)', async () => {
             const name = `${PROGRAM_NAME_TAG} audit`;
             const program = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 

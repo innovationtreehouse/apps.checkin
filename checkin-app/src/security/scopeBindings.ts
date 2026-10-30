@@ -209,7 +209,9 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // A bucket's treasurer rows. `personId` makes it scopable; read only through
     // BudgetOwnerApprover by finance or board.
     'BudgetOwnerTreasurer',
-    // finance-or-board everyones:pii only; nobody reads their own row.
+    // Receipt mail aliases (registry/receipt.ts). Not pending: `personId` makes it
+    // scopable, but every route is finance-or-board with everyones grants, and the
+    // person an alias belongs to never reads it, so it never earns `their_own`.
     'PersonMailAlias',
     // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never

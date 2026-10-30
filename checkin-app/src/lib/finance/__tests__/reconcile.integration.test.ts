@@ -69,6 +69,7 @@ function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOr
         discountCents: 0,
         discountCodes: [],
         cancelledAt: null,
+        processedAt: null,
         updatedAt: new Date(),
         // Default null = an order synced before #1029, i.e. the email-fallback path.
         // Tests of the preferred path pass noteAttributes explicitly.
@@ -138,7 +139,7 @@ async function makeProgramEnrollment(opts: {
     }
     const variantId = `variant-prg-${opts.email}`;
     const program = await prisma.program.create({
-        data: { name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
+        data: { appliesToYear: 2026, name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({
         data: { programId: program.id, personId: person.id, status: opts.status, shopifyOrderId: opts.shopifyOrderId ?? null },
@@ -392,6 +393,36 @@ describe("forward recovery", () => {
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
         expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
+    });
+
+    it("stamps the year of the variant's row, whatever the live year is", async () => {
+        const email = `yearrow-${TAG}@ex.com`;
+        const oid = `${TAG}-130`;
+        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
+        await prisma.membershipYearVariant.create({ data: { membershipYear: 2031, shopifyVariantId: `${TAG}-v2031` } });
+        orderLineVariantIds.mockResolvedValue([`${TAG}-v2031`]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+        try {
+            await runReconcile();
+        } finally {
+            await prisma.membershipYearVariant.delete({ where: { membershipYear: 2031 } });
+        }
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2031 });
+    });
+
+    it("stamps the single variant with the live year when the order was paid, not when it was found", async () => {
+        const email = `yearpaid-${TAG}@ex.com`;
+        const oid = `${TAG}-131`;
+        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) } });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, processedAt: new Date(Date.UTC(2024, 5, 20)) })]);
+        try {
+            await runReconcile();
+        } finally {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
+        }
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2023 });
     });
 
     it("raises NO_ITEM when a variant-mirrored order contains no membership product", async () => {

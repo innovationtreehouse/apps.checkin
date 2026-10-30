@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { Alert, Badge, Button, Paper, Stack, Table, Text, Textarea } from "@mantine/core";
-import { dollars, send, useLoad, type ReceiptConfirmation, type ReceiptListRow } from "./api";
+import { send, useLoad, type ReceiptConfirmation, type ReceiptListRow } from "./api";
+import { formatCents } from "@checkin/money";
 
 /** A reimbursement's confirm is the submitter's signature on its lines and amounts. */
 export const CONFIRM_AS_READ = "These lines and amounts are right";
@@ -43,8 +44,8 @@ export default function ConfirmationList({ empty = null }: { empty?: React.React
         <Paper key={c.id} withBorder p="sm">
           <Stack gap="xs">
             <Text fw={500}>
-              {c.retailer ?? "—"}, {c.receiptDate ?? "—"}: {dollars(c.receiptTotalCents)} (tax {dollars(c.taxCents)}, shipping {dollars(c.shippingCents)}
-              {c.discountCents ? `, discount ${dollars(c.discountCents)}` : ""})
+              {c.retailer ?? "—"}, {c.receiptDate ?? "—"}: {formatCents(c.receiptTotalCents)} (tax {formatCents(c.taxCents)}, shipping {formatCents(c.shippingCents)}
+              {c.discountCents ? `, discount ${formatCents(c.discountCents)}` : ""})
               {c.onBehalf && <Badge ml="xs" size="sm">For a person with no account</Badge>}
             </Text>
             {c.changedFields.length > 0 && (
@@ -61,7 +62,7 @@ export default function ConfirmationList({ empty = null }: { empty?: React.React
                   <Table.Tr key={l.id}>
                     <Table.Td>{l.description}</Table.Td>
                     <Table.Td>{l.quantity}</Table.Td>
-                    <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
+                    <Table.Td>{formatCents(l.totalPriceCents)}</Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>

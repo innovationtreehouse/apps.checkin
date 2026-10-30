@@ -137,12 +137,12 @@ describe('Eligible Participants API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Elig API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Elig API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
         const orgMemberOnlyProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Elig API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Elig API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
         });
         orgMemberOnlyProgramId = orgMemberOnlyProgram.id;
 

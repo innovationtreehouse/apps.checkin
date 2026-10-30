@@ -11,11 +11,12 @@
  * strips it to the surface's declared tiers.
  */
 import { configureExpense, QuickBooksNotConnectedError, reimburseeVendorId } from "@checkin/expense";
-import type { ExpensePosting, ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
-import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
+import { catalogEventsSince, getOrg } from "@/lib/components/host";
+import { budgetOwners, householdOf } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
@@ -24,19 +25,6 @@ import { outboundCall } from "@/security/outbound";
 async function db() {
   return (await import("@/lib/prisma")).default;
 }
-
-/** The signed-in person with their finance roles; null for any session checkin refuses. */
-async function getPrincipal(): Promise<ExpensePrincipal | null> {
-  const user = await sessionUser();
-  if (!user) return null;
-  return { id: user.id, name: user.name ?? null, isFinance: user.isFinance === true, isBoard: user.isBoardMember === true };
-}
-
-const budgetOwners: OwnerDirectory = {
-  async list() {
-    return (await db()).budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
-  },
-};
 
 async function eligibleSigner(): Promise<Prisma.PersonWhereInput> {
   return (await import("@/lib/finance/bucketApprovers")).eligibleSigner();
@@ -74,17 +62,7 @@ export const signoff: SignoffDirectory = {
   financeHolders: () => roleHolders("FINANCE"),
   boardMembers: () => roleHolders("BOARD"),
 
-  async householdOf(personIds) {
-    if (personIds.length === 0) return [];
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    // Live members of every household holding one of these people (a merged-away person's
-    // household still counts, so a tombstone id never narrows the conflict set).
-    const members = await (await db()).person.findMany({
-      where: { household: { householdMembers: { some: { id: { in: personIds } } } }, ...LIVE_PERSON },
-      select: { id: true },
-    });
-    return members.map((m) => m.id);
-  },
+  householdOf,
 
   async personExists(personId) {
     const { LIVE_PERSON } = await import("@/lib/person/filters");
@@ -268,7 +246,6 @@ export async function expensePostingMissing(): Promise<string[]> {
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,
-    auth: { getPrincipal },
     budgetOwners,
     signoff,
     catalog: catalogReader,

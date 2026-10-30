@@ -56,14 +56,14 @@ async function makePerson(slug: string, householdId: number, data: Partial<{ dat
 
 /** Attach a person to a fresh program as a participant so they count as program-attached. */
 async function attachToProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }
 
 /** Attach a person to a program that ended well outside the 12-month lookback. */
 async function attachToStaleProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }

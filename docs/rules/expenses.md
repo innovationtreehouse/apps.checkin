@@ -52,6 +52,10 @@ Things the app takes as true because they are handled outside it.
   where the app allows an edit.
   [Decision — owner]
 
+- Each view of receipts and expenses other than the viewer's own is recorded,
+  under the finance-view rule in `revenue.md`.
+  [Decision — owner]
+
 - An adult member or a staff/role holder may submit a receipt and view, edit,
   and fetch their own receipts. An adult member is a person whose session age
   band is adult and whose household membership is ACTIVE. A role holder or a
@@ -88,6 +92,16 @@ Things the app takes as true because they are handled outside it.
   from any open state. The Board neither discards nor rejects. An open receipt
   is one not yet finalized, discarded or rejected. Finance may add a discarded
   or rejected receipt's file to the mailbox ignore list.
+  [Decision — owner]
+
+- A receipt finance rejected counts in its uploader's My receipts pill, with
+  finance's reason, until the uploader acknowledges it on the receipt.
+  [Decision — owner]
+
+- Once a receipt is finalized, its uploader sees in the receipt pages what
+  became of the purchase: receiving, the expense's approval and booking, with
+  the reason on a rejected line, and an in-kind gift's decision. The person
+  reimbursed sees the same for a receipt someone else uploaded for them.
   [Decision — owner]
 
 - Nobody takes a step on a receipt they are conflicted on if they could use it
@@ -142,10 +156,14 @@ Things the app takes as true because they are handled outside it.
 
 - Mail to the receipt mailbox counts as from a person only when Google's own
   check shows the sender's domain signed it (DKIM) and passed DMARC, and the
-  sender is that person's sign-in email. A pass on SPF alone is not enough.
-  Anything else waits for finance, which sees why it was held: the sender
-  could not be verified, or nobody who may submit receipts uses that address.
-  [Decision — owner]
+  sender is that person's sign-in email or an approved alias. A pass on SPF
+  alone is not enough. Anything else waits for finance, which sees why it was
+  held: the sender could not be verified, or nobody who may submit receipts uses
+  that address.  [Decision — owner]
+
+- Mail from a person's alias is their own, on the same daily allowance. An alias
+  counts only after finance or the Board approves it, on an authenticated first
+  mail assigned to that person.  [Decision — owner]
 
 - A test or staging instance reads only its own test mailbox, never the real
   one. It refuses to read mail unless it is told which mailbox is the real one

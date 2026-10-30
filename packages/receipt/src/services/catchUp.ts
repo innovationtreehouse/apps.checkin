@@ -15,6 +15,8 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
   const stuck = await db.receiptDetail.findMany({
     where: { orgId, state: "auto_upload", ocrStartedAt: { lt: new Date(now.getTime() - OCR_INTERRUPTED_AFTER_MS) } },
     select: { id: true },
+    orderBy: { ocrStartedAt: "asc" },
+    take: CATCH_UP_CAP,
   });
   let swept = 0;
   for (const { id } of stuck) {
