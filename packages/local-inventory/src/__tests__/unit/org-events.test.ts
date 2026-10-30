@@ -245,6 +245,22 @@ describeDb("S5 catch-up: alerts", () => {
     expect(orgEventsStuck).toHaveBeenCalledTimes(2);
   });
 
+  it("runs a new event even when failed rows alone would fill the cap", async () => {
+    await orgEventConsumer.onOrgEvents(Array.from({ length: 10 }, (_, i) => malformed(i + 1)));
+    configure(pagedSource([...Array.from({ length: 10 }, (_, i) => malformed(i + 1)), rejected(100)]));
+
+    expect(await catchUpOrgEvents(10)).toMatchObject({ processed: 1, failed: 9, unprocessed: 1 });
+
+    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 100 } })).toMatchObject({ status: "processed" });
+  });
+
+  it("retries every failed row when the cap has room", async () => {
+    await orgEventConsumer.onOrgEvents([malformed(1), malformed(2), malformed(3)]);
+    configure(pagedSource([malformed(1), malformed(2), malformed(3), rejected(100)]));
+
+    expect(await catchUpOrgEvents(10)).toMatchObject({ processed: 1, failed: 3, unprocessed: 0 });
+  });
+
   it("finishes the run when the alert itself throws", async () => {
     configure(pagedSource([malformed(1)]), { orgEventsStuck: async () => { throw new Error("mail down"); } });
     expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
