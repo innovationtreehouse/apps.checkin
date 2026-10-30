@@ -29,4 +29,5 @@ export type {
   InventoryRouteHandler,
   OrgEventRecord,
   CatalogEventSource,
+  InventoryAlerts,
 } from "./contract";
