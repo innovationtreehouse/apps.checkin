@@ -32,7 +32,10 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
         await audit(tx, id, null, { action: "ocr_failed", valueAfter: "interrupted" });
         swept++;
       })
-      .catch(() => failed++);
+      .catch((err) => {
+        failed++;
+        console.error(`[receipt] interrupted OCR sweep failed for receipt ${id}:`, err);
+      });
   }
   return { swept, failed };
 }
@@ -64,7 +67,10 @@ export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: num
         await audit(tx, id, null, { action: "pipeline_failed", fieldChanged: "state", valueBefore: "uploaded", valueAfter: "stuck in uploaded" });
         swept++;
       })
-      .catch(() => failed++);
+      .catch((err) => {
+        failed++;
+        console.error(`[receipt] stuck-upload sweep failed for receipt ${id}:`, err);
+      });
   }
   return { swept, failed };
 }
