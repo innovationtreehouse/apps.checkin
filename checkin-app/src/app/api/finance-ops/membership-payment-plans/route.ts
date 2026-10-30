@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -99,7 +100,7 @@ export const POST = withAuth(
             return NextResponse.json({ success: true });
         } catch (error) {
             if (error instanceof PaymentError) {
-                return apiError(error.message, error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 409);
+                return apiError(error.message, PAYMENT_ERROR_STATUS[error.code]);
             }
             logger.error("Failed to approve membership payment plan:", error);
             return apiError("Failed to approve payment plan", 500);
