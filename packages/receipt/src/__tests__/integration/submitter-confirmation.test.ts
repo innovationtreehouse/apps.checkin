@@ -31,6 +31,7 @@ const reimbursees: ReceiptReimbursees = {
     return name ? { id, name, isAdult: true } : null;
   },
   hasAccount: async (id) => id !== NO_ACCOUNT.id,
+  addNonMemberAdult: async (name) => ({ id: 301, name, isAdult: true }),
 };
 
 beforeEach(async () => {

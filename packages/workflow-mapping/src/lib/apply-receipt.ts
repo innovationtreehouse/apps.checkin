@@ -13,7 +13,7 @@ import { insertAuditEvent } from "./audit";
 export type ApplyResult =
   | { state: "resolved" }
   | { state: "apply_failed"; error: string }
-  // Inventory committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
+  // A leg committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
   | { state: "applying"; error: string };
 
 /** How long a push's claim holds before another caller may take it over (a crashed push). */
@@ -235,16 +235,25 @@ async function pushAndSettle(
 
   const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
   let inventoryUnstamped = false;
+  let moneyUnstamped = false;
+  const stampMoney = async (data: { expenseAppliedAt?: Date; donationAppliedAt?: Date }) => {
+    try {
+      await stamp(data);
+    } catch (err) {
+      moneyUnstamped = true;
+      throw err;
+    }
+  };
   // An in-kind receipt's money side goes to donations, never to expense.
   if (receipt.isInKind ? !legs.donationAppliedAt : !legs.expenseAppliedAt) {
     pushes.push({ leg: receipt.isInKind ? "Donation" : "Expense", push: async () => {
       const validated = CompletedReceiptSchema.parse(moneyReceipt);
       if (receipt.isInKind) {
         await donationSink.ingestInKind(validated);
-        await stamp({ donationAppliedAt: new Date() });
+        await stampMoney({ donationAppliedAt: new Date() });
       } else {
         await expenseSink.pushReceipt(validated);
-        await stamp({ expenseAppliedAt: new Date() });
+        await stampMoney({ expenseAppliedAt: new Date() });
       }
     } });
   }
@@ -275,8 +284,8 @@ async function pushAndSettle(
   );
   if (failures.length > 0) {
     const error = failures.join("; ");
-    // Inventory took the delta but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same delta.
-    if (inventoryUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error);
+    // A sink took its leg but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same payload, which the sinks dedupe.
+    if (inventoryUnstamped || moneyUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped });
     return settleFailed(receiptId, received.orgId, actor, error);
   }
 
@@ -300,8 +309,12 @@ async function settleUnstamped(
   orgId: string,
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
+  unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
 ): Promise<ApplyResult> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error, inventoryUnconfirmedAt: new Date() } });
+  await db.receivedReceipt.update({
+    where: { id: receiptId },
+    data: { validationNotes: error, ...(unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}) },
+  });
   await insertAuditEvent(db, {
     orgId,
     ...actor,
@@ -309,7 +322,7 @@ async function settleUnstamped(
     receivedReceiptId: receiptId,
     fromState: "applying",
     toState: "applying",
-    details: JSON.stringify({ error, inventoryUnstamped: true }),
+    details: JSON.stringify({ error, ...unstamped }),
   });
   return { state: "applying", error };
 }

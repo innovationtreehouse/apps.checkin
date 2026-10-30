@@ -46,12 +46,12 @@ export const receiptRepo = {
   count: (where: Prisma.ReceiptWhereInput) => db.receipt.count({ where }),
 
   /** Each matching receipt's uploader, reimbursee and state, for counts that apply the conflict rule. */
-  async listParties(where: Prisma.ReceiptWhereInput): Promise<Array<Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId" | "state">>> {
+  async listParties(where: Prisma.ReceiptWhereInput): Promise<Array<Pick<ReceiptRow, "id" | "uploadedByUserId" | "reimburseePersonId" | "state">>> {
     const rows = await db.receipt.findMany({
       where,
-      select: { uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
+      select: { id: true, uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
     });
-    return rows.flatMap((r) => (r.details ? [{ uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
+    return rows.flatMap((r) => (r.details ? [{ id: r.id, uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
   },
 
   /**

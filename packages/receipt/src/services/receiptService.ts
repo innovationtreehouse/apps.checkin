@@ -292,16 +292,21 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
       : { success: false, error: "OCR returned invalid receipt data" };
   if (result.success) {
     assertExpectedState("auto_upload", { type: "OCR_SUCCEEDED" }, NEUTRAL_CONTEXT, "uploaded");
-    await db.$transaction(async (tx) => {
+    const landed = await db.$transaction(async (tx) => {
       const moved = await tx.receiptDetail.updateMany({
         where: { id, state: "auto_upload" },
         data: { ...ocrDetail(result.data), state: "uploaded", validationNotes: null },
       });
-      if (moved.count === 0) throw new ServiceError(409, "Receipt left OCR while it was being read");
+      if (moved.count === 0) {
+        await audit(tx, id, actor, { action: "ocr_result_refused", valueAfter: "receipt left OCR while it was being read" });
+        return false;
+      }
       await tx.receiptLineItem.deleteMany({ where: { receiptId: id } });
       await tx.receipt.update({ where: { id }, data: { lineItems: { create: toLineRows(result.data.lineItems.map(toLine)) } } });
       await audit(tx, id, actor, { action: "ocr_complete" });
+      return true;
     });
+    if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
     await failOcr(id, actor, result.error);
@@ -1249,11 +1254,18 @@ export const receiptService = {
   },
 
   /**
-   * How many of the org's receipts wait on this FINANCE viewer, in all and per state, for the
-   * host's nav pill and the review queues. A receipt the viewer is conflicted on is left out.
+   * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
+   * review queues. The total also holds undelivered receipts catch-up gave up on, which have no
+   * queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
-    const rows = await receiptRepo.listParties({ orgId: (await getOrg()).id, details: { state: { in: [...FINANCE_ACTION_STATES] } } });
+    const orgId = (await getOrg()).id;
+    const [queued, undelivered] = await Promise.all([
+      receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
+      receiptRepo.listParties({ orgId, pushedAt: null, details: { state: "receipt_finalized" } }),
+    ]);
+    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
+    const rows = [...queued, ...undelivered.filter((r) => stopped.has(r.id))];
     const lookups = new Map<string, Promise<number[]>>();
     const partiesOf = (r: Parties): Promise<number[]> => {
       const key = `${r.uploadedByUserId}:${r.reimburseePersonId}`;
@@ -1268,7 +1280,7 @@ export const receiptService = {
     let total = 0;
     rows.forEach((r, i) => {
       if (conflicted[i]) return;
-      byState[r.state] += 1;
+      if (r.state in byState) byState[r.state] += 1;
       total += 1;
     });
     return { total, byState };
@@ -1276,12 +1288,16 @@ export const receiptService = {
 
   async listNeedsAttention(access: Access) {
     const actor = await requireActor();
+    const orgId = (await getOrg()).id;
     const rows = await receiptRepo.list({
-      orgId: (await getOrg()).id,
+      orgId,
       ...(access === "submitter" ? { uploadedByUserId: actor.id } : {}),
       details: { state: { in: NEEDS_ATTENTION } },
     });
-    return access === "finance" ? rows : rows.map(toSubmitterView);
+    if (access !== "finance") return rows.map(toSubmitterView);
+    const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
+    const records = await pushRecords(orgId, undelivered.map((r) => r.id));
+    return [...rows, ...undelivered.flatMap((r) => (records.get(r.id)?.pushGivenUp ? [{ ...r, ...records.get(r.id) }] : []))];
   },
 
   /**
