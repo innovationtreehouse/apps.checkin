@@ -332,6 +332,7 @@ Read these before changing the relevant area — start here, then follow links.
 **Operations** (`docs/ops/`)
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
 - `docs/ops/production-runbook.md` — how to deploy to production and roll back.
+- `docs/ops/quickbooks-go-live.md` — the ordered steps for turning on QuickBooks posting in production.
 - `docs/ops/shopify-dev-store.md` — the Shopify dev store and its webhooks in dev and local.
 
 **Security** (`docs/security/`)
