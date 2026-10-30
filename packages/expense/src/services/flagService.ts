@@ -49,13 +49,16 @@ export async function raiseStray(tx: Db, expenseId: string, entry: string, detai
 /** Text a QB_POST_HELD check-off carries when the expense's posting settles the hold. */
 export const POSTED_CHECK_OFF = "posted to QuickBooks";
 
-/** An expense linked to its QuickBooks entry no longer waits on finance: its open QB_POST_HELD is checked off. */
-export async function checkOffHeldOnPost(tx: Db, expenseId: string): Promise<void> {
+/** Text a QB_POST_HELD check-off carries when finance skips the expense. */
+export const SKIPPED_CHECK_OFF = "skipped by finance";
+
+/** An expense linked to its QuickBooks entry, or skipped, no longer waits on finance: its open QB_POST_HELD is checked off. */
+export async function checkOffHeldOnPost(tx: Db, expenseId: string, notes = POSTED_CHECK_OFF): Promise<void> {
   const { count } = await tx.expenseFlag.updateMany({
     where: { expenseId, kind: "QB_POST_HELD", checkedOffAt: null },
-    data: { checkedOffAt: new Date(), checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes: POSTED_CHECK_OFF },
+    data: { checkedOffAt: new Date(), checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes },
   });
-  if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_POST_HELD", notes: POSTED_CHECK_OFF });
+  if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_POST_HELD", notes });
 }
 
 /** Whether the stored expense's tax still waits on finance, from its stored receipt review. */

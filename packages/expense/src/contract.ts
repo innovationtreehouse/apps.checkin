@@ -295,9 +295,10 @@ export type SetReimbursee = (orgId: string, expenseId: string, choice: Reimburse
 /**
  * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.
  * A backfilled receipt names the hand-booked transaction it matched (`qbEntity` + `qbTxnId`).
+ * `statusUnavailable` marks an expense finance skipped: the app holds no entry to read a payment from.
  */
 export interface ReimbursementStatus {
-  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
+  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null; statusUnavailable?: boolean }>>;
 }
 
 /**
