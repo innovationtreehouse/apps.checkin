@@ -58,7 +58,7 @@ function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> 
         household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts, ...NO_GRANTS, ...grants },
         roles: [],
-        budgetOwnerTreasurerships: [],
+        budgetOwnersOwned: [], budgetOwnerTreasurerships: [],
         programsLed: [],
         instancesLed: [],
         toolStatuses: [],
@@ -93,6 +93,13 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
 
     it("refuses a bucket treasurer's email change when they have no sign-in and no other grant", async () => {
         findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnerTreasurerships: [{ budgetOwnerId: 5 }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bucket owner's email change when they have no sign-in and no other grant", async () => {
+        findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnersOwned: [{ id: 5 }] });
         const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
         expect(res.status).toBe(400);
         expect(tx.person.update).not.toHaveBeenCalled();

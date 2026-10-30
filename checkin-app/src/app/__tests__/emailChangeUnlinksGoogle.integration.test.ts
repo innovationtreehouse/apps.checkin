@@ -113,6 +113,16 @@ describe('board email change unlinks Google sign-ins', () => {
         });
     });
 
+    it('lets a board member change a bucket owner\'s email with a reason (owner decision 2026-10-30)', async () => {
+        const bucket = await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, ownerId: personId } });
+        try {
+            expect((await put(personId, { email: NEW_EMAIL, emailChangeReason: 'New address' })).status).toBe(200);
+            expect((await prisma.person.findUnique({ where: { id: personId } }))?.email).toBe(NEW_EMAIL);
+        } finally {
+            await prisma.budgetOwner.delete({ where: { id: bucket.id } });
+        }
+    });
+
     it('the old Google account no longer resolves, and the new address links', async () => {
         expect((await adapter.getUserByAccount({ provider: 'google', providerAccountId: OLD_SUB }))?.id).toBe(String(personId));
 

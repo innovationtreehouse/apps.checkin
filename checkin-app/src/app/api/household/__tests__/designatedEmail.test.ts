@@ -62,7 +62,7 @@ beforeEach(() => {
     tx.person.create.mockImplementation(({ data }) => Promise.resolve({ id: data.id, email: data.email ?? null, name: data.name }));
 });
 
-const NOT_TRUSTED = { roles: [], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [] };
+const NOT_TRUSTED = { roles: [], budgetOwnersOwned: [], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [] };
 
 describe("PATCH /api/household/member — designated address", () => {
     beforeEach(() => findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "kid@example.com", household: { orgMembership: null }, _count: { accounts: 0 }, ...NOT_TRUSTED }));

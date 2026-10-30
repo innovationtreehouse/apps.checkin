@@ -209,7 +209,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         mockAccount.create.mockResolvedValue({});
         mockPersonFindUnique.mockResolvedValue({
             email: 'trusted@example.com',
-            roles: [{ role: 'KEYHOLDER' }], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [],
+            roles: [{ role: 'KEYHOLDER' }], budgetOwnersOwned: [], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [],
         });
 
         await expect(adapter.linkAccount({ ...account, id_token: idToken('other@example.com') })).rejects.toThrow();
