@@ -250,6 +250,14 @@ export interface MailListingFailedEvent {
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
+/** Why a mailed file was not accepted. */
+export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling";
+
+export interface MailRefusal {
+  file: string;
+  reason: MailRefusalReason;
+}
+
 export interface MailAcknowledgement {
   to: string;
   /** True when the recipient is the person the receipt is credited to. */
@@ -257,8 +265,11 @@ export interface MailAcknowledgement {
   /** The credited person's name; null on a sender's copy when the receipt went to someone else. */
   creditedName: string | null;
   senderAddress: string;
-  receiptId: string;
+  /** Null on a notice that only reports refused files. */
+  receiptId: string | null;
   receivedAt: Date;
+  /** The message's refused files; only ever on the sender's copy. */
+  refused: MailRefusal[];
 }
 
 /** The host's mail out, for acknowledging mailed receipts. */

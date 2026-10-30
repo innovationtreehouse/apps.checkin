@@ -150,6 +150,15 @@ Things the app takes as true because they are handled outside it.
   acknowledgement, and no acknowledgement is sent twice.
   [Decision]
 
+- A person whose emailed file is refused is told which file and why: too large,
+  the wrong type, empty, an email attached as a file, or the holding queue is
+  full. This reaches them even when no receipt was made, and does not wait on
+  the message's other files. If the receipt already exists, one email covers
+  both. Only senders who pass the sender check and may submit receipts are
+  told. Forged, unknown and automatic mail gets nothing. No notice is sent
+  twice.
+  [Decision — owner]
+
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
   fraction of a cent. Then the total may differ by up to one cent for each

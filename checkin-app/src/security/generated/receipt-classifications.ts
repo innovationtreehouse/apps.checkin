@@ -130,6 +130,8 @@ export const classifications = {
         claimedAt: 'internal',
         senderSentAt: 'internal',
         creditedSentAt: 'internal',
+        refusals: 'pii',
+        refusalSentAt: 'internal',
         doneAt: 'internal',
         attempts: 'internal',
         createdAt: 'internal',
