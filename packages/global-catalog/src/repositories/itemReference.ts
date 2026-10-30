@@ -9,6 +9,12 @@ export function createItemReferenceRepository(db: Prisma.TransactionClient) {
     findById: (id: number) =>
       db.itemReference.findFirst({ where: { id } }),
 
+    /** Holds the row until the transaction ends, so its item and archived state can't change under a conflict check. */
+    async findByIdForUpdate(id: number) {
+      await db.$queryRaw`SELECT 1 FROM item_references WHERE id = ${id} FOR UPDATE`;
+      return db.itemReference.findFirst({ where: { id } });
+    },
+
     findByMfrPart: (partNumber: string, manufacturer: string) =>
       db.itemReference.findFirst({
         where: { partNumber, manufacturer, archivedAt: null },

@@ -175,6 +175,44 @@ describeDb("one lookup key points at one item", () => {
   });
 });
 
+describeDb("a reference that changes while a write is on its way", () => {
+  /** An active reference holding the key on G1, plus `own` on G1 and an open conflict moving `own` to G2. */
+  async function seed(own: Prisma.ItemReferenceUncheckedCreateInput) {
+    await prisma.itemReference.create({ data: { gtin13: G1, ...PART_ROW, retailer: "Shop A" } });
+    const ref = await prisma.itemReference.create({ data: own });
+    const conflict = await prisma.referenceConflict.create({
+      data: { itemReferenceId: ref.id, existingGtin13: G1, proposedGtin13: G2, receiptId: "r-1", lineItemId: 1 },
+    });
+    return { ref, conflict };
+  }
+  const movedToG2 = (id: number) => (tx: Prisma.TransactionClient) =>
+    tx.itemReference.update({ where: { id }, data: { gtin13: G2 } });
+
+  it("an unarchive checks the item the reference was just moved to", async () => {
+    const { ref } = await seed({ gtin13: G1, ...PART_ROW, retailer: "Shop B", archivedAt: new Date() });
+    const result = await racing(movedToG2(ref.id), () => unarchive({ ...post({}), params: { id: String(ref.id) } }));
+    expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
+    expect((await activeRefs()).map((r) => r.gtin13)).toEqual([G1]);
+  });
+
+  it("an update checks the item the reference was just moved to", async () => {
+    const { ref } = await seed({ gtin13: G1, partNumber: "OTHER", manufacturer: "Acme" });
+    const result = await racing(movedToG2(ref.id), () => update({ ...post(PART_ROW), params: { id: String(ref.id) } }));
+    expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
+    expect((await activeRefs()).map((r) => r.gtin13)).toEqual([G1]);
+  });
+
+  it("a resolve checks a reference that was just unarchived", async () => {
+    const { ref, conflict } = await seed({ gtin13: G1, ...PART_ROW, retailer: "Shop B", archivedAt: new Date() });
+    const result = await racing(
+      (tx) => tx.itemReference.update({ where: { id: ref.id }, data: { archivedAt: null } }),
+      () => resolveConflict(conflict.id, 1, "use_proposed"),
+    );
+    expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
+    expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).gtin13).toBe(G1);
+  });
+});
+
 describeDb("conversion challenges", () => {
   const seedRef = () => prisma.itemReference.create({ data: { gtin13: G1, ...PART_ROW, conversionFactor: 1 } });
   const challenge = (itemReferenceId: number, proposedFactor: number, orgId = ORG.orgId) =>

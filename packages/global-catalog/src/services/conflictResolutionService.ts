@@ -70,7 +70,7 @@ export async function resolveConflict(
     if (count === 0) throw new ServiceError(409, "Conflict was already resolved");
 
     if (nextState === "use_proposed") {
-      const ref = await tx.itemReference.findUnique({ where: { id: conflict.itemReferenceId } });
+      const ref = await createItemReferenceRepository(tx).findByIdForUpdate(conflict.itemReferenceId);
       if (ref && !ref.archivedAt) {
         await assertNoReferenceConflict(
           tx,
