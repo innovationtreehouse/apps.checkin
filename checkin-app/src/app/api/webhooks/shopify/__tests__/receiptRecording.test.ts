@@ -128,7 +128,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
         expect((await res.json()).success).toBe(true);
-        expect(activate).toHaveBeenCalledWith(12, '999001', false);
+        expect(activate).toHaveBeenCalledWith(12, '999001', null);
     });
 
     it('flags Shopify\'s "Send test notification" sample as test: true', async () => {
