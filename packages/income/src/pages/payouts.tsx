@@ -1,8 +1,9 @@
 "use client";
 import { Fragment, useState } from "react";
 import { Anchor, Badge, Code, Table, Text, Title } from "@mantine/core";
-import { money, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { useLoad } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 
 interface PayoutRow {
   payoutGid: string;
@@ -68,9 +69,9 @@ function Detail({ gid }: { gid: string }) {
             <Table.Tr key={t.txnGid}>
               <Table.Td>{t.type}</Table.Td>
               <Table.Td>{t.orderName ?? "—"}</Table.Td>
-              <Table.Td>{money(t.amountCents)}</Table.Td>
-              <Table.Td>{money(t.feeCents)}</Table.Td>
-              <Table.Td>{money(t.netCents)}</Table.Td>
+              <Table.Td>{formatCents(t.amountCents)}</Table.Td>
+              <Table.Td>{formatCents(t.feeCents)}</Table.Td>
+              <Table.Td>{formatCents(t.netCents)}</Table.Td>
               <Table.Td><SourceBadge source={t.source} /></Table.Td>
             </Table.Tr>
           ))}
@@ -107,7 +108,7 @@ export default function PayoutsPage() {
                 <Fragment key={p.payoutGid}>
                   <Table.Tr>
                     <Table.Td>{new Date(p.issuedAt).toLocaleDateString()}</Table.Td>
-                    <Table.Td>{money(p.netCents)}</Table.Td>
+                    <Table.Td>{formatCents(p.netCents)}</Table.Td>
                     <Table.Td>{p.status} <SourceBadge source={p.source} /></Table.Td>
                     <Table.Td><Code>{p.payoutGid}</Code></Table.Td>
                     <Table.Td>

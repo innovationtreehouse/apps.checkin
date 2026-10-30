@@ -6,7 +6,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconArrowsExchange, IconEdit, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { api, errorMessage, useCanManage, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface LocationRow {
   id: number;
@@ -45,7 +45,7 @@ export default function LocationsPage() {
       setDialog(null);
       locations.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }

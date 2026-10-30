@@ -277,12 +277,12 @@ async function settleRestockedSeats(
         .reduce((n, l) => n + l.quantity, 0);
     let unmatched = 0;
     if (seats > 0 && k >= seats && personIds.length <= k) {
-        for (const personId of personIds) await removeRefundedEnrollment(programId, personId, orderLegacyId);
+        for (const personId of personIds) unmatched += await removeRefundedEnrollment(programId, personId, orderLegacyId);
     } else {
         for (const l of lines) {
             const named = [...new Set(l.personIds ?? [])].filter((id) => personIds.includes(id));
             if (l.quantity === l.lineQuantity && named.length === l.quantity) {
-                for (const personId of named) await removeRefundedEnrollment(programId, personId, orderLegacyId);
+                for (const personId of named) unmatched += await removeRefundedEnrollment(programId, personId, orderLegacyId);
             } else {
                 unmatched += l.quantity;
             }
@@ -294,21 +294,39 @@ async function settleRestockedSeats(
         return;
     }
     if (unmatched === 0) return;
-    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no child can be matched to: taking them back off sale, the board decides who leaves`);
+    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no enrolled child holds: taking them back off sale, the board decides who leaves`);
     await adjustProgramInventory(variant, -unmatched, "refund-unmatched", { deferred: true });
 }
 
 /**
- * Remove an enrollment whose seat a restocking refund already put back on sale.
- * No hold release and no Shopify call: Shopify restocked the unit itself. Scoped to
- * the refunded order, so a row since re-paid on another order is left alone.
+ * Remove an ACTIVE enrollment whose seat a restocking refund already put back on
+ * sale. No hold release and no Shopify call: Shopify restocked the unit itself.
+ * Scoped to the refunded order, so a row since re-paid on another order is left
+ * alone. A WITHDRAWN row is history: the refund is recorded against it and the row
+ * stays. Returns the seats to take back off sale: 1 when that withdrawal already
+ * put the seat back, so the restock would offer it twice.
  */
-async function removeRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<void> {
+async function removeRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<number> {
     const where = { programId, personId, shopifyOrderId: orderLegacyId };
+    const withdrawn = await prisma.programParticipant.findFirst({ where: { ...where, status: "WITHDRAWN" } });
+    if (withdrawn) {
+        await prisma.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "EDIT",
+                tableName: "ProgramParticipant",
+                affectedEntityId: personId,
+                secondaryAffectedEntity: programId,
+                newData: { ...withdrawn, reason: `refund restocked the seat on order ${orderLegacyId} after withdrawal` },
+            },
+        });
+        return withdrawn.seatTakenWithoutSaleAt ? 1 : 0;
+    }
+    const active = { ...where, status: "ACTIVE" as const };
     const removed = await prisma.$transaction(async (tx) => {
-        const row = await tx.programParticipant.findFirst({ where });
+        const row = await tx.programParticipant.findFirst({ where: active });
         if (!row) return false;
-        const { count } = await tx.programParticipant.deleteMany({ where });
+        const { count } = await tx.programParticipant.deleteMany({ where: active });
         if (count === 0) return false;
         await tx.auditLog.create({
             data: {
@@ -322,8 +340,8 @@ async function removeRefundedEnrollment(programId: number, personId: number, ord
         });
         return true;
     });
-    if (!removed) return;
-    logger.info(`[reconcile] removed enrollment program ${programId} / person ${personId}: refund on order ${orderLegacyId} restocked the seat`);
+    if (removed) logger.info(`[reconcile] removed enrollment program ${programId} / person ${personId}: refund on order ${orderLegacyId} restocked the seat`);
+    return 0;
 }
 
 export async function reconcileReversals(): Promise<number> {
@@ -333,9 +351,10 @@ export async function reconcileReversals(): Promise<number> {
         where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ["ACTIVE", "PENDING_BG_CLEARANCE"] } },
         select: { id: true, shopifyOrderId: true, orgMembershipId: true, status: true },
     });
+    // A withdrawn row keeps its order, so a late reversal is raised against it.
     const enrolls = await prisma.programParticipant.findMany({
-        where: { shopifyOrderId: { not: null }, status: "ACTIVE" },
-        select: { programId: true, personId: true, shopifyOrderId: true },
+        where: { shopifyOrderId: { not: null }, status: { not: "PENDING" } },
+        select: { programId: true, personId: true, shopifyOrderId: true, status: true },
     });
 
     const orderIds = [
@@ -389,6 +408,7 @@ export async function reconcileReversals(): Promise<number> {
             raised++;
         }
     }
+    const unreversed = new Map<string, MirrorOrder>();
     for (const e of enrolls) {
         const o = byLegacy.get(e.shopifyOrderId!);
         if (!o) continue;
@@ -400,7 +420,56 @@ export async function reconcileReversals(): Promise<number> {
         if (kind) {
             await raisePaymentException(kind, { shopifyOrderId: e.shopifyOrderId, programId: e.programId, personId: e.personId });
             raised++;
+        } else {
+            unreversed.set(e.shopifyOrderId!, o);
         }
+    }
+    raised += await raiseUnderSeatedOrders(enrolls.filter((e) => e.status === "ACTIVE" && unreversed.has(e.shopifyOrderId!)), unreversed);
+    return raised;
+}
+
+/**
+ * An unreversed program order edited down to fewer seats than the people ACTIVE on
+ * it: someone holds a seat the order no longer pays for. Raised once per order and
+ * program as AMOUNT_MISMATCH, against its lowest-id holder; nobody is removed, as the
+ * order cannot say which seat it dropped. An order with no mirrored line variant ids
+ * carries no seat evidence and is not judged.
+ */
+async function raiseUnderSeatedOrders(
+    enrolls: { programId: number; personId: number; shopifyOrderId: string | null }[],
+    orders: Map<string, MirrorOrder>,
+): Promise<number> {
+    if (enrolls.length === 0) return 0;
+    const lines = await mirror.incomeOrderLines([...orders.values()].map((o) => o.orderGid));
+    const linesByGid = new Map<string, { variantId: string; currentQuantity: number }[]>();
+    for (const l of lines) {
+        if (!l.variantId) continue;
+        linesByGid.set(l.orderGid, [...(linesByGid.get(l.orderGid) ?? []), { variantId: l.variantId, currentQuantity: l.currentQuantity }]);
+    }
+    const programs = await prisma.program.findMany({
+        where: { id: { in: [...new Set(enrolls.map((e) => e.programId))] } },
+        select: { id: true, shopifyVariantId: true, claimantShopifyVariantId: true },
+    });
+    const variantsByProgram = new Map(programs.map((p) => [p.id, new Set(programVariantIds(p))]));
+
+    const holders = new Map<string, { orderId: string; programId: number; personIds: number[] }>();
+    for (const e of enrolls) {
+        const key = `${e.shopifyOrderId}:${e.programId}`;
+        const group = holders.get(key) ?? { orderId: e.shopifyOrderId!, programId: e.programId, personIds: [] };
+        group.personIds.push(e.personId);
+        holders.set(key, group);
+    }
+
+    let raised = 0;
+    for (const { orderId, programId, personIds } of holders.values()) {
+        const orderLines = linesByGid.get(orders.get(orderId)!.orderGid);
+        if (!orderLines) continue;
+        const variants = variantsByProgram.get(programId) ?? new Set<string>();
+        const seats = orderLines.filter((l) => variants.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
+        if (seats >= personIds.length) continue;
+        logger.warn(`[reconcile] program order ${orderId} pays for ${seats} seat(s) of program ${programId} but ${personIds.length} people hold them — raised, nobody removed`);
+        await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: orderId, programId, personId: Math.min(...personIds) });
+        raised++;
     }
     return raised;
 }

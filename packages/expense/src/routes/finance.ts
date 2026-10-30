@@ -1,27 +1,30 @@
 /**
  * FINANCE and Board surfaces: holds, account mapping, QuickBooks accounts, bucket ownership,
- * ledgers, settings, flags, the capital seed and QuickBooks matching. The registry gates each
+ * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { db } from "../db";
-import type { ExpenseRouteHandler } from "../contract";
-import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
+import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { writeOrgAudit } from "../lib/audit";
+import { getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
+import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
+import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
+import { financeQueueTab } from "../financeQueue";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
 import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
 import { pageArgs } from "./_shared";
 
-/** Runs `fn` for a FINANCE principal; the registry gate already admitted only FINANCE. */
-async function asFinance() {
-  const principal = await getPrincipal();
+/** The principal, refused unless FINANCE; the registry gate already admitted only FINANCE. */
+async function asFinance(principal: ExpensePrincipal) {
   await mapServiceErrors(async () => requireFinance(principal));
   return principal;
 }
@@ -37,16 +40,14 @@ export const holds: ExpenseRouteHandler = async ({ req }) => ({
   }),
 });
 
-export const holdLineAccount: ExpenseRouteHandler = async ({ req, params }) => {
+export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
   const { qbAccount } = await parseBody(req, z.object({ qbAccount: z.string().trim().min(1, "qbAccount is required") }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => setHeldLineAccount(principal, params.expenseId, lineItemId, qbAccount));
   return { ExpenseLineItem: await db.expenseLineItem.findFirst({ where: { id: lineItemId } }) };
 };
 
-export const holdResubmit: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const holdResubmit: ExpenseRouteHandler = async ({ params, principal }) => {
   await mapServiceErrors(() => resubmitHeldExpense(principal, params.expenseId));
   return { Expense: await db.expense.findFirst({ where: { id: params.expenseId } }) };
 };
@@ -68,9 +69,9 @@ export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
 });
 
-export const createAccountMapping: ExpenseRouteHandler = async ({ req }) => {
+export const createAccountMapping: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, mappingSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   return {
     AccountMapping: await db.$transaction(async (tx) => {
@@ -87,10 +88,10 @@ async function ownedRow<T>(find: () => Promise<T | null>): Promise<T> {
   return row;
 }
 
-export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params }) => {
+export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, mappingSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
   return {
@@ -102,9 +103,9 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params })
   };
 };
 
-export const deleteAccountMapping: ExpenseRouteHandler = async ({ params }) => {
+export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, principal }) => {
   const id = parseId(params.id);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
   await db.$transaction(async (tx) => {
@@ -125,9 +126,9 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
   ExpenseQbAccount: await db.expenseQbAccount.findMany({ where: { orgId: await getOrgId() }, orderBy: { name: "asc" } }),
 });
 
-export const createQbAccount: ExpenseRouteHandler = async ({ req }) => {
+export const createQbAccount: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, qbAccountSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
@@ -138,10 +139,10 @@ export const createQbAccount: ExpenseRouteHandler = async ({ req }) => {
   };
 };
 
-export const updateQbAccount: ExpenseRouteHandler = async ({ req, params }) => {
+export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
   return {
@@ -153,9 +154,9 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params }) => {
   };
 };
 
-export const deleteQbAccount: ExpenseRouteHandler = async ({ params }) => {
+export const deleteQbAccount: ExpenseRouteHandler = async ({ params, principal }) => {
   const id = parseId(params.id);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await db.expenseQbAccount.findFirst({ where: { id, orgId } });
   if (before) {
@@ -173,17 +174,17 @@ const buckets = () => getExpenseRuntime().budgetOwners.list();
 
 export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView: await buckets() });
 
-export const ownershipMap: ExpenseRouteHandler = async ({ req }) => ({
-  PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) }),
-  ExpenseBucketView: await buckets(),
-});
+export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
+  return { PartOwnerMap: rows, Item: await getItemNames(rows.map((r) => r.gtin13)), ExpenseBucketView: await buckets() };
+};
 
-export const setOwnership: ExpenseRouteHandler = async ({ req }) => {
+export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {
   const { gtin13, ownerId } = await parseBody(
     req,
     z.object({ gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"), ownerId: z.number().int().positive() }),
   );
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   if (!(await buckets()).some((b) => b.id === ownerId && !b.archivedAt)) throw httpError(400, "Unknown or archived bucket");
   const orgId = await getOrgId();
   await db.$transaction(async (tx) => {
@@ -240,9 +241,8 @@ export const qbExclusions: ExpenseRouteHandler = async ({ req }) => ({
   }),
 });
 
-export const createQbExclusion: ExpenseRouteHandler = async ({ req }) => {
+export const createQbExclusion: ExpenseRouteHandler = async ({ req, principal }) => {
   const { qbTxnId, reason } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1), reason: z.string() }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => excludeQbTxn(principal, qbTxnId, reason));
   return { ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findFirst({ where: { orgId: await getOrgId(), qbTxnId } }) };
 };
@@ -254,40 +254,59 @@ export const settings: ExpenseRouteHandler = async () => {
   return { ExpenseOrgSettings: { orgId, ...(await getExpenseSettings(orgId)) } };
 };
 
-export const updateSettings: ExpenseRouteHandler = async ({ req }) => {
+export const updateSettings: ExpenseRouteHandler = async ({ req, principal }) => {
   const patch = await parseBody(req, z.unknown());
-  const principal = await getPrincipal();
   const orgId = await getOrgId();
   const next = await mapServiceErrors(() => updateExpenseSettings(orgId, patch, principal));
   return { ExpenseOrgSettings: { orgId, ...next } };
 };
 
-export const flags: ExpenseRouteHandler = async () => ({ ExpenseFlag: await listOpenFlags(await getPrincipal()) });
+export const flags: ExpenseRouteHandler = async ({ principal }) => ({ ExpenseFlag: await listOpenFlags(principal) });
 
-export const checkOff: ExpenseRouteHandler = async ({ req, params }) => {
+export const checkOff: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
-  const { notes } = await parseBody(req, z.object({ notes: z.string().nullish() }));
-  const principal = await getPrincipal();
-  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null));
+  const { notes, shown } = await parseBody(
+    req,
+    z.object({ notes: z.string().nullish(), shown: z.object({ detail: z.string().nullable(), observed: z.string().nullable() }) }),
+  );
+  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null, shown));
   return { ExpenseFlag: await db.expenseFlag.findFirst({ where: { id } }) };
 };
 
+// ── Finance queue ─────────────────────────────────────────────────────────────
+
+/** One expense tab of the finance queue; `?tab=` is the tab's queue value (expenses, to_sign, holds, qb, board). */
+export const financeQueue: ExpenseRouteHandler = async ({ req, principal }) => {
+  const tab = financeQueueTab(query(req).get("tab"));
+  if (!tab) throw httpError(400, "tab must be one of: expenses, to_sign, holds, qb, board");
+  return { FinanceQueueRow: await financeQueueRows(principal, tab.key) };
+};
+
+export const financeQueueCounts: ExpenseRouteHandler = async ({ principal }) => ({ FinanceQueueCounts: await queueCounts(principal) });
+
 // ── Capital seed + QuickBooks matching ────────────────────────────────────────
 
-export const capitalSeed: ExpenseRouteHandler = async ({ req }) => {
+export const capitalSeed: ExpenseRouteHandler = async ({ req, principal }) => {
   const rows = await parseBody(req, CapitalSeedSchema);
-  const principal = await getPrincipal();
   return { ExpenseCapitalSeedResult: await mapServiceErrors(() => seedCapitalAssets(principal, rows)) };
 };
 
-export const candidates: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const donatedCapital: ExpenseRouteHandler = async ({ principal }) => {
+  return { DonatedCapitalLineView: await mapServiceErrors(() => listDonatedCapital(principal)) };
+};
+
+export const reviewDonatedCapital: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const id = parseId(params.id);
+  const body = await parseBody(req, DonatedCapitalReviewSchema);
+  return { DonatedCapitalLineView: await mapServiceErrors(() => reviewDonatedLine(principal, id, body)) };
+};
+
+export const candidates: ExpenseRouteHandler = async ({ params, principal }) => {
   return { ExpenseQbCandidateView: await mapServiceErrors(() => qbCandidates(principal, params.id)) };
 };
 
-export const match: ExpenseRouteHandler = async ({ req, params }) => {
+export const match: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { qbTxnId } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1) }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => matchExpenseToQb(principal, params.id, qbTxnId));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
 };

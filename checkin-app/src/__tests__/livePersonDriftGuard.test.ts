@@ -130,9 +130,10 @@ const PERSON_RELATION_NAMES = [
  *     would falsify history, not protect anyone.
  */
 const ALLOWLIST: Record<string, string> = {
+    'lib/receipt/mailAliases.ts': "Reads an alias's person through the alias's own FK: a merge moves every alias to the survivor (moveMailAliases), so an alias's person is never a tombstone. Its one Person list query spreads LIVE_PERSON.",
     // ── sweeps / reconcilers (rule: "must still see tombstone rows") ──────────
     'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (lib/person/merge/execute.ts moveJoinTables), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
-    'app/api/cron/pending-participants/route.ts': '7-day clock → withdrawAndReleaseHold — must see a tombstoned participant to release its hold.',
+    'app/api/cron/pending-participants/route.ts': '7-day clock → deleteAndReleaseHold — must see a tombstoned participant to release its hold.',
     'app/api/cron/scholarship-grace-expiry/route.ts': 'Grace cutoff sweep — must see a tombstoned participant to release its held seat.',
     'lib/finance/reconcile/program.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
     'lib/finance/reconcile/reversals.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
@@ -144,7 +145,6 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/cron/nightly/route.ts': 'Nightly force-checkout sweep: must see every open visit, including a merge-orphaned tombstone\'s, or a stranded open visit is never released (same rationale as lifecycleDrift.ts\'s I1 heal).',
 
     // ── structural mass writes (the write rule\'s second exception) ────────────
-    'app/api/membership-ops/participants/import/route.ts': 'Household merge, structural write: `tx.person.updateMany({ where: { householdId: source } })` reparents EVERY row in the source household so the following `household.delete` can run. A tombstone skipped here keeps pointing at the source household, the RESTRICT FK rejects the delete, and the whole merge rolls back. The two lead-cap reads and the cap re-check in the same file DO filter LIVE_PERSON — only the reparent is unfiltered, and deliberately.',
 
     // ── id-scoped findFirst (one-row shape, same boundary as findUnique-by-id) ─
     'lib/orgMembership.ts': 'isActiveOrgMember ANDs an explicit `id: personId` into the where — at most one row, same shape as findUnique-by-id.',
@@ -173,11 +173,12 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── authz target checks (class 3, never rendered or counted) ──────────────
     'lib/programs/events.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
-    'lib/bulkDonation/donorSurname.ts': 'In-kind accept step\'s conflict rule: the first findMany is pinned to `id: { in }` over named parties (the decider, and the uploader or recorder) to learn their households. A since-merged uploader must still resolve, or their household would silently drop out of the conflict set. The household members it then reads filter LIVE_PERSON. Never rendered or counted.',
+    'lib/bulkDonation/donorSurname.ts': 'In-kind accept step\'s conflict rule: the merge walk and the household read are pinned to `id: { in }` over named parties (the decider, and the uploader or recorder) and their merge chains. A since-merged uploader keeps their own household in the conflict set, and their survivor\'s household joins it. The household members it then reads filter LIVE_PERSON. Never rendered or counted.',
 
     // ── historical / audit trail (showing a since-merged identity is correct) ──
     'app/api/membership-audit/bg-attestations/route.ts': 'BG attestation history: three FK-pinned to-one Person relations (reviewer, attestation.subjectPerson, process.subjectPerson) resolve names for historical attestation records. A reviewer or subject who has since been merged must still appear in the audit trail.',
     'app/api/system-status/audit-log/route.ts': 'Resolves actor names for audit-log rows by their recorded actorId — a historical record must still name an actor who has since been merged away.',
+    'app/api/system-status/finance-views/route.ts': 'Resolves viewer names for finance view log rows by their recorded actorId — the Board\'s record of who viewed finance records must still name a viewer who has since been merged away.',
     'lib/finance/matchAudit.ts': 'Mixed file: the reconciliation match itself filters LIVE_PERSON (line ~280). Separately, resolving certifier/comper NAMES for the audit report needs any historical actor, including one since merged — a report-only id→name lookup, not a live roster.',
     'app/api/finance-ops/payments/route.ts': 'Resolves names/emails for a fixed set of person ids already attached to processed payment records — historical financial records must still name a payer who has since been merged. (The queue\'s household-lead contact pull is the opposite case — a live address to chase — and does filter LIVE_PERSON.)',
     'app/api/facility/trends/route.ts': 'Visit-history report: shows who was physically present at the time, including the rare merge-orphaned open visit (see lib/attendance/close.ts) — historical accuracy, not a live roster.',

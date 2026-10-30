@@ -21,7 +21,7 @@ export function LibraryReleaseCard({ initial }: { initial: readonly string[] }) 
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => null)) as { error?: string } | null;
-        notifications.show({ color: "red", message: err?.error ?? "Failed to save" });
+        notifications.show({ color: "red", autoClose: false, message: err?.error ?? "Failed to save" });
         return;
       }
       const { settings } = (await res.json()) as { settings: { releasedLibraries: string[] } };

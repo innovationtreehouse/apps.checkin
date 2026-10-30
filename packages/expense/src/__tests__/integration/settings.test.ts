@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
+import { financeQueueRows } from "../../services/financeQueueService";
 import { principal, ORG } from "../helpers/seed";
 import { DEFAULT_EXPENSE_SETTINGS, getExpenseSettings, updateExpenseSettings } from "../../services/settingsService";
 import { receiveCompletedReceipt } from "../../services/intakeService";
@@ -17,7 +18,7 @@ describe("updateExpenseSettings — guards", () => {
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ status: 403 });
   });
 
-  it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalEquipmentUnitCents: 1.5 }, { bogus: 1 }])(
+  it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalLineItemThresholdCents: 1.5 }, { capitalEquipmentUnitCents: 50_000 }, { bogus: 1 }])(
     "rejects %j",
     async (patch) => {
       await expect(updateExpenseSettings(ORG, patch, FINANCE)).rejects.toThrow();
@@ -29,7 +30,6 @@ describeDb("expense settings", () => {
   it("a missing row reads as the defaults", async () => {
     expect(await getExpenseSettings(ORG)).toEqual(DEFAULT_EXPENSE_SETTINGS);
     expect(DEFAULT_EXPENSE_SETTINGS).toMatchObject({
-      capitalEquipmentUnitCents: 50_000,
       boardReviewTotalCents: 200_000,
     });
   });
@@ -46,8 +46,8 @@ describeDb("expense settings", () => {
     ]);
   });
 
-  it("intake flags read the configured thresholds", async () => {
-    await updateExpenseSettings(ORG, { boardReviewTotalCents: 1_000, capitalEquipmentUnitCents: 900 }, FINANCE);
+  it("the Board tab reads the configured Board-review total", async () => {
+    await updateExpenseSettings(ORG, { boardReviewTotalCents: 1_000 }, FINANCE);
     await receiveCompletedReceipt({
       receiptId: "r-thresholds",
       orgId: ORG,
@@ -66,7 +66,8 @@ describeDb("expense settings", () => {
       lineItems: [{ receiptLineItemId: 1, lineNumber: 1, description: "Drill", partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1_000, totalPriceCents: 1_000, isDelayed: false }],
     });
 
-    const kinds = (await db.expenseFlag.findMany({ where: { expenseId: "r-thresholds" } })).map((f) => f.kind).sort();
-    expect(kinds).toEqual(["CAPITAL_EQUIPMENT", "THRESHOLD_CROSSED"]);
+    const rows = await financeQueueRows(principal(3, { isFinance: true }), "board");
+    expect(rows.map((r) => r.expenseId)).toEqual(["r-thresholds"]);
+    expect(rows[0].reasons.map((x) => x.code)).toContain("BOARD_APPROVAL");
   });
 });

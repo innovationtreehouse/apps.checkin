@@ -24,6 +24,11 @@ describe("settingsChanges", () => {
     }
   });
 
+  it("caps Benevity's cents on their own, under the same lower-only rule", () => {
+    expect(settingsChanges(DEFAULT_INCOME_SETTINGS, { benevityMaxCreateCentsPerRun: 1_000 }, finance)).toEqual({ benevityMaxCreateCentsPerRun: 1_000 });
+    expect(() => settingsChanges(DEFAULT_INCOME_SETTINGS, { benevityMaxCreateCentsPerRun: 3_000_000 }, finance)).toThrow(/board/);
+  });
+
   it("drops values equal to the current ones", () => {
     expect(settingsChanges(DEFAULT_INCOME_SETTINGS, { maxCreatesPerRun: 25 }, finance)).toEqual({});
   });

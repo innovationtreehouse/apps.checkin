@@ -18,7 +18,7 @@ const BOARD_AUDIT_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', ['everyones:personal', 'everyones:internal', 'public']],
 ];
 
-defineRoute({ endpoint: 'GET /api/finance-ops/payments', authorize: BOARD, envelope: null, returns: ['PaymentQueueRow', 'PaymentQueueLiveOrder'], orderedView: BOARD_QUEUE_VIEW });
+defineRoute({ endpoint: 'GET /api/finance-ops/payments', authorize: BOARD, envelope: null, returns: ['PaymentQueueRow', 'PaymentQueueLiveOrder'], orderedView: BOARD_QUEUE_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/finance-ops/s-read/sync', authorize: BOARD, envelope: 'run', returns: ['SyncRun'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/finance-ops/s-read/sync', authorize: BOARD, envelope: null, returns: ['SReadSyncTrigger'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/finance-ops/s-read/diagnose', authorize: BOARD, envelope: 'steps', returns: ['SReadDiagnoseStep'], orderedView: BOARD_VIEW });

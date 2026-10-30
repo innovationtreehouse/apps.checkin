@@ -5,7 +5,17 @@
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),
  * plus the detail screen's line items and review reasons and "My receipts"'
- * paid status (`reimbursement`: `{ paidOn }` or null). Tiers match the generated
+ * paid status (`reimbursement`: `{ paidOn }` or null), and on a finalized receipt
+ * not yet delivered to receiving its push record: whether catch-up has given up
+ * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
+ * `lastPushFailure`). The message is the push_failed audit row's `valueAfter`, so
+ * it keeps that column's `personal` tier. A finalized receipt also carries its
+ * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
+ * expense's status with each rejected line's note, and an in-kind gift's
+ * decision. The line notes are approvers' free text, so the field is `personal`,
+ * like `validationNotes`. A rejected receipt says whether its uploader has yet
+ * to acknowledge the rejection (`rejectionUnacknowledged`), which keeps it in
+ * their My receipts pill until they do. Tiers match the generated
  * models field for field. No file column is listed, so the stripper drops one if
  * a projection ever passes it through: the file leaves only through the file
  * route (plan rule 7).
@@ -14,6 +24,10 @@
  * A line row has no owner column of its own, and the stripper scopes each nested
  * row by itself, so without the stamp a submitter's `their_own` view would strip
  * every line of their own receipt. A line without the stamp fails closed.
+ *
+ * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
+ * a count per state, finalized receipts not yet delivered, and those catch-up
+ * gave up on. Counts only, `internal`.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
@@ -28,9 +42,35 @@
  * Counts only, no record field. Receiving and the time are `public`, matching
  * WorkflowReceiptCount; receipts and expenses are `internal`.
  *
+ * ReceiptConfirmationView — a reimbursement waiting for the confirmation that
+ * signs it, as the person reimbursed (or a Board member on their behalf) reads
+ * it to confirm: the receipt's date, vendor, money and lines, its state, the
+ * reimbursee's id the row is scoped by, whether a Board member confirms it on
+ * the reimbursee's behalf (`onBehalf`), and, once the expense exists, the names
+ * of the fields a finance change touched (`changedFields`). No uploader, file,
+ * donor or note field. All `internal`. ReceiptConfirmationLineView — a line,
+ * stamped with the receipt's `reimburseePersonId` as ReceiptLineView is with the
+ * uploader; a line without the stamp fails closed.
+ *
+ * ReceiptReimbursedView — a reimbursement naming the caller that someone else
+ * uploaded, once finance has settled its receipt, as the person reimbursed reads
+ * what became of it: the receipt's date, vendor and total, its state, the
+ * reimbursee's id the row is scoped by, finance's reason when it was rejected
+ * (`rejectionReason`, `personal` like `validationNotes`), whether QuickBooks shows
+ * it paid (`reimbursement`), and its `purchaseOutcome` as on ReceiptView. No
+ * uploader, file or donor field.
+ *
  * ReceiptReimburseeOption — a person the uploader may name as reimbursee: the
  * Person's `id` and `name`, both `public` on Person, so any receipt submitter
  * reads them.
+ *
+ * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
+ * its members in upload order and the ids of the receipts dismissed against it.
+ * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
+ * state, or a rejection with its reason) and, for a member rejected as a copy,
+ * the id of the receipt kept in its place (`copyOfId`). Members may be other
+ * submitters' receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is;
+ * the label carries a rejection reason, `personal` like `validationNotes`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
@@ -77,6 +117,11 @@ export const classifications = {
     financialReviewReasons: "internal",
     complete: "internal",
     reimbursement: "internal",
+    pushGivenUp: "internal",
+    lastPushFailedAt: "internal",
+    lastPushFailure: "personal",
+    purchaseOutcome: "personal",
+    rejectionUnacknowledged: "internal",
   },
   ReceiptLineView: {
     id: "internal",
@@ -86,6 +131,42 @@ export const classifications = {
     description: "internal",
     partNumber: "internal",
     manufacturer: "internal",
+    quantity: "internal",
+    unitPriceCents: "internal",
+    totalPriceCents: "internal",
+    isDelayed: "internal",
+  },
+  ReceiptConfirmationView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    state: "internal",
+    retailer: "internal",
+    receiptDate: "internal",
+    currency: "internal",
+    shippingCents: "internal",
+    taxCents: "internal",
+    discountCents: "internal",
+    receiptTotalCents: "internal",
+    onBehalf: "internal",
+    changedFields: "internal",
+  },
+  ReceiptReimbursedView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    state: "internal",
+    retailer: "internal",
+    receiptDate: "internal",
+    currency: "internal",
+    receiptTotalCents: "internal",
+    rejectionReason: "personal",
+    reimbursement: "internal",
+    purchaseOutcome: "personal",
+  },
+  ReceiptConfirmationLineView: {
+    id: "internal",
+    reimburseePersonId: "internal",
+    lineNumber: "internal",
+    description: "internal",
     quantity: "internal",
     unitPriceCents: "internal",
     totalPriceCents: "internal",
@@ -101,6 +182,11 @@ export const classifications = {
   ReceiptPushResult: {
     pushed: "internal",
   },
+  ReceiptQueueCounts: {
+    byState: "internal",
+    notPushed: "internal",
+    pushGivenUp: "internal",
+  },
   ReceiptFlowStatus: {
     asOf: "public",
     receipt: "internal",
@@ -110,6 +196,15 @@ export const classifications = {
   ReceiptReimburseeOption: {
     id: "public",
     name: "public",
+  },
+  ReceiptDuplicateGroup: {
+    dismissed: "pii",
+  },
+  ReceiptDuplicateMember: {
+    id: "pii",
+    state: "internal",
+    label: "personal",
+    copyOfId: "pii",
   },
   ReceiptIgnoredFileView: {
     id: "internal",
@@ -124,5 +219,11 @@ export const classifications = {
 export const relations = {
   ReceiptView: {
     lineItems: { model: "ReceiptLineView", isList: true },
+  },
+  ReceiptConfirmationView: {
+    lineItems: { model: "ReceiptConfirmationLineView", isList: true },
+  },
+  ReceiptDuplicateGroup: {
+    members: { model: "ReceiptDuplicateMember", isList: true },
   },
 } as const;

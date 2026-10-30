@@ -13,8 +13,13 @@ describe("CompletedReceipt.financeReview", () => {
     expect(parsed.financeReview).toBeUndefined();
   });
 
-  it("carries finance's approval, reasons, approver and time", () => {
+  it("carries finance's approval, reasons, approver, approved tax and time", () => {
     expect(CompletedReceiptSchema.parse(approved).financeReview).toEqual(review);
+  });
+
+  it("carries whether the receipt org held its tax for review, absent from older senders", () => {
+    expect(CompletedReceiptSchema.parse(approved).taxReviewRequired).toBe(true);
+    expect(CompletedReceiptSchema.parse(raw("S1-completed-receipt/with-tax-shipping-discount")).taxReviewRequired).toBeUndefined();
   });
 
   it("parses an approval whose note is null or a string", () => {
@@ -27,6 +32,7 @@ describe("CompletedReceipt.financeReview", () => {
     ["an unknown reason", withReview({ reasons: ["vibes"] })],
     ["a non-positive approver", withReview({ decidedByPersonId: 0 })],
     ["a time that is not ISO", withReview({ decidedAt: "yesterday" })],
+    ["a negative approved tax", withReview({ taxCents: -1 })],
   ])("refuses %s", (_label, input) => {
     expect(CompletedReceiptSchema.safeParse(input).success).toBe(false);
   });

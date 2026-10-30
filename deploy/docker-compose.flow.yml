@@ -1,10 +1,9 @@
 # Dockerized DEVELOPMENT server for flow tests (checkin-app/flow-tests/*.flow.test.ts).
 #
-# Runs the app with `next dev` — NOT the production image (deploy/docker-compose.yml)
-# — on purpose: persona-mint login (how flow tests authenticate) is gated on
-# NODE_ENV != production, and the prod image pins NODE_ENV=production. The app
-# container installs deps, applies migrations, seeds the debug personas, then
-# serves on :4000. Flow tests run inside this container (see flow-tests.yml).
+# Runs the app with `next dev`, not the production image (deploy/docker-compose.yml).
+# Persona-mint login (how flow tests authenticate) needs only CHECKIN_ENV=local,
+# set below; NODE_ENV does not gate it. The app container installs deps, applies
+# migrations, seeds the debug personas, then serves on :4000. Flow tests run inside this container (see flow-tests.yml).
 services:
   db:
     image: public.ecr.aws/docker/library/postgres:15

@@ -45,6 +45,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
         // minAge 14, begins 2026-09-01. Free (no prices) so enrollment is allowed.
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: 'Age StartDate Test Program',
                 minAge: 14,
                 startAt: new Date('2026-09-01T00:00:00.000Z'),

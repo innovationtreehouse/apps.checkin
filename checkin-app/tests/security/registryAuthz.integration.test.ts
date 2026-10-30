@@ -30,6 +30,7 @@ import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
+import { configureRuntime as configureIncomeRuntime } from '@/lib/income/configure';
 import '@/security/registry';
 import libraries from '../../libraries.json';
 
@@ -108,6 +109,7 @@ const EXTERNAL_GATED_GETS = new Set([
     'GET /api/finance-ops/s-read/sync',
     'GET /api/finance-ops/s-read/match-audit',
     'GET /api/budget-owners/quickbooks-classes',
+    'GET /api/books-map/quickbooks-accounts',
 ]);
 
 function importPathFor(routePath: string): string {
@@ -140,6 +142,7 @@ describe('Registry route admission gates', () => {
         // Bind the library runtimes the routes call into, as server boot (instrumentation.ts) does.
         configureBulkDonationRuntime();
         configureExpenseRuntime();
+        configureIncomeRuntime();
 
         const plain = await prisma.person.create({
             data: {
@@ -177,7 +180,7 @@ describe('Registry route admission gates', () => {
 
         // For the public route's 2xx sanity (programs/[id]). orgMemberOnly defaults
         // false, so an anonymous caller is admitted and sees it.
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
         programId = program.id;
 
         // For event routes ('GET /api/events/[id]' etc.) whose [id] is an EVENT

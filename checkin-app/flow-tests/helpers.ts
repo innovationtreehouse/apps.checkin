@@ -69,3 +69,14 @@ export async function api<T = unknown>(
     try { json = text ? JSON.parse(text) : null; } catch { json = text; }
     return { status: res.status, json: json as T };
 }
+
+/**
+ * Finance's Different purchases on a held receipt: reads its duplicate group and sends the live
+ * members as the ids shown, as the compare panel does.
+ */
+export async function differentPurchases<T = unknown>(finance: Session, receiptId: string): Promise<{ status: number; json: T }> {
+    const group = await api<{ members: Array<{ id: string; state: string }> }>(finance, `/api/receipts/${receiptId}/duplicate-group`);
+    if (group.status !== 200) throw new Error(`duplicate group of ${receiptId}: ${group.status}`);
+    const shownIds = group.json.members.filter((m) => m.state !== "discarded").map((m) => m.id);
+    return api<T>(finance, `/api/receipts/${receiptId}/different-purchases`, { method: "POST", body: JSON.stringify({ shownIds }) });
+}

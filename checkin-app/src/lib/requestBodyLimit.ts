@@ -12,8 +12,6 @@ export const MAX_UPLOAD_BODY_BYTES = 11 * 1024 * 1024;
 /** API routes that accept a file upload. Each route still enforces its own exact file cap. */
 export const UPLOAD_ROUTES: readonly string[] = [
     '/api/donations/uploaded-files',
-    '/api/membership-ops/participants/import',
-    '/api/membership-ops/participants/import/preview',
     '/api/receipts/upload',
     '/api/receipts/import',
 ];

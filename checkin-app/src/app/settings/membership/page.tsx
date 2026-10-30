@@ -1,5 +1,6 @@
 "use client";
 
+import { centsToDecimalString } from "@checkin/money";
 import { useState, useEffect, useCallback } from "react";
 import { Alert, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
@@ -8,6 +9,7 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 
@@ -18,15 +20,11 @@ interface Settings {
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
   volunteerFamilyDiscountCode: string | null;
-  // Sent by a server still on the pre-rename release during a deploy.
-  volunteerDiscountCode?: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
 }
-
-const dollars = (cents: number) => (cents / 100).toFixed(2);
 
 // Next occurrence (>= now) of the stored boundary's month/day, as a label.
 // ponytail: mirrors nextBoundary() in lib/membership/renewal.ts — can't import, it pulls in prisma.
@@ -77,14 +75,14 @@ export default function MembershipSettingsPage() {
       if (sRes.ok) {
         const { settings } = (await sRes.json()) as { settings: Settings };
         const snap = {
-          standardFee: dollars(settings.standardMembershipFeeCents),
-          volunteerFee: dollars(settings.volunteerMembershipFeeCents),
+          standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
+          volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
           bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
           scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
           variantId: settings.orgMembershipVariantId ?? "",
           productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerFamilyDiscountCode ?? settings.volunteerDiscountCode ?? "",
+          discountCode: settings.volunteerFamilyDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
         setStandardFee(snap.standardFee);
@@ -228,7 +226,7 @@ export default function MembershipSettingsPage() {
                 rightSectionWidth={36}
                 inputMode="numeric"
                 w={200}
-                error={(!bgRecheckMonths || parseInt(bgRecheckMonths, 10) <= 0) ? "Required — not configured." : undefined}
+                error={!isRecheckPolicySet(parseInt(bgRecheckMonths, 10)) ? "Required — not configured." : undefined}
                 value={bgRecheckMonths}
                 onChange={(e) => setBgRecheckMonths(e.currentTarget.value)}
               />
@@ -245,11 +243,12 @@ export default function MembershipSettingsPage() {
               />
             </Group>
 
-            {(!bgRecheckMonths || parseInt(bgRecheckMonths, 10) <= 0) && (
+            {!isRecheckPolicySet(parseInt(bgRecheckMonths, 10)) && (
               <Alert color="red" variant="light" mt="md">
                 ⛔ Background-check interval is <strong>not set</strong>. Until the board enters the
-                policy value (in months), every renewal will be sent back for a fresh background
-                review. Enter the real Treehouse re-check interval above.
+                policy value (in months), every background check counts as expired: every renewal
+                is sent back for a fresh background review, and no one counts as a supervising
+                adult in the two-deep check. Enter the real Treehouse re-check interval above.
               </Alert>
             )}
 

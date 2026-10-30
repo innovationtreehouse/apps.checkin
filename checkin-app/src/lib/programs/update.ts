@@ -8,7 +8,6 @@ import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
@@ -79,7 +78,7 @@ export async function resolveProgramYear(input: {
     startAt: Date;
     endAt: Date;
     supplied: unknown;
-    current: { appliesToYear: number | null; startAt: Date; endAt: Date } | null;
+    current: { appliesToYear: number; startAt: Date; endAt: Date } | null;
     isBoardMember: boolean;
 }): Promise<ProgramYearResult> {
     const { startAt, endAt, supplied, current, isBoardMember } = input;
@@ -95,9 +94,8 @@ export async function resolveProgramYear(input: {
     if (years.length === 1) return { ok: true, appliesToYear: years[0] };
 
     const askTheBoard = refuse("forbidden", "These dates cross the membership year boundary, so the program's membership year comes from its budget approval. Ask the Board to set it.");
-    const currentYear = current?.appliesToYear;
-    const keptYear = current && currentYear != null && years.includes(currentYear)
-        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? currentYear : null;
+    const keptYear = current && years.includes(current.appliesToYear)
+        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? current.appliesToYear : null;
     const stated = supplied as number | null | undefined;
     if (stated != null && stated !== keptYear) {
         if (!isBoardMember) return askTheBoard;
@@ -449,10 +447,10 @@ async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): 
     });
     if (misfits.length === 0) return;
 
-    const rows = misfits.map(m => `<li>${escapeHtml(m.name ?? "Unnamed")}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})</li>`).join("");
-    await emailBoardMembers(
-        `Program "${after.name}": ${misfits.length} enrolled no longer fit its ages`,
-        `<p>An edit to the dates or age limits of <strong>${escapeHtml(after.name)}</strong> leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.</p><ul>${rows}</ul><p><a href="${config.baseUrl()}/program-ops/programs/${after.id}">Open the program</a></p>`,
-        "Program age re-check board alert failed:",
-    );
+    await emailBoardMembers("board.programAgeMisfit", {
+        programName: after.name,
+        count: String(misfits.length),
+        people: misfits.map(m => `${m.name ?? "Unnamed"}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})`).join("\n"),
+        actionLink: `${config.baseUrl()}/program-ops/programs/${after.id}`,
+    }, "Program age re-check board alert failed:");
 }

@@ -67,6 +67,10 @@ GET /api/budget-owners/approver-options
 PUT /api/budget-owners/[id]/owner
 PUT /api/budget-owners/[id]/treasurers/[personId]
 DELETE /api/budget-owners/[id]/treasurers/[personId]
+GET /api/books-map
+GET /api/books-map/quickbooks-accounts
+PUT /api/books-map/classes/[budgetOwnerId]
+PUT /api/books-map/accounts/[role]
 GET /api/donations/uploaded-files
 POST /api/donations/uploaded-files
 GET /api/donations/uploaded-files/[id]/blob
@@ -86,10 +90,6 @@ GET /api/donations/disbursement-holds
 POST /api/donations/disbursement-holds/[disbursementId]/resubmit
 GET /api/donations/disbursement-events
 GET /api/donations/nav-counts
-GET /api/donations/disbursement-events/[disbursementId]/qb-candidates
-POST /api/donations/disbursement-events/[disbursementId]/qb-resolve
-GET /api/donations/qb-exclusions
-POST /api/donations/qb-exclusions
 GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual
@@ -109,6 +109,7 @@ POST /api/expense/qb-accounts
 GET /api/expense/expenses/[id]
 POST /api/expense/expenses/[id]/set-depreciation-cycle/submit
 PUT /api/expense/expenses/[id]/reimbursee
+POST /api/expense/expenses/[id]/tax-approval
 GET /api/expense/expenses/[id]/reimbursee-vendor
 PUT /api/expense/expenses/[id]/reimbursee-vendor
 GET /api/expense/expenses/[id]/reimbursee-vendor/options
@@ -191,7 +192,11 @@ GET /api/receipts/settings
 PUT /api/receipts/settings
 POST /api/receipts/[id]/approve
 POST /api/receipts/[id]/reject
-POST /api/receipts/[id]/clear-duplicate
+GET /api/receipts/[id]/duplicate-group
+POST /api/receipts/[id]/not-this-one
+DELETE /api/receipts/[id]/not-this-one/[otherId]
+POST /api/receipts/[id]/different-purchases
+POST /api/receipts/[id]/keep-this-one
 POST /api/receipts/[id]/restart-flow
 POST /api/receipts/[id]/push-to-inventory
 POST /api/receipts/import

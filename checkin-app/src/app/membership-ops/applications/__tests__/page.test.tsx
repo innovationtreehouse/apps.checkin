@@ -32,7 +32,7 @@ const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPag
 // reconciling, losing the page's already-fetched rows state.
 const rewrapped = () => (
     <MantineProvider>
-        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false }}>
+        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false }}>
             <ModalsProvider>
                 <AdminMembershipPage />
             </ModalsProvider>
@@ -143,10 +143,10 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByRole("button", { name: "Discard approvals — start the review over" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /Override →/ })).not.toBeInTheDocument();
-        expect(screen.getByText("A board member can reset or override this review.")).toBeInTheDocument();
+        expect(screen.getByText("A board member can reset this review.")).toBeInTheDocument();
     });
 
-    it("drives the external-action, certify, and override controls", async () => {
+    it("drives the external-action, certify, and reset controls", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
@@ -175,12 +175,9 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
 
-        // A force-approve stamps the adult it names, so it stays disabled until one is
-        // named — an unnamed override would clear the check against nobody.
-        expect(screen.getByRole("button", { name: /Override/ })).toBeDisabled();
-        fireEvent.click(screen.getByRole("radio", { name: "Lead One" }));
-        fireEvent.click(screen.getByRole("button", { name: /Override/ }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Overridden to payment." })));
+        // Board ruling B5/B25: the board resets a blocked review but never clears it.
+        expect(screen.queryByRole("button", { name: /Override/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     });
 
     it("clears a still-open review's approvals, behind a confirmation", async () => {
@@ -201,7 +198,7 @@ describe("AdminMembershipPage", () => {
         await waitFor(() =>
             expect(fetchMock).toHaveBeenCalledWith(
                 "/api/membership-ops/applications/review-override",
-                expect.objectContaining({ body: JSON.stringify({ processId: 2, action: "reset", subjectPersonIds: [] }) }),
+                expect.objectContaining({ body: JSON.stringify({ processId: 2, action: "reset" }) }),
             ),
         );
     });

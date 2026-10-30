@@ -154,6 +154,25 @@ describe('Receipt mail queue is listed to FINANCE only', () => {
     expect(entry.visible({ isFinance: true }, counts)).toBe(true);
     expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
     expect(entry.visible({ isSysadmin: true }, counts)).toBe(false);
-    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, counts)).toBe(true);
+    expect(entryFor('/finance/review').visible({ isBoardMember: true }, counts)).toBe(true);
+  });
+});
+
+describe('Directory rows agree with the gates of the pages they open', () => {
+  const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
+
+  it('lists the certification grid to the roles its API admits, and not to a plain member or FINANCE', () => {
+    const grid = entryFor('/attendance/certifications');
+    expect(grid.visible({ isKeyholder: true }, null)).toBe(true);
+    expect(grid.visible({ isBoardMember: true }, null)).toBe(true);
+    expect(grid.visible({ isSysadmin: true }, null)).toBe(true);
+    expect(grid.visible({}, null)).toBe(false);
+    expect(grid.visible({ isFinance: true, isInventoryManager: true }, null)).toBe(false);
+  });
+
+  it('lists Safety Trusted Adults to the board and not to a keyholder', () => {
+    const trusted = entryFor('/safety/trusted-adults');
+    expect(trusted.visible({ isBoardMember: true }, null)).toBe(true);
+    expect(trusted.visible({ isKeyholder: true }, null)).toBe(false);
   });
 });

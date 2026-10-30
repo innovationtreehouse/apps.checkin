@@ -64,6 +64,7 @@ describe('Cron Nightly API Integration Tests', () => {
         // Setup Program & Event for emails
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: 'Nightly Test Program',
@@ -168,7 +169,7 @@ describe('Cron Nightly API Integration Tests', () => {
             expect(sendEmail).toHaveBeenCalledWith(
                 'board-nightly@example.com',
                 `Action Required: Confirm Attendance for Test Event - Nightly`,
-                expect.stringContaining('Review & Confirm Attendance')
+                expect.stringContaining('Review &amp; Confirm Attendance')
             );
         });
 

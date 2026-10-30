@@ -7,6 +7,7 @@ import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, grantableRenewalWhere, handledThi
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { personActor, systemActor } from "@/lib/auditActor";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -26,11 +27,6 @@ import { personActor, systemActor } from "@/lib/auditActor";
  */
 
 const RENEWAL_LEAD_MONTHS = 2;
-
-// The in-flight-renewal status list now lives ONCE in lib/membership/lifecycle
-// (`IN_FLIGHT_RENEWAL`, fix #2) — the single source the
-// `membership_one_inflight_renewal` partial index is verified against (index-parity
-// integration test), replacing the hand-sync comment that used to live here.
 
 /**
  * A household application that stops another from starting: one in flight (one
@@ -85,7 +81,7 @@ export function bgValidUntilBoundary(
     lastBackgroundCheck: Date | null,
     settings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number },
 ): Date | null {
-    if (!lastBackgroundCheck || settings.bgRecheckMonths <= 0 || !settings.orgMembershipYearBoundary) {
+    if (!lastBackgroundCheck || !isRecheckPolicySet(settings.bgRecheckMonths) || !settings.orgMembershipYearBoundary) {
         return null;
     }
     const rawExpiry = monthsAfter(lastBackgroundCheck, settings.bgRecheckMonths);
@@ -141,6 +137,11 @@ export function membershipYearCycle(
     const cycleEnd = new Date(Date.UTC(endYear, boundary.getUTCMonth(), boundary.getUTCDate()));
     const cycleStart = new Date(Date.UTC(endYear - 1, boundary.getUTCMonth(), boundary.getUTCDate()));
     return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
+}
+
+/** The live year at `now`, named by the year its opening boundary is in; null with no boundary set. */
+export function liveMembershipYear(configuredBoundary: Date | null | undefined, now: Date): number | null {
+    return configuredBoundary ? membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear() : null;
 }
 
 /**
@@ -201,7 +202,7 @@ export async function renewalSeasonWindow(now: Date): Promise<{ boundary: Date; 
 /**
  * Open renewal processes for every ACTIVE membership, inside the lead window only,
  * unless the household was already handled this cycle. Backs the board's
- * "Open renewals" button (and the unscheduled cron endpoint). Returns a summary.
+ * "Open renewals" button, the only way renewals start. Returns a summary.
  */
 export async function runRenewalSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -276,7 +277,7 @@ export async function beginRenewal(processId: number, actorId: number) {
     // A still-valid background check ⇒ stamp bgClearedAt now: the external card
     // shows "no new background check needed" and the signature alone opens
     // payment. Reviewers are pinged by the advance, once consent is recorded.
-    const clearNow = await householdBgIsFresh(membership.householdId, boundary, settings?.bgRecheckMonths ?? 0);
+    const clearNow = await householdBgIsFresh(membership.householdId, boundary, settings?.bgRecheckMonths);
 
     const refusal = await prisma.$transaction(async (tx) => {
         const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
@@ -390,15 +391,21 @@ export async function beginRenewalForUser(userId: number) {
     return beginRenewal(process.id, userId);
 }
 
+/** The earliest check date still valid at the boundary, or null under an unset policy. */
+export function bgFreshThreshold(boundary: Date | null, recheckMonths: number | null | undefined): Date | null {
+    if (!isRecheckPolicySet(recheckMonths) || !boundary) return null;
+    return monthsBefore(boundary, recheckMonths);
+}
+
 /**
  * True if EITHER guardian (household lead) has a background check still valid at the boundary,
  * i.e. lastBackgroundCheck >= boundary - recheckMonths. Unset policy — recheckMonths 0 or a
  * null boundary (no membership year configured) — means nothing counts as fresh; renewals
  * re-run review rather than measuring freshness against an invented boundary.
  */
-export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number): Promise<boolean> {
-    if (recheckMonths <= 0 || !boundary) return false;
-    const threshold = monthsBefore(boundary, recheckMonths);
+export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number | null | undefined): Promise<boolean> {
+    const threshold = bgFreshThreshold(boundary, recheckMonths);
+    if (!threshold) return false;
     const fresh = await prisma.person.findFirst({
         where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold }, ...LIVE_PERSON },
         select: { id: true },

@@ -1,6 +1,7 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
 import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { isIsoDate } from "./missingDetails";
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
@@ -13,7 +14,19 @@ const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
 /** An ISO 4217 code; money formatting throws on anything else. */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
-const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
+/** The most a money column holds: its integer cents limit, in dollars. */
+const MAX_DOLLARS = (2 ** 31 - 1) / 100;
+const dollarString = z.string().refine(
+  (v) => {
+    const dollars = parseFloat(v);
+    return Number.isFinite(dollars) && dollars >= 0 && dollars <= MAX_DOLLARS;
+  },
+  { message: "must be a number from 0 to 21,474,836.47" },
+);
+/** Text a receipt cannot be checked without; blank or spaces-only is refused. */
+const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
+/** A calendar date as the date picker sends it. */
+const isoDate = requiredText("The date", 50).refine(isIsoDate, { message: "The date must be a real date written YYYY-MM-DD" });
 
 export const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
@@ -26,8 +39,8 @@ export const LineItemSchema = z.object({
 
 /** Details typed by the uploader. Present ⇒ manual upload; absent ⇒ OCR reads the file. */
 export const ManualDetailsSchema = z.object({
-  retailer: z.string().min(1).max(500),
-  receiptDate: z.string().min(1).max(50),
+  retailer: requiredText("The retailer", 500),
+  receiptDate: isoDate,
   receiptTotal: dollarString,
   currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
   shipping: dollarString.optional(),
@@ -63,11 +76,26 @@ export const UploadInputSchema = z
   .object({
     details: ManualDetailsSchema.optional(),
     needsReimbursement: z.boolean().default(false),
+    // The person reimbursed; unset means the uploader.
+    reimburseePersonId: z.number().int().positive().optional(),
+    // A non-member adult to add and reimburse, declared an adult by the uploader.
+    newReimbursee: z.object({ name: z.string().trim().min(1).max(200), isAdult: z.literal(true) }).strict().optional(),
     isInKind: z.boolean().default(false),
     donor: DonorInputSchema.optional(),
   })
   .strict()
-  .superRefine(inKindRules);
+  .superRefine(inKindRules)
+  .superRefine((input, ctx) => {
+    if (input.reimburseePersonId !== undefined && !input.needsReimbursement) {
+      ctx.addIssue({ code: "custom", path: ["reimburseePersonId"], message: "A reimbursee needs needsReimbursement" });
+    }
+    if (input.newReimbursee !== undefined && !input.needsReimbursement) {
+      ctx.addIssue({ code: "custom", path: ["newReimbursee"], message: "A reimbursee needs needsReimbursement" });
+    }
+    if (input.newReimbursee !== undefined && input.reimburseePersonId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["newReimbursee"], message: "Name one reimbursee: someone on file or a new person, not both" });
+    }
+  });
 export type UploadInput = z.input<typeof UploadInputSchema>;
 
 export const InKindInputSchema = z
@@ -86,8 +114,8 @@ export const AddLineItemSchema = z.object({
 
 export const EditReceiptSchema = z
   .object({
-    retailer: z.string().min(1).max(500).optional(),
-    receiptDate: z.string().min(1).max(50).optional(),
+    retailer: requiredText("The retailer", 500).optional(),
+    receiptDate: isoDate.optional(),
     currency: z.string().min(1).max(10).optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),
@@ -137,15 +165,15 @@ export const ImportReceiptSchema = z
     importSourceId: z.string().min(1).max(200),
     qbTxnId: z.string().min(1).max(100),
     qbEntity: z.string().max(50).nullable().optional(),
-    retailer: z.string().min(1).max(500),
+    retailer: requiredText("The retailer", 500),
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
-    receiptDate: z.string().max(50).nullable().optional(),
+    receiptDate: isoDate,
     currency: z.string().max(10).default("USD"),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,
-    receiptTotalCents: cents,
+    receiptTotalCents: z.number({ error: "The total is required" }).int().nonnegative(),
     mimeType: z.string().max(100),
     fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),

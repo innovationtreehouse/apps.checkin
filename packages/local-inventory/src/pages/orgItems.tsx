@@ -1,14 +1,14 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Badge, Button, Group, Modal, NumberInput, Pagination, Select, Table, Tabs, Text, TextInput, Title, Tooltip,
+  ActionIcon, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCanSeeReceiving, useCatalogNames, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import { LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -21,15 +21,6 @@ interface OrgItemRow {
   location: LocationRef | null;
   backstockLocation: LocationRef | null;
 }
-interface LogRow {
-  id: number;
-  changedAt: string;
-  changeType: string;
-  gtin13: string;
-  fieldChanged: string;
-  valueBefore: string | null;
-  valueAfter: string | null;
-}
 interface ItemForm {
   gtin13: string;
   /** The on-hand count when the form was loaded; a changed count is checked against it. */
@@ -39,13 +30,6 @@ interface ItemForm {
   locationId: string | null;
   backstockLocationId: string | null;
 }
-
-const FIELD_LABELS: Record<string, string> = {
-  existingQuantity: "Existing Quantity",
-  desiredQuantity: "Desired Quantity",
-  locationId: "Location",
-  backstockLocationId: "Backstock Location",
-};
 
 const toId = (v: string | null) => (v ? Number(v) : null);
 
@@ -134,7 +118,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
       setForm(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
       if (!isNew) await reloadForm(form.gtin13);
     } finally {
       setSaving(false);
@@ -157,7 +141,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
       setRemoveTarget(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }
@@ -263,57 +247,22 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   );
 }
 
-function InventoryLog() {
-  const [page, setPage] = useState(1);
-  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}`);
-  const count = useLoad<{ total: number }>("/inventory-log/count");
-  if (rows.error) return <LoadError what="the inventory log" message={rows.error} onRetry={rows.reload} />;
-  if (rows.data === null) return <Text c="dimmed">Loading…</Text>;
-  if (rows.data.length === 0) return <Text c="dimmed">No log entries yet.</Text>;
+/** /inventory/org-items — on-hand stock by location. */
+export default function OrgItemsPage() {
   return (
     <>
-      <Table striped highlightOnHover withTableBorder>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>When</Table.Th><Table.Th>Type</Table.Th><Table.Th>Part No.</Table.Th>
-            <Table.Th>Field</Table.Th><Table.Th>Before</Table.Th><Table.Th>After</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {rows.data.map((entry) => (
-            <Table.Tr key={entry.id}>
-              <Table.Td>{new Date(entry.changedAt).toLocaleString()}</Table.Td>
-              <Table.Td><Badge color={entry.changeType === "manual" ? "gray" : "blue"} variant="light">{entry.changeType}</Badge></Table.Td>
-              <Table.Td ff="monospace">{formatGtinDisplay(entry.gtin13)}</Table.Td>
-              <Table.Td>{FIELD_LABELS[entry.fieldChanged] ?? entry.fieldChanged}</Table.Td>
-              <Table.Td>{entry.valueBefore ?? "—"}</Table.Td>
-              <Table.Td>{entry.valueAfter ?? "—"}</Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-      <Pagination mt="md" value={page} onChange={setPage} total={lastPage(count.data?.total ?? 0)} />
+      <Title order={3} mb="md">Organization Inventory</Title>
+      <ItemsTable unlocated={false} />
     </>
   );
 }
 
-/** /inventory/org-items — on-hand stock by location, items without a location, and the change log. */
-export default function OrgItemsPage() {
-  const canManage = useCanManage();
-  const canSeeLog = useCanSeeReceiving();
+/** /inventory/unlocated — items with no location set. */
+export function UnlocatedItemsPage() {
   return (
     <>
-      <Title order={3} mb="md">Organization Inventory</Title>
-      <Tabs defaultValue="all" keepMounted={false}>
-        <Tabs.List mb="md">
-          <Tabs.Tab value="all">All Inventory</Tabs.Tab>
-          {canManage && <Tabs.Tab value="attention" color="yellow">Needs a location</Tabs.Tab>}
-          {canSeeLog && <Tabs.Tab value="log">Inventory Log</Tabs.Tab>}
-        </Tabs.List>
-        <Tabs.Panel value="all"><ItemsTable unlocated={false} /></Tabs.Panel>
-        {canManage && <Tabs.Panel value="attention"><ItemsTable unlocated /></Tabs.Panel>}
-        {canSeeLog && <Tabs.Panel value="log"><InventoryLog /></Tabs.Panel>}
-      </Tabs>
+      <Title order={3} mb="md">Needs a location</Title>
+      <ItemsTable unlocated />
     </>
   );
 }

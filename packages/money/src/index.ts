@@ -47,6 +47,11 @@ export function centsToDollars(cents: number): number {
   return cents / 100;
 }
 
+/** Integer cents as a plain decimal string for a wire format that wants "12.50"; never for display. */
+export function centsToDecimalString(cents: number): string {
+  return centsToDollars(cents).toFixed(2);
+}
+
 /** Sum integer-cent amounts. Inputs must already be integer cents. */
 export function sumCents(...amounts: number[]): number {
   return amounts.reduce((acc, n) => acc + n, 0);
@@ -65,7 +70,8 @@ export function formatCents(cents: number | null | undefined, currency = "USD"):
     currency: currency || "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(cents / 100);
+    // Adding 0 turns -0 into 0, which Intl would print as "-$0.00".
+  }).format(cents / 100 + 0);
 }
 
 /** @deprecated Use `formatCents`. Retained as an identical alias for existing call sites. */

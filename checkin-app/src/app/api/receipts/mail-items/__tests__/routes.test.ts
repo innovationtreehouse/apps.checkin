@@ -10,6 +10,7 @@ import { POST as assign } from "../[id]/assign/route";
 import { POST as discard } from "../[id]/discard/route";
 import { GET as file } from "../[id]/file/route";
 
+jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
   mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn() },
@@ -48,6 +49,8 @@ const ITEM = {
   receivedAt: "2026-10-15T00:00:00.000Z",
   senderAddress: "stranger@elsewhere.test",
   status: "held",
+  holdReason: "unverified_sender",
+  dmarcVerdict: "fail",
   mimeType: "application/pdf",
   receiptId: null,
 };

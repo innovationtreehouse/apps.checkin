@@ -1,9 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import { audit, type Actor } from "../repositories/receipt";
 import { ServiceError } from "@checkin/component-kit";
 import type { ReceiptLimits } from "./limits";
+import { deleteStoredFiles, receiptFileKey, sha256Hex } from "./fileStorage";
+import { fileStore, storesNewFilesInBucket } from "../runtime";
 
 /** The 429 for the org-wide daily upload limit, which refuses every uploader alike. */
 export class OrgUploadLimitError extends ServiceError {
@@ -44,7 +46,7 @@ export interface NewReceipt {
   mimeType: string;
   core?: Omit<
     Prisma.ReceiptUncheckedCreateInput,
-    "id" | "orgId" | "uploadedByUserId" | "fileBlob" | "fileHash" | "mimeType" | "details" | "lineItems" | "auditLogs"
+    "id" | "orgId" | "uploadedByUserId" | "fileBlob" | "fileKey" | "fileSize" | "fileHash" | "mimeType" | "details" | "lineItems" | "auditLogs"
   >;
   detail: Omit<Prisma.ReceiptDetailUncheckedCreateWithoutReceiptInput, "orgId" | "duplicateSuspectReceiptId">;
   lines: NewLine[];
@@ -65,32 +67,77 @@ export interface NewReceipt {
  */
 export async function insertReceipt(r: NewReceipt): Promise<string> {
   const id = randomUUID();
-  const fileHash = createHash("sha256").update(r.file).digest("hex");
-  await db.$transaction(async (tx) => {
-    if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
-    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
-    const suspect = await tx.receipt.findFirst({
-      where: { orgId: r.orgId, fileHash },
-      orderBy: [{ uploadedAt: "asc" }, { id: "asc" }],
-      select: { id: true },
-    });
-    await tx.receipt.create({
-      data: {
-        ...r.core,
-        id,
-        orgId: r.orgId,
-        uploadedByUserId: r.actor.id,
-        fileBlob: new Uint8Array(r.file),
-        fileHash,
-        mimeType: r.mimeType,
-        details: { create: { ...r.detail, orgId: r.orgId, duplicateSuspectReceiptId: suspect?.id ?? null } },
-        lineItems: { create: toLineRows(r.lines) },
-      },
-    });
-    await audit(tx, id, r.actor, { action: r.auditAction });
-    await r.afterInsert?.(tx, id);
-  });
+  // Refuses before storing anything in the common case; the check inside the transaction is the one that holds.
+  if (r.limits && storesNewFilesInBucket()) await checkUploadLimits(db, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
+  const [fileKey] = await putFiles([id], [r]);
+  await removingFilesOnFailure([fileKey], () => db.$transaction((tx) => insertInto(tx, id, fileKey, r)));
   return id;
+}
+
+/** Insert several receipts in one transaction: every one of them, or none if any insert fails. */
+export async function insertReceiptsTogether(rs: NewReceipt[], timeoutMs: number): Promise<string[]> {
+  const ids = rs.map(() => randomUUID());
+  const keys = await putFiles(ids, rs);
+  await removingFilesOnFailure(keys, () =>
+    db.$transaction(
+      async (tx) => {
+        for (const [i, r] of rs.entries()) await insertInto(tx, ids[i], keys[i], r);
+      },
+      { timeout: timeoutMs },
+    ),
+  );
+  return ids;
+}
+
+/** Stores each file before its row exists, under its key, or nulls with the flag off. A failed put takes back the ones before it. */
+async function putFiles(ids: string[], rs: NewReceipt[]): Promise<(string | null)[]> {
+  if (!storesNewFilesInBucket()) return rs.map(() => null);
+  const keys: string[] = [];
+  await removingFilesOnFailure(keys, async () => {
+    for (const [i, r] of rs.entries()) {
+      const key = receiptFileKey(ids[i]);
+      await fileStore().put(key, r.file, sha256Hex(r.file));
+      keys.push(key);
+    }
+  });
+  return keys;
+}
+
+async function removingFilesOnFailure<T>(keys: (string | null)[], work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    await deleteStoredFiles(keys);
+    throw err;
+  }
+}
+
+async function insertInto(tx: Prisma.TransactionClient, id: string, fileKey: string | null, r: NewReceipt): Promise<void> {
+  const fileHash = sha256Hex(r.file);
+  if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
+  await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
+  const suspect = await tx.receipt.findFirst({
+    where: { orgId: r.orgId, fileHash },
+    orderBy: [{ uploadedAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  await tx.receipt.create({
+    data: {
+      ...r.core,
+      id,
+      orgId: r.orgId,
+      uploadedByUserId: r.actor.id,
+      fileBlob: fileKey ? null : new Uint8Array(r.file),
+      fileKey,
+      fileSize: r.file.length,
+      fileHash,
+      mimeType: r.mimeType,
+      details: { create: { ...r.detail, orgId: r.orgId, duplicateSuspectReceiptId: suspect?.id ?? null } },
+      lineItems: { create: toLineRows(r.lines) },
+    },
+  });
+  await audit(tx, id, r.actor, { action: r.auditAction });
+  await r.afterInsert?.(tx, id);
 }
 
 /**
@@ -105,15 +152,27 @@ async function enforceUploadLimits(
   limits: ReceiptLimits,
   mailLimit?: number,
 ): Promise<void> {
-  const mailed = mailLimit !== undefined;
   await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${orgId}:upload-limits`}, 0))`;
-  const [used] = await tx.$queryRaw<{ mineCount: number; mineBytes: number; allBytes: number }[]>`
+  await checkUploadLimits(tx, orgId, personId, bytes, limits, mailLimit);
+}
+
+/** Rows from before file_size was recorded count their bytes in file_blob. */
+async function checkUploadLimits(
+  client: Prisma.TransactionClient | typeof db,
+  orgId: string,
+  personId: number,
+  bytes: number,
+  limits: ReceiptLimits,
+  mailLimit?: number,
+): Promise<void> {
+  const mailed = mailLimit !== undefined;
+  const [used] = await client.$queryRaw<{ mineCount: number; mineBytes: number; allBytes: number }[]>`
     SELECT count(*) FILTER (
              WHERE uploaded_by_user_id = ${personId}
                AND (NOT ${mailed} OR (intake_source = 'email' AND NOT EXISTS (
                  SELECT 1 FROM receipt_audit_log a WHERE a.receipt_id = receipts.id AND a.action = 'mail_assigned'))))::int AS "mineCount",
-           coalesce(sum(octet_length(file_blob)) FILTER (WHERE uploaded_by_user_id = ${personId}), 0)::float8 AS "mineBytes",
-           coalesce(sum(octet_length(file_blob)), 0)::float8 AS "allBytes"
+           coalesce(sum(coalesce(file_size, octet_length(file_blob))) FILTER (WHERE uploaded_by_user_id = ${personId}), 0)::float8 AS "mineBytes",
+           coalesce(sum(coalesce(file_size, octet_length(file_blob))), 0)::float8 AS "allBytes"
     FROM receipts
     WHERE org_id = ${orgId} AND uploaded_at > now() - interval '24 hours'`;
   if (used.mineCount + 1 > (mailLimit ?? limits.uploadsPerPersonPerDay)) {

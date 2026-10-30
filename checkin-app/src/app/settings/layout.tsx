@@ -1,29 +1,31 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect } from "react";
 import { Center, Loader, Stack, Text } from "@mantine/core";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { SETTINGS } from "@/lib/nav/sections/settings";
+import { settingsRolesFor } from "@/lib/nav/sections/settings";
+import { hasAnyRole } from "@/lib/nav/gates";
 
-// Settings is isSysadmin/board/operations. Gate here since these pages were moved out of
-// /admin: the membership settings page self-gates nothing and relied on the admin layout.
-// Operations only actually has a real destination today (settings/outreach) — every other
-// settings page carries its own stricter useRequireRole(['isSysadmin','isBoardMember']) that
-// bounces an operations session straight back out, the same layered pattern that already
-// keeps board members off the sysadmin-only localization tab.
+// Settings is isSysadmin/board/operations, Finance is FINANCE/board, and the bare /settings
+// index admits both so it can redirect each to their own tab. The gate lives here
+// because the membership and finance settings pages self-gate nothing. Operations' only real
+// destination is settings/outreach — every other settings page carries its own stricter
+// useRequireRole(['isSysadmin','isBoardMember']) that bounces an operations session back out,
+// the same layered pattern that keeps board members off the sysadmin-only localization tab.
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const allowed = hasAnyRole(session?.user, settingsRolesFor(usePathname() ?? ""));
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/");
     } else if (status === "authenticated") {
-      if (!SETTINGS.visible(session?.user, null)) router.push("/");
+      if (!allowed) router.push("/");
     }
-  }, [status, session, router]);
+  }, [status, allowed, router]);
 
   if (status === "loading") {
     return (
@@ -36,7 +38,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     );
   }
 
-  if (!session || !SETTINGS.visible(session.user, null)) {
+  if (!session || !allowed) {
     return null;
   }
 

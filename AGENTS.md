@@ -54,8 +54,9 @@ pointing at, not the fact that it is pointing.
 
 Two runners, split by workspace type — no file ever runs under both (issue #228):
 
-- **`checkin-app/` → Jest** (jsdom + RTL + ts-jest + next). The three classes
-  below are all Jest; run their commands from `checkin-app/`.
+- **`checkin-app/` → Jest** (jsdom + RTL + ts-jest + next). The first three
+  classes below are Jest; run their commands from `checkin-app/`. The fourth,
+  browser e2e tests, runs on Playwright under its own config.
 - **`packages/*` and `*-function` → Vitest.** Each such workspace owns its own
   `vitest.config.ts` + `vitest` devDep — no shared root config. Real-Postgres
   integration tiers boot a throwaway container via `@checkin/pg-test-harness`
@@ -83,7 +84,7 @@ changed file maps to tests: `docs/ops/per-library-testing.md`.
 
 ## Test classes
 
-There are **three** classes of tests. Run all commands from `checkin-app/`.
+There are **four** classes of tests. Run all commands from `checkin-app/`.
 
 ### 1. Unit tests — `*.test.ts(x)`
 In-process, no database. `@/lib/prisma`, `next-auth`, and `fetch` are mocked in
@@ -130,10 +131,12 @@ routes, auth, and DB together.
   inside that container.
 
 **Gotchas (why it's built this way):**
-- Use the **dev** server, never the production image: persona-mint login is gated
-  on `NODE_ENV != production`, and the prod `Dockerfile` pins `NODE_ENV=production`.
-  So flow tests would have no way to authenticate against the prod image.
-- The server must run with `CHECKIN_ENV=local` (enables persona-mint) and a
+- Flow tests run against the **dev** server (`next dev` in
+  `deploy/docker-compose.flow.yml`). Persona-mint login is gated on `CHECKIN_ENV`
+  alone (`config.isDevInstance()`), never `NODE_ENV`, so the production image run
+  with `CHECKIN_ENV=local` allows it too.
+- The server must run with `CHECKIN_ENV=local` (enables persona-mint for any
+  caller; under `dev` only a verified org session may mint) and a
   **freshly seeded** DB (`prisma db seed`) — flow tests assume the seed's baseline
   personas/households (e.g. `parent.family2@example.com` is a non-member household
   lead; `boardmember@example.com` is sysadmin+board).
@@ -164,6 +167,39 @@ keep it to real HTTP calls + response assertions. Prefer routes that don't need
 external integrations (Zoho/Shopify/Averity); use the board/admin manual-action
 routes to advance flows those would otherwise gate. Real journeys are catalogued
 in `docs/backlog/CUJS.md` — start there when choosing what to cover.
+
+### 4. Browser e2e tests — `e2e/*.e2e.ts`
+**User journeys driven in a real browser (Playwright) against the same running
+dev server flow tests use.** They catch what HTTP cannot see: a page that
+crashes after its APIs answer 200, an error chip, a tab that leads to a denial.
+
+- **Config:** `playwright.config.ts` (its own runner; Jest never matches
+  `*.e2e.ts`). `e2e/tsconfig.json` maps `@/` and the libraries' `nav` modules
+  to source.
+- **Run locally, no setup:** `npm run test:e2e:standalone` — brings up
+  `deploy/docker-compose.flow.yml`, installs Chromium in the app container,
+  runs the suite there, tears down. Pass arguments with `E2E_ARGS`. It is a
+  Docker-backed tier: ask first, as for flow tests.
+- **Against a server you already have up:** `npm run test:e2e` (targets
+  `FLOW_BASE_URL`, default `:4000`; needs `npx playwright install chromium`).
+- **Auth:** `e2e/support/session.ts` → `signIn(browser, email)` signs in with the
+  flow-test `loginAs` (persona-mint) and loads its cookies into a new browser
+  context. Same gotchas as flow tests: dev server, `CHECKIN_ENV=local`, fresh seed.
+- **Errors:** `e2e/support/pageErrors.ts` → `watchPage(page)` records uncaught
+  page errors, red error chips and alerts, 5xx/401/403 API calls, and bounces to
+  sign-in or access-denied. Assert its `problems()` are empty after each step.
+- **Nav sweep:** `e2e/nav-pages.e2e.ts` opens every page each seeded persona's
+  nav shows. The page list comes from `test-support/navPages.ts`, which reads
+  the nav section descriptors, so a new tab is covered with no list to update.
+- **In CI: nightly, not on PRs.** `.github/workflows/e2e-tests.yml` runs on the
+  flow-test stack once a night on `main`, and skips when `main` hasn't moved since
+  the last green nightly run. It can also be run by hand on any branch (Actions →
+  Browser e2e tests → Run workflow). It uploads the report and traces as the
+  `playwright-report` artifact. A failing nightly run opens or updates one issue,
+  "Nightly browser tests failing", listing the failed tests; the next green run
+  closes it.
+- A spec that fails because of a real app bug is marked `test.fail()` with the
+  bug named, until the fix lands.
 
 ## Issue workflow (org project 1)
 
@@ -293,9 +329,10 @@ Read these before changing the relevant area — start here, then follow links.
 - `GEMINI.md`, `.jules/sentinel.md` — instructions for other agents (Gemini, Jules); keep cross-consistent with this file.
 - `TRADEMARKS.md` — naming/brand constraints.
 
-**Design & product** (`docs/designs/`)
+**Operations** (`docs/ops/`)
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
-- `PRODUCTION_PLAN.md` — the production launch runbook.
+- `docs/ops/production-runbook.md` — how to deploy to production and roll back.
+- `docs/ops/shopify-dev-store.md` — the Shopify dev store and its webhooks in dev and local.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).

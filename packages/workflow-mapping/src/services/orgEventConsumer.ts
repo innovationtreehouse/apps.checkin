@@ -43,9 +43,9 @@ async function advanceCursor(eventId: number): Promise<void> {
 }
 
 /**
- * Point lines still provisional on this GTIN at the catalog's real item, on editable receipts
- * only, so a receipt with an applied leg keeps the mapping its retry resends. A line the manager
- * has since linked or marked not-inventory keeps that decision.
+ * Point lines still provisional on this GTIN at the catalog's real item, on receipts still in
+ * review only: once a receipt leaves review its lines keep the mapping any apply or retry sends.
+ * A line the manager has since linked or marked not-inventory keeps that decision.
  */
 async function remapProvisional(
   orgId: string,

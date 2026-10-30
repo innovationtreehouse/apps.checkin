@@ -2,11 +2,10 @@
  * @jest-environment node
  */
 /**
- * Integration tests for renewal: the cron sweep, beginRenewal (3-yr BG rule),
+ * Integration tests for renewal: the renewal sweep, beginRenewal (3-yr BG rule),
  * and the renewal background-review path reusing the 2-of-N flow.
  */
 
-import { GET as CRON } from '@/app/api/cron/membership-renewals/route';
 import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/renewal';
 import { attest } from '@/lib/membership/review';
 import { markBgConsent, markContractSigned } from '@/lib/membership/external';
@@ -16,16 +15,8 @@ import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
 const TAG = 'renewal-test';
-const CRON_SECRET = 'cron-test-secret';
-
-function cronReq(token: string | null) {
-    return new Request('http://localhost:4000/api/cron/membership-renewals', {
-        headers: token ? { authorization: `Bearer ${token}` } : {},
-    });
-}
 
 describe('Membership renewal', () => {
-    const prevSecret = process.env.CRON_SECRET;
     let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1: number, rev2: number;
     // The sweep is global; track where we started so afterAll can remove every
@@ -66,7 +57,6 @@ describe('Membership renewal', () => {
     }
 
     beforeAll(async () => {
-        process.env.CRON_SECRET = CRON_SECRET;
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
         restoreBoardSettings = await snapshotBoardSettings();
@@ -82,13 +72,8 @@ describe('Membership renewal', () => {
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
         await restoreBoardSettings();
-        if (prevSecret === undefined) delete process.env.CRON_SECRET;
-        else process.env.CRON_SECRET = prevSecret;
         await prisma.$disconnect();
     });
-
-    // Cron auth negatives are covered centrally in src/lib/__tests__/cronAuth.test.ts;
-    // the valid-bearer smoke ('cron runs with a valid bearer') stays below.
 
     it('nextBoundary rolls to next year when the date has passed', () => {
         const boundary = new Date(Date.UTC(2020, 7, 1)); // Aug 1
@@ -183,14 +168,5 @@ describe('Membership renewal', () => {
         await attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
         const final = await attest(rev2, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
         expect(final.status).toBe('PENDING_PAYMENT');
-    });
-
-    it('cron runs with a valid bearer', async () => {
-        // Far-future boundary so the real-time sweep is a no-op (no global pollution).
-        await setBoundary(new Date(Date.now() + 150 * 24 * 3600 * 1000));
-        const res = await CRON(cronReq(CRON_SECRET));
-        expect(res.status).toBe(200);
-        const data = await res.json();
-        expect(data.success).toBe(true);
     });
 });

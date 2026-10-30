@@ -21,7 +21,7 @@ export type ProgramDetail = {
   name: string;
   startAt: string;
   endAt: string;
-  appliesToYear: number | null;
+  appliesToYear: number;
   offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;

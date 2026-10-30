@@ -118,6 +118,13 @@ Things the app takes as true because they are handled outside it.
 - A refund removes only the people it refunds. A sibling on the same order
   stays enrolled.  [Decision]
 
+- A refund, chargeback or cancellation on a withdrawn person's order is raised
+  against their withdrawn enrollment, which stays. A refund that puts back a seat
+  the order identifies as theirs removes nobody and the seat stays on sale, unless
+  the withdrawal had already put that seat back, in which case the extra one is
+  taken off sale. A returned seat the order cannot tie to anyone is taken off sale
+  like any other, even when one of the order's people has withdrawn.  [Decision]
+
 - The store decides what a discount comes to; the app decides who may use one and
   until when. An order carrying the right item is correct whatever it totals.  [Decision — deliberate limit]
 
@@ -128,7 +135,16 @@ Things the app takes as true because they are handled outside it.
   or cancelled, is for that program (reserved seats count), and buys a seat for
   every person it would enroll. The same test applies however the payment
   arrives. An order that falls short enrolls nobody, because it cannot say who
-  it was for, and is raised for the board.  [Decision]
+  it was for, and is raised for the board. A seat an order paid for an earlier
+  enrollment is spent, whether that person is still enrolled or has since left,
+  so a later enrollment needs its own payment. An order seen again with every
+  seat spent enrolls nobody and is not raised, because it carries no new
+  money.  [Decision]
+
+- A program order edited at the store, after it enrolled people, to pay for
+  fewer seats than the people still enrolled on it is raised for the board. The
+  app removes nobody, because the order cannot say whose seat it dropped.
+  [Decision — *Principle: people decide about people*]
 
 - A paid program order with seats no waiting enrollment uses is raised for the
   board, which settles the money and the seat; the app changes neither. That
@@ -227,6 +243,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Only finance and the board can see who gave. Each look at a donor is
   recorded.  [Decision — *Principle: least privilege*]
 
+- Every view of finance records other than a person's own is recorded: who looked,
+  which records, through which screen, and when, never what the records said.
+  A person looking at their own receipts is not recorded, and neither is a
+  count. Only the Board reads the record.  [Decision — owner]
+
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 
 - Each gift goes to a program or fund, or is general Treehouse money. A gift
@@ -237,6 +258,9 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
+
+- Every finished giving-platform batch must match one deposit in the books.
+  Finance settles any the app can't match and records why. [Decision]
 
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of

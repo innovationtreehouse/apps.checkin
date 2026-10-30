@@ -8,7 +8,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconPlus } from "@tabler/icons-react";
 import { api, errorMessage, useCanManage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { CategoryRow, SubcategoryRow } from "./viewTypes";
 
 function ListItem({ label, isArchived, isSelected, canEdit, onSelect, onEdit, onArchive, onUnarchive }: {
@@ -84,7 +84,7 @@ export default function CategoriesClient() {
       closeCatModal();
       await loadCategories(showArchivedCats);
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
+      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setSaving(false); }
   }
 
@@ -103,7 +103,7 @@ export default function CategoriesClient() {
       closeSubModal();
       await loadSubcategories(selectedCat.id, showArchivedSubs);
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
+      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setSaving(false); }
   }
 
@@ -113,7 +113,7 @@ export default function CategoriesClient() {
       if (selectedCat?.id === id) setSelectedCat(null);
       await loadCategories(showArchivedCats);
       notifications.show({ message: "Category archived", color: "orange" });
-    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" }); }
+    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleCatUnarchive(id: number) {
@@ -122,7 +122,7 @@ export default function CategoriesClient() {
       if (selectedCat?.id === id) setSelectedCat(updated);
       await loadCategories(showArchivedCats);
       notifications.show({ message: "Category unarchived", color: "green" });
-    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" }); }
+    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleSubArchive(id: number) {
@@ -131,7 +131,7 @@ export default function CategoriesClient() {
       await api(`/subcategories/${id}/archive`, { method: "POST" });
       await loadSubcategories(selectedCat.id, showArchivedSubs);
       notifications.show({ message: "Subcategory archived", color: "orange" });
-    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" }); }
+    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleSubUnarchive(id: number) {
@@ -140,7 +140,7 @@ export default function CategoriesClient() {
       await api(`/subcategories/${id}/unarchive`, { method: "POST" });
       await loadSubcategories(selectedCat.id, showArchivedSubs);
       notifications.show({ message: "Subcategory unarchived", color: "green" });
-    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" }); }
+    } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleSelectCat(cat: CategoryRow | null) {

@@ -1,7 +1,7 @@
 "use client";
 import { Badge, Code, Table, Text, Title } from "@mantine/core";
 import { useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 type Status = "pending" | "processed" | "failed";
 interface EventRow {

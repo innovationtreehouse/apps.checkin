@@ -2,6 +2,7 @@
 import { beforeEach, expect, it } from "vitest";
 import { APPLY_FAILED_QUEUE_STATES } from "../../db/schema";
 import { receiptService } from "../../services/receiptService";
+import { receivingOutcomes } from "../../services/receivingOutcomes";
 import { describeDb } from "../helpers/db";
 import { OTHER_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt } from "../helpers/setup";
 
@@ -24,6 +25,17 @@ describeDb("queues", () => {
     expect(queue[0]).toMatchObject({ vendorName: "Acme Hardware", lineItemCount: 1, receiptTotalCents: 10 });
     expect(queue[0]).not.toHaveProperty("receiptJson");
     expect(await receiptService.list()).toHaveLength(4);
+  });
+
+  it("narrows the queue to the given receipts, within the caller's org", async () => {
+    const a = await makeReceipt({ state: "resolved" });
+    const b = await makeReceipt({ state: "pending_review" });
+    await makeReceipt({ state: "resolved" });
+    const foreign = await makeReceipt({ state: "resolved", orgId: OTHER_ORG_ID });
+
+    const rows = await receiptService.list(undefined, [a.receiptId, b.receiptId, foreign.receiptId]);
+    expect(rows.map((r) => [r.id, r.receiptId]).sort()).toEqual([[a.id, a.receiptId], [b.id, b.receiptId]].sort());
+    expect((await receiptService.list(["resolved"], [a.receiptId, b.receiptId])).map((r) => r.id)).toEqual([a.id]);
   });
 
   it("400 on an unknown state", async () => {
@@ -66,5 +78,26 @@ describeDb("audit log", () => {
     expect(rows.map((x) => x.eventType)).toEqual(["receipt_proceeded"]);
     expect(rows[0]).toMatchObject({ actorUserId: 7, fromState: "pending_review", toState: "applying" });
     expect(await receiptService.auditLog({ receiptId: r.id + 1000 })).toEqual([]);
+  });
+});
+
+describeDb("receivingOutcomes", () => {
+  it("reads each asked receipt's receiving state in the bound org, and leaves out the rest", async () => {
+    const waiting = await makeReceipt({ state: "pending_review" });
+    const applying = await makeReceipt({ state: "applying" });
+    const failed = await makeReceipt({ state: "apply_failed" });
+    const received = await makeReceipt({ state: "resolved" });
+    await makeReceipt({ state: "resolved" });
+    const foreign = await makeReceipt({ state: "resolved", orgId: OTHER_ORG_ID });
+
+    const ids = [waiting, applying, failed, received, foreign].map((r) => r.receiptId);
+    expect(await receivingOutcomes([...ids, "never-received"])).toEqual(
+      new Map([
+        [waiting.receiptId, "waiting"],
+        [applying.receiptId, "applying"],
+        [failed.receiptId, "stuck"],
+        [received.receiptId, "received"],
+      ]),
+    );
   });
 });

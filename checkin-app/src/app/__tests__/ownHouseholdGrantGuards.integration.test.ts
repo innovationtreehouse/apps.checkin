@@ -4,9 +4,8 @@
 /**
  * No actor may grant their own household a volunteer discount or a
  * background-check date, under any role: the household volunteer flag, the
- * volunteer-designation allowlist, and the participant lastBackgroundCheck edit.
- * A board edit that makes a lead's check stale needs an explicit confirmation,
- * and one that moves a check date later needs a Board member and a reason.
+ * volunteer-designation allowlist. The participant edit writes no
+ * background-check date at all.
  */
 
 import { PATCH as HOUSEHOLD_PATCH } from '@/app/api/membership-ops/households/[id]/route';
@@ -14,7 +13,6 @@ import { POST as DESIG_POST } from '@/app/api/settings/membership/volunteer-desi
 import { PUT as PARTICIPANT_PUT } from '@/app/api/membership-ops/participants/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
-import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -91,12 +89,6 @@ describe('own-household grant guards', () => {
             expect(res.status).toBe(200);
             expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(true);
         });
-
-        it('accepts the pre-rename isVolunteer key from a stale client', async () => {
-            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: false }) as never, params(otherHouseholdId));
-            expect(res.status).toBe(200);
-            expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(false);
-        });
     });
 
     describe('volunteer designation POST', () => {
@@ -136,104 +128,35 @@ describe('own-household grant guards', () => {
         });
     });
 
-    describe('participant lastBackgroundCheck PUT', () => {
-        it.each([
-            ['the actor', () => actorId],
-            ['a member of the actor’s household', () => spouseId],
-        ])('refuses setting the date for %s', async (_label, target) => {
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-01-15' }) as never, params(target()));
-            expect(res.status).toBe(403);
-            expect((await prisma.person.findUnique({ where: { id: target() } }))?.lastBackgroundCheck).toBeNull();
-            expect(await lastRefusal()).toEqual(expect.objectContaining({ reason: 'own_household', table: 'Person' }));
-        });
-
-        it('allows an own-household edit that resends the unchanged date', async () => {
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { phone: '', lastBackgroundCheck: '' }) as never, params(spouseId));
-            expect(res.status).toBe(200);
-        });
-
-        it('sets the date for someone outside the household and audits old and new values', async () => {
-            const first = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-01-15', bgCheckReason: 'Vendor report seen' }) as never, params(outsiderId));
-            expect(first.status).toBe(200);
-            const second = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-03-01', bgCheckReason: 'Re-check on file' }) as never, params(outsiderId));
-            expect(second.status).toBe(200);
-
-            const log = await prisma.auditLog.findFirst({
-                where: { actorId, tableName: 'Person', affectedEntityId: outsiderId },
-                orderBy: { id: 'desc' },
-            });
-            expect((log?.oldData as { lastBackgroundCheck: string }).lastBackgroundCheck).toBe('2026-01-15T00:00:00.000Z');
-            expect(log?.newData).toEqual(expect.objectContaining({ lastBackgroundCheck: '2026-03-01T00:00:00.000Z', bgAssertedReason: 'Re-check on file' }));
-        });
-
-        it('refuses a later date without a reason and leaves the date alone', async () => {
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-04-01', bgCheckReason: '  ' }) as never, params(outsiderId));
-            expect(res.status).toBe(400);
-            expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-03-01T00:00:00.000Z');
-        });
-
-        describe('as a sysadmin who is not on the Board', () => {
-            beforeEach(() => {
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: actorId, isSysadmin: true } });
-            });
-
-            it('refuses a later date even with a reason', async () => {
-                const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-04-01', bgCheckReason: 'Trust me' }) as never, params(outsiderId));
-                expect(res.status).toBe(403);
-                expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-03-01T00:00:00.000Z');
-            });
-
-            it('moves the date earlier without a reason', async () => {
-                const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-02-20' }) as never, params(outsiderId));
-                expect(res.status).toBe(200);
-                expect((await prisma.person.findUnique({ where: { id: outsiderId } }))?.lastBackgroundCheck?.toISOString()).toBe('2026-02-20T00:00:00.000Z');
-            });
-        });
-    });
-
-    describe('stale lead check confirmation', () => {
-        let restoreBoardSettings: () => Promise<void> = async () => {};
-        let leadId: number;
-
+    // Board ruling B5/B25, 2026-10-27: a background-check date comes only from a clearance.
+    describe('participant PUT never writes the background-check date', () => {
+        const DATE = new Date('2026-03-01T00:00:00.000Z');
         beforeAll(async () => {
-            restoreBoardSettings = await snapshotBoardSettings();
-            await prisma.boardSettings.upsert({
-                where: { id: 1 },
-                update: { orgMembershipYearBoundary: new Date('2026-08-01'), bgRecheckMonths: 24 },
-                create: { id: 1, orgMembershipYearBoundary: new Date('2026-08-01'), bgRecheckMonths: 24 },
-            });
-            leadId = (await prisma.person.create({
-                data: { email: `lead-${TAG}@example.com`, name: 'Lead', isHouseholdLead: true, householdId: otherHouseholdId, lastBackgroundCheck: new Date() },
-            })).id;
+            await prisma.person.update({ where: { id: outsiderId }, data: { lastBackgroundCheck: DATE } });
+        });
+        const dateOf = async (id: number) => (await prisma.person.findUnique({ where: { id } }))?.lastBackgroundCheck ?? null;
+
+        it('treats a date-only body as nothing to update', async () => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-06-01', bgCheckReason: 'Vendor report seen' }) as never, params(outsiderId));
+            expect(res.status).toBe(400);
+            expect(await dateOf(outsiderId)).toEqual(DATE);
         });
 
-        afterAll(async () => {
-            await restoreBoardSettings();
-        });
-
-        it('refuses clearing a fresh lead check without confirmation and leaves the date alone', async () => {
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '' }) as never, params(leadId));
-            expect(res.status).toBe(409);
-            const data = await res.json();
-            expect(data.requiresConfirmation).toBe(true);
-            expect(data.warning).toMatch(/background check covers the membership year/);
-            expect((await prisma.person.findUnique({ where: { id: leadId } }))?.lastBackgroundCheck).not.toBeNull();
-        });
-
-        it('saves after confirmation and records the warning in the audit row', async () => {
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2020-01-01', confirmBgStale: true }) as never, params(leadId));
+        it.each([
+            ['moved later', '2026-06-01'],
+            ['moved earlier', '2026-01-01'],
+            ['removed', null],
+            ['removed with a blank', ''],
+        ])('leaves the date alone when the body asks for it to be %s', async (_label, value) => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { phone: '', lastBackgroundCheck: value, confirmBgStale: true }) as never, params(outsiderId));
             expect(res.status).toBe(200);
-            const log = await prisma.auditLog.findFirst({
-                where: { actorId, tableName: 'Person', affectedEntityId: leadId },
-                orderBy: { id: 'desc' },
-            });
-            expect((log?.newData as { bgStaleWarning?: string }).bgStaleWarning).toMatch(/will not after this change/);
+            expect(await dateOf(outsiderId)).toEqual(DATE);
         });
 
-        it('needs no confirmation for a non-lead', async () => {
-            await prisma.person.update({ where: { id: outsiderId }, data: { lastBackgroundCheck: new Date() } });
-            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '' }) as never, params(outsiderId));
+        it('does not set a date for the actor’s own household either', async () => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { phone: '', lastBackgroundCheck: '2026-01-15' }) as never, params(spouseId));
             expect(res.status).toBe(200);
+            expect(await dateOf(spouseId)).toBeNull();
         });
     });
 });

@@ -47,7 +47,7 @@ describe.each([
 describe("Revenue Ops tabs", () => {
   it("hides the legacy tabs from FINANCE-only and shows them to Board", () => {
     expect(visibleLinks(REVENUE_OPS, { isFinance: true }, null)).toEqual([]);
-    expect(visibleLinks(REVENUE_OPS, { isBoardMember: true }, null).map((t) => t.href)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items", "/donations"]);
+    expect(visibleLinks(REVENUE_OPS, { isBoardMember: true }, null).map((t) => t.href)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items"]);
     expect(visibleLinks(REVENUE_OPS, { isSysadmin: true }, null)).toEqual([]);
   });
 });

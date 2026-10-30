@@ -9,6 +9,19 @@ const details = (currency?: string) => ({
   lineItems: [{ description: "Bolt", quantity: 1, unitPrice: 10 }],
 });
 
+describe("ManualDetailsSchema money", () => {
+  const withMoney = (money: Record<string, string>) => ManualDetailsSchema.safeParse({ ...details(), ...money }).success;
+
+  it.each(["receiptTotal", "shipping", "tax", "discount"])("refuses a negative or oversized %s", (field) => {
+    expect(withMoney({ [field]: "-0.01" })).toBe(false);
+    expect(withMoney({ [field]: "21474836.48" })).toBe(false);
+  });
+
+  it("accepts zero and the largest amount a column holds", () => {
+    expect(withMoney({ tax: "0", receiptTotal: "21474836.47" })).toBe(true);
+  });
+});
+
 describe("ManualDetailsSchema currency", () => {
   it.each(["USD", "CAD", "EUR"])("accepts the 3-letter code %s", (code) => {
     expect(ManualDetailsSchema.safeParse(details(code)).success).toBe(true);

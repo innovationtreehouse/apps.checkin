@@ -27,6 +27,11 @@ interface ParticipantMergeView {
   [key: string]: unknown;
 }
 
+interface BgNotice {
+  date: string;
+  makesHouseholdValid: boolean;
+}
+
 // Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
 // email/googleId/emailVerified are NOT here: they're the login identity, minted
 // together at sign-in and resolved as ONE unit under the `identity` key (never
@@ -140,6 +145,10 @@ export default function MergeParticipants() {
   const swapDirectionBlock = (keeperIsA ? membershipBlock?.bAsKeeper : membershipBlock?.aAsKeeper) ?? null;
   const swapClearsMembershipBlock = !!membershipBlockReason && !swapDirectionBlock;
 
+  // The background-check date the survivor would adopt, per direction like the block above.
+  const [bgNotices, setBgNotices] = useState<{ aAsKeeper: BgNotice | null; bAsKeeper: BgNotice | null } | null>(null);
+  const bgNotice = (keeperIsA ? bgNotices?.aAsKeeper : bgNotices?.bAsKeeper) ?? null;
+
   const conflicts: ConflictField[] = keepParticipant && mergeParticipant
     ? CONFLICT_FIELDS.filter((f) => {
         const kv = keepParticipant[f];
@@ -180,6 +189,7 @@ export default function MergeParticipants() {
             setAnalyzedA(d.participants[0]);
             setAnalyzedB(d.participants[1]);
             setMembershipBlock(d.membershipBlock ?? null);
+            setBgNotices(d.bgNotice ?? null);
 
             // Recommend keeping the one with more activity or better data
             const score = (p: ParticipantMergeView) => {
@@ -207,6 +217,7 @@ export default function MergeParticipants() {
       setKeepId(null);
       setPreviewMode(false);
       setMembershipBlock(null);
+      setBgNotices(null);
     }
   };
 
@@ -235,7 +246,7 @@ export default function MergeParticipants() {
       if (res.ok) {
         setSuccess(true);
       } else if (typeof data.error === "string" && data.error.includes("lead of a household with other members")) {
-        notifications.show({ color: "red", message: data.error, autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error, autoClose: false });
         // No page-level reload here; clear the stale analyzed selection so the
         // user re-picks (and re-analyzes) against current household state.
         pick(null, null);
@@ -475,6 +486,15 @@ export default function MergeParticipants() {
             <List.Item>Missing personal info on the kept participant will be filled in from the merged participant.</List.Item>
             <List.Item>Raw badge scans will remain on the tombstoned record for audit purposes.</List.Item>
           </List>
+
+          {bgNotice && (
+            <Alert color="yellow" variant="light" mb="md" title="Background-check date will change">
+              <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong> will
+              end up with the background-check date {formatDateOnly(bgNotice.date)}, carried over
+              from <strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong>.
+              {bgNotice.makesHouseholdValid && " This makes the household's background check valid: an application waiting on the check may advance, and a paid one may activate the household."}
+            </Alert>
+          )}
 
           {error && (
             <Alert color="red" variant="light" mb="md" fw={700}>

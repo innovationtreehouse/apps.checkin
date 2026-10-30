@@ -15,6 +15,8 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
   const stuck = await db.receiptDetail.findMany({
     where: { orgId, state: "auto_upload", ocrStartedAt: { lt: new Date(now.getTime() - OCR_INTERRUPTED_AFTER_MS) } },
     select: { id: true },
+    orderBy: { ocrStartedAt: "asc" },
+    take: CATCH_UP_CAP,
   });
   let swept = 0;
   for (const { id } of stuck) {
@@ -31,6 +33,38 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
   return { swept };
 }
 
+export const STUCK_UPLOADED_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * A receipt left in `uploaded` by a flow that never ran its checks moves to `flow_error`, which
+ * finance's queue lists and can restart. Its last audit entry (or its upload) dates the wait.
+ */
+export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: number; failed: number }> {
+  const cutoff = new Date(now.getTime() - STUCK_UPLOADED_AFTER_MS);
+  const rows = await db.receipt.findMany({
+    where: { orgId: (await getOrg()).id, details: { state: "uploaded" } },
+    select: { id: true, uploadedAt: true, auditLogs: { select: { changedAt: true }, orderBy: { id: "desc" }, take: 1 } },
+  });
+  const stuck = rows.filter((r) => (r.auditLogs[0]?.changedAt ?? r.uploadedAt) < cutoff).slice(0, CATCH_UP_CAP);
+  let swept = 0;
+  let failed = 0;
+  for (const { id } of stuck) {
+    // One row failing leaves it for the next run; the rest still move.
+    await db
+      .$transaction(async (tx) => {
+        const moved = await tx.receiptDetail.updateMany({
+          where: { id, state: "uploaded" },
+          data: { state: "flow_error", validationNotes: "The automatic checks stopped before finishing. Restart the flow." },
+        });
+        if (moved.count === 0) return;
+        await audit(tx, id, null, { action: "pipeline_failed", fieldChanged: "state", valueBefore: "uploaded", valueAfter: "stuck in uploaded" });
+        swept++;
+      })
+      .catch(() => failed++);
+  }
+  return { swept, failed };
+}
+
 /** Catch-up stops retrying a receipt after this many system push failures in a row. */
 export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
 
@@ -39,7 +73,7 @@ export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
  * A success or a manual push (one with an acting user) ends the run, and so does any
  * delivery in the org since: the receiver accepting a push means it may accept these too.
  */
-async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
+export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
   const lastDelivery = await db.receiptAuditLog.findFirst({
     where: { action: "pushed", receipt: { orgId } },
     select: { id: true },
@@ -58,6 +92,36 @@ async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
     else ended.add(receiptId);
   }
   return new Set([...run].filter(([, n]) => n >= MAX_CONSECUTIVE_PUSH_FAILURES).map(([id]) => id));
+}
+
+/** Where a finalized, not-yet-delivered receipt stands with catch-up, for the review screen. */
+export interface PushRecord {
+  pushGivenUp: boolean;
+  lastPushFailedAt: Date | null;
+  lastPushFailure: string | null;
+}
+
+/** The push record of each of `ids`, all of which should be finalized and not yet delivered. */
+export async function pushRecords(orgId: string, ids: string[]): Promise<Map<string, PushRecord>> {
+  if (ids.length === 0) return new Map();
+  const [skip, failures] = await Promise.all([
+    givenUp(orgId, ids),
+    db.receiptAuditLog.findMany({
+      where: { receiptId: { in: ids }, action: "push_failed" },
+      select: { receiptId: true, changedAt: true, valueAfter: true },
+      orderBy: [{ receiptId: "asc" }, { id: "desc" }],
+      distinct: ["receiptId"],
+    }),
+  ]);
+  // Rows come newest first within each receipt; the first one seen is the latest.
+  const latest = new Map<string | null, (typeof failures)[number]>();
+  for (const f of failures) if (!latest.has(f.receiptId)) latest.set(f.receiptId, f);
+  return new Map(
+    ids.map((id) => {
+      const failure = latest.get(id);
+      return [id, { pushGivenUp: skip.has(id), lastPushFailedAt: failure?.changedAt ?? null, lastPushFailure: failure?.valueAfter ?? null }];
+    }),
+  );
 }
 
 /** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */

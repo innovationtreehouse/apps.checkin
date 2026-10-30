@@ -27,6 +27,18 @@ describeDb("editing a receipt", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
+  it("sends a receipt with no lines back to validation_failed even when its total balances", async () => {
+    const r = await invalid();
+    for (const line of await db.receiptLineItem.findMany({ where: { receiptId: r.id } })) {
+      await receiptService.deleteLine(r.id, "submitter", line.id);
+    }
+    await receiptService.edit(r.id, "submitter", { receiptTotal: 0 });
+    await receiptService.resubmit(r.id, "submitter");
+    const detail = await db.receiptDetail.findUniqueOrThrow({ where: { id: r.id } });
+    expect(detail.state).toBe("validation_failed");
+    expect(detail.validationNotes).toContain("no line items");
+  });
+
   it("refuses edits outside validation_failed / submitter_review", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     // Not yet delivered, so the state rule answers rather than the received-receipt lock.

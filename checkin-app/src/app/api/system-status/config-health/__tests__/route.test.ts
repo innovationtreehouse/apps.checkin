@@ -12,6 +12,10 @@ jest.mock('@/lib/auth', () => ({
         (req: Request, auth: unknown) => handler(req, auth),
 }));
 
+jest.mock('@/lib/quickbooks/health', () => ({
+    getQuickBooksHealth: async () => [{ id: 'quickbooks-connection', label: 'QuickBooks connection', ok: true, detail: 'Connected to the sandbox company.' }],
+}));
+
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
 
@@ -45,6 +49,7 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         const body = await res.json();
         expect(Array.isArray(body.checks)).toBe(true);
         expect(body.checks.some((c: { id: string }) => c.id === 'zoho-esign')).toBe(true);
+        expect(body.checks.some((c: { id: string }) => c.id === 'quickbooks-connection')).toBe(true);
         // Never leaks secret values — only booleans + labels + detail.
         for (const c of body.checks) {
             expect(typeof c.ok).toBe('boolean');

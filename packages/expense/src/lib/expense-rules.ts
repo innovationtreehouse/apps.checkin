@@ -2,8 +2,9 @@ import type { ExpenseOrgSettings, ExpenseLineItem } from "../db/schema";
 
 // ── Approval terminal states ──────────────────────────────────────────────────
 
-export const TERMINAL_APPROVAL_STATUSES = new Set(["approved", "finance_assigned", "rejected"] as const);
-export type TerminalApprovalStatus = "approved" | "finance_assigned" | "rejected";
+// A finance-assigned line waits for its new bucket's approver, so it is not terminal.
+export const TERMINAL_APPROVAL_STATUSES = new Set(["approved", "rejected"] as const);
+export type TerminalApprovalStatus = "approved" | "rejected";
 
 export function isTerminalApproval(status: string): status is TerminalApprovalStatus {
   return TERMINAL_APPROVAL_STATUSES.has(status as TerminalApprovalStatus);
@@ -38,6 +39,7 @@ export const HoldReason = {
   NO_MATCH:         "NO_MATCH",
   MULTIPLE_MATCHES: "MULTIPLE_MATCHES",
   NO_PART_NUMBER:   "NO_PART_NUMBER",
+  NON_INVENTORY:    "NON_INVENTORY",
 } as const;
 
 export type HoldReason = (typeof HoldReason)[keyof typeof HoldReason];

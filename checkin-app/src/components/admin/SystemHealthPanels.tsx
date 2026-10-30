@@ -302,7 +302,7 @@ export function SystemVersionBox() {
         const currentSha = localData.version;
         setCurrentVersion(currentSha);
 
-        if (currentSha && !currentSha.startsWith('unknown')) {
+        if (currentSha && currentSha !== 'dev') {
           const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/apps.checkin/commits/main');
           if (!ghRes.ok) throw new Error('Failed to fetch latest version from GitHub');
 

@@ -184,7 +184,7 @@ describe('X5 ExpenseSink → expense intake', () => {
         await receiptService.retryApply(id);
         const result = await receiptService.apply(id);
 
-        expect(result).toEqual({ state: 'apply_failed', error: 'Receipt x5-mismatch was already received with a different payload' });
+        expect(result).toEqual({ state: 'apply_failed', error: 'Expense: Receipt x5-mismatch was already received with a different payload' });
         expect((await legs(id)).expenseAppliedAt).toBeNull();
         expect(await expenses('x5-mismatch')).toEqual(before);
     });
@@ -193,9 +193,9 @@ describe('X5 ExpenseSink → expense intake', () => {
         const { id } = await seedReceipt('x5-down');
         jest.spyOn(expenseIntake, 'receive').mockRejectedValueOnce(new Error('expense database unreachable'));
 
-        expect(await proceedAndApply(id)).toEqual({ state: 'apply_failed', error: 'expense database unreachable' });
+        expect(await proceedAndApply(id)).toEqual({ state: 'apply_failed', error: 'Expense: expense database unreachable' });
         const failed = await legs(id);
-        expect(failed).toMatchObject({ state: 'apply_failed', validationNotes: 'expense database unreachable', expenseAppliedAt: null });
+        expect(failed).toMatchObject({ state: 'apply_failed', validationNotes: 'Expense: expense database unreachable', expenseAppliedAt: null });
         expect(failed.inventoryAppliedAt).not.toBeNull();
         expect(await expenses('x5-down')).toHaveLength(0);
 

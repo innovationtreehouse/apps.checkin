@@ -11,6 +11,7 @@ import { reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
+import { assertNoReferenceConflict } from "./referenceMatchingService";
 
 export interface CreateItemReferenceProposalParams {
   gtin13: string;
@@ -119,6 +120,8 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
     const reviewedAt = new Date();
     const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
     if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
+
+    await assertNoReferenceConflict(tx, proposal.gtin13, proposal);
 
     await tx.itemReference.create({
       data: {

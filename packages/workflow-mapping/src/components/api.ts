@@ -1,72 +1,45 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
+import { createClient, request, useViewer } from "@checkin/component-ui";
+
+export { errorMessage, notifyNavCounts, type Loaded } from "@checkin/component-ui";
 
 /**
  * Client fetch helpers over the host's /api/workflow-mapping/* routes. The
  * routes gate server-side; the client reads the caller's role only to decide
  * which controls to show.
  */
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api/workflow-mapping${path}`, { headers: { "Content-Type": "application/json" }, ...options });
-  const text = await res.text();
-  let data: unknown = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    throw new Error(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`);
-  }
-  if (!res.ok) {
-    const message = (data as { error?: unknown } | null)?.error;
-    throw new Error(typeof message === "string" ? message : `HTTP ${res.status}`);
-  }
-  return data as T;
+export const { api, useLoad } = createClient("/api/workflow-mapping");
+
+/** Reads from the catalog's own /api/catalog/* routes, the source of the legal category values. */
+export function catalogApi<T>(path: string): Promise<T> {
+  return request<T>(`/api/catalog${path}`);
 }
 
-/** Tells the host nav to refetch its count pills after a write that can move a receipt's state. */
-export function notifyNavCounts(): void {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("nav-counts-mutated"));
-}
-
-export function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : "Error";
-}
-
-/** Mirrors the write routes' INVENTORY_MANAGER gate; read off the host's augmented session user. */
+/** Mirrors the write routes' INVENTORY_MANAGER gate. */
 export function useCanManage(): boolean {
-  const { data } = useSession();
-  return (data?.user as { isInventoryManager?: boolean } | undefined)?.isInventoryManager === true;
+  return useViewer()?.isInventoryManager === true;
 }
 
-export interface Loaded<T> {
-  data: T | null;
-  error: string | null;
-  reload: () => void;
-}
+export { STATE_LABEL } from "../lib/stateLabels";
 
-/** Load `path` on mount and on reload(); a stale response never overwrites a newer one. */
-export function useLoad<T>(path: string): Loaded<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  const seq = useRef(0);
-  useEffect(() => {
-    const mine = ++seq.current;
-    api<T>(path)
-      .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
-      .catch((e: unknown) => { if (mine === seq.current) setError(errorMessage(e)); });
-  }, [path, tick]);
-  const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, error, reload };
-}
+export const STATE_COLOR: Record<string, string> = {
+  pending_review: "yellow",
+  applying: "blue",
+  apply_failed: "red",
+  resolved: "green",
+};
 
-export function formatCents(cents: number | null | undefined, currency = "USD"): string {
-  return cents == null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
-}
+/** A line's mapping decision, in plain words. */
+export const LINE_STATUS_LABEL: Record<string, string> = {
+  unrecognized: "Unrecognized",
+  recognized: "Recognized",
+  provisional: "Provisional",
+  non_inventory: "Not inventory",
+};
 
-export const STATE_LABEL: Record<string, string> = {
-  pending_review: "Needs mapping",
-  applying: "Applying",
-  apply_failed: "Apply failed",
-  resolved: "Resolved",
+export const LINE_STATUS_COLOR: Record<string, string> = {
+  unrecognized: "yellow",
+  recognized: "green",
+  provisional: "violet",
+  non_inventory: "gray",
 };

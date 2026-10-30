@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Concurrency test for renewal opening. runRenewalSweep (the board button and
- * the unscheduled cron) and concurrent presses check-then-act through the shared
+ * Concurrency test for renewal opening. runRenewalSweep (the board button) and
+ * concurrent presses check-then-act through the shared
  * createRenewalProcess. Across instances
  * two overlapping runs each read zero open processes and both reach the INSERT —
  * which would mint duplicate PENDING_RENEWAL rows (and a dangling process

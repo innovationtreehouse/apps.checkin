@@ -2,22 +2,22 @@
  * @jest-environment node
  */
 /**
- * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, runs the expense and donation
- * QuickBooks steps and income's orphan sweep (each isolated), records the run, and answers `{}`.
+ * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, runs the expense, donation and
+ * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { runExpenseQbPosting } from '@checkin/expense';
-import { runDonationQbPosting } from '@checkin/bulk-donation';
-import { runIncomeOrphanSweep } from '@checkin/income';
+import { runDonationDepositHandOver, runInKindQbPosting } from '@checkin/bulk-donation';
+import { drainIncomeOutbox, runIncomeOrphanSweep } from '@checkin/income';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
-jest.mock('@checkin/bulk-donation', () => ({ runDonationQbPosting: jest.fn() }));
-jest.mock('@checkin/income', () => ({ runIncomeOrphanSweep: jest.fn() }));
-jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
+jest.mock('@checkin/bulk-donation', () => ({ runDonationDepositHandOver: jest.fn(), runInKindQbPosting: jest.fn() }));
+jest.mock('@checkin/income', () => ({ drainIncomeOutbox: jest.fn(), runIncomeOrphanSweep: jest.fn() }));
+jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
 const SECRET = 'qbo-posting-secret-under-test';
@@ -36,7 +36,9 @@ describe('GET /api/cron/qbo-posting', () => {
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
         jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound' });
-        jest.mocked(runDonationQbPosting).mockResolvedValue('unbound');
+        jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
+        jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
+        jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: 'unbound' });
         jest.mocked(runIncomeOrphanSweep).mockResolvedValue({ status: 'unbound' });
     });
 
@@ -50,17 +52,21 @@ describe('GET /api/cron/qbo-posting', () => {
 
         expect(res.status).toBe(401);
         expect(runExpenseQbPosting).not.toHaveBeenCalled();
-        expect(runDonationQbPosting).not.toHaveBeenCalled();
+        expect(runDonationDepositHandOver).not.toHaveBeenCalled();
+        expect(runInKindQbPosting).not.toHaveBeenCalled();
+        expect(drainIncomeOutbox).not.toHaveBeenCalled();
         expect(create).not.toHaveBeenCalled();
     });
 
-    it('runs both postings, records the run, and answers {}', async () => {
+    it('runs every step, records the run, and answers {}', async () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({});
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
-        expect(runDonationQbPosting).toHaveBeenCalledWith('org-1');
+        expect(runDonationDepositHandOver).toHaveBeenCalledWith('org-1');
+        expect(runInKindQbPosting).toHaveBeenCalledWith('org-1');
+        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
         expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
         expect(create).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
@@ -74,9 +80,35 @@ describe('GET /api/cron/qbo-posting', () => {
 
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({});
-        expect(runDonationQbPosting).toHaveBeenCalledTimes(1);
+        expect(runDonationDepositHandOver).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: expense' });
         expect(logged).toHaveBeenCalledWith('[qbo-posting] expense QuickBooks posting failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('a throwing in-kind drain still runs income and records the failure', async () => {
+        jest.mocked(runInKindQbPosting).mockRejectedValue(new Error('donation db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
+        expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: in-kind' });
+        expect(logged).toHaveBeenCalledWith('[qbo-posting] in-kind QuickBooks posting failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('a throwing income drain still runs the sweep and records the failure', async () => {
+        jest.mocked(drainIncomeOutbox).mockRejectedValue(new Error('income db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
+        expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: income' });
+        expect(logged).toHaveBeenCalledWith('[qbo-posting] income QuickBooks posting failed:', expect.any(Error));
         logged.mockRestore();
     });
 });

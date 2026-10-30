@@ -24,6 +24,7 @@ const people: PersonRow[] = [
 ];
 
 const mockAuditCreate = jest.fn<Promise<object>, [unknown]>(async () => ({}));
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {

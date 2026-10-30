@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { handOverDeposit } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 import type { AccountMap } from "../generated/prisma/client";
 import { z } from "zod";
@@ -42,10 +43,8 @@ export const disbursementService = {
     return holds.map((hold) => ({ ...hold, matchedRows: parseMatchedRows(hold.matchedRows) }));
   },
 
-  async listEvents(orgId: string, page?: { skip: number; take: number }, qbStates?: string[], noted = false) {
-    const byState = qbStates && { qbMatchState: { in: qbStates } };
-    const filter = byState && noted ? { OR: [byState, { qbNote: { not: null } }] } : byState;
-    return db.disbursementEvent.findMany({ where: { orgId, ...filter }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
+  async listEvents(orgId: string, page?: { skip: number; take: number }) {
+    return db.disbursementEvent.findMany({ where: { orgId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
   },
 
   async resubmitHold(orgId: string, disbursementId: string, audit: AuditContext) {
@@ -69,5 +68,6 @@ export const disbursementService = {
       });
       await runDisbursementCycleTx(tx, orgId, disbursementId, { type: "HOLD_RESUBMITTED" }, audit);
     });
+    await handOverDeposit(orgId, disbursementId);
   },
 };

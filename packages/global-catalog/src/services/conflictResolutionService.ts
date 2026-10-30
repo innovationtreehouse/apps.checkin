@@ -10,6 +10,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { reviewTransitionError } from "./categoryService";
 import { assertConflictResolutionTransition } from "../workflows/conflict-resolution.machine";
 import { recordTransition } from "./orgEventService";
+import { assertNoReferenceConflict } from "./referenceMatchingService";
 
 export interface ReportConflictParams {
   itemReferenceId: number;
@@ -69,6 +70,15 @@ export async function resolveConflict(
     if (count === 0) throw new ServiceError(409, "Conflict was already resolved");
 
     if (nextState === "use_proposed") {
+      const ref = await createItemReferenceRepository(tx).findByIdForUpdate(conflict.itemReferenceId);
+      if (ref && !ref.archivedAt) {
+        await assertNoReferenceConflict(
+          tx,
+          conflict.proposedGtin13,
+          { partNumber: ref.partNumber, manufacturer: ref.manufacturer, retailer: ref.retailer, description: ref.descriptionNormalized },
+          ref.id,
+        );
+      }
       await tx.itemReference.update({
         where: { id: conflict.itemReferenceId },
         data: { gtin13: conflict.proposedGtin13 },

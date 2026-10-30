@@ -5,6 +5,8 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { logger } from "@/lib/logger";
+import { config } from "@/lib/config";
+import { quickBooks } from "@/lib/components/ports";
 
 // Budget-owner buckets (#1280 §6) and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -28,9 +30,19 @@ export async function listBudgetOwners(includeArchived: boolean) {
     });
 }
 
+// Stand-in Classes for CHECKIN_ENV=local; ids are digits, as the bucket form requires.
+export const LOCAL_QUICKBOOKS_CLASSES = [
+    { id: "9001", name: "Facility", active: true },
+    { id: "9002", name: "Operations", active: true },
+    { id: "9003", name: "Programs:Robotics", active: true },
+    { id: "9004", name: "Programs:Woodshop", active: true },
+    { id: "9005", name: "Retired", active: false },
+];
+
 /** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
 export async function listQuickBooksClasses() {
-    const qb = await (await import("@/lib/quickbooks/client")).getQuickBooks();
+    if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_CLASSES.map((c) => ({ ...c }));
+    const qb = await quickBooks();
     if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
     const classes = await qb.classes().catch((error: unknown) => {
         logger.error("QuickBooks Class list failed:", error);

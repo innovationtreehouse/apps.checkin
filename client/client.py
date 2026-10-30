@@ -1300,8 +1300,8 @@ def _scan_result_banner_html(body, status, confirmed=False):
         return f'<div class="banner banner-ok">✓ {who} — {label}<br>🔒 {html.escape(CLOSING_ALONE_COPY)}</div>', 0
     warning = html.escape(body.get("warning", "")).replace("\n", "<br>")
     if warning:
-        # Scan succeeded but the room is short of supervising adults (#1436):
-        # amber, and it dwells 12s instead of 5s. Still confirms the scan.
+        # Scan succeeded but the room is short of supervising adults: confirms the
+        # scan in amber with the warning, and clears on the banner's usual 12s timer.
         return f'<div class="banner banner-warning">✓ {who} — {label}<br>⚠️ {warning}</div>', 0
     if msg and msg != "Checked in successfully" and msg != "Checked out successfully":
         return f'<div class="banner banner-ok">✓ {who} — {msg}</div>', 0

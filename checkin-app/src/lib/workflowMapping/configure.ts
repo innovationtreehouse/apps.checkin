@@ -1,6 +1,6 @@
 /**
  * Wire the workflow-mapping library into checkin, called once at
- * server boot from instrumentation.ts. It shares the catalog's principal and
+ * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, so every library stamps the same org and person
  * ids, and boot stays DB-free.
  *
@@ -12,7 +12,7 @@
 import { configureWorkflowMapping, type ExpenseSink } from "@checkin/workflow-mapping";
 import { expenseIntake } from "@checkin/expense";
 import { ingestInKind } from "@checkin/bulk-donation";
-import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
+import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";

@@ -1,16 +1,30 @@
 /** Item-reference route factories (#1286). Returns ItemReference model bags. */
-import { httpError, parseBody, parseId, query } from "@checkin/component-kit";
+import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
-import type { Prisma } from "../generated/prisma/client";
-import { createItemReferenceRepository } from "../repositories/itemReference";
+import type { ItemReference, Prisma } from "../generated/prisma/client";
+import { createItemReferenceRepository, type ItemReferenceRepository } from "../repositories/itemReference";
 import { createCatalogRepository } from "../repositories/catalog";
-import { findAutoConflict, type RefFields } from "../services/referenceMatchingService";
+import { assertNoReferenceConflict, type RefFields } from "../services/referenceMatchingService";
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
 
 const refRepo = () => createItemReferenceRepository(getDb());
 const catalogRepo = () => createCatalogRepository(getDb());
+
+/** Runs a write on one reference with its row locked, so `existing` stays current through the conflict check. */
+const withLockedReference = <T>(
+  id: number,
+  fn: (tx: Prisma.TransactionClient, repo: ItemReferenceRepository, existing: ItemReference) => Promise<T>,
+) =>
+  mapServiceErrors(() =>
+    getDb().$transaction(async (tx) => {
+      const repo = createItemReferenceRepository(tx);
+      const existing = await repo.findByIdForUpdate(id);
+      if (!existing) throw httpError(404, "Reference not found");
+      return fn(tx, repo, existing);
+    }),
+  );
 
 const optionalTrimmed = z
   .string()
@@ -91,36 +105,35 @@ export const create: CatalogRouteHandler = async ({ req }) => {
     retailer: body.retailer,
   };
   if (!(await catalogRepo().findItemByGtin13(body.gtin13))) throw httpError(404, "Item not found");
-  const conflict = await findAutoConflict(body.gtin13, fields);
-  if (conflict) throw httpError(409, conflict);
 
   const principal = await getPrincipal();
   const now = new Date();
-  const created = await refRepo().createItemReference({
-    gtin13: body.gtin13,
-    partNumber: fields.partNumber,
-    descriptionNormalized: body.description ? normalizeDescription(body.description) : null,
-    manufacturer: fields.manufacturer,
-    retailer: fields.retailer,
-    url: body.url,
-    conversionFactor: 1.0,
-    conversionVersion: 1,
-    createdAt: now,
-    updatedAt: now,
-    createdByUserId: principal.id,
-    updatedByUserId: principal.id,
-    createdByUsername: principal.name,
-    updatedByUsername: principal.name,
-  });
+  const created = await mapServiceErrors(() =>
+    getDb().$transaction(async (tx) => {
+      await assertNoReferenceConflict(tx, body.gtin13, fields);
+      return createItemReferenceRepository(tx).createItemReference({
+        gtin13: body.gtin13,
+        partNumber: fields.partNumber,
+        descriptionNormalized: body.description ? normalizeDescription(body.description) : null,
+        manufacturer: fields.manufacturer,
+        retailer: fields.retailer,
+        url: body.url,
+        conversionFactor: 1.0,
+        conversionVersion: 1,
+        createdAt: now,
+        updatedAt: now,
+        createdByUserId: principal.id,
+        updatedByUserId: principal.id,
+        createdByUsername: principal.name,
+        updatedByUsername: principal.name,
+      });
+    }),
+  );
   return { ItemReference: created };
 };
 
 export const update: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const r = refRepo();
-  const existing = await r.findById(id);
-  if (!existing) throw httpError(404, "Reference not found");
-
   const body = await parseBody(req, updateSchema);
   const fields: RefFields = {
     partNumber: body.partNumber,
@@ -128,19 +141,20 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
     manufacturer: body.manufacturer,
     retailer: body.retailer,
   };
-  const conflict = await findAutoConflict(existing.gtin13, fields);
-  if (conflict) throw httpError(409, conflict);
 
   const principal = await getPrincipal();
-  const updated = await r.updateItemReference(id, {
-    partNumber: fields.partNumber,
-    descriptionNormalized: body.description ? normalizeDescription(body.description) : null,
-    manufacturer: fields.manufacturer,
-    retailer: fields.retailer,
-    url: body.url,
-    updatedAt: new Date(),
-    updatedByUserId: principal.id,
-    updatedByUsername: principal.name,
+  const updated = await withLockedReference(id, async (tx, repo, existing) => {
+    await assertNoReferenceConflict(tx, existing.gtin13, fields);
+    return repo.updateItemReference(id, {
+      partNumber: fields.partNumber,
+      descriptionNormalized: body.description ? normalizeDescription(body.description) : null,
+      manufacturer: fields.manufacturer,
+      retailer: fields.retailer,
+      url: body.url,
+      updatedAt: new Date(),
+      updatedByUserId: principal.id,
+      updatedByUsername: principal.name,
+    });
   });
   return { ItemReference: updated };
 };
@@ -163,23 +177,21 @@ export const archive: CatalogRouteHandler = async ({ params }) => {
 
 export const unarchive: CatalogRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
-  const r = refRepo();
-  const existing = await r.findById(id);
-  if (!existing) throw httpError(404, "Reference not found");
-  const conflict = await findAutoConflict(existing.gtin13, {
-    partNumber: existing.partNumber,
-    manufacturer: existing.manufacturer,
-    description: existing.descriptionNormalized,
-    retailer: existing.retailer,
-  });
-  if (conflict) throw httpError(409, conflict);
   const principal = await getPrincipal();
   return {
-    ItemReference: await r.updateItemReference(id, {
-      archivedAt: null,
-      updatedAt: new Date(),
-      updatedByUserId: principal.id,
-      updatedByUsername: principal.name,
+    ItemReference: await withLockedReference(id, async (tx, repo, existing) => {
+      await assertNoReferenceConflict(tx, existing.gtin13, {
+        partNumber: existing.partNumber,
+        manufacturer: existing.manufacturer,
+        description: existing.descriptionNormalized,
+        retailer: existing.retailer,
+      });
+      return repo.updateItemReference(id, {
+        archivedAt: null,
+        updatedAt: new Date(),
+        updatedByUserId: principal.id,
+        updatedByUsername: principal.name,
+      });
     }),
   };
 };

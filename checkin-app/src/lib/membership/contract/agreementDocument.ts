@@ -13,11 +13,9 @@ import { config } from "@/lib/config";
  * the environment — no static creds in the image). One bucket/key serves every
  * env; non-prod signatures are watermarked at upload time (see stampWatermark).
  *
- * TODO(#289): upload the real agreement to s3://$AGREEMENT_PDF_S3_BUCKET/
- * $AGREEMENT_PDF_S3_KEY once https://github.com/innovationtreehouse/checkin/
- * issues/289 closes. Until the bucket is configured / the object exists,
- * loadAgreementPdf() throws AgreementUnavailableError (the sign endpoint then
- * reports a clean 503) rather than uploading a placeholder.
+ * When the bucket is unset or the object is missing, loadAgreementPdf() throws
+ * AgreementUnavailableError (the sign endpoint then reports a clean 503) rather
+ * than uploading a placeholder.
  */
 
 /** Filename shown in Zoho for the uploaded document. */

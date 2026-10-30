@@ -71,6 +71,11 @@ function KioskDisplayInner() {
   const [error, setError] = useState<string | null>(null);
   // The kiosk proxy answers 204 while the building is known empty.
   const [kioskResting, setKioskResting] = useState(false);
+  // Whether the roster in `data` already carries kiosk labels. The signed kiosk payload and the
+  // roster the proxy pushes do; labelling those again would shorten an already-shortened name.
+  // A `mode=kiosk` preview opened by a privileged session carries full names, so it is labelled
+  // here instead.
+  const [namesAreKioskLabels, setNamesAreKioskLabels] = useState(false);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
   const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -177,6 +182,7 @@ function KioskDisplayInner() {
         setData(json);
         setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
         setError(null);
+        setNamesAreKioskLabels(json.signedRequest === true);
         if (json.signedRequest === true) setIsKioskMode(true);
       } else if (!res.ok) {
         setError(json.error || "Failed to load attendance");
@@ -201,6 +207,7 @@ function KioskDisplayInner() {
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
         setAsOf(new Date().toISOString());
+        setNamesAreKioskLabels(true);
         setLoading(false);
       } else if (event.data === "refresh-attendance") {
         fetchAttendance();
@@ -314,7 +321,7 @@ function KioskDisplayInner() {
       } else {
         const d = await res.json().catch(() => ({}));
         if (d.error === "User is already checked in") {
-          notifications.show({ color: "red", message: d.error, autoClose: 4000 });
+          notifications.show({ color: "red", message: d.error, autoClose: false });
           refreshAttendance();
         } else {
           notifications.show({ color: "red", message: d.error || "Action failed.", autoClose: false });
@@ -334,10 +341,10 @@ function KioskDisplayInner() {
   const displayResults = searchResults.filter(p => !checkedInIds.includes(p.id));
 
   const kioskDisplayNames = useMemo(() => {
-    if (!isKioskMode) return new Map<number, string>();
+    if (!isKioskMode || namesAreKioskLabels) return new Map<number, string>();
     const allVisits = [...keyholderList, ...volunteerList, ...youthList];
     return getKioskDisplayNames(allVisits.map(v => ({ id: v.participant.id, name: v.participant.name || null, nickname: v.participant.nickname, email: v.participant.email })));
-  }, [isKioskMode, keyholderList, volunteerList, youthList]);
+  }, [isKioskMode, namesAreKioskLabels, keyholderList, volunteerList, youthList]);
 
   const canSeeNames = !isKioskMode && (currentUserIsKeyholder || currentUserIsSysadmin || currentUserIsBoardMember);
 

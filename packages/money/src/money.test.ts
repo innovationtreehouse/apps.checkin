@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { centsToDollars, dollarsToCents, dollarsToCentsOrNull, sumCents, formatCents, formatUSD } from "./index";
+import { centsToDecimalString, centsToDollars, dollarsToCents, dollarsToCentsOrNull, sumCents, formatCents, formatUSD } from "./index";
 
 describe("centsToDollars", () => {
   it("round-trips through dollarsToCents", () => {
@@ -99,4 +99,24 @@ describe("formatUSD (deprecated alias of formatCents)", () => {
   it("returns em-dash for null", () => expect(formatUSD(null)).toBe("—"));
   it("returns em-dash for undefined", () => expect(formatUSD(undefined)).toBe("—"));
   it("is the same function as formatCents", () => expect(formatUSD).toBe(formatCents));
+});
+
+describe("centsToDecimalString", () => {
+  it("gives two decimals with no symbol or grouping", () => {
+    expect(centsToDecimalString(1250)).toBe("12.50");
+    expect(centsToDecimalString(123456789)).toBe("1234567.89");
+    expect(centsToDecimalString(0)).toBe("0.00");
+    expect(centsToDecimalString(-5)).toBe("-0.05");
+  });
+
+  it("throws on a non-integer amount", () => {
+    expect(() => centsToDecimalString(12.5)).toThrow("safe integer");
+  });
+});
+
+describe("formatCents sign", () => {
+  it("shows no sign on a negative zero, as a rounded tiny negative sum gives", () => {
+    expect(formatCents(Math.round(-0.3))).toBe("$0.00");
+    expect(formatCents(-1)).toBe("-$0.01");
+  });
 });

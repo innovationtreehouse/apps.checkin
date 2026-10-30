@@ -78,6 +78,15 @@ export interface QboDeposit {
   Line?: { Description?: string; Amount?: number }[];
 }
 
+/** A JournalEntry; TotalAmt is the sum of its debits. */
+export interface QboJournalEntry {
+  Id: string;
+  TxnDate: string;
+  TotalAmt: number;
+  PrivateNote?: string;
+  Line?: { Amount?: number; JournalEntryLineDetail?: { PostingType?: "Debit" | "Credit"; AccountRef?: QboRef } }[];
+}
+
 export interface QboBillPayment {
   Id: string;
   TxnDate: string;

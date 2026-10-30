@@ -1,4 +1,4 @@
-import { buildQuickBooks, lambdaAccessTokenSource } from "../client";
+import { buildQuickBooks, lambdaAccessTokenSource, tryBuildQuickBooks } from "../client";
 
 jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
 
@@ -116,5 +116,15 @@ describe("buildQuickBooks", () => {
     it("is off with no token source", async () => {
         env({ QBO_REFRESHER_FN: undefined });
         expect(await buildQuickBooks()).toBeNull();
+    });
+
+    it("answers the reason it is off, for the status page", () => {
+        expect(tryBuildQuickBooks()).toMatchObject({ ok: true, env: "sandbox" });
+        env({ QBO_REFRESHER_FN: undefined });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "no token source (set QBO_REFRESHER_FN)" });
+        env({ QBO_SANDBOX_REALM_ALLOWED: "2222" });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "QBO realm is not the allowlisted sandbox realm" });
+        env({ QBO_REALM_ID: undefined });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "no company set (QBO_REALM_ID)" });
     });
 });

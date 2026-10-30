@@ -8,9 +8,10 @@ import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";
-import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt } from "../../inKind";
+import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, withdrawInKind } from "../../inKind";
+import { inKindService } from "../../services/inKindService";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
-import type { InKindDirectory, OwnerInfo } from "../../contract";
+import type { CapitalReviewLine, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
@@ -32,11 +33,12 @@ const BUCKETS: OwnerInfo[] = [
 let buckets: OwnerInfo[];
 let finance: number[];
 let largeValueCents: number;
+let capital: InKindCapital | undefined;
 let householdCalls = 0;
 let surnameCalls = 0;
 const HOUSEHOLDS: Record<number, number[]> = { [UPLOADER]: [UPLOADER, FINANCE_IN_UPLOADER_HOUSEHOLD], [RECORDER]: [RECORDER] };
 
-function configure(principalId = RECORDER) {
+function configure(principalId = RECORDER, apply: () => Promise<void> = async () => undefined) {
   const inKind: InKindDirectory = {
     financeHolders: async () => finance,
     boardMembers: async () => [BOARD],
@@ -56,8 +58,9 @@ function configure(principalId = RECORDER) {
     org: async () => ({ id: orgId, name: "Test Org" }),
     owners: { list: async () => buckets },
     catalog: { search: async () => [], getItem: async (g) => ({ gtin13: g, name: "Drill" }) },
-    inventory: { apply: async () => undefined },
+    inventory: { apply },
     inKind,
+    capital,
   });
 }
 
@@ -88,7 +91,7 @@ function receipt(totalCents = 2500): CompletedReceipt {
 
 async function receiptGift(totalCents = 2500): Promise<number> {
   await ingestInKind(receipt(totalCents));
-  await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null });
+  await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
   return (await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } })).id;
 }
 
@@ -113,11 +116,13 @@ const queueFor = (callerId: number) => inKindAcceptService.listQueue(orgId, call
 beforeEach(async () => {
   await db.workflowEvent.deleteMany({});
   await db.inKindDonation.deleteMany({});
+  await db.inKindSyncMark.deleteMany({});
   await db.manualInKindDonation.deleteMany({});
   await db.inKindBooking.deleteMany({});
   buckets = BUCKETS;
   finance = [FINANCE, FINANCE_IN_UPLOADER_HOUSEHOLD];
   largeValueCents = 50_000;
+  capital = undefined;
   configure();
 });
 
@@ -225,6 +230,16 @@ describeDb("the bucket after acceptance", () => {
     expect((await queueFor(FINANCE))[0]).toMatchObject({ revenueBooking: "MATCHED", expenseBooking: null, state: "booking" });
   });
 
+  it("resubmitting the current bucket changes nothing and writes no audit row, even while it is held", async () => {
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const assignedAt = (await db.inKindDonation.findUniqueOrThrow({ where: { id } })).bucketAssignedAt;
+    buckets = BUCKETS.map((b) => (b.id === 1 ? { ...b, archivedAt: new Date() } : b));
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).resolves.toMatchObject({ budgetOwnerId: 1 });
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "IN_KIND_BUCKET_CHANGED" } })).toBe(0);
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).bucketAssignedAt).toEqual(assignedAt);
+  });
+
   it("a bucket archived or losing its Class later holds the gift", async () => {
     const id = await receiptGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
@@ -249,7 +264,7 @@ describeDb("warnings", () => {
   it("warns on a surname match, a large value and a replaced donor, and never blocks", async () => {
     largeValueCents = 2500;
     const id = await receiptGift(2500);
-    await recordInKindDonor(orgId, R1, { firstName: "Janet", lastName: "Doe", companyName: null });
+    await recordInKindDonor(orgId, R1, { firstName: "Janet", lastName: "Doe", companyName: null }, 0);
     const [item] = await queueFor(FINANCE);
     expect(item).toMatchObject({ warnDonorSurnameMatch: true, warnDonorIsRecorder: false, warnLargeValue: true, warnDonorReplaced: true });
     expect(item).not.toHaveProperty("donorLastName");
@@ -261,6 +276,20 @@ describeDb("warnings", () => {
   it("reads ops' suggestion for the large-value warning before a gift without a receipt is valued", async () => {
     largeValueCents = 4000;
     await manualGift();
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
+  });
+
+  it("warns at exactly the large-value amount and not one cent under it", async () => {
+    largeValueCents = 2501;
+    await receiptGift(2500);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: false });
+    largeValueCents = 2500;
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
+  });
+
+  it("warns on every gift when the large-value amount is 0, as an off capital review line threshold reads", async () => {
+    largeValueCents = 0;
+    await receiptGift(1);
     expect((await queueFor(FINANCE))[0]).toMatchObject({ warnLargeValue: true });
   });
 });
@@ -279,6 +308,11 @@ describeDb("listQueue lookups", () => {
 });
 
 describeDb("accepting: the total cap", () => {
+  it("refuses a line value of 0", () => {
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues: [{ lineId: 1, valueCents: 0 }] }).success).toBe(false);
+    expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues: [{ lineId: 1, valueCents: 1 }] }).success).toBe(true);
+  });
+
   it("refuses line values whose total is over $1,000,000", () => {
     const lineValues = [1, 2].map((lineId) => ({ lineId, valueCents: 60_000_000 }));
     expect(InKindDecisionInputSchema.safeParse({ ...ACCEPT, lineValues }).success).toBe(false);
@@ -300,5 +334,163 @@ describeDb("listByBucket", () => {
     expect(JSON.stringify(mine)).not.toMatch(/Jane|Doe|Sam|Giver/);
     expect(await inKindAcceptService.listByBucket(orgId, 41, false)).toEqual([]);
     expect((await inKindAcceptService.listByBucket(orgId, FINANCE, true)).map((g) => g.source).sort()).toEqual(["manual", "receipt"]);
+  });
+});
+
+describeDb("getGift", () => {
+  const reader = { actorUserId: FINANCE, actorUsername: "fin", route: "GET /api/donations/in-kind/receipt/[id]" };
+
+  it("shows a receipt gift with its donor, lines, state and history, and audits the donor read", async () => {
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await db.inKindBooking.create({ data: { orgId, source: "receipt", giftId: id, side: "revenue", matchState: "MATCHED", qbTxnId: "D-9" } });
+
+    const gift = await inKindAcceptService.getGift(orgId, "receipt", id, reader);
+    expect(gift).toMatchObject({
+      id,
+      source: "receipt",
+      receiptId: R1,
+      receiptDate: "2026-09-01",
+      totalValueCents: 2500,
+      donorFirstName: "Jane",
+      donorLastName: "Doe",
+      outcome: "ACCEPTED",
+      budgetOwnerName: "Robotics",
+      state: "booking",
+      revenueBooking: "MATCHED",
+      expenseBooking: null,
+      inventorySourceKey: null,
+      inventoryLoadedAt: null,
+      lines: [expect.objectContaining({ description: "Drill", quantity: 1, valueCents: 2500 })],
+    });
+    expect(gift.events.map((e) => e.eventType)).toEqual(["IN_KIND_MONEY_RECEIVED", "IN_KIND_DONOR_RECORDED", "IN_KIND_DECIDED"]);
+    expect(gift.events[2]).toMatchObject({ actorUsername: `u${FINANCE}` });
+
+    const reads = await db.workflowEvent.findMany({ where: { orgId, eventType: "DONOR_DATA_READ", entityType: "in_kind", entityId: R1 } });
+    expect(reads).toHaveLength(1);
+    expect((await inKindAcceptService.getGift(orgId, "receipt", id, reader)).events).toHaveLength(3);
+  });
+
+  it("shows a gift without a receipt with its recorder, suggested values and inventory source key", async () => {
+    const { id } = await manualGift();
+    const gift = await inKindAcceptService.getGift(orgId, "manual", id, { ...reader, route: "GET /api/donations/in-kind/manual/[id]" });
+    expect(gift).toMatchObject({
+      source: "manual",
+      receiptId: null,
+      donationDate: "2026-10-02",
+      recordedByUsername: "tester",
+      donorFirstName: "Sam",
+      donorLastName: "Giver",
+      totalValueCents: null,
+      state: "decision",
+      inventorySourceKey: `donation:${id}`,
+    });
+    expect(gift.inventoryLoadedAt).not.toBeNull();
+    expect(gift.lines.map((l) => [l.quantity, l.suggestedValueCents])).toEqual([[1, 4000], [2, null]]);
+    expect(gift.events.map((e) => e.eventType)).toEqual(["MANUAL_IN_KIND_RECORDED"]);
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "DONOR_DATA_READ", entityType: "manual_in_kind", entityId: String(id) } })).toBe(1);
+  });
+
+  it("shows a failed inventory load as not loaded", async () => {
+    configure(RECORDER, async () => {
+      throw new Error("inventory down");
+    });
+    const { id } = await recordInKindWithoutReceipt({
+      donor: { firstName: "Sam", lastName: "Giver", companyName: null },
+      donationDate: "2026-10-02",
+      lines: [{ gtin13: DRILL, quantity: 1 }],
+    });
+    expect(await inKindAcceptService.getGift(orgId, "manual", id, reader)).toMatchObject({ inventorySourceKey: `donation:${id}`, inventoryLoadedAt: null });
+  });
+
+  it("shows a settled withdrawal with nothing left to do and no donor", async () => {
+    const id = await receiptGift();
+    await withdrawInKind(orgId, R1, 0);
+    await inKindService.settle(orgId, id, "withdrawal", by(FINANCE));
+    expect(await inKindAcceptService.getGift(orgId, "receipt", id, reader)).toMatchObject({
+      state: null,
+      waitingOn: [],
+      donorFirstName: null,
+      donorLastName: null,
+      withdrawalSettledAt: expect.any(Date),
+    });
+  });
+
+  it("404s a gift in another org or of the other source", async () => {
+    const id = await receiptGift();
+    await expect(inKindAcceptService.getGift("other-org", "receipt", id, reader)).rejects.toMatchObject({ status: 404 });
+    await expect(inKindAcceptService.getGift(orgId, "manual", id, reader)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describeDb("capital review", () => {
+  function captureCapital(awaiting: { giftSource: string; giftId: number }[] = []) {
+    const sent: CapitalReviewLine[][] = [];
+    capital = { submit: async (_org, lines) => void sent.push(lines), awaitingReview: async () => awaiting, assetLineIds: async () => [] };
+    configure();
+    return sent;
+  }
+
+  it("accepting sends a receipt gift's lines with the tax and shipping spread across them by value", async () => {
+    const sent = captureCapital();
+    const r = receipt(1000);
+    r.lineItems = [
+      { ...r.lineItems[0], receiptLineItemId: 1, totalPriceCents: 300 },
+      { ...r.lineItems[0], receiptLineItemId: 2, lineNumber: 2, description: "Saw", totalPriceCents: 600 },
+    ];
+    await ingestInKind(r);
+    await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
+    const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } });
+
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(sent).toHaveLength(1);
+    expect(sent[0].map((l) => [l.description, l.costCents, l.acquisitionDate, l.budgetOwnerId])).toEqual([
+      ["Drill", 333, "2026-09-01", 1],
+      ["Saw", 667, "2026-09-01", 1],
+    ]);
+    expect(JSON.stringify(sent)).not.toMatch(/Jane|Doe/);
+
+    await inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId: 2 }, by(FINANCE));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a gift without a receipt sends finance's values on its donation date", async () => {
+    const { id, lineIds } = await manualGift();
+    const sent = captureCapital();
+    await inKindAcceptService.decide("manual", id, { ...ACCEPT, lineValues: [{ lineId: lineIds[0], valueCents: 3000 }, { lineId: lineIds[1], valueCents: 500 }] }, by(FINANCE));
+    expect(sent[0].map((l) => [l.giftSource, l.costCents, l.acquisitionDate])).toEqual([
+      ["manual", 3000, "2026-10-02"],
+      ["manual", 500, "2026-10-02"],
+    ]);
+  });
+
+  it("a refused gift sends nothing", async () => {
+    const id = await receiptGift();
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, { outcome: "refuse", confirmOutsideDonorHousehold: true }, by(FINANCE));
+    expect(sent).toEqual([]);
+  });
+
+  it("a failed send keeps the accept, waits on capital review, and accepting again resends", async () => {
+    const id = await receiptGift();
+    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
+    configure();
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 502 });
+    const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
+
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(sent).toHaveLength(1);
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).capitalSubmittedAt).not.toBeNull();
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "booking", waitingOn: ["booking"] });
+  });
+
+  it("a gift with a line in capital review waits on it before booking", async () => {
+    const id = await receiptGift();
+    captureCapital([{ giftSource: "receipt", giftId: id }]);
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
   });
 });

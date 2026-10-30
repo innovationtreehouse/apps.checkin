@@ -28,7 +28,6 @@ POST /api/auth/[...nextauth]
 GET /api/auth/dev-personas
 POST /api/auth/dev-personas
 GET /api/cron/lifecycle-reconcile
-GET /api/cron/membership-renewals
 GET /api/cron/nightly
 GET /api/cron/pending-participants
 GET /api/cron/person-bg-annual
@@ -83,8 +82,6 @@ GET /api/membership-ops/households
 POST /api/membership-ops/households
 POST /api/membership-ops/participants/[id]/household
 PUT /api/membership-ops/participants/[id]
-POST /api/membership-ops/participants/import/preview
-POST /api/membership-ops/participants/import
 GET /api/membership-ops/participants/merge/analyze
 POST /api/membership-ops/participants/merge
 POST /api/membership-ops/participants

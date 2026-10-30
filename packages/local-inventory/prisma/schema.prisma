@@ -116,13 +116,15 @@ model ReceiveQueue {
   queuedAt    DateTime  @default(now()) @map("queued_at")
   /// @sensitivity:public
   fulfilledAt DateTime? @map("fulfilled_at")
-  // A cancelled line stays as the record of who withdrew it; it is never fulfilled.
+  // A cancelled line stays as the record of who withdrew it and why; it is never fulfilled.
   /// @sensitivity:public
   cancelledAt         DateTime? @map("cancelled_at")
   /// @sensitivity:internal
   cancelledBy         Int?      @map("cancelled_by")
   /// @sensitivity:internal
   cancelledByUsername String?   @map("cancelled_by_username")
+  /// @sensitivity:internal
+  cancelReason        String?   @map("cancel_reason")
 
   @@map("receive_queue")
 }

@@ -53,8 +53,10 @@ const writes = endpoints.filter(e => !e.startsWith('GET '));
 const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
+const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve'));
+const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
 const financeWrites = writes.filter(e => !DECISIONS.includes(e));
-const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e));
+const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
 async function callJson(endpoint: string) {
@@ -65,6 +67,7 @@ async function callJson(endpoint: string) {
     return { status: res.status, impl, body: res.status === 200 ? await res.json() : undefined };
 }
 
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 let approvedBuckets: number[];
@@ -85,7 +88,12 @@ describe('donation registry — shape', () => {
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
         ]);
+        expect(QB_RESOLVES).toEqual([
+            'POST /api/donations/in-kind/receipt/[id]/qb-resolve',
+            'POST /api/donations/in-kind/manual/[id]/qb-resolve',
+        ]);
         expect(IN_KIND_MANUAL).toHaveLength(3);
+        expect(endpoints.filter(e => e.includes('/qb-candidates') || e.includes('/qb-exclusions'))).toEqual([]);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
     });
 
@@ -261,8 +269,8 @@ describe('UploadedFile.fileBlob is file-only', () => {
     });
 });
 
-describe('in-kind decision, settle and by-bucket routes never grant pii', () => {
-    it.each([...DECISIONS, SETTLE, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
+describe('in-kind decision, settle, qb-resolve and by-bucket routes never grant pii', () => {
+    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
         const tokens = (getRoute(endpoint)?.orderedView ?? []).flatMap(([, t]) => [...t]);
         expect(tokens.length).toBeGreaterThan(0);
         expect(tokens.some(t => t.endsWith(':pii'))).toBe(false);
@@ -362,4 +370,63 @@ describe('in-kind settle route', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(settled);
     });
+});
+
+describe('in-kind qb-resolve routes', () => {
+    it.each(QB_RESOLVES)('%s replies to finance with the queue item and no donor', async endpoint => {
+        signIn(7, { isFinance: true });
+        const item = { id: 1, source: 'receipt', state: 'ready', revenueBooking: 'matched', expenseBooking: 'unbooked', qbState: 'skipped', qbNote: 'booked by hand', lines: [] };
+        const impl = jest.fn(async () => ({ InKindQueueItemView: { ...item, donorLastName: 'Doe' } }));
+        const res = await handler(endpoint, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/x/1/qb-resolve', { method: 'POST' }),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(item);
+    });
+});
+
+describe('in-kind gift detail routes', () => {
+    const gift = {
+        id: 1,
+        source: 'manual',
+        receiptId: null,
+        donationDate: '2026-10-01',
+        recordedByUsername: 'ops',
+        outcome: 'ACCEPTED',
+        state: null,
+        waitingOn: [],
+        inventorySourceKey: 'donation:1',
+        inventoryLoadedAt: '2026-10-01T12:00:00.000Z',
+        lines: [{ id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800 }],
+        events: [{ id: 5, eventType: 'IN_KIND_DECIDED', actorUsername: 'fin', occurredAt: '2026-10-02T00:00:00.000Z', payload: '{"outcome":"ACCEPTED"}' }],
+    };
+    const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
+
+    async function getAs(endpoint: string, flags: Flags) {
+        signIn(7, flags);
+        const impl = jest.fn(async () => ({
+            InKindGiftDetailView: {
+                ...gift,
+                ...donor,
+                uploadedByUserId: 9,
+                lines: [{ ...gift.lines[0], donorLastName: 'Doe' }],
+                events: [{ ...gift.events[0], actorUserId: 7, orgId: 'treehouse' }],
+            },
+        }));
+        const res = await handler(endpoint, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/x/1'),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        return { status: res.status, body: res.status === 200 ? await res.json() : undefined };
+    }
+
+    it.each(DETAILS.flatMap(e => [{ isFinance: true }, { isBoardMember: true }].map(flags => [e, flags] as const)))(
+        '%s shows %p the gift with its donor, lines and history and nothing else',
+        async (endpoint, flags) => {
+            const { status, body } = await getAs(endpoint, flags);
+            expect(status).toBe(200);
+            expect(body).toEqual({ ...gift, ...donor });
+        },
+    );
 });

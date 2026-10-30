@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
+import { mergeBgNotice } from "@/lib/membership/mergeBgAdvance";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
 
@@ -77,9 +78,16 @@ export const GET = withAuth(
                 return p;
             };
 
-            const [pA, pB] = await Promise.all([getParticipant(aId), getParticipant(bId)]);
+            // Read apart from the select above, so the raw dates stay out of `participants`
+            // and only a date the survivor would adopt leaves this route.
+            const getBgSubject = (id: number) => prisma.person.findUnique({
+                where: { id },
+                select: { householdId: true, isHouseholdLead: true, lastBackgroundCheck: true },
+            });
 
-            if (!pA || !pB) {
+            const [pA, pB, bgA, bgB] = await Promise.all([getParticipant(aId), getParticipant(bId), getBgSubject(aId), getBgSubject(bId)]);
+
+            if (!pA || !pB || !bgA || !bgB) {
                 return apiError("Participant not found", 404);
             }
 
@@ -183,12 +191,15 @@ export const GET = withAuth(
                 collisions.push({ type: 'openVisit', message: 'Both have an open building visit. Close one visit first.' });
             }
 
+            const [bgNoticeAKept, bgNoticeBKept] = await Promise.all([mergeBgNotice(bgA, bgB), mergeBgNotice(bgB, bgA)]);
+
             return NextResponse.json({
                 participants: [pA, pB],
                 membershipBlock: {
                     aAsKeeper: membershipMergeBlock(a, b),
                     bAsKeeper: membershipMergeBlock(b, a),
                 },
+                bgNotice: { aAsKeeper: bgNoticeAKept, bAsKeeper: bgNoticeBKept },
                 collisions,
             });
         } catch (error) {

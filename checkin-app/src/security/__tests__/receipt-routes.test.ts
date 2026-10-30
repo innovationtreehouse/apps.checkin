@@ -36,6 +36,7 @@ import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } fro
 import { stripValue } from '@/security/stripper';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
+jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
 interface Flags {
@@ -72,6 +73,11 @@ function signIn(id: unknown, flags: Flags = {}) {
 }
 
 const RECEIPT = /^[A-Z]+ \/api\/receipts(\/|$)/;
+/** The reimbursee's confirmation: any signed-in person is admitted, and the library decides. */
+const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/receipts/[id]/confirmation'];
+/** What became of reimbursements someone else uploaded: any signed-in person is admitted, and sees their own. */
+const REIMBURSED_ROUTE = 'GET /api/receipts/reimbursements';
+const REIMBURSEE_ROUTES = [...CONFIRMATION_ROUTES, REIMBURSED_ROUTE];
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -79,7 +85,7 @@ function request(endpoint: string) {
     const [method, path] = endpoint.split(' ');
     return new NextRequest(`http://localhost${path.replace(/\[[^\]]+\]/g, '1')}`, { method });
 }
-const params = { params: Promise.resolve({ id: '1', lineItemId: '1' }) };
+const params = { params: Promise.resolve({ id: '1', lineItemId: '1', otherId: '1' }) };
 
 beforeEach(() => mockSession.mockReset());
 
@@ -89,8 +95,8 @@ describe('receipt routes are registered', () => {
         expect(fileRoutes.sort()).toEqual(['GET /api/receipts/[id]/file', 'GET /api/receipts/mail-items/[id]/file']);
     });
 
-    it('never admits public, kiosk or plain authenticated callers', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes]) {
+    it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s own routes', () => {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e))) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
@@ -154,8 +160,12 @@ describe('role admission', () => {
             'POST /api/receipts/[id]/ignore-file',
             'GET /api/receipts/ignored-files',
             'DELETE /api/receipts/ignored-files/[id]',
+            'POST /api/receipts/[id]/not-this-one',
+            'DELETE /api/receipts/[id]/not-this-one/[otherId]',
+            'POST /api/receipts/[id]/different-purchases',
+            'POST /api/receipts/[id]/keep-this-one',
         ]));
-        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs']));
+        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group']));
     });
 
     it.each([
@@ -230,6 +240,7 @@ describe('receipt submitter admission', () => {
         'PATCH /api/receipts/[id]/line-items/[lineItemId]',
         'DELETE /api/receipts/[id]/line-items/[lineItemId]',
         'POST /api/receipts/[id]/retry-ocr',
+        'POST /api/receipts/[id]/acknowledge-rejection',
         'POST /api/receipts/[id]/discard',
         'POST /api/receipts/[id]/resubmit',
     ];
@@ -311,6 +322,104 @@ describe('the reimbursee options', () => {
     });
 });
 
+describe('the confirmation that signs a reimbursement', () => {
+    const views = (e: string) => new Map(getRoute(e)!.orderedView);
+    const line = { id: 1, reimburseePersonId: 9, lineNumber: 1, description: 'Arduino', quantity: 1, unitPriceCents: 6989, totalPriceCents: 6989, isDelayed: false };
+    const row = {
+        id: 'r-1', reimburseePersonId: 9, state: 'submitter_review', retailer: 'Acme', receiptDate: '2026-10-01', currency: 'USD',
+        shippingCents: 0, taxCents: 0, discountCents: 0, receiptTotalCents: 6989, onBehalf: false, changedFields: [],
+        uploadedByUserId: 7, reimbursementFor: 'Sam Lee', validationNotes: 'note', lineItems: [line],
+    };
+
+    it('admits any signed-in person, and shows the Board everyone\'s and anyone else their own', () => {
+        for (const e of CONFIRMATION_ROUTES) {
+            expect(getRoute(e)?.authorize).toBe('authenticated');
+            expect(getRoute(e)?.orderedView).toEqual([['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]]);
+        }
+    });
+
+    it('returns the person reimbursed the receipt and lines, and no uploader, name or note', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        const out = stripValue('ReceiptConfirmationView', row, own, { selfId: 9 } as CallerContext) as Record<string, unknown>;
+        const { uploadedByUserId: _u, reimbursementFor: _r, validationNotes: _v, ...expected } = row;
+        expect(out).toEqual(expected);
+    });
+
+    it('returns nothing to anyone else, the uploader included', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [{}] });
+    });
+
+    it('returns a Board member the receipt they confirm on the reimbursee\'s behalf', () => {
+        const board = views(CONFIRMATION_ROUTES[1]).get('isBoardMember')!;
+        const out = stripValue('ReceiptConfirmationView', { ...row, onBehalf: true }, board, { selfId: 5 } as CallerContext) as Record<string, unknown>;
+        expect(out.onBehalf).toBe(true);
+        expect(out.lineItems).toEqual([line]);
+        expect(out).not.toHaveProperty('reimbursementFor');
+    });
+
+    it('admits a reimbursee whose membership lapsed, who is no receipt submitter', async () => {
+        const lapsed = { type: 'session', user: user(9, { ageBand: 'adult', isActiveOrgMember: false }) } as AuthResult;
+        for (const e of CONFIRMATION_ROUTES) {
+            const spec = getRoute(e)!;
+            expect((await resolveAccess('receipt-submitter', { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(false);
+            expect((await resolveAccess(spec.authorize, { auth: lapsed, params: {}, callerContext: await buildCallerContext(lapsed, spec.ctxNeeds) })).allowed).toBe(true);
+        }
+    });
+
+    it('drops a line missing its reimbursee stamp (fails closed)', () => {
+        const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
+        expect(stripValue('ReceiptConfirmationLineView', { id: 1, description: 'Arduino' }, own, { selfId: 9 } as CallerContext)).toEqual({});
+    });
+});
+
+describe('what became of a reimbursement someone else uploaded', () => {
+    const view = () => new Map(getRoute(REIMBURSED_ROUTE)!.orderedView);
+    const row = {
+        id: 'r-1', reimburseePersonId: 9, state: 'receipt_finalized', retailer: 'Acme', receiptDate: '2026-10-01', currency: 'USD',
+        receiptTotalCents: 6989, rejectionReason: null, reimbursement: { paidOn: null },
+        purchaseOutcome: { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null },
+    };
+
+    it('admits any signed-in person and shows each their own, notes included', () => {
+        expect(getRoute(REIMBURSED_ROUTE)?.authorize).toBe('authenticated');
+        expect(getRoute(REIMBURSED_ROUTE)?.orderedView).toEqual([['authenticated', ['their_own:personal', 'their_own:internal']]]);
+        const own = view().get('authenticated')!;
+        expect(stripValue('ReceiptReimbursedView', row, own, { selfId: 9 } as CallerContext)).toEqual(row);
+    });
+
+    it('returns nothing to anyone else, the uploader included', () => {
+        const own = view().get('authenticated')!;
+        expect(stripValue('ReceiptReimbursedView', row, own, { selfId: 7 } as CallerContext)).toEqual({});
+    });
+
+    it('drops an uploader, donor or name field the library might pass through', () => {
+        const own = view().get('authenticated')!;
+        const leaky = { ...row, uploadedByUserId: 7, reimbursementFor: 'Sam Lee', donorFirstName: 'Pat', validationNotes: 'x' };
+        expect(stripValue('ReceiptReimbursedView', leaky, own, { selfId: 9 } as CallerContext)).toEqual(row);
+    });
+});
+
+describe('the discard route', () => {
+    const DISCARD = 'POST /api/receipts/[id]/discard';
+
+    it('holds the submitter view alone, so no role acts on it org-wide', () => {
+        expect(getRoute(DISCARD)?.orderedView).toEqual(getRoute('POST /api/receipts/[id]/submitter-discard')?.orderedView);
+        expect(getRoute(DISCARD)?.orderedView.map(([role]) => role)).toEqual(['authenticated']);
+    });
+
+    it.each([
+        ['FINANCE', { isFinance: true }],
+        ['the Board', { isBoardMember: true }],
+    ] as [string, Flags][])("returns %s nothing of another person's receipt", async (_who, flags) => {
+        signIn(5, { ...flags, ageBand: 'adult', isActiveOrgMember: true });
+        const other = { id: 'r-1', uploadedByUserId: 8, receiptTotalCents: 6989, donorFirstName: 'Pat' };
+        const res = await handler(DISCARD, async () => ({ ReceiptView: other }))(request(DISCARD), params);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({});
+    });
+});
+
 describe('the submitter view', () => {
     const own = getRoute('GET /api/receipts/mine')?.orderedView[0][1] as readonly Token[];
     const ctx = { selfId: 7 } as CallerContext;
@@ -324,12 +433,13 @@ describe('the submitter view', () => {
         donorLastName: 'Doe',
         donorCompanyName: 'Doe Hardware',
         reimbursement: { paidOn: null },
+        purchaseOutcome: { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null },
         lineItems: [{ id: 1, receiptId: 'r-1', uploadedByUserId: 7, description: 'Arduino', totalPriceCents: 6989 }],
     };
 
-    it('returns the uploader their own receipt, lines and paid status, without donor or reimbursee names', () => {
+    it('returns the uploader their own receipt, lines, paid status and purchase outcome, without donor or reimbursee names', () => {
         const out = stripValue('ReceiptView', row, own, ctx) as Record<string, unknown>;
-        expect(out).toMatchObject({ id: 'r-1', receiptTotalCents: 6989, validationNotes: 'rejected: wrong store', reimbursement: { paidOn: null } });
+        expect(out).toMatchObject({ id: 'r-1', receiptTotalCents: 6989, validationNotes: 'rejected: wrong store', reimbursement: { paidOn: null }, purchaseOutcome: row.purchaseOutcome });
         expect(out.lineItems).toEqual(row.lineItems);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
             expect(out).not.toHaveProperty(f);

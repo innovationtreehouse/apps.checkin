@@ -3,7 +3,7 @@
  */
 import prisma from '@/lib/prisma';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
-import { withdrawAndReleaseHold } from '@/lib/program/capacity';
+import { deleteAndReleaseHold } from '@/lib/program/capacity';
 import { reportShopifyFailure } from '@/lib/shopify/client';
 import { setProgramProductOffSale, adjustProgramInventory } from '@/lib/shopify/stock';
 import { emailBoardMembers } from '@/lib/emailRecipients';
@@ -32,6 +32,7 @@ const emailBoard = jest.mocked(emailBoardMembers);
 async function mkProgram(name: string, data: Partial<{ startAt: Date; offSaleAt: Date | null; phase: 'UPCOMING' | 'FINISHED'; saleEndedAt: Date; claimantShopifyVariantId: string }>) {
     return prisma.program.create({
         data: {
+            appliesToYear: 2026,
             name: `${TAG} ${name}`,
             startAt: data.startAt ?? day('2026-11-01'),
             endAt: day('2026-12-31'),
@@ -140,10 +141,9 @@ describe('program sale sweep', () => {
         await runSaleSweep(NOW);
 
         expect(emailBoard).toHaveBeenCalledTimes(1);
-        const [subject, html] = emailBoard.mock.calls[0];
-        expect(subject).toContain(`${TAG} unpaid`);
-        expect(html).toContain('Unpaid Kid');
-        expect(html).not.toContain('Paid Kid');
+        const [key, values] = emailBoard.mock.calls[0];
+        expect(key).toBe('board.unpaidClaims');
+        expect(values).toMatchObject({ programName: expect.stringContaining(`${TAG} unpaid`), names: 'Unpaid Kid' });
         expect((await prisma.program.findUniqueOrThrow({ where: { id: recent.id } })).unpaidClaimsNotifiedAt).toBeNull();
     });
 
@@ -157,11 +157,11 @@ describe('program sale sweep', () => {
             });
         }
 
-        const a = await withdrawAndReleaseHold(ended.id, kid.id, ended);
+        const a = await deleteAndReleaseHold(ended.id, kid.id, ended);
         expect(a.released).toBe(true);
         expect(adjust).not.toHaveBeenCalled();
 
-        const b = await withdrawAndReleaseHold(open.id, kid.id, open);
+        const b = await deleteAndReleaseHold(open.id, kid.id, open);
         expect(b.released).toBe(true);
         expect(adjust).toHaveBeenCalledWith({ id: open.id, shopifyVariantId: open.shopifyVariantId }, 1, 'hold-release', {});
     });

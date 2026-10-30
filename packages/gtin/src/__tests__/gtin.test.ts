@@ -7,8 +7,26 @@ import {
   formatItemId,
   formatProvisionalDisplay,
   isProvisionalGtin13,
+  isValidGtin13,
   parseProvisionalSequence,
 } from "../index";
+
+describe("isValidGtin13", () => {
+  it("accepts 13 digits with the right check digit", () => {
+    expect(isValidGtin13("4006381333931")).toBe(true);
+    expect(isValidGtin13(buildGtin13("A", 1, 1))).toBe(true);
+  });
+
+  it("rejects a wrong check digit", () => {
+    expect(isValidGtin13("4006381333932")).toBe(false);
+  });
+
+  it("rejects anything that is not exactly 13 digits", () => {
+    for (const value of ["", "400638133393", "40063813339310", "400638133393X", " 4006381333931", "4006381333931\n"]) {
+      expect(isValidGtin13(value)).toBe(false);
+    }
+  });
+});
 
 describe("calculateChecksum", () => {
   it("calculateChecksum_returns_correct_digit_for_known_input", () => {

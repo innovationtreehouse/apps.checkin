@@ -19,12 +19,16 @@ function asState(raw: string): ReceivedReceiptState {
 }
 
 export const receiptService = {
-  /** Queue rows, newest first; `states` filters (e.g. APPLY_FAILED_QUEUE_STATES). */
-  async list(states?: string[]) {
+  /** Queue rows, newest first; `states` filters (e.g. APPLY_FAILED_QUEUE_STATES), `receiptIds` narrows to those receipts. */
+  async list(states?: string[], receiptIds?: string[]) {
     await requireActor();
     const filter = states?.map(asState);
     const rows = await db.receivedReceipt.findMany({
-      where: { orgId: (await getOrg()).id, ...(filter ? { state: { in: filter } } : {}) },
+      where: {
+        orgId: (await getOrg()).id,
+        ...(filter ? { state: { in: filter } } : {}),
+        ...(receiptIds ? { receiptId: { in: receiptIds } } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
 

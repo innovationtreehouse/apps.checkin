@@ -6,6 +6,7 @@ import type { BenevityRow } from "../lib/csv-parser";
 import { ServiceError } from "@checkin/component-kit";
 import { getOwnerDirectory } from "../runtime";
 import { lockDisbursementTx, runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { handOverDeposits } from "../lib/deposit-handover";
 
 const SELECT_FILE_FIELDS = {
   id: true,
@@ -54,7 +55,8 @@ export const uploadedFileService = {
 
     // Rows are deduplicated against committed transactions, so the unique key fires only when a
     // concurrent upload of the same gifts commits first.
-    return db.$transaction(async (tx) => {
+    const cycled: string[] = [];
+    const result = await db.$transaction(async (tx) => {
       const fileRecord = await tx.uploadedFile.create({
         data: {
           orgId,
@@ -199,12 +201,15 @@ export const uploadedFileService = {
       for (const disbursementId of disbursementIds) {
         await runOwnerAssignedCycleTx(tx, orgId, disbursementId, audit);
       }
+      cycled.push(...disbursementIds);
 
       return { id: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
     }).catch((err: unknown) => {
       if (isUniqueConstraintError(err)) throw new ServiceError(409, "This file is already being uploaded; retry once that upload finishes");
       throw err;
     });
+    await handOverDeposits(orgId, cycled);
+    return result;
   },
   /** Drop the stored CSV of an upload that added nothing; the file row stays. */
   async deleteBlob(orgId: string, id: number, audit: AuditContext) {

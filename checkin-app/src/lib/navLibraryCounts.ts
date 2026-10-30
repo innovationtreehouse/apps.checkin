@@ -6,8 +6,6 @@
  */
 import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
-import { FINANCE_OR_BOARD, hasAnyRole } from "@/lib/nav/gates";
-import { RECEIVING_ROLES } from "@/lib/nav/sections/inventory";
 import { canSubmitReceipts } from "@/lib/volunteer";
 import { financeQueueCountKey } from "@checkin/receipt/nav";
 
@@ -15,9 +13,9 @@ export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
 export type LibraryCountProvider = {
   library: LibraryKey;
-  /** Whether this viewer may see the counts — mirror the library's read gate. */
+  /** Whether this viewer gets the counts: only a role that can act on what they count. */
   visible: (user: SessionUser) => boolean;
-  /** Named counts for this viewer, e.g. { holds: 2, openFlags: 1 }. */
+  /** Named counts for this viewer, e.g. { financeQueue: 2, approver: 1 }. */
   count: (user: SessionUser) => Promise<Record<string, number>>;
 };
 
@@ -33,7 +31,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "bulk-donation",
-    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
+    // Only FINANCE assigns a gift or resubmits a disbursement hold.
+    visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
       const { getNavCounts, getOrgId } = await import("@checkin/bulk-donation");
@@ -43,7 +42,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "workflow-mapping",
-    visible: (u) => hasAnyRole(u, RECEIVING_ROLES),
+    // Only INVENTORY_MANAGER maps or applies a receipt.
+    visible: (u) => u.isInventoryManager === true,
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
@@ -56,7 +56,8 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "income",
-    visible: (u) => hasAnyRole(u, FINANCE_OR_BOARD),
+    // Only FINANCE runs and resolves reconciliation.
+    visible: (u) => u.isFinance === true,
     count: async (): Promise<Record<string, number>> =>
       process.env.INCOME_DATABASE_URL
         ? { openReconciliation: await (await import("@/lib/income/count")).incomeOpenCount() }
@@ -64,18 +65,23 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   },
   {
     library: "receipt",
-    // An uploader counts their own receipts; FINANCE counts its queues, less the receipts it is
-    // conflicted on. BOARD reads the queues but cannot act on them, so it gets no queue count.
-    visible: (u) => canSubmitReceipts(u) || u.isFinance === true,
+    // An uploader counts their own receipts; anyone who may be named as reimbursee (an adult) counts
+    // the confirmations waiting on them, and a Board member also those it alone gives, for a
+    // reimbursee with no account. FINANCE counts its queues, less the receipts it is conflicted on;
+    // BOARD reads the queues but cannot act on them, so it gets no queue count.
+    visible: (u) => canSubmitReceipts(u) || u.ageBand === "adult" || u.isFinance === true || u.isBoardMember === true,
     count: async (u): Promise<Record<string, number>> => {
       if (!process.env.RECEIPT_DATABASE_URL || typeof u.id !== "number") return {};
       const { receiptService } = await import("@checkin/receipt");
-      const [awaitingMe, finance] = await Promise.all([
+      const board = u.isBoardMember === true;
+      const [awaitingMe, toConfirm, finance] = await Promise.all([
         canSubmitReceipts(u) ? receiptService.countAwaitingSubmitter(u.id) : null,
+        u.ageBand === "adult" || board ? receiptService.countToConfirm(u.id, board) : null,
         u.isFinance === true ? receiptService.countAwaitingFinance(u.id) : null,
       ]);
       return {
         ...(awaitingMe === null ? {} : { awaitingMe }),
+        ...(toConfirm === null ? {} : { toConfirm }),
         ...(finance === null
           ? {}
           : {

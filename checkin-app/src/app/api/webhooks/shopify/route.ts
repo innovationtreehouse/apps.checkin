@@ -8,7 +8,7 @@ import { config } from "@/lib/config";
 import { activateProgramEnrollment, refuseReversedActivation } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
-import { membershipVariantIdSet, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
+import { findMembershipLine, membershipVariantYears, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
 import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
@@ -17,9 +17,11 @@ import { isShopifyTestNotification, logRejectedShopifyWebhook, recordShopifyWebh
 interface ShopifyOrder {
     id?: number | string;
     note_attributes?: { name: string; value: string }[];
-    line_items?: { variant_id?: number | string; quantity?: number }[];
+    /** `quantity` is the original count; `current_quantity` excludes units an edit or refund removed. */
+    line_items?: { variant_id?: number | string; quantity?: number; current_quantity?: number | null }[];
     financial_status?: string | null;
     cancelled_at?: string | null;
+    processed_at?: string | null;
     /** Coupons applied at checkout — the program member-code entitlement check below. */
     discount_codes?: { code?: string }[];
 }
@@ -69,7 +71,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
 // Shopify store; local receives it from the self-fired mock (/api/dev/shopify/orders-paid).
 // The HMAC secret differs per env (config.shopifyWebhookSecret). The only env-branched
 // logic is the synthetic dev-mock variant fallback, gated on config.shopifyMockActive()
-// (⇔ CHECKIN_ENV=local) inside membershipVariantIdSet.
+// (⇔ CHECKIN_ENV=local) inside membershipVariantYears.
 export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, order: ShopifyOrder) => {
         // Only a paid, unreversed orders/paid delivery moves anything. A reversed one is
         // left to the reconciler, which raises it against the pending record.
@@ -79,7 +81,10 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
             financialStatus: order.financial_status ?? null,
             cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
             totalRefundedCents: 0,
-            lines: (order.line_items ?? []).map((li) => ({ variantId: String(li.variant_id), quantity: li.quantity ?? 1 })),
+            lines: (order.line_items ?? []).map((li) => {
+                const quantity = li.quantity ?? 1;
+                return { variantId: String(li.variant_id), quantity, currentQuantity: li.current_quantity ?? quantity };
+            }),
         };
         const topic = req.headers.get("x-shopify-topic");
         if (topic !== "orders/paid" || !isPaid(facts)) {
@@ -114,13 +119,8 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // checkout link is built from), never by total. Every outcome other than
         // settling or a redelivery is raised for the board.
         //
-        // TODO(#278) still open: we still trust the customer-controlled
-        // Membership_Process_ID cart attribute for WHICH process to credit (no
-        // per-process checkout token yet), and the volunteer discount code is still
-        // a self-serve code on a public cart link rather than gated to a Shopify
-        // customer segment. Neither enables over-activation on its own now that the
-        // membership item is checked, but both remain honor-system until a real
-        // token / Shopify-side segment exists.
+        // Membership_Process_ID is customer-controlled: it names the process to credit and
+        // proves nothing about who paid. The volunteer code isn't checked here; reconciliation flags it.
         let membershipOutcome: string | null = null;
         if (membershipProcessIdStr) {
             const processId = parseInt(membershipProcessIdStr, 10);
@@ -133,8 +133,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 logger.info(`[SHOPIFY WEBHOOK] Test order ${orderId || "?"} for membership process ${membershipProcessIdStr} — ignored`);
             } else if (!isNaN(processId)) {
                 const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-                const hasMembershipItem = (order.line_items ?? []).some((li) => membershipVariantIdSet(settings).has(String(li.variant_id)));
-                const result = await activateByProcessId(processId, orderId, hasMembershipItem);
+                const variantYears = await membershipVariantYears(settings, order.processed_at ? new Date(order.processed_at) : new Date());
+                const line = findMembershipLine(variantYears, (order.line_items ?? []).map((li) => String(li.variant_id)));
+                const result = await activateByProcessId(processId, orderId, line);
                 await raiseMembershipPaymentOutcome(result.outcome, { shopifyOrderId: orderId || null, processId });
                 outcome = `process ${processId}: ${result.outcome}`;
                 logger.info(`[SHOPIFY WEBHOOK] Membership payment for process ${processId}: ${result.outcome}`);
@@ -179,6 +180,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 if (!entitlement.ok && entitlement.kind === "REVERSED_BEFORE_ACTIVATION" && orderId) {
                     await refuseReversedActivation(programId, participantIds, orderId);
                     outcome = `program ${programId}: order reversed before activation — raised, not activated`;
+                } else if (!entitlement.ok && entitlement.spent) {
+                    logger.info(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} already spent on earlier enrollments in program ${programId} — NOT activated`);
+                    outcome = `program ${programId}: order already spent on earlier enrollments — not activated`;
                 } else if (!entitlement.ok) {
                     logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
                     if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: entitlement.personId ?? participantIds[0] ?? null });

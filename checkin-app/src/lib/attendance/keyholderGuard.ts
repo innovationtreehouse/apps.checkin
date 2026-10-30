@@ -7,8 +7,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import type { AuthenticatedUser } from "@/types/auth";
-import { sendEmail } from "@/lib/email";
-import { escapeHtml } from "@/lib/email-templates/base";
+import { sendTemplated } from "@/lib/email-templates/send";
 import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 import { executePendingCloses, recordClose } from "@/lib/attendance/close";
@@ -285,13 +284,8 @@ async function emailHandover(handoverToId: number, leaverId: number, othersInsid
         prisma.visit.count({ where: { personId: handoverToId, departedAt: null, deletedAt: null } }),
     ]);
     if (!named?.email || open > 0) return;
-    const leaverName = escapeHtml(leaver?.nickname || leaver?.name || "A keyholder");
+    const leaverName = leaver?.nickname || leaver?.name || "A keyholder";
     const when = formatDateTime(new Date(), { timeZone: await resolveDisplayTimezone() });
-    const inside = othersInside === 1 ? "1 person is" : `${othersInside} people are`;
-    await sendEmail(
-        named.email,
-        "You were named as the keyholder in charge",
-        `<p>${leaverName} checked out at ${when} and named you as the keyholder they handed the building over to.</p>` +
-        `<p>${inside} still recorded inside, and no keyholder is checked in. If you are there, check in; if not, let them know.</p>`,
-    );
+    const peopleInside = othersInside === 1 ? "1 person is" : `${othersInside} people are`;
+    await sendTemplated("attendance.keyholderHandover", named.email, { leaverName, when, peopleInside });
 }

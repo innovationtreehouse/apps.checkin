@@ -174,8 +174,8 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
  * but the membership variant is manual BoardSettings config that a local seed never
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
- * the inbound handler fall back to this id when shopifyMockActive(), so local membership
- * the membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
+ * the inbound handler fall back to this id when shopifyMockActive(), so a local
+ * membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
  */
 export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
 
@@ -241,6 +241,9 @@ export const config = {
     // unavailable (503), the same failure as a missing object. The key has a
     // default so only the bucket must be wired per-env.
     agreementPdfBucket: (): string | null => process.env.AGREEMENT_PDF_S3_BUCKET || null,
+    // Receipt files: the private bucket, and the flag sending new files to it.
+    receiptFilesBucket: (): string | null => process.env.RECEIPT_FILES_S3_BUCKET || null,
+    receiptFilesS3: (): boolean => process.env.RECEIPT_FILES_S3 === 'true',
     agreementPdfKey: (): string => process.env.AGREEMENT_PDF_S3_KEY || 'membership-agreement.pdf',
 
     // Zoho Sign — membership-agreement e-signing. The three OAuth secrets are
@@ -317,6 +320,9 @@ export const config = {
     // True ONLY on CHECKIN_ENV=local (see shopifyMockActiveEnv). Gates /api/dev/shopify/*
     // + the dev tool + the synthetic dev-mock variant fallbacks. Always false on dev and prod.
     shopifyMockActive: (): boolean => shopifyMockActiveEnv(),
+    // True ONLY on CHECKIN_ENV=local, where no QuickBooks company is reachable: the
+    // bucket form's Class picker lists fixed stand-in Classes. Always false on dev and prod.
+    quickBooksMockActive: (): boolean => readCheckinEnv() === 'local',
 
     // True when the dev/local background-check mock stands in for Averity (consent URL
     // unset, non-prod). Selects the mock provider (in-app consent link) and gates
@@ -336,9 +342,6 @@ export const config = {
     // unset/unrecognized value; cloud-dev pages are additionally behind the
     // org-member login gate.
     devToolsActive: (): boolean => readCheckinEnv() !== 'prod',
-    // Optional CSV participant import module (page + API). Off unless CSV_IMPORT_ENABLED=true;
-    // when off the page and its routes 404.
-    csvImportEnabled: (): boolean => process.env.CSV_IMPORT_ENABLED === 'true',
     // True only on a developer laptop. Gates offline credential login + keyless kiosk.
     isLocal: (): boolean => readCheckinEnv() === 'local',
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access

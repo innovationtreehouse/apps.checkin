@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
-import { addHouseholdLead, HouseholdLeadLimitError } from "@/lib/household/leads";
+import { HouseholdLeadLimitError } from "@/lib/household/leads";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
+import { createInOwnHousehold } from "@/lib/person/ownHousehold";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 import { withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -83,28 +86,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
                 }
-                const trimmedParentName = parentName.trim();
-                const parentLastName = trimmedParentName.split(/\s+/).pop() || "";
-                // No transaction in this route, so the mint gets a minimal one
-                // paired with its create — an id minted outside would be burned
-                // if the create failed. The household is created as its own
-                // statement rather than nested: an explicit `id` is only
-                // accepted in Prisma's *unchecked* create input, which has no
-                // room for a nested relation create.
                 parent = await withTx(prisma, async (tx) => {
-                    const household = await tx.household.create({
-                        data: { name: parentLastName ? `${parentLastName} Household` : "Household" }
-                    });
-                    return tx.person.create({
-                        data: {
-                            id: await mintPersonId(tx),
-                            email: parentEmail,
-                            name: trimmedParentName,
-                            householdId: household.id,
-                        }
-                    });
+                    await removeAliasesForSignInEmail(tx, parentEmail, personActor(auth.user.id), "participant_add");
+                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim() });
                 });
-                await addHouseholdLead(prisma, parent.householdId, parent.id);
             } else {
                 joinsExistingHousehold = true;
             }
@@ -134,6 +119,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (await lockAndFindDeniedHousehold(tx, [targetHouseholdId]) !== null) {
                     throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
+                if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
                 return tx.person.create({
                     data: {
                         id: await mintPersonId(tx),
@@ -146,24 +132,15 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 });
             });
         } else {
-            const lastName = (name || "").trim().split(/\s+/).pop() || "";
             newParticipant = await withTx(prisma, async (tx) => {
-                const household = await tx.household.create({
-                    data: { name: lastName ? `${lastName} Household` : "Household" }
-                });
-                return tx.person.create({
-                    data: {
-                        id: await mintPersonId(tx),
-                        name: nameWrite(name),
-                        ...(email && { email }),
-                        // #1165: 26+ participants are stored declared-adult with no DoB.
-                        ...normalizeAdultDob(dob),
-                        householdId: household.id,
-                    }
+                if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
+                return createInOwnHousehold(tx, {
+                    name: nameWrite(name)!,
+                    ...(email && { email }),
+                    // #1165: 26+ participants are stored declared-adult with no DoB.
+                    ...normalizeAdultDob(dob),
                 });
             });
-
-            await addHouseholdLead(prisma, newParticipant.householdId, newParticipant.id);
         }
 
         return NextResponse.json({ success: true, participant: newParticipant });

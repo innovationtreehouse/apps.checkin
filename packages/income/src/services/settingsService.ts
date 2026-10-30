@@ -1,4 +1,4 @@
-// The org's caps on what one outbox drain may create. FINANCE may lower a cap; raising one
+// The org's caps on what one outbox drain may create: one count across sources, a cents cap per source. FINANCE may lower a cap; raising one
 // takes the board. Every change is written to the audit log with its before and after.
 import { db } from "../db";
 import { recordAudit, type TxClient } from "../lib/audit";
@@ -8,12 +8,14 @@ import type { Actor } from "./reconciliationService";
 export interface IncomeSettings {
   maxCreatesPerRun: number;
   maxCreateCentsPerRun: number;
+  benevityMaxCreateCentsPerRun: number;
 }
 
 /** The column defaults; a missing row reads as these. */
 export const DEFAULT_INCOME_SETTINGS: IncomeSettings = {
   maxCreatesPerRun: 25,
   maxCreateCentsPerRun: 2_500_000,
+  benevityMaxCreateCentsPerRun: 2_500_000,
 };
 
 export interface SettingsActor extends Actor {
@@ -22,13 +24,14 @@ export interface SettingsActor extends Actor {
 }
 
 const KEYS = Object.keys(DEFAULT_INCOME_SETTINGS) as (keyof IncomeSettings)[];
+const SELECT = { maxCreatesPerRun: true, maxCreateCentsPerRun: true, benevityMaxCreateCentsPerRun: true } as const;
 const MAX_INT = 2_147_483_647;
 
 export async function readIncomeSettings(client: TxClient | typeof db, orgId: string): Promise<IncomeSettings> {
   return (
     (await client.incomeOrgSettings.findUnique({
       where: { orgId },
-      select: { maxCreatesPerRun: true, maxCreateCentsPerRun: true },
+      select: SELECT,
     })) ?? DEFAULT_INCOME_SETTINGS
   );
 }
@@ -65,7 +68,7 @@ export async function updateIncomeSettings(orgId: string, patch: unknown, actor:
       where: { orgId },
       create: { orgId, ...changes },
       update: changes,
-      select: { maxCreatesPerRun: true, maxCreateCentsPerRun: true },
+      select: SELECT,
     });
     await recordAudit(tx, {
       orgId,

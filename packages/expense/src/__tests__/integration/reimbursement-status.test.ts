@@ -3,7 +3,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense } from "../helpers/seed";
-import { inertQbReader, type QbBillBalance } from "../../contract";
+import { inertQbReader, QuickBooksNotConnectedError, type QbBillBalance } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 
 const PAYMENTS: Record<string, string> = { p1: "2026-06-01", p2: "2026-06-20" };
@@ -94,6 +94,18 @@ describeDb("X12 reimbursement status", () => {
         ["r3", { paidOn: null }],
       ]),
     );
+  });
+
+  it("throws, never answers 'not yet paid', while QuickBooks is off", async () => {
+    bindPorts({});
+    const id = await bookedBill("b1");
+    await expect(reimbursementStatus.forReceipts([ask(id)])).rejects.toBeInstanceOf(QuickBooksNotConnectedError);
+  });
+
+  it("reads nothing for a receipt with no QuickBooks entry, so it is not yet paid while QuickBooks is off", async () => {
+    bindPorts({});
+    const unbooked = await seedExpense({ needsReimbursement: true, reimburseePersonId: 1 });
+    expect(await reimbursementStatus.forReceipts([ask(unbooked)])).toEqual(new Map([[unbooked, { paidOn: null }]]));
   });
 
   it("reads only this org's expenses", async () => {

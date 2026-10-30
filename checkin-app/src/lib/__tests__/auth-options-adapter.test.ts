@@ -71,7 +71,9 @@ import { authOptions } from '@/lib/auth-options';
 // explicitly, NOT via a fallback proxy — see the note above.
 const prismaMockTx = {
     household: { create: jest.fn() },
-    person: { create: jest.fn() },
+    person: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    personMailAlias: { findMany: jest.fn().mockResolvedValue([]) },
+    $executeRaw: jest.fn(),
     $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
 };
 
@@ -89,7 +91,7 @@ const adapter = authOptions.adapter as unknown as {
 };
 
 const mockAccount = (prisma as unknown as { account: { findUnique: jest.Mock; create: jest.Mock } }).account;
-const mockPersonUpdate = (prisma as unknown as { person: { update: jest.Mock } }).person.update;
+const mockPersonUpdate = prismaMockTx.person.update;
 
 beforeEach(() => {
     jest.clearAllMocks();

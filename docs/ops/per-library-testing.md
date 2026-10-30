@@ -152,3 +152,30 @@ for `prisma generate` and about 13 s for a cold checkin tsc.
 - **Measured** (catalog, 2026-10-17): `catalog.flow.test.ts` ran its 10 tests
   in 6 s. The whole standalone step, start-up and `down -v` included, took
   362 s, so start-up is about six minutes for seconds of test.
+
+## Browser e2e tests
+
+`test:affected` does not run the browser tier, and PR CI doesn't either.
+`.github/workflows/e2e-tests.yml` runs it nightly on `main`, on the same
+dev-server stack as `--flow`, and skips when `main` hasn't moved since the last
+green nightly run. To test a branch, start the workflow by hand on that ref
+(Actions → Browser e2e tests → Run workflow). A failing nightly run opens or
+updates the issue "Nightly browser tests failing", and the next green run closes
+it. Run the tier locally only when your coordinator or user says yes, as with
+any Docker-backed tier.
+
+- `npm run test:e2e:standalone` (from `checkin-app/`) brings up
+  `deploy/docker-compose.flow.yml`, installs Chromium in the app container,
+  runs `playwright test` there, and takes the stack down with `down -v`. Set
+  `E2E_ARGS` to pass arguments through, for example a spec file or `--grep`.
+- With a seeded dev server already up (`CHECKIN_ENV=local`), `npm run test:e2e`
+  runs against `FLOW_BASE_URL` (default `http://localhost:4000`). Install a
+  browser first with `npx playwright install chromium`.
+- Start-up costs the same as `--flow`. Each spec logs in through the seeded
+  personas and assumes a fresh seed.
+- Each run uploads the HTML report, the JSON results and the traces as the
+  `playwright-report` artifact. Open a trace with
+  `npx playwright show-trace <trace.zip>`.
+- Locally, delete `checkin-app/.next` before `test:e2e:standalone`. The repo is
+  bind-mounted into the container, so a stale Turbopack cache from an earlier
+  revision makes `next dev` Fast-Refresh-reload pages in a loop.

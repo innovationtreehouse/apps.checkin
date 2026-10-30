@@ -21,13 +21,14 @@ async function stuckBeforeDelivery(id: string) {
 }
 
 describeDb("finance decisions on one's own receipt", () => {
-  it("refuses clearing the duplicate flag on one's own receipt", async () => {
+  it("refuses deciding the duplicate group of one's own receipt", async () => {
     actAs(FINANCE);
     const file = textFile();
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     expect(dup.state).toBe("duplicate_flagged");
-    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.differentPurchases(dup.id, [first.id, dup.id])).rejects.toMatchObject({ status: 403 });
+    await expect(receiptService.notThisOne(dup.id, first.id)).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(dup.id)).toBe("duplicate_flagged");
   });
 
@@ -48,7 +49,7 @@ describeDb("finance decisions on one's own receipt", () => {
   });
 });
 
-describeDb("a receipt already sent to receiving", () => {
+describeDb("a receipt already sent to part mapping", () => {
   async function pushedThenReopened(state: string) {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     expect(ports.calls.pushes).toHaveLength(1);
@@ -59,7 +60,7 @@ describeDb("a receipt already sent to receiving", () => {
   it("refuses a restart, so no changed copy is re-sent", async () => {
     const id = await pushedThenReopened("flow_error");
     actAs(FINANCE);
-    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already sent to receiving/) });
+    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already sent to part mapping/) });
     expect(await stateOf(id)).toBe("flow_error");
     expect(ports.calls.pushes).toHaveLength(1);
   });
@@ -228,15 +229,15 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
-  it("refuses clearing the duplicate flag; an independent finance user clears it", async () => {
+  it("refuses deciding the duplicate group; an independent finance user decides it", async () => {
     const file = textFile();
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
     actAs(HOUSEMATE);
-    await expect(receiptService.clearDuplicate(dup.id)).rejects.toMatchObject({ status: 403 });
-    expect(await refusals(dup.id)).toEqual([[HOUSEMATE.id, "clear duplicate"]]);
+    await expect(receiptService.differentPurchases(dup.id, [first.id, dup.id])).rejects.toMatchObject({ status: 403 });
+    expect(await refusals(dup.id)).toEqual([[HOUSEMATE.id, "different purchases"]]);
     actAs(FINANCE);
-    await receiptService.clearDuplicate(dup.id);
+    await receiptService.differentPurchases(dup.id, [first.id, dup.id]);
     expect(await stateOf(dup.id)).not.toBe("duplicate_flagged");
   });
 
@@ -250,7 +251,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
-  it("refuses every finance edit, line change and discard; an independent finance user makes them", async () => {
+  it("refuses every finance edit, line change, discard and reject; an independent finance user edits and rejects", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
@@ -261,13 +262,14 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     await expect(receiptService.editLine(r.id, "finance", line.id, { unitPrice: 1 })).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.deleteLine(r.id, "finance", line.id)).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.discard(r.id, "finance")).rejects.toMatchObject({ status: 403 });
-    expect((await refusals(r.id)).map(([, action]) => action)).toEqual(["edit", "edit", "add line", "edit line", "delete line", "discard"]);
+    await expect(receiptService.rejectFinancial(r.id, "family")).rejects.toMatchObject({ status: 403 });
+    expect((await refusals(r.id)).map(([, action]) => action)).toEqual(["edit", "edit", "add line", "edit line", "delete line", "discard", "reject"]);
     expect(await stateOf(r.id)).toBe("submitter_review");
 
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { tax: 1, receiptDate: "2020-01-01" });
     await receiptService.editLine(r.id, "finance", line.id, { description: "Washer" });
-    await receiptService.discard(r.id, "finance");
-    expect(await stateOf(r.id)).toBe("discarded");
+    await receiptService.rejectFinancial(r.id, "personal purchase");
+    expect(await stateOf(r.id)).toBe("rejected");
   });
 });

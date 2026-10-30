@@ -33,7 +33,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 11. ✅ Scholarship/payment-plan request — the **ask** is now modeled distinctly (`scholarshipRequestKind`: SCHOLARSHIP / PAYMENT_PLAN / UNSURE, stated by the family, shown on the queue); the **grant** still rides the board payment-plan-certify override, and granted terms stay out of the app by decision
 
 ### A2. Returning family (annual renewal)  [bucket M]  — validated V1
-1. 🟡 Renewal cron OPENS the process ✅ but **auto-reminder SEND is gutted** (`renewalReminderSentAt` write-never — `CM5`); manual outreach only
+1. 🟡 Board's "open renewals" button OPENS the process ✅ (Board ruling B6, 2026-10-27: no scheduled run) but **auto-reminder SEND is gutted** (`renewalReminderSentAt` write-never — `CM5`); manual outreach only
 2. ✅ Login yellow "renew by…" banner
 3. ✅ Renewal by session userId — no email lookup (anti-enumeration)
 4. ✅ BG re-trigger if stale (29mo = board `bgRecheckMonths`, `SA5`)
@@ -112,7 +112,7 @@ _Extraction adds (2026-07-22):_
 6. ❌ Cert-upgrade request queue — member proposes upgrade, tool's certifiers tagged to review (`SA10`); member-facing cert visibility is `SA9` (A3-10)
 
 ### A9. Board / admin (oversight)  [bucket M/RB/PL]  — validated V7
-1. ✅ Review applications + override — board/sysadmin queue (PII field-stripped per role); `review-override` → `overrideBlocked()`
+1. ✅ Review applications + reset — board/sysadmin queue (PII field-stripped per role); `review-override` → `boardResetReview()`
 2. 🟡 Manage roles (`RB17`) — `GET/PATCH /api/roles` dual-writes PersonRole + legacy mirror; **UI doesn't scale ~10 roles** (#161/#1150). Not a security hole (PersonRole un-bound, no row-leak)
 3. ✅ Board settings (fees/BG months/membership) — gated at layer + stricter per-page. ⚠️ feeds `RB7`: `/api/admin/localization` is sysadmin-ONLY while `/api/admin/broken-households` is sysadmin|board — same prefix, two "admin" defs
 4. ✅ Admin edit household (remediation) — `PATCH households/[id]`, audit row per change
@@ -224,7 +224,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
   - ✅ **email send-failure queue** — `IntegrationErrorLog` → **Link Status** panel with mark-resolved/reopen (the one mature exception-review surface)
   - ❌ **event-cancel notifies registrants (`CM11`) — silent data loss**: cancel txn `deleteMany` RSVPs + deletes event, **no email** (#472)
   - ❌ staleness auto-notification (`PL14` parked #958) — only a login-time in-app `RenewalBanner`; no nudge cron, no board digest
-  - ❌ **renewal-reminder engine (`CM5`) CONFIRMED GUTTED (write-never)** — `cron/membership-renewals` opens PENDING_RENEWAL but sends zero email (test asserts "the machine never emails"); A2.1's ~Jul-15 reminder does NOT send. _(owner: out-of-scope, external fix underway)_
+  - ❌ **renewal-reminder engine (`CM5`) CONFIRMED GUTTED (write-never)** — the board's open-renewals button opens PENDING_RENEWAL but sends zero email (test asserts "the machine never emails"); A2.1's ~Jul-15 reminder does NOT send. _(owner: out-of-scope, external fix underway)_
   - ❌ per-program Google Groups auto-managed (3 lists: team/parents/mentors; Slack variant) — group addresses as Program fields (`CM6`)
   - ❌ checkin→public Google Calendar feed w/ **cancellation/move display rules** (`P14`)
   - ❌ policy library (`CM13`)

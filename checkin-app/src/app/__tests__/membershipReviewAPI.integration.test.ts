@@ -140,16 +140,6 @@ describe('Membership BG review API', () => {
         expect(advance?.actorId).toBe(rev2);
     });
 
-    it('accepts the pre-rename isMarkedVolunteer key from a stale review page', async () => {
-        const proc = await makeApplicantProcess('StaleKey');
-        as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteer: true, subjectPersonIds: [proc.leadId] }) as never);
-        as(rev2, { isBackgroundCheckReviewer: true });
-        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
-        expect((await r2.json()).outcome.status).toBe('PENDING_PAYMENT');
-        expect((await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } }))?.isVolunteerFamily).toBe(true);
-    });
-
     it('applies volunteer status from a pre-designation (Gmail dot-insensitive), without a checkbox', async () => {
         // Gmail drops dots, so vol.parent... matches the dotless designation. Non-Gmail
         // domains keep dots significant (see volunteerMatch.test.ts) — that's the fix.
@@ -246,36 +236,30 @@ describe('Membership BG review API', () => {
         });
     });
 
-    it('board override-approve on a BLOCKED app forces it to PENDING_PAYMENT', async () => {
+    it('the board cannot override-approve a BLOCKED app (Board ruling B5/B25): 400, still blocked, nothing stamped', async () => {
         const proc = await makeApplicantProcess('ForceApprove');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'REJECT', note: 'Needs another look' }) as never);
 
         as(board, { isBoardMember: true });
         const res = await OVERRIDE(req({ processId: proc.processId, action: 'approve', subjectPersonIds: [proc.leadId] }) as never);
-        expect(res.status).toBe(200);
+        expect(res.status).toBe(400);
         const updated = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.processId } });
-        expect(updated?.status).toBe('PENDING_PAYMENT');
-        // The override stamps the adults it named, and only those.
-        expect((await prisma.person.findUnique({ where: { id: proc.leadId } }))?.lastBackgroundCheck).not.toBeNull();
-
-        // The advance audit records the acting board member.
-        const audits = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.processId }, orderBy: { id: 'desc' } });
-        const advance = audits.find((a) => JSON.stringify(normalizeAuditData(a.newData)).includes('"status":"PENDING_PAYMENT"'));
-        expect(advance?.actorId).toBe(board);
+        expect(updated?.status).toBe('BLOCKED');
+        expect(updated?.bgClearedAt).toBeNull();
+        expect((await prisma.person.findUnique({ where: { id: proc.leadId } }))?.lastBackgroundCheck).toBeNull();
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: proc.processId } })).toBe(1);
     });
 
-    it('override (approve/reset) on a non-BLOCKED process is rejected (409 wrong_phase), status unchanged', async () => {
+    it('reset on a process neither blocked nor in review is rejected (409 wrong_phase), status unchanged', async () => {
         const proc = await makeProcess('NotBlocked', 'INITIAL', 'PENDING_PAYMENT');
         as(board, { isBoardMember: true });
 
-        for (const action of ['approve', 'reset'] as const) {
-            const res = await OVERRIDE(req({ processId: proc.processId, action }) as never);
-            expect(res.status).toBe(409);
-            expect((await res.json()).code).toBe('wrong_phase');
-            const after = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.processId } });
-            expect(after?.status).toBe('PENDING_PAYMENT');
-        }
+        const res = await OVERRIDE(req({ processId: proc.processId, action: 'reset' }) as never);
+        expect(res.status).toBe(409);
+        expect((await res.json()).code).toBe('wrong_phase');
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.processId } });
+        expect(after?.status).toBe('PENDING_PAYMENT');
     });
 
     it('board reset on a BLOCKED RENEWAL without consent restarts the request flow (PENDING_EXTERNAL_ACTION), attestations cleared', async () => {

@@ -218,6 +218,7 @@ model Person {
   programVolunteers   ProgramVolunteer[]
   budgetOwnersOwned   BudgetOwner[]        @relation("BudgetOwnerOwner")
   budgetOwnerTreasurerships BudgetOwnerTreasurer[]
+  mailAliases         PersonMailAlias[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
   instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
@@ -242,6 +243,37 @@ model Person {
   // Person had no householdId index — the old HouseholdLead composite PK provided
   // one; this restores it, extended with isHouseholdLead so lead scans stay index-only.
   @@index([householdId, isHouseholdLead])
+}
+
+/// An extra address a person's receipt mail may come from, recorded by finance
+/// or the Board. It counts only once approved. Nothing but receipt mail intake
+/// reads it; sign-in and contact read Person.email only.
+model PersonMailAlias {
+  /// @sensitivity:internal
+  id           Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  personId     Int
+  /// Lowercased and trimmed; resolution matches it exactly.
+  /// @sensitivity:pii
+  address      String    @unique
+  /// canonicalizeEmail(address): checked across people for uniqueness, never used to resolve.
+  /// @sensitivity:pii
+  canonicalKey String
+  /// The actor who added it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  addedById    Int
+  /// @sensitivity:internal
+  createdAt    DateTime  @default(now())
+  /// @sensitivity:internal
+  approvedAt   DateTime?
+  /// The actor who approved it; a plain id, like AuditLog.actorId.
+  /// @sensitivity:internal
+  approvedById Int?
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([canonicalKey])
+  @@index([personId])
 }
 
 enum PersonRoleKind {
@@ -1007,7 +1039,7 @@ model Program {
   endAt                          DateTime @db.Date
   /// Opening year of the membership year the program runs in (2026 = 2026-2027).
   /// @sensitivity:public
-  appliesToYear                  Int?
+  appliesToYear                  Int
   /// @sensitivity:public
   phase                          ProgramPhase     @default(PLANNING)
   /// @sensitivity:public
@@ -1105,11 +1137,11 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
-  budgetOwners BudgetOwner[]
+  budgetOwners BudgetOwner[] @ignore
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
-// reads it yet). See docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
+// reads it yet). See docs/in-design/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
 // The offering columns are mirrored here so a later phase can repoint the child
 // FKs (programId → instanceId) as a pure RENAME off the id-aliased backfill.
 // ponytail: two offering columns the design lists are deliberately deferred to a
@@ -1164,9 +1196,9 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
-  /// Unread; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops it.
+  /// Out of the client; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops the column.
   /// @sensitivity:internal
-  isTreasurer   Boolean @default(false)
+  isTreasurer   Boolean @default(false) @ignore
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1516,6 +1548,45 @@ model AuditLog {
   // Neither actor index serves that; without this it is a full scan of every
   // audit row the org has ever written.
   @@index([tableName, timestamp])
+}
+
+/// One view of finance records other than the viewer's own (Board ruling B11).
+/// Records who looked at which records through which endpoint, never what the
+/// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
+/// read only by the Board. Kept indefinitely.
+model FinanceViewLog {
+  /// @sensitivity:internal
+  id        Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  viewedAt  DateTime
+  /// The viewer's person id. No FK, as on AuditLog: the row outlives the person.
+  /// @sensitivity:internal
+  actorId   Int
+  /// The role the view was chosen under; null only on rows copied from the
+  /// bulk-donation donor-read audit, which did not record it.
+  /// @sensitivity:internal
+  role      String?
+  /// The registry key, e.g. `GET /api/receipts/[id]`.
+  /// @sensitivity:internal
+  endpoint  String
+  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string.
+  /// @sensitivity:internal
+  params    Json
+  /// @sensitivity:internal
+  recordIds String[]
+  /// @sensitivity:internal
+  rowCount  Int
+  /// `viewedAt` rounded down to fifteen minutes (UTC); repeats within it collapse.
+  /// @sensitivity:internal
+  window    DateTime
+  /// Hex SHA-256 of the endpoint, the params with keys sorted, and the sorted record ids.
+  /// @sensitivity:internal
+  viewKey   String
+
+  @@unique([actorId, viewKey, window])
+  @@index([viewedAt])
+  @@index([actorId, viewedAt])
+  @@index([recordIds], type: Gin)
 }
 
 model Account {
@@ -1908,9 +1979,9 @@ model BudgetOwner {
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Unread; a later migration drops it.
+  /// Out of the client; a later migration drops the column.
   /// @sensitivity:internal
-  programId            Int?
+  programId            Int?      @ignore
   /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
   /// @sensitivity:internal
   isOrgLevel           Boolean   @default(false)
@@ -1926,7 +1997,7 @@ model BudgetOwner {
 
   // Restrict: a program with a bucket is not deleted out from under it, and
   // SetNull would silently turn a program bucket into an org-level one.
-  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict)
+  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict) @ignore
   owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   treasurers BudgetOwnerTreasurer[]
 
@@ -1946,4 +2017,17 @@ model BudgetOwnerTreasurer {
 
   @@id([budgetOwnerId, personId])
   @@index([personId])
+}
+
+/// The books map's account half: which QuickBooks account a named role books to
+/// (a bank account, a Shopify or Benevity line). The Class half is
+/// BudgetOwner.quickBooksClassId. Finance edits it; a role without a row is unset.
+model BooksMapRoleAccount {
+  /// One of BOOKS_MAP_ROLES in @checkin/quickbooks; a string, not an enum, so a
+  /// new role needs no ADD VALUE.
+  /// @sensitivity:internal
+  role                String @id
+  /// The QuickBooks Online id of the account (external id, not a checkin FK).
+  /// @sensitivity:internal
+  quickBooksAccountId String
 }
