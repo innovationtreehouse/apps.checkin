@@ -30,7 +30,7 @@ export async function ingestNode(prisma: PrismaClient, args: IngestNodeArgs): Pr
 
   // 2. Project into live tables atomically.
   try {
-    await prisma.$transaction((tx) => projectNode(tx, args.storeId, args.objectType, args.node, args.source));
+    await prisma.$transaction((tx) => projectNode(tx, args.storeId, args.objectType, args.node, args.source, raw.rawEventId));
   } catch (err) {
     logger.error("projection failed; raw event retained for replay", {
       rawEventId: raw.rawEventId.toString(),

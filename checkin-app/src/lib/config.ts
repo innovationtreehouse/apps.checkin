@@ -174,8 +174,8 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
  * but the membership variant is manual BoardSettings config that a local seed never
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
- * the inbound handler fall back to this id when shopifyMockActive(), so local membership
- * the membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
+ * the inbound handler fall back to this id when shopifyMockActive(), so a local
+ * membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
  */
 export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
 

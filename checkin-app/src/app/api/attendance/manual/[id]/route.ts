@@ -13,7 +13,6 @@ import type { CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { logBackendError } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
 import { formatDateTime } from "@/lib/time";
@@ -47,16 +46,16 @@ async function loadEditableVisit(id: number, actorId: number) {
 function flagBoard(kind: "edit" | "delete", visitId: number, actorName: string, byProxy: boolean, score: number, detail: string) {
     // Fire-and-forget (errors logged and swallowed inside the helper): the
     // flag is oversight, never a gate on the member's response.
-    // actorName is the member's self-editable profile name: escape it, it is
-    // untrusted markup in the board's inbox.
-    const whose = byProxy ? "a household member's" : "one of their own";
-    void emailBoardMembers(
-        `Attendance: significant ${byProxy ? "household" : "self"}-${kind} of visit #${visitId}`,
-        `<p>${escapeHtml(actorName)} ${kind === "delete" ? "deleted" : "changed"} ${whose} visit ` +
-        `(significance ${score}).</p><p>${detail}</p>` +
-        `<p>Full before/after is in the audit trail (Visit #${visitId}).</p>`,
-        "Self-correction board flag failed:",
-    );
+    void emailBoardMembers("attendance.selfCorrectionFlag", {
+        scope: byProxy ? "household" : "self",
+        change: kind,
+        visitId: String(visitId),
+        actorName,
+        verb: kind === "delete" ? "deleted" : "changed",
+        whose: byProxy ? "a household member's" : "one of their own",
+        score: String(score),
+        detail,
+    }, "Self-correction board flag failed:");
 }
 
 const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', async ({ req, auth, params }) => {

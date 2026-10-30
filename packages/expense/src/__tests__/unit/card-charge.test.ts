@@ -166,7 +166,7 @@ describe("the Board seat on a card charge", () => {
     expect(signoffRefusal({ ...card, boardSeat: false }, [], "BOARD", 5)).toMatch(/no Board seat/);
   });
 
-  it("is not a Board substitution: an org-level line approved by a Board member still takes the Board seat", () => {
+  it("an org-level line approved by a Board member still takes the Board seat from another", () => {
     const org = { ...card, orgLevel: true, approvers: [], approver: 6 };
     expect(signoffRefusal(org, treasurer, "BOARD", 5)).toBeNull();
     expect(blockedSeats(org, treasurer)).toEqual([]);

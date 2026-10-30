@@ -9,6 +9,7 @@ import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
 import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
+import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
@@ -138,11 +139,8 @@ export const PATCH = withAuth(
                         id: await mintPersonId(tx),
                         name: memberName,
                         ...(memberEmail && { email: memberEmail.toLowerCase() }),
-                        // #1165: strip DoB + declare adult when the entered date is 26+.
-                        // When no DoB is given, the over-25 checkbox owns the flag.
-                        ...normalizeAdultDob(memberDob || null),
+                        ...normalizeAdultDob(memberDob, memberOver25),
                         ...(memberPhone && { phone: formatPhone(memberPhone) }),
-                        ...(memberDob ? {} : { isDeclaredAdult: !!memberOver25 }),
                         allergies: memberAllergies || null,
                         householdId,
                     },
@@ -174,7 +172,7 @@ export const PATCH = withAuth(
             // error framed around login-time linking — do NOT attach the existing
             // account, and do NOT confirm it exists.
             if (isPrismaError(error, 'P2002')) {
-                return apiError("We couldn't add this member with that email. If they already have an account, they'll be linked automatically when they first sign in with Google using that email.", 400);
+                return apiError(EMAIL_IN_USE_REFUSAL, 400);
             }
             logger.error("Household PATCH Error:", error);
             return apiError("Internal Server Error", 500);

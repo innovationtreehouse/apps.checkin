@@ -18,7 +18,7 @@
  * `registry/<lib>.ts` module, registered by the side-effect imports below.
  * Importing this file registers the whole policy.
  */
-import { defineRoute, defineOutbound } from './core';
+import { defineRoute, defineOutbound, type OrderedViewEntry } from './core';
 import './registry/catalog';
 import './registry/inventory';
 import './registry/expense';
@@ -418,6 +418,38 @@ defineRoute({
     authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
     envelope: null,
     orderedView: [],
+});
+
+// The caller's own Key Volunteer Agreement: its status, the embedded sign URL
+// (the first click creates the Zoho request) and the return-from-signing status
+// pull. Each resolves the caller's own open agreement, so the grant is
+// their_own; a row for anyone else keeps only its public personId.
+const KEY_VOLUNTEER_SELF_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_own:internal', 'public']],
+];
+
+defineRoute({
+    endpoint: 'GET /api/membership/key-volunteer',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['KeyVolunteerSelfStatus'],
+    orderedView: KEY_VOLUNTEER_SELF_VIEW,
+});
+
+defineRoute({
+    endpoint: 'POST /api/membership/key-volunteer/sign',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['KeyVolunteerSigning'],
+    orderedView: KEY_VOLUNTEER_SELF_VIEW,
+});
+
+defineRoute({
+    endpoint: 'POST /api/membership/key-volunteer/sync',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['KeyVolunteerSelfStatus'],
+    orderedView: KEY_VOLUNTEER_SELF_VIEW,
 });
 
 // Background-check reviewers' queue. Reviewers must see applicant parents' names
@@ -880,6 +912,19 @@ defineRoute({
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+    ],
+});
+
+// Board bumps the Key Volunteer Agreement version, opening a new agreement for
+// every current Key Volunteer. Board-only: the agreement is a Board document.
+// The response is the new version and the count opened; no person leaves.
+defineRoute({
+    endpoint: 'POST /api/settings/membership/key-volunteer-version',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['KeyVolunteerVersionBump'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
     ],
 });
 

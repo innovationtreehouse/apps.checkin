@@ -1184,7 +1184,7 @@ export const receiptService = {
         r.state === "discarded" ||
         (r.state === "rejected" && !rejectionUnacknowledged(r)) ||
         (r.state === "receipt_finalized" && (!r.needsReimbursement || paidOn !== null));
-      const reimbursement = r.needsReimbursement ? (paid ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
+      const reimbursement = r.needsReimbursement ? (paid && !paid.get(r.id)?.statusUnavailable ? { paidOn } : { paidOn, statusUnavailable: true }) : null;
       return { ...toSubmitterView(r), reimbursement, complete, purchaseOutcome: outcomeOf(r, outcomes) };
     });
     return opts.hideCompleted ? list.filter((r) => !r.complete) : list;
@@ -1215,7 +1215,7 @@ export const receiptService = {
       currency: r.currency,
       receiptTotalCents: r.receiptTotalCents,
       rejectionReason: r.state === "rejected" ? r.validationNotes : null,
-      reimbursement: paid ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
+      reimbursement: paid && !paid.get(r.id)?.statusUnavailable ? { paidOn: paid.get(r.id)?.paidOn ?? null } : { paidOn: null, statusUnavailable: true },
       purchaseOutcome: outcomeOf(r, outcomes),
     }));
   },
@@ -1305,7 +1305,9 @@ export const receiptService = {
     if (access !== "finance") return rows.map(toSubmitterView);
     const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
     const records = await pushRecords(orgId, undelivered.map((r) => r.id));
-    return [...rows, ...undelivered.flatMap((r) => (records.get(r.id)?.pushGivenUp ? [{ ...r, ...records.get(r.id) }] : []))];
+    const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
+    const parties = await Promise.all(stopped.map(conflictedParties));
+    return [...rows, ...stopped.flatMap((r, i) => (parties[i].includes(actor.id) ? [] : [{ ...r, ...records.get(r.id) }]))];
   },
 
   /**

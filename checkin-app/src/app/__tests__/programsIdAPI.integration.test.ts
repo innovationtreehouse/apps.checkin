@@ -1748,7 +1748,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
             expect(res.status).toBe(200);
         };
-        const flaggedHtml = () => emailSpy.mock.calls.map(c => String(c[1])).join('\n');
+        const flaggedHtml = () => emailSpy.mock.calls.map(c => String(c[1].people)).join('\n');
 
         beforeAll(async () => {
             hhId = (await prisma.household.create({ data: { name: 'Age HH' } })).id;

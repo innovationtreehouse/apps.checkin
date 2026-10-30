@@ -29,7 +29,7 @@ export function createItemReferenceRepository(db: Prisma.TransactionClient) {
 
     findByMfrDesc: (descriptionNormalized: string, manufacturer: string) =>
       db.itemReference.findFirst({
-        where: { descriptionNormalized, manufacturer, archivedAt: null },
+        where: { descriptionNormalized, manufacturer, partNumber: null, archivedAt: null },
         select: REF_SELECT,
       }),
 

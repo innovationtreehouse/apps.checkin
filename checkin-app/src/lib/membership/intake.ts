@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
 import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
-import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolation";
+import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
@@ -42,7 +43,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -371,11 +372,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
-                        // 26+ DoB is stripped and forces the flag on; an empty DoB honors
-                        // the checkbox.
-                        ...(input.primaryParent.dob !== undefined && normalizeAdultDob(input.primaryParent.dob)),
-                        ...(input.primaryParent.over25 !== undefined && !input.primaryParent.dob && { isDeclaredAdult: !!input.primaryParent.over25 }),
+                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
@@ -396,8 +393,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...(sp.dob !== undefined && normalizeAdultDob(sp.dob)),
-                            ...(sp.over25 !== undefined && !sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            ...normalizeAdultDob(sp.dob, sp.over25),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -412,8 +408,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newSpName,
                             ...(sp.email && { email: sp.email.toLowerCase() }),
-                            ...normalizeAdultDob(sp.dob),
-                            ...(!sp.dob && { isDeclaredAdult: !!sp.over25 }),
+                            ...normalizeAdultDob(sp.dob, sp.over25),
                             allergies: sp.allergies ?? null,
                         },
                     });
@@ -442,7 +437,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: child.id },
                         data: {
                             ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                            ...(child.dob !== undefined && normalizeAdultDob(child.dob)),
+                            ...normalizeAdultDob(child.dob),
                             ...(child.allergies !== undefined && { allergies: child.allergies }),
                         },
                     });
@@ -466,6 +461,13 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // existing emergency contact — re-evaluate and flag (direction B).
             await reconcileHouseholdConflicts(tx, householdId);
         }, { maxWait: 5_000, timeout: 15_000 });
+    } catch (e) {
+        // Which new person collided stays unsaid: every one given an email is marked.
+        if (uniqueViolationFields(e)?.includes("email")) {
+            const fields = [...new Set(newPeople.filter((p) => p.email).map((p) => p.field))];
+            throw new IntakeError("email_in_use", EMAIL_IN_USE_REFUSAL, fields);
+        }
+        throw e;
     } finally {
         // A refused attempt stays on record even when the save rolls back.
         for (const refusal of refusals) await recordSelfGrantRefusal(prisma, refusal);

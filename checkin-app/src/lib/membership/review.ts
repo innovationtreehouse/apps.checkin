@@ -1,6 +1,6 @@
 import { Prisma, type OrgMembershipProcessStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { sendEmail } from "@/lib/email";
+import { sendTemplated } from "@/lib/email-templates/send";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { logger } from "@/lib/logger";
 import { sendCongrats } from "@/lib/membership/payment";
@@ -115,17 +115,13 @@ export async function notifyReviewers(): Promise<void> {
             where: { email: { not: null }, OR: [{ isBackgroundCheckReviewer: true }, { isBoardMember: true }], ...LIVE_PERSON },
             select: { email: true },
         });
-        const base = config.baseUrl();
+        const actionLink = `${config.baseUrl()}/membership-ops/review`;
         await Promise.all(
             reviewers.map((r) =>
                 r.email
-                    // sendEmail never rejects (resolves false + logs via logIntegrationError
+                    // sendTemplated never rejects (resolves false + logs via logIntegrationError
                     // on failure) — nothing here for a .catch to ever reach.
-                    ? sendEmail(
-                          r.email,
-                          "Membership: a background-check review is needed",
-                          `<p>An application is ready for your background-check review. Please sign in to review it: <a href="${base}/membership-ops/review">${base}/membership-ops/review</a></p>`,
-                      )
+                    ? sendTemplated("membership.reviewNeeded", r.email, { actionLink })
                     : Promise.resolve(),
             ),
         );
@@ -755,21 +751,19 @@ function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatu
  * completed when no reviewer read anything.
  */
 export async function notifyPaymentOpenOnExistingCheck(householdId: number) {
-    const base = config.baseUrl();
     await emailHouseholdLeads(
         householdId,
-        "Your background check is on file — you can now pay your membership fee",
-        `<p>Good news — your household already holds a current background check, so no new one is needed. The last step is paying your membership fee: <a href="${base}/membership">${base}/membership</a></p>`,
+        "membership.paymentOpenExistingCheck",
+        { actionLink: `${config.baseUrl()}/membership` },
         "Payment-open notice failed:",
     );
 }
 
 async function notifyPaymentOpen(householdId: number) {
-    const base = config.baseUrl();
     await emailHouseholdLeads(
         householdId,
-        "Background check complete — you can now pay your membership fee",
-        `<p>Good news — your household's background-check review is complete. The last step is paying your membership fee: <a href="${base}/membership">${base}/membership</a></p>`,
+        "membership.paymentOpen",
+        { actionLink: `${config.baseUrl()}/membership` },
         "Payment-open notice failed:",
     );
 }

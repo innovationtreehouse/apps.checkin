@@ -127,6 +127,9 @@ Things the app takes as true because they are handled outside it.
   finance, name the person reimbursed, or close its reviews.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A person conflicted on an expense may not skip it in QuickBooks.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A person conflicted on an expense may not choose which QuickBooks entry it is
   matched to. The app does not refuse this yet: any finance holder can make the
   match.
@@ -258,9 +261,12 @@ Things the app takes as true because they are handled outside it.
   the submitter, by confirming the receipt; by a program approver, who is an
   owner or treasurer of the line's bucket, or, for a line outside a
   Board-approved program budget (an org-level bucket), a Board member without a
-  conflict who is not the Treasurer; and by the Treasurer. Every signer is a
-  different person from a different household.
-  [Decision — *Policy: Financial Policy, Art. IX §IX.3*]
+  conflict who does not sign the line as Treasurer; and by the Treasurer. Every
+  signer is a different person from a different household. The approver is
+  independent of the Treasurer signer, not barred for holding the finance role:
+  a Board member with the finance role may approve an org-level line, and a
+  different finance holder without a conflict then signs as Treasurer.
+  [Decision — owner; *Policy: Financial Policy, Art. IX §IX.3*]
 
 - A card charge reaches the books only once each of its lines is signed by a
   program approver, chosen as for a reimbursement, and the Treasurer, two
@@ -366,6 +372,11 @@ Things the app takes as true because they are handled outside it.
   nobody decides on a receipt they are conflicted on.
   [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
 
+- The app sets no limit on how many Board members stand in on one line. A line
+  is held only when nobody independent is left to sign it: no eligible signer,
+  and no Board member who passes the conflict, step and household rules.
+  [Decision — owner]
+
 - A Board member without a conflict may approve any line in place of its
   bucket approvers, giving the reason. On a line in a program bucket, holding
   the finance role does not bar them; a conflict does. A Board member approving
@@ -428,10 +439,9 @@ Things the app takes as true because they are handled outside it.
   [Decision — *Policy: Procurement Policy, Art. III*; *Principle: fail closed*]
 
 - When nobody eligible can sign a seat, a Board member without a conflict may
-  sign in their place. On any one line that happens at most twice for a
-  reimbursement and once for a card charge. A line that would need more is held
-  for the Board to resolve.
-  [Decision]
+  sign in their place, as often on one line as it takes. A line with nobody
+  independent left to sign is held for the Board to resolve.
+  [Decision — owner]
 
 ### Sending expenses to the books
 
@@ -445,3 +455,12 @@ the parts specific to expenses.
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
+
+- Finance may skip an expense that waits on it to reach the books, giving a
+  reason. The record keeps who skipped it and why. The app never books or
+  matches a skipped expense again, even if the expense later goes back to an
+  earlier step. If the app may already have created the entry, it looks for that
+  entry first and links it instead of skipping. A skipped reimbursement shows
+  its payment status as unavailable, because the app holds no entry to read a
+  payment from.
+  [Decision — owner]

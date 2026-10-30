@@ -2,9 +2,9 @@
  * Integration tests against a real Postgres. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  *   SHOPIFY_READ_DATABASE_URL=postgresql://... npm test
  */
-import { it, expect, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { describeDb } from "@checkin/pg-test-harness";
-import { prisma, injectFixtures, setWatermark, ObjectType } from "@checkin/s-ingest-core";
+import { prisma, injectFixtures, ingestNode, setWatermark, EventSource, ObjectType } from "@checkin/s-ingest-core";
 import { replay, resetWatermark } from "../../src/replay.js";
 import { handler } from "../../src/handler.js";
 import { wipeStore, orderNode, rawOrderEvent } from "./helpers.js";
@@ -82,6 +82,30 @@ run("s-replay-function admin operations", () => {
 
     await replay(prisma, { storeId: STORE, actor: "test", reason: "stale-bulk" });
     expect((await liveOrder(gid))?.financialStatus).toBe("REFUNDED");
+  });
+
+  describe("payouts", () => {
+    const gid = "gid://shopify/ShopifyPaymentsPayout/7001";
+    const node = (status: string, net: string, issuedAt: string) => ({ id: gid, status, net: { amount: net, currencyCode: "USD" }, issuedAt });
+    const ingest = (n: unknown) => ingestNode(prisma, { storeId: STORE, objectType: ObjectType.PAYOUT, node: n, source: EventSource.INCREMENTAL });
+    const livePayout = () => prisma.shopPayout.findFirst({ where: { storeId: STORE, payoutGid: gid } });
+
+    it("a replay that selects only an older event does not revert the payout", async () => {
+      await ingest(node("IN_TRANSIT", "50.00", "2026-03-01T00:00:00Z"));
+      await ingest(node("PAID", "77.00", "2026-02-01T00:00:00Z"));
+
+      await replay(prisma, { storeId: STORE, sinceOccurredAt: new Date("2026-02-15T00:00:00Z"), actor: "test", reason: "floor" });
+      expect(await livePayout()).toMatchObject({ status: "PAID", netCents: 7700 });
+    });
+
+    it("a replay still repairs a payout from its newest event", async () => {
+      await ingest(node("IN_TRANSIT", "50.00", "2026-02-01T00:00:00Z"));
+      await ingest(node("PAID", "77.00", "2026-02-01T00:00:00Z"));
+      await prisma.shopPayout.updateMany({ where: { storeId: STORE }, data: { netCents: 1 } });
+
+      await replay(prisma, { storeId: STORE, actor: "test", reason: "repair" });
+      expect(await livePayout()).toMatchObject({ status: "PAID", netCents: 7700 });
+    });
   });
 
   it("records partial progress on the FAILED run when projection dies mid-stream", async () => {

@@ -45,8 +45,8 @@ describe('saveIntake rollback', () => {
     });
 
     it('a taken child email saves nothing, and resubmitting creates no one', async () => {
-        await expect(failingSave()).rejects.toThrow();
-        await expect(failingSave()).rejects.toThrow();
+        await expect(failingSave()).rejects.toMatchObject({ code: 'email_in_use', fields: ['children'] });
+        await expect(failingSave()).rejects.toMatchObject({ code: 'email_in_use', fields: ['children'] });
 
         expect((await prisma.household.findUniqueOrThrow({ where: { id: householdId } })).line1).toBeNull();
         expect(await prisma.person.count({ where: { householdId } })).toBe(1);

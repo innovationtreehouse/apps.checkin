@@ -363,6 +363,29 @@ describeDb("mail intake ageing alert", () => {
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
   });
 
+  it("alerts for a newer unread message at its own last chance, not with the oldest unread", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1", { ageMs: old + 1_000 });
+    send("m2", { ageMs: old });
+    send("newer");
+    const { getMessage } = mail.reader;
+    let first = true;
+    mail.reader.getMessage = async (id) => {
+      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+      first = false;
+      return getMessage(id);
+    };
+    expect(await readMailbox()).toMatchObject({ messages: 1, unread: 2 });
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+
+    vi.setSystemTime(Date.now() + old);
+    mail.reader.listRecent = async () => {
+      throw new Error("Gmail request failed: 401");
+    };
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1 }, { messages: 1 }]);
+  });
+
   it("alerts for a message that cannot be fetched, since its age is unknown, keeping the known oldest date", async () => {
     raised();
     for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });

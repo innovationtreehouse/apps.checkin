@@ -222,6 +222,7 @@ export const PAGES: PageEntry[] = [
   { href: '/system-status/errors', label: 'Errors', section: 'System Status', visible: SYSTEM },
   { href: '/system-status/unsynced-scans', label: 'Unsynced Scans', section: 'System Status', keywords: 'kiosk parked replay badge scan review stale out of order offline queue', visible: linkGate(SYSTEM_STATUS, '/system-status/unsynced-scans') },
   { href: '/system-status/audit-log', label: 'Audit Log', section: 'System Status', visible: SYSTEM },
+  { href: '/system-status/finance-views', label: 'Finance Views', section: 'System Status', keywords: 'finance view log who looked viewed receipt expense donation payout payment record audit board', visible: linkGate(SYSTEM_STATUS, '/system-status/finance-views') },
   { href: '/system-status/links', label: 'Links', section: 'System Status', visible: SYSTEM },
   { href: '/system-status/lifecycle', label: 'Lifecycle', section: 'System Status', keywords: 'invariant validate off-diagram drift reconcile enrollment membership state machine', visible: SYSTEM },
 

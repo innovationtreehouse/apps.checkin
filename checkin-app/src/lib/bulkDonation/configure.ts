@@ -61,11 +61,10 @@ function inKindQbPosting(): InKindQbPosting | undefined {
     booksMap,
     async sweepIncomplete({ since }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert(
-        "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
-        `<p>QuickBooks returned more journal entries created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. <a href="${config.baseUrl()}/donations/in-kind">Open the in-kind queue</a></p>`,
-        "In-kind sweep alert failed:",
-      );
+      await notifyFinanceAlert("finance.inKindSweepIncomplete", {
+        since: since.toISOString().slice(0, 10),
+        actionLink: `${config.baseUrl()}/donations/in-kind`,
+      }, "In-kind sweep alert failed:");
     },
   };
 }

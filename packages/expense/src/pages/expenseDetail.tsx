@@ -113,6 +113,7 @@ const NOT_SENT: Record<string, string> = {
   AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
   UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
   BEFORE_LINE: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
+  SKIPPED: "Not sent to QuickBooks: finance skipped it",
 };
 
 const REVIEW_LABEL: Record<ReviewKind, { title: string; act: string }> = {
@@ -376,6 +377,37 @@ interface Candidate {
   vendorRef: string | null;
 }
 
+/** The QuickBooks reasons finance answers with a skip. */
+const QB_SKIP_REASONS = new Set<ReasonCode>(["QB_UNBOOKED", "QB_AWAITING_MATCH", "QB_VENDOR_MISSING", "QB_POST_FAILED"]);
+
+/** Skips the expense for good, with the required reason. A refusal may have changed it, so the page rereads either way. */
+function SkipButton({ base, onDecided, onRefused }: { base: string; onDecided: () => void; onRefused: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [why, setWhy] = useState("");
+  return (
+    <>
+      <Button size="xs" variant="default" onClick={() => { setWhy(""); setAsking(true); }}>Skip</Button>
+      <Modal opened={asking} onClose={() => setAsking(false)} title="Skip this expense in QuickBooks">
+        <Stack>
+          <Text size="sm">The app will never book or match this expense again. This cannot be undone.</Text>
+          <Textarea label="Why it is skipped" required value={why} onChange={(ev) => setWhy(ev.currentTarget.value)} />
+          <Button
+            disabled={!why.trim()}
+            onClick={async () => {
+              const skipped = await send(`${base}/qb-resolve`, "POST", { action: "skip", reason: why.trim() }, "Skipped in QuickBooks");
+              setAsking(false);
+              if (skipped) onDecided();
+              else onRefused();
+            }}
+          >
+            Skip this expense
+          </Button>
+        </Stack>
+      </Modal>
+    </>
+  );
+}
+
 /** QuickBooks entries the expense may match: pick one, or exclude one that belongs to nothing, with a reason. */
 function MatchPicker({ base, currency, onDecided }: { base: string; currency: string; onDecided: () => void }) {
   const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
@@ -559,6 +591,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           )}
           {open("QB_VENDOR_MISSING") && (
             <Text size="sm">The reimbursee has no QuickBooks vendor yet; link one in the Reimbursee panel below. The next drain then posts it.</Text>
+          )}
+          {reasons.some((r) => QB_SKIP_REASONS.has(r.code) && r.actionable) && (
+            <Group mt="xs"><SkipButton base={base} onDecided={() => void decided()} onRefused={reloadAll} /></Group>
           )}
         </Paper>
       )}

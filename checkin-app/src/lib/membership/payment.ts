@@ -321,17 +321,10 @@ export async function activateByProcessId(processId: number, shopifyOrderId: str
  * years reads as if we don't know them.
  */
 export async function sendCongrats(householdId: number, isInitial: boolean) {
-    const base = config.baseUrl();
-    const subject = isInitial
-        ? "Welcome to the Treehouse — your membership is active!"
-        : "Thank you for renewing — your Treehouse membership is active!";
-    const lead = isInitial
-        ? "Congratulations! Your household membership is now active. Welcome to the Innovation Treehouse community."
-        : "Thank you for renewing! Your household membership is active again — we're glad to have your family back at the Innovation Treehouse.";
     await emailHouseholdLeads(
         householdId,
-        subject,
-        `<p>${lead}</p><p><a href="${base}">Visit your dashboard</a></p>`,
+        isInitial ? "membership.welcome" : "membership.renewed",
+        { actionLink: config.baseUrl() },
         "Congrats email failed:",
     );
 }

@@ -378,6 +378,25 @@ describe('saveIntake', () => {
         expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
+    it('refuses a taken email for new people without confirming anyone holds it; other unique violations stay unexpected', async () => {
+        const violation = (target: string[]) => new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0', meta: { target } });
+        const input = {
+            secondaryParent: { name: 'New Parent', email: 'parent@example.com' },
+            children: [{ name: 'Kid', email: 'kid@example.com' }, { name: 'Kid Two', email: 'two@example.com' }, { name: 'No Email' }],
+        };
+
+        prisma.person.create.mockRejectedValueOnce(violation(['email']));
+        await expect(saveIntake(1, input)).rejects.toMatchObject({
+            code: 'email_in_use',
+            fields: ['secondaryParent', 'children'],
+            message: expect.stringContaining('If they already have an account'),
+        });
+
+        const other = violation(['id']);
+        prisma.person.create.mockRejectedValueOnce(other);
+        await expect(saveIntake(1, input)).rejects.toBe(other);
+    });
+
     it('no_household when the caller has no participant row', async () => {
         prisma.person.findUnique.mockResolvedValue(null);
         await expect(saveIntake(1, {})).rejects.toBeInstanceOf(IntakeError);
@@ -491,7 +510,7 @@ describe('saveIntake', () => {
         await saveIntake(1, { secondaryParent: { name: 'New Parent', email: 'NEW@X.com' } });
 
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', dateOfBirth: null, isDeclaredAdult: false, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', allergies: null },
         });
         expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 55);
     });
@@ -627,7 +646,7 @@ describe('saveIntake', () => {
             data: { name: 'Existing Kid' },
         });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', allergies: null },
         });
     });
 
@@ -644,7 +663,7 @@ describe('saveIntake', () => {
         prisma.person.create.mockResolvedValue({ id: 56 });
         await saveIntake(1, { children: [{ name: '  John  ' }] });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'John', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'John', allergies: null },
         });
     });
 

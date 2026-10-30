@@ -161,11 +161,12 @@ or skip what it hasn't entered yet. So every payout is **matched first**:
 3. **Not found, first seen after switch-on, dated after the books closing
    date:** create the deposit (QB-2 write),
    keyed so a retry never books twice. **Gated on the mirror being
-   newest-wins.** s-read's `projectOrders` / `projectPayouts` do not keep the
-   newest version today: a backfill, bulk re-ingest or replay can revert a row to
-   older state. A deposit created from a reverted payout would book wrong amounts,
-   so step 3 stays off (the payout waits as `WAITING`) until that fix, owned
-   outside the port, is deployed. Matching (steps 1, 2, 4) does not wait.
+   newest-wins.** s-read's `projectOrders` / `projectPayouts` keep the newest
+   version, so a backfill, bulk re-ingest or replay cannot revert a row to older
+   state. A deposit created from a reverted payout would book wrong amounts, so
+   step 3 stays off (the payout waits as `WAITING`) until
+   `INCOME_MIRROR_NEWEST_WINS` is set, after that projection is deployed.
+   Matching (steps 1, 2, 4) does not wait.
 4. **Not found otherwise:** finance's queue as `NO_DEPOSIT`. Finance books it
    ("book it", which still matches first and never creates in closed books) or
    dismisses it with a reason.

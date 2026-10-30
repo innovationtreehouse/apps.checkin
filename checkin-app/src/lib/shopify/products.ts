@@ -1,7 +1,6 @@
 // Shopify products: storefront variant lookup and program product creation.
 
 import { centsToDecimalString } from "@checkin/money";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { config } from "@/lib/config";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
 import { outboundCall } from "@/security/outbound";
@@ -181,7 +180,7 @@ export async function createShopifySingleVariantProgram(
             "createShopifySingleVariantProgram",
             new Error("Shopify credentials are missing or no access token could be obtained"),
             { program: name },
-            `Program <strong>${escapeHtml(name)}</strong> is priced, but its Shopify product was not created because Shopify is not configured. Its payment link will not work until a board member runs Sync to Shopify.`,
+            `Program ${name} is priced, but its Shopify product was not created because Shopify is not configured. Its payment link will not work until a board member runs Sync to Shopify.`,
         );
         return null;
     }
@@ -257,7 +256,7 @@ export async function createShopifySingleVariantProgram(
             "createShopifySingleVariantProgram",
             error,
             { program: name, orphanedProductId: productId ?? null },
-            `An error occurred in the Shopify integration while creating the variant for program: <strong>${escapeHtml(name)}</strong>.`,
+            `An error occurred in the Shopify integration while creating the variant for program: ${name}.`,
         );
 
         return null;
@@ -382,7 +381,7 @@ export async function createClaimantProduct(
             "createClaimantProduct",
             error,
             { program: name, orphanedProductId: productId },
-            `An error occurred in the Shopify integration while creating the reserved-seat product for program: <strong>${escapeHtml(name)}</strong>.`,
+            `An error occurred in the Shopify integration while creating the reserved-seat product for program: ${name}.`,
         );
         return null;
     }

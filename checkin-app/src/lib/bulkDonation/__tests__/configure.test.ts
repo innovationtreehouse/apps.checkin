@@ -183,7 +183,8 @@ describe("bulk-donation wiring", () => {
     await expect(inKindQb!.booksMap.accounts()).resolves.toEqual({ INKIND_INCOME: "400" });
     await expect(inKindQb!.booksMap.classes()).resolves.toEqual(new Map([[1, "7"]]));
     await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
-    expect(notifyFinanceAlert.mock.calls[0][0]).toContain("stray QuickBooks journal entries");
+    expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.inKindSweepIncomplete");
+    expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

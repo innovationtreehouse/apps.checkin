@@ -1,7 +1,7 @@
 import { sendEmail } from "@/lib/email";
 import prisma from "@/lib/prisma";
 import { baseEmailLayout } from "./base";
-import { REGISTRY, type TemplateKey, type TemplateSpec } from "./registry";
+import { REGISTRY, type TemplateCtx, type TemplateKey, type TemplateSpec } from "./registry";
 import { renderBodyHtml, substituteTokens } from "./tokens";
 
 /**
@@ -23,14 +23,13 @@ async function findOverride(key: TemplateKey) {
  * to the `sendEmail` result and never rejects. Callers still check the
  * recipient's notification preferences before calling.
  */
-export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<string, string>): Promise<boolean> {
+export async function sendTemplated<K extends TemplateKey>(key: K, to: string, ctx: TemplateCtx<K>, headers?: Record<string, string>): Promise<boolean>;
+export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<string, string>, headers?: Record<string, string>): Promise<boolean> {
     const spec: TemplateSpec = REGISTRY[key];
     const row = await findOverride(key);
     const subject = row?.subject.trim() ? row.subject : spec.defaultSubject;
     const body = row?.body.trim() ? row.body : spec.defaultBody;
-    return sendEmail(
-        to,
-        substituteTokens(subject, ctx, spec.allowedTokens, { escape: false }),
-        baseEmailLayout(renderBodyHtml(substituteTokens(body, ctx, spec.allowedTokens, { escape: true }))),
-    );
+    const renderedSubject = substituteTokens(subject, ctx, spec.allowedTokens, { escape: false });
+    const html = baseEmailLayout(renderBodyHtml(substituteTokens(body, ctx, spec.allowedTokens, { escape: true })));
+    return headers ? sendEmail(to, renderedSubject, html, headers) : sendEmail(to, renderedSubject, html);
 }

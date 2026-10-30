@@ -130,13 +130,13 @@ describe("a Board stand-in (C′.3)", () => {
     expect(approvalRefusal({ ...pending, seatedHouseholds: [5] }, CONFIRMED, 5)).toMatch(/household already signs off/);
   });
 
-  it("counts as a substitution: on a card charge it leaves none for the Treasurer seat", () => {
+  it("on a card charge another Board member still signs the Treasurer seat", () => {
     const facts: SignoffFacts = { ...pending, kind: "card_charge", conflicted: [1, 8, 3], approved: true, approver: 5 };
-    expect(signoffRefusal(facts, [], "TREASURER", 6)).toMatch(/no Board substitution left/);
-    expect(blockedSeats(facts, [])).toEqual(["TREASURER"]);
+    expect(signoffRefusal(facts, [], "TREASURER", 6)).toBeNull();
+    expect(blockedSeats(facts, [])).toEqual([]);
   });
 
-  it("on a reimbursement it leaves one for the Treasurer seat", () => {
+  it("on a reimbursement another Board member signs the Treasurer seat", () => {
     const facts: SignoffFacts = { ...pending, conflicted: [1, 8, 3], approved: true, approver: 5 };
     expect(signoffRefusal(facts, [], "TREASURER", 6)).toBeNull();
     expect(signoffRefusal(facts, [], "TREASURER", 5)).toMatch(/approved the line/);
@@ -246,7 +246,7 @@ describe("one seat per household on an expense", () => {
   });
 });
 
-describe("Board substitution (F2-COI)", () => {
+describe("a Board member standing in for the Treasurer (F2-COI)", () => {
   it("the only FINANCE holder conflicted: a Board member takes the Treasurer seat", () => {
     const facts = { ...base, conflicted: [1, 3] };
     expect(signoffRefusal(facts, [], "TREASURER", 3)).toMatch(/household/);
@@ -259,10 +259,41 @@ describe("Board substitution (F2-COI)", () => {
     expect(signoffRefusal(facts, [], "TREASURER", 4)).toBeNull();
   });
 
-  it("a card charge with a bucket approver keeps its one substitution for the Treasurer seat", () => {
+  it("a card charge with a bucket approver takes a Board member in the Treasurer seat", () => {
     const facts: SignoffFacts = { ...base, kind: "card_charge", conflicted: [1, 8, 3] };
     expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
     expect(blockedSeats(facts, [])).toEqual([]);
+  });
+});
+
+describe("an org-level line has no cap on Board stand-ins", () => {
+  // 7 is the org-level bucket's owner; it has no bucket approvers
+  const org: SignoffFacts = { ...pending, kind: "card_charge", approvers: [], orgLevel: true };
+
+  it("the only FINANCE holder conflicted: one Board member approves, another signs as Treasurer", () => {
+    const facts: SignoffFacts = { ...org, conflicted: [1, 8, 3] };
+    expect(approvalRefusal(facts, [], 5)).toBeNull();
+    const approved: SignoffFacts = { ...facts, approved: true, approver: 5, expenseSigners: [{ step: "APPROVAL", userId: 5 }] };
+    expect(signoffRefusal(approved, [], "TREASURER", 3)).toMatch(/submitter/);
+    expect(signoffRefusal(approved, [], "TREASURER", 5)).toMatch(/approved the line/);
+    expect(signoffRefusal(approved, [], "TREASURER", 6)).toBeNull();
+    expect(blockedSeats(approved, [])).toEqual([]);
+    expect(missingSeats(approved, seats(["TREASURER", 6]))).toEqual([]);
+  });
+
+  it("a Board member holding FINANCE approves; a different FINANCE holder signs as Treasurer", () => {
+    const facts: SignoffFacts = { ...org, finance: [3, 5] };
+    expect(approvalRefusal(facts, [], 5)).toBeNull();
+    const approved: SignoffFacts = { ...facts, approved: true, approver: 5, expenseSigners: [{ step: "APPROVAL", userId: 5 }] };
+    expect(signoffRefusal(approved, [], "TREASURER", 5)).toMatch(/approved the line/);
+    expect(signoffRefusal(approved, [], "TREASURER", 3)).toBeNull();
+    expect(availableSigners(approved, [], "TREASURER")).toEqual([3]);
+  });
+
+  it("is held only when nobody independent is left to sign the Treasurer seat", () => {
+    const approved: SignoffFacts = { ...org, conflicted: [1, 8, 3], approved: true, approver: 5, expenseSigners: [{ step: "APPROVAL", userId: 5 }] };
+    expect(blockedSeats({ ...approved, seatedHouseholds: [6] }, [])).toEqual(["TREASURER"]);
+    expect(blockedSeats({ ...approved, board: [5, 6, 9], seatedHouseholds: [6] }, [])).toEqual([]);
   });
 });
 
