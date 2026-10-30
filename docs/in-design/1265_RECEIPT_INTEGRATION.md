@@ -131,12 +131,14 @@ intake (owner decision). Nothing in the source does this, so it is designed here
 at an address in the organization's own domain (owner decision; the name is a
 deploy-time value, `RECEIPT_MAILBOX_ADDRESS`) and one OAuth grant with the `gmail.readonly` scope only: the app never
 labels, moves or deletes mail. An operator runs the consent once from a CLI;
-the resulting refresh token is seeded into a secret only an **Infra-owned
-refresher Lambda** can read and write. The app invokes that Lambda, as it does the
+the resulting refresh token is seeded into a per-environment secret only the
+**refresher Lambda** (`gmail-refresher-function/`; Infra provisions it, this repo
+deploys its code) can read. The app invokes that Lambda, as it does the
 QuickBooks refresher, and gets back a short-lived access token with its expiry and
 the mailbox it belongs to; the app refuses a token for any other mailbox and never
-refreshes. No OAuth route in the app, no token in Postgres. Static client
-credentials are Infra env for the refresher and consent tool, not the app. The
+refreshes. No OAuth route in the app, no token in Postgres. The OAuth client id and
+secret are one secret shared across environments, readable only by the refresher;
+neither the app nor the Lambda's env holds them. The
 step is bound only on a deployed instance with both `GMAIL_REFRESHER_FN` and
 `RECEIPT_MAILBOX_ADDRESS` set; otherwise it reports "unbound" and does nothing.
 
