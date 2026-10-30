@@ -230,8 +230,11 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
  * markBgConsent, with the applicant as the audit actor, so a self-reported
  * consent stays distinguishable from a board-confirmed one. The board
  * mark-bg-consent action remains as the backstop. Idempotent (markBgConsent
- * no-ops on a second call), and restricted to a household lead — the person who
- * actually consents on Averity.
+ * no-ops on a second call).
+ *
+ * A household lead attests the household application awaiting external action.
+ * Otherwise the caller attests their own open PERSON_BG obligation, if they have
+ * one; the household gates refuse everyone else.
  */
 export async function selfRecordBgConsent(userId: number): Promise<ExternalStatus> {
     const user = await prisma.person.findUnique({
@@ -241,17 +244,40 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
         },
     });
     if (!user) throw new ExternalError("not_found", "Application not found.");
-    if (!user.householdId) throw new ExternalError("no_household", "You must create a household first.");
-    if (!user.isHouseholdLead && !user.isSysadmin) {
-        throw new ExternalError("not_lead", "Only a household lead can confirm background-check consent.");
+    const canAttestHousehold = !!user.householdId && (user.isHouseholdLead || user.isSysadmin);
+
+    const householdProcess = canAttestHousehold ? latestPendingExternal(user.household?.orgMembership?.processes) : undefined;
+    if (householdProcess) {
+        const updated = await markBgConsent(householdProcess.id, userId);
+        if (!updated) throw new ExternalError("not_found", "Application not found.");
+        return getExternalStatus(updated);
     }
 
-    const process = latestPendingExternal(user.household?.orgMembership?.processes);
-    if (!process) throw new ExternalError("wrong_phase", "No application is awaiting background-check consent.");
+    const ownBg = await selfAttestPersonBg(userId);
+    if (ownBg) return getExternalStatus(ownBg);
 
-    const updated = await markBgConsent(process.id, userId);
-    if (!updated) throw new ExternalError("not_found", "Application not found.");
-    return getExternalStatus(updated);
+    if (!user.householdId) throw new ExternalError("no_household", "You must create a household first.");
+    if (!canAttestHousehold) {
+        throw new ExternalError("not_lead", "Only a household lead can confirm background-check consent.");
+    }
+    throw new ExternalError("wrong_phase", "No application is awaiting background-check consent.");
+}
+
+/**
+ * Records consent on the caller's own PERSON_BG awaiting review, putting it in the
+ * reviewer queue. Reviewers are pinged only on the first attestation, as on the
+ * board's submit path. Returns null when the caller has no such obligation.
+ */
+async function selfAttestPersonBg(userId: number) {
+    const process = await prisma.orgMembershipProcess.findFirst({
+        where: { kind: "PERSON_BG", subjectPersonId: userId, status: "PENDING_BG_REVIEW" },
+        orderBy: { id: "desc" },
+        select: { id: true, bgConsentAt: true },
+    });
+    if (!process) return null;
+    const updated = await markBgConsent(process.id, userId, "PERSON_BG");
+    if (!process.bgConsentAt) await notifyReviewers();
+    return updated;
 }
 
 /**
