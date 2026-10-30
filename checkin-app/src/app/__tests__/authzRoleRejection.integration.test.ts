@@ -126,7 +126,7 @@ describe('Protected-route role rejection', () => {
         plainId = (await prisma.person.create({ data: { name: `Plain ${TAG}`, householdId: plainHh } })).id;
         // A real event so events/[id] GET reaches its in-handler staff gate
         // (a missing event short-circuits to 404 before the 403).
-        const prog = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
+        const prog = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
         programId = prog.id;
         eventId = (await prisma.event.create({
             data: { programId, name: `Evt ${TAG}`, startAt: new Date('2030-01-01T10:00:00Z'), endAt: new Date('2030-01-01T12:00:00Z') },
@@ -137,13 +137,13 @@ describe('Protected-route role rejection', () => {
         // not staff of ownedEvent — the cross-program attacker).
         const ownerHh = (await prisma.household.create({ data: { name: `Owner HH ${TAG}` } })).id;
         ownerLeadId = (await prisma.person.create({ data: { name: `OwnerLead ${TAG}`, householdId: ownerHh } })).id;
-        const ownedProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
+        const ownedProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
         ownedEventId = (await prisma.event.create({
             data: { programId: ownedProgram.id, name: `Owned Evt ${TAG}`, startAt: new Date('2030-02-01T10:00:00Z'), endAt: new Date('2030-02-01T12:00:00Z') },
         })).id;
         const foreignHh = (await prisma.household.create({ data: { name: `Foreign HH ${TAG}` } })).id;
         foreignLeadId = (await prisma.person.create({ data: { name: `ForeignLead ${TAG}`, householdId: foreignHh } })).id;
-        await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
+        await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
     });
 
     afterAll(async () => {

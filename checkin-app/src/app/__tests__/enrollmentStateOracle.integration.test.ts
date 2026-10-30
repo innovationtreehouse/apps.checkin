@@ -61,7 +61,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
         boardId = board.id;
         // shopifyVariantId present so the apply-time hold logic engages (single pool).
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
         });
         programId = program.id;
     });

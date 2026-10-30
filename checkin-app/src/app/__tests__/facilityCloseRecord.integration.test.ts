@@ -593,7 +593,7 @@ describe('facility close record and departure log (real DB)', () => {
         it('logs every segment of a visit the checkout splits across an event', async () => {
             process.env.CRON_SECRET = 'test-secret';
             const program = await prisma.program.create({
-                data: { name: `Program ${TAG}`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: member.id },
+                data: { appliesToYear: 2026, name: `Program ${TAG}`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: member.id },
             });
             programIds.push(program.id);
             await prisma.event.create({

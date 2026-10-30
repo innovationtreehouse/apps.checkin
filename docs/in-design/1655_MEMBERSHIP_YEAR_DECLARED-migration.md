@@ -19,10 +19,9 @@ on an operations step in production (the board entering variants).
 
 Stable IDs; a resolved question is marked in place, never renumbered.
 
-- **`MY-0` (resolved):** this design and `PROGRAM_MEMBERSHIP_YEAR.md` describe one
-  membership-year rule and are planned together. They share the field name
-  `appliesToYear`, the opening-year integer, and the helpers in
-  `checkin-app/src/lib/programYear.ts`.
+- **`MY-0` (resolved):** this design and the program year (`Program.appliesToYear`)
+  describe one membership-year rule. They share the field name `appliesToYear`, the
+  opening-year integer, and the helpers in `checkin-app/src/lib/programYear.ts`.
 - **`MY-1` (resolved):** from the day the renewal window opens, a joining family's
   checkout sells the coming year, the same as a renewal's.
 - **`MY-2` (resolved):** no correction of existing rows. The fill freezes the year
@@ -161,9 +160,8 @@ Shopify products.
 ### PR 5: grant buttons name their year [app]
 
 - **Files:**
-  - `checkin-app/src/lib/programYear.ts`: `membershipYearOf(boundary, date)` and
-    `membershipYearLabel(year)`, unless `PROGRAM_MEMBERSHIP_YEAR` PR 3 has already
-    written them (see [Ordering](#ordering-against-other-work)).
+  - `membershipYearOf(boundary, date)` and `membershipYearLabel(year)` already
+    exist in `checkin-app/src/lib/programYear.ts`; reuse them.
   - `checkin-app/src/lib/membership/grant.ts`: `grantCurrentYear` becomes
     `grantMembership(householdId, actor, year)` and passes the year to
     `certifyPaymentPlan`. It already pays an in-flight renewal as well as a joining
@@ -271,17 +269,9 @@ Shopify products.
 
 ## Ordering against other work
 
-**`PROGRAM_MEMBERSHIP_YEAR` (#1484).** Neither plan blocks the other, but they share
-files, and a shared file is never edited by both at once:
-
-| Shared | This plan | Program plan | Rule |
-|---|---|---|---|
-| `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
-| `programYear.ts` helpers | PR 5 | PR 3 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them. The program plan's end-date rule (an end on the boundary counts in the closing year) is its own wrapper, not the shared helper |
-| `orgMembership.ts` and the program-pricing integration suites | PR 4 | PRs 2, 4 | serialize; both change what the pricing tests set up |
-
-Member pricing needs no extra step from this plan: the program plan's horizon
-comparison reads `membershipValidThrough`, which PR 4 moves to the recorded year.
+**Program year (`Program.appliesToYear`, #1484).** Shipped. Program pricing needs
+no extra step from this plan: its horizon comparison reads `membershipValidThrough`,
+which PR 4 moves to the recorded year.
 
 **Unified signup (#1370).** Its member test should be the same horizon comparison,
 not equality between a settlement's year and the program's (design, "Program

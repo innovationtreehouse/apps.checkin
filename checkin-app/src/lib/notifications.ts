@@ -97,7 +97,7 @@ export async function sendNotification(userId: number, eventType: NotificationEv
  * has fired. Best-effort: fire-and-forget from the helper.
  */
 export async function notifyNewProgramAnnounced(
-    program: { name: string; endAt: Date; appliesToYear: number | null },
+    program: { name: string; endAt: Date; appliesToYear: number },
 ): Promise<void> {
     try {
         const coverageDate = await programCoverageDate(program);

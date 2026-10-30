@@ -466,7 +466,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 1a (#1456): decision-bearing collisions refuse the merge.
     it("409s on decision-bearing collisions, naming every collision in the response", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Merge Conflict Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Merge Conflict Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Conflict Tool" } });
         createdToolId = tool.id;
@@ -501,7 +501,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 1b (#1456): bare-join collisions auto-dedupe — merge succeeds, duplicates deleted.
     it("auto-dedupes bare-join collisions (ProgramVolunteer, CorporationLead, CorporationMember)", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Dedupe Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Dedupe Program" } });
         createdProgramId = program.id;
         const corp = await prisma.corporation.create({ data: {} });
         createdCorporationId = corp.id;
@@ -570,7 +570,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.
     it("auto-dedupes past RSVP collisions, refuses future RSVP collisions", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });
         createdProgramId = program.id;
 
         const pastEvent = await prisma.event.create({
@@ -595,7 +595,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 2: non-collision move — the row relinks to the keeper, not duplicated.
     it("moves a tombstone-only enrollment/tool/rsvp to the keeper (no collision)", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Tool" } });
         createdToolId = tool.id;
@@ -949,7 +949,7 @@ describe("Merge Participants API", () => {
 
     // #1456: analyze reports collisions up front so the UI can warn before the operator commits.
     it("analyze returns collisions for decision-bearing overlaps", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Collision Analysis Program" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Collision Analysis Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Collision Analysis Tool" } });
         createdToolId = tool.id;
@@ -1206,7 +1206,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 12
     it("zero-rows-deleted invariant across every join table + moved relation", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Invariant Program", leadMentorId: pMergeId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Invariant Program", leadMentorId: pMergeId } });
         createdProgramId = program.id;
         const corp = await prisma.corporation.create({ data: {} });
         createdCorporationId = corp.id;
@@ -2018,7 +2018,7 @@ describe("Merge Participants API", () => {
 
         // #1456: ProgramParticipant collision now refuses the merge entirely.
         it("enrollment collision refuses instead of leaving a tombstone seat", async () => {
-            const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
+            const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
             createdProgramId = program.id;
             await prisma.programParticipant.create({ data: { programId: program.id, personId: pKeepId } });
             await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId } });
@@ -2032,7 +2032,7 @@ describe("Merge Participants API", () => {
 
     // Matrix 17 (#1456): collision-bearing merge refused, no tombstone residue to audit.
     it("match-audit: a non-colliding enrollment migrates to the keeper normally", async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
         createdProgramId = program.id;
         await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId, status: "ACTIVE" } });
 

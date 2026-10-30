@@ -180,7 +180,7 @@ describe('Registry route admission gates', () => {
 
         // For the public route's 2xx sanity (programs/[id]). orgMemberOnly defaults
         // false, so an anonymous caller is admitted and sees it.
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
         programId = program.id;
 
         // For event routes ('GET /api/events/[id]' etc.) whose [id] is an EVENT

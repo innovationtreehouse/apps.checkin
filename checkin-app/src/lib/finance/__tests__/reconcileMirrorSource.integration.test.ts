@@ -98,7 +98,7 @@ async function enrollment(email: string) {
     const person = await prisma.person.create({ data: { email, name: `Lead ${email}`, isHouseholdLead: true, householdId: hh.id } });
     const variantId = `variant-${email}`;
     const program = await prisma.program.create({
-        data: { name: `Program ${TAG} ${email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
+        data: { appliesToYear: 2026, name: `Program ${TAG} ${email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({ data: { programId: program.id, personId: person.id, status: "PENDING" } });
     return { programId: program.id, personId: person.id, variantId };

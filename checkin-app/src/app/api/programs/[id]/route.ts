@@ -31,10 +31,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const auth = await authenticateRequest(req);
     if (auth.type !== 'session') return res;
 
-    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number | null };
+    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number };
     const coverageDate = await programCoverageDate({
         endAt: new Date(body.endAt),
-        appliesToYear: body.appliesToYear ?? null,
+        appliesToYear: body.appliesToYear,
     });
     // viewerIsMember answers "is this household a Treehouse Member" (ACTIVE only);
     // viewerMemberPricingEligible answers the pricing question, which also covers a

@@ -46,7 +46,7 @@ this plan does not.
 
 Working docs already in `docs/in-design/` that other sessions own are out of
 this plan's scope: `1265_`, `1272_`, `1280_`, `1283_`, `2180_`, `2182_`,
-`TOMBSTONE_REMOVAL.md` and `PROGRAM_MEMBERSHIP_YEAR`. No PR here edits them;
+and `TOMBSTONE_REMOVAL.md`. No PR here edits them;
 where a move breaks one of their pointers, that doc's session gets the new path
 (§5).
 

@@ -23,7 +23,7 @@ describe('attendanceTransitions', () => {
 
     beforeAll(async () => {
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `AT Program ${TAG}`, enrollmentStatus: 'OPEN' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `AT Program ${TAG}`, enrollmentStatus: 'OPEN' },
         });
         programId = program.id;
 
