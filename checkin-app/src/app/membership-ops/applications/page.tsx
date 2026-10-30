@@ -57,6 +57,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const KIND_LABELS: Record<string, string> = {
+  INITIAL: "New membership",
+  RENEWAL: "Renewal",
   PERSON_AGREEMENT: "Membership agreement",
   PERSON_BG: "Background check",
   KEY_VOLUNTEER_AGREEMENT: "Key Volunteer agreement",
