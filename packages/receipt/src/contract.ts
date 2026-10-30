@@ -78,6 +78,28 @@ export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
+// ── Purchase outcome ← receiving, expense, donations ───────────────────────
+
+/** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
+export const purchaseOutcomeSchema = z.object({
+  receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  money: z
+    .object({
+      status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
+      /** The approver's reason on each rejected line; empty otherwise. */
+      notes: z.array(z.string()),
+    })
+    .nullable(),
+  gift: z.enum(["awaiting_decision", "accepted", "refused", "returned"]).nullable(),
+});
+export type PurchaseOutcome = z.infer<typeof purchaseOutcomeSchema>;
+export const purchaseOutcomesSchema = z.map(z.string(), purchaseOutcomeSchema);
+
+/** The host's answer for finalized receipts; a receipt missing from it has not reached any downstream library. */
+export interface PurchaseOutcomes {
+  forReceipts(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>>;
+}
+
 // ── Submitter confirmations ← expense ──────────────────────────────────────
 
 /** A reimbursement whose expense waits for the person reimbursed to confirm its receipt. */
@@ -257,6 +279,7 @@ export interface ReceiptConfig {
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
   submitterConfirmations?: SubmitterConfirmations;
+  purchaseOutcomes?: PurchaseOutcomes;
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;

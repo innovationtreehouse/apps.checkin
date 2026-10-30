@@ -310,6 +310,21 @@ export interface SubmitterConfirmations {
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
 }
 
+/** Where each receipt's expense stands, as its uploader and reimbursee read it. */
+export type ExpenseOutcomeStatus =
+  | "awaiting_confirmation"
+  | "awaiting_approval"
+  | "exception"
+  | "with_finance"
+  | "line_rejected"
+  | "complete"
+  | "backfill";
+
+/** Receipt callee: each named receipt's expense outcome; a receipt with no expense is left out. */
+export interface ExpenseOutcomes {
+  forReceipts(receiptIds: unknown): Promise<Map<string, { status: ExpenseOutcomeStatus; notes: string[] }>>;
+}
+
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;

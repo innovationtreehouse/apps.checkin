@@ -7,7 +7,7 @@ import { it, expect, beforeEach } from "vitest";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { ingestInKind, recordInKindDonor, recordReceiptDonorReads, withdrawInKind } from "../../inKind";
+import { giftOutcomes, ingestInKind, recordInKindDonor, recordReceiptDonorReads, withdrawInKind } from "../../inKind";
 import { inKindService } from "../../services/inKindService";
 import { inKindAcceptService } from "../../services/inKindAcceptService";
 import { configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
@@ -243,5 +243,19 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     expect(await row()).toMatchObject({ donorFirstName: null, donorLastName: null, donorCompanyName: null });
     await recordInKindDonor(orgId, R1, DONOR, 3);
     expect(await row()).toMatchObject({ donorFirstName: null, donorLastName: null, donorCompanyName: null });
+  });
+});
+
+describeDb("gift outcomes for the receipt port", () => {
+  const R2 = "22222222-2222-4222-8222-222222222222";
+  const R3 = "33333333-3333-4333-8333-333333333333";
+
+  it("reads finance's decision on each asked receipt's gift, and leaves out a receipt with no gift", async () => {
+    await ingestInKind(receipt(R1));
+    await ingestInKind(receipt(R2));
+    await db.inKindDonation.update({ where: { orgId_receiptId: { orgId, receiptId: R2 } }, data: { decisionOutcome: "REFUSED" } });
+
+    expect(await giftOutcomes([R1, R2, R3])).toEqual(new Map([[R1, "awaiting_decision"], [R2, "refused"]]));
+    expect(await giftOutcomes([])).toEqual(new Map());
   });
 });
