@@ -11,6 +11,11 @@ if (process.env.INTEGRATION_DB && process.env.TEST_BASE_URL && process.env.TEST_
   u.pathname = `/checkin_test_${process.env.TEST_RUN_ID}_${process.env.JEST_WORKER_ID || '1'}`;
   process.env.DATABASE_URL = u.toString();
 
+  // The same worker DB, connected as the role row security binds.
+  const dml = new URL(process.env.TEST_DML_BASE_URL);
+  dml.pathname = u.pathname;
+  process.env.DML_DATABASE_URL = dml.toString();
+
   // Each integration file builds its own prisma pool (fresh module registry per
   // file). Close it when the file finishes, or pools accumulate across the
   // worker's files and exhaust the shared Postgres server's max_connections.
