@@ -597,4 +597,19 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     send("m2");
     expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
   });
+
+  it("stores the sender check's verdict on every item", async () => {
+    send("passed");
+    send("spf-only", { auth: ["mx.google.com; spf=pass smtp.mailfrom=alice@example.org; dmarc=pass header.from=example.org"] });
+    send("no-record", { auth: ["mx.google.com; spf=pass; dmarc=none header.from=example.org"] });
+    send("no-from", { from: ["a@example.org, b@example.org"] });
+    await readMailbox();
+    const items = await db.receiptMailItem.findMany();
+    expect(Object.fromEntries(items.map((i) => [i.gmailMessageId, [i.status, i.dmarcVerdict]]))).toEqual({
+      passed: ["assigned", "pass"],
+      "spf-only": ["held", "fail"],
+      "no-record": ["held", "none"],
+      "no-from": ["held", "fail"],
+    });
+  });
 });

@@ -153,7 +153,7 @@ export interface OcrProvider {
 
 /** The host's people, for attributing a mailed receipt to its sender. */
 export interface ReceiptPeople {
-  /** The one live person allowed to submit receipts whose sign-in email is exactly this address, else null. */
+  /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
 }
 
