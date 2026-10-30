@@ -36,8 +36,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const body = await request.json();
-        // An edit modal loaded before the rename deploy still sends isVolunteer; drop the fallback one release later.
-        const isVolunteerFamily: unknown = body.isVolunteerFamily ?? body.isVolunteer;
+        const isVolunteerFamily: unknown = body.isVolunteerFamily;
         const data: { name?: string } & Partial<StructuredAddress> = {};
         if (body.name !== undefined) {
             if (typeof body.name !== "string" || !body.name.trim()) {
