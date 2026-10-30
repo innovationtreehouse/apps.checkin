@@ -85,11 +85,24 @@ describeDb("sign-off seats", () => {
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "signoff", userId: 5, valueAfter: "TREASURER" } })).toBe(1);
   });
 
-  it("a card charge needing two Board substitutions is held, and shows in the Board tab as held", async () => {
+  it("an org-level card charge whose only FINANCE holder is conflicted: one Board member approves, another signs as Treasurer", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending" });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
-    // A Board member's approval of an org-level line uses the card charge's one substitution.
+    await seedApproval(id, li, { ownerId: 7, status: "approved", decidedByUserId: 5 });
+
+    await expect(signLine(principal(3), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
+    expect((await signoffStatus(id))[0].blocked).toEqual([]);
+
+    await signLine(principal(6), li, "TREASURER");
+    expect(await events(id)).toBe(1);
+  });
+
+  it("a card charge with nobody independent left for the Treasurer seat is held, and shows in the Board tab as held", async () => {
+    // 5 approved the line and 6 is in 5's household, so no Board member can stand in
+    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 3], [5, 6]] }) });
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 7, status: "approved", decidedByUserId: 5 });
 
     await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 403 });
