@@ -155,6 +155,13 @@ describeDb("a receipt finance rejected", () => {
     expect((await receiptService.listMine()).find((r) => r.id === id)).toMatchObject({ complete: true, validationNotes: "Personal purchase" });
   });
 
+  it("offers Got it to an uploader who reads the receipt with finance access", async () => {
+    const id = await rejected();
+    expect(await receiptService.get(id, "finance")).toMatchObject({ uploadedByUserId: ALICE.id, rejectionUnacknowledged: true });
+    await receiptService.acknowledgeRejection(id);
+    expect(await receiptService.get(id, "finance")).toMatchObject({ rejectionUnacknowledged: false });
+  });
+
   it("a repeat acknowledgement does nothing, and only one is audited", async () => {
     const id = await rejected();
     await receiptService.acknowledgeRejection(id);
