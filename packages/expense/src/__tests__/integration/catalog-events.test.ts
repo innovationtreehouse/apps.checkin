@@ -143,17 +143,16 @@ describeDb("S5 consumer — catch-up sweep", () => {
     for (const ev of bad) await consumeCatalogEvent(ev);
     bindPorts({ catalogEvents: paged([...bad, envelope(itemRef, 5)]) });
 
-    expect(await catchUpCatalogEvents(4)).toEqual({ ...CLEAN, processed: 1, failed: 2, unprocessed: 2 });
+    expect(await catchUpCatalogEvents(4)).toEqual({ ...CLEAN, processed: 1, failed: 3, unprocessed: 1 });
   });
 
   it("a failed overlap does not overwrite a processed ledger row", async () => {
     const ev = malformed(30);
-    const realFindFirst = db.expenseReceivedOrgEvent.findFirst;
     // The overlapping consumer's success lands after this one read the ledger.
     const spy = vi.spyOn(db.expenseReceivedOrgEvent, "findFirst").mockImplementationOnce((async () => {
       await db.expenseReceivedOrgEvent.create({ data: { id: 30, orgId: ORG, eventType: ev.eventType, payload: ev.payload, receivedAt: new Date(), status: "processed" } });
       return null;
-    }) as unknown as typeof realFindFirst);
+    }) as unknown as typeof db.expenseReceivedOrgEvent.findFirst);
     try {
       expect(await consumeCatalogEvent(ev)).toBe("duplicate");
     } finally {

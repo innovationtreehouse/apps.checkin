@@ -149,9 +149,12 @@ export const orgEventConsumer: OrgEventConsumer = {
   },
 };
 
+/** The share of the cap retried before new events, so failures that persist can't starve them. */
+const RETRY_FIRST_SHARE = 0.1;
+
 /**
- * Catch-up sweep: retries recorded failures, using at most half the cap so they can't starve new
- * events, then pages through all the org's catalog events and consumes those in neither ledger.
+ * Catch-up sweep: retries a small share of the recorded failures, pages through all the org's
+ * catalog events and consumes those in neither ledger, then retries more failures with the cap left.
  * Reading from the start means no event is missed however late it committed or however many later
  * ids were applied. What stays undone is retried on the next run. A person is alerted once per run
  * for an event newly failed, an unreadable catalog, or a capped run that applied nothing; a capped
@@ -160,17 +163,20 @@ export const orgEventConsumer: OrgEventConsumer = {
 export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number; unprocessed: number; unreadable: boolean }> {
   const limit = opts.limit ?? 500;
   const recorded = await db.workflowFailedOrgEvent.findMany({ orderBy: { id: "asc" } });
-  const retries = recorded.slice(0, Math.ceil(limit / 2));
   let applied = 0;
   let failed = 0;
-  for (const r of retries) {
-    if (await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload })) applied++;
-    else failed++;
-  }
+  const retry = async (rows: typeof recorded) => {
+    for (const r of rows) {
+      if (await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload })) applied++;
+      else failed++;
+    }
+  };
+  const firstRetries = recorded.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
 
-  let unprocessed = recorded.length - retries.length;
+  let unprocessed = 0;
   let unreadable = false;
-  let budget = limit - retries.length;
+  let budget = limit - firstRetries.length;
   let newlyFailed = 0;
   try {
     const orgId = (await getOrg()).id;
@@ -204,6 +210,10 @@ export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{
     unreadable = true;
     console.error("[workflow-mapping/org-events] catalog events could not be read", err);
   }
+
+  const laterRetries = recorded.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += recorded.length - firstRetries.length - laterRetries.length;
 
   if (newlyFailed > 0 || unreadable || (unprocessed > 0 && applied === 0)) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
   return { applied, failed, unprocessed, unreadable };

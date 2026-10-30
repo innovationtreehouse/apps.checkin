@@ -92,9 +92,12 @@ async function consumeInSweep(raw: unknown): Promise<ConsumeResult> {
   }
 }
 
+/** The share of the cap retried before new events, so failures that persist can't starve them. */
+const RETRY_FIRST_SHARE = 0.1;
+
 /**
- * Catch-up sweep: retries failed events, using at most half the cap so they can't starve new
- * events, then pages through all the org's catalog events and consumes those not in the ledger.
+ * Catch-up sweep: retries a small share of the failed events, pages through all the org's catalog
+ * events and consumes those not in the ledger, then retries more failed events with the cap left.
  * Reading from the start means no event is missed however late it committed or however many later
  * ids were received. What stays undone is retried on the next run. A person is alerted once per
  * run for an event newly failed, an unreadable catalog, or a capped run that processed nothing; a
@@ -105,14 +108,17 @@ export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeR
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0 };
   const repo = createOrgEventsRepository(db);
   const allFailed = await repo.findPending(await getOrgId());
-  const retries = allFailed.slice(0, Math.ceil(limit / 2));
-  for (const r of retries) {
-    counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
-  }
+  const retry = async (rows: typeof allFailed) => {
+    for (const r of rows) {
+      counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
+    }
+  };
+  const firstRetries = allFailed.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
 
-  let unprocessed = allFailed.length - retries.length;
+  let unprocessed = 0;
   let unreadable = false;
-  let budget = limit - retries.length;
+  let budget = limit - firstRetries.length;
   let newlyFailed = 0;
   try {
     // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
@@ -139,6 +145,10 @@ export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeR
     unreadable = true;
     logError("catalog_events_unreadable", {}, err);
   }
+
+  const laterRetries = allFailed.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += allFailed.length - firstRetries.length - laterRetries.length;
 
   if (newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0)) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
   return { ...counts, unprocessed, unreadable };

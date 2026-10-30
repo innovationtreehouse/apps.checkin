@@ -216,7 +216,7 @@ describeDb("catch-up sweep", () => {
     await orgEventConsumer.onOrgEvents([malformed(1), malformed(2), malformed(3), malformed(4)]);
     configure({ catalogEventSource: paged([malformed(1), malformed(2), malformed(3), malformed(4), rejected(5)]) });
 
-    expect(await catchUpOrgEvents({ limit: 4 })).toEqual({ ...CLEAN, applied: 1, failed: 2, unprocessed: 2 });
+    expect(await catchUpOrgEvents({ limit: 4 })).toEqual({ ...CLEAN, applied: 1, failed: 3, unprocessed: 1 });
     expect(await applied()).toEqual([5]);
   });
 });
