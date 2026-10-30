@@ -46,8 +46,8 @@ GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... GMAIL_MAILBOX=... npm run consent -w
 
 Sign in as the mailbox. The CLI requests `gmail.readonly` only, refuses any other granted scope,
 checks that the grant opens `GMAIL_MAILBOX`, and writes a new `gmail-token.json` (mode 0600, in
-this directory, gitignored; `GMAIL_TOKEN_FILE` overrides the path). Seed the environment's token
-secret from it, then delete it:
+this directory, gitignored; `GMAIL_TOKEN_FILE` overrides the path). It refuses to start if that
+file exists. Seed the environment's token secret from it, then delete it:
 
 ```bash
 aws secretsmanager put-secret-value --secret-id "$TOKEN_SECRET" --secret-string file://gmail-token.json
