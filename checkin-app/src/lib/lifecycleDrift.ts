@@ -198,7 +198,7 @@ async function reportViolation(v: LifecycleViolation): Promise<void> {
         "lifecycleReconcile",
         new Error(`${v.model} ${v.key}: off-diagram — invariant ${v.invariant} violated (status ${v.status})`),
         { model: v.model, key: v.key, status: v.status, invariant: v.invariant },
-        `A ${v.model} row is off its lifecycle diagram (invariant <strong>${v.invariant}</strong>) and needs a human to resolve — nothing was changed automatically.`,
+        `A ${v.model} row is off its lifecycle diagram (invariant ${v.invariant}) and needs a human to resolve — nothing was changed automatically.`,
     );
 }
 

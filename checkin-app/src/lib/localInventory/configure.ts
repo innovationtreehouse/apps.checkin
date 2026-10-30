@@ -13,11 +13,7 @@ const alerts: InventoryAlerts = {
     const problem = unreadable
       ? "could not read the catalog's events"
       : `found ${failed} newly failed and ${unprocessed} unprocessed catalog event(s)`;
-    await emailBoardMembers(
-      "Inventory: catalog events need attention",
-      `<p>The inventory catch-up ${problem}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.</p>`,
-      "Inventory catalog event alert failed:",
-    );
+    await emailBoardMembers("board.inventoryEventsStuck", { problem }, "Inventory catalog event alert failed:");
   },
 };
 

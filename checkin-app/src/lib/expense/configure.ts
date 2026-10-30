@@ -195,22 +195,21 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
   refusedAlerted = accountId;
   const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert(
-    "Expenses: QuickBooks posting is off until the payment account is fixed",
-    `<p>The books map's "Organisation card" account (QuickBooks id ${accountId}) is ${accountType ? `a ${accountType} account` : "not in QuickBooks"}. Expenses post only from a Bank or Credit Card account, so none are posting. <a href="${config.baseUrl()}/books-map">Open the books map</a></p>`,
-    "Expense payment-account alert failed:",
-  );
+  await notifyFinanceAlert("finance.expensePaymentAccount", {
+    accountId,
+    accountKind: accountType ? `a ${accountType} account` : "not in QuickBooks",
+    actionLink: `${config.baseUrl()}/books-map`,
+  }, "Expense payment-account alert failed:");
 }
 
 /** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
   const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert(
-    "Expenses: the daily check for stray QuickBooks entries could not see them all",
-    `<p>QuickBooks returned more purchases or bills created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. <a href="${config.baseUrl()}/expense/expenses">Open expenses</a></p>`,
-    "Expense sweep alert failed:",
-  );
+  await notifyFinanceAlert("finance.expenseSweepIncomplete", {
+    since: since.toISOString().slice(0, 10),
+    actionLink: `${config.baseUrl()}/expense/expenses`,
+  }, "Expense sweep alert failed:");
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };

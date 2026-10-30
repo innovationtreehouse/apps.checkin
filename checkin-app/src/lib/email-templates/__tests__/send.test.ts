@@ -85,9 +85,31 @@ describe("sendTemplated", () => {
     it("renders a multi-line token value with <br>", async () => {
         findUnique.mockResolvedValue({ subject: "s", body: "{{names}}" });
 
-        await sendTemplated("board.unpaidClaims", "a@example.org", { names: "Ann\nBob" });
+        await sendTemplated("board.unpaidClaims", "a@example.org", { programName: "Robotics", names: "Ann\nBob", actionLink: "https://x.test/p" });
 
         expect(send.mock.calls[0][2]).toContain("<p>Ann<br>Bob</p>");
+    });
+
+    it("escapes a member's profile name in the board's attendance flag", async () => {
+        await sendTemplated("attendance.selfCorrectionFlag", "a@example.org", {
+            scope: "self",
+            change: "edit",
+            visitId: "1",
+            actorName: '<a href="http://evil">Pay membership fee here</a>',
+            verb: "changed",
+            whose: "one of their own",
+            score: "7",
+            detail: "Mar 7 → Mar 8",
+        });
+
+        expect(send.mock.calls[0][2]).not.toContain("<a href");
+        expect(send.mock.calls[0][2]).toContain("&lt;a href=&quot;http://evil&quot;&gt;");
+    });
+
+    it("passes headers through to the send", async () => {
+        await sendTemplated("receipt.mailReplySender", "a@example.org", { when: "May 1", creditedName: "Pat" }, { "Auto-Submitted": "auto-replied" });
+
+        expect(send.mock.calls[0][3]).toEqual({ "Auto-Submitted": "auto-replied" });
     });
 
     it("renders a link token with its fixed label", async () => {
