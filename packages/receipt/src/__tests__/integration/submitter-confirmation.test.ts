@@ -1,27 +1,35 @@
 import { beforeEach, expect, it } from "vitest";
+import { ServiceError } from "@checkin/component-kit";
 import { db } from "../../db";
 import type { AwaitedConfirmation, PurchaseOutcome, PurchaseOutcomes, ReceiptReimbursees, SubmitterConfirmations } from "../../contract";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
-// 101 Alice uploads · 102 Bob is reimbursed · 104 Lee's membership lapsed · 300 has no account · 500 is on the Board
+// 101 Alice uploads · 102 Bob is reimbursed · 104 Lee's membership lapsed · 300 has no account · 500 and 501 are on the Board
 const NO_ACCOUNT = { id: 300, name: "Nora Noaccount" };
 const LAPSED = { id: 104, name: "lee", firstName: "Lee", lastName: "Lapsed", isAdult: true };
 const BOARD = { id: 500, name: "bea", firstName: "Bea", lastName: "Board", isAdult: true, isBoardMember: true };
+const AUTHORIZER = { id: 501, name: "abe", firstName: "Abe", lastName: "Authorizer", isAdult: true, isBoardMember: true };
 
 let ports: ReturnType<typeof recordingPorts>;
 let awaiting: AwaitedConfirmation[];
 let confirmed: Array<{ receiptId: string; reimburseePersonId: number; signerId: number; reason?: string }>;
+/** Receipt id → the people its expense refuses the submitter seat. */
+let refused: Map<string, number[]>;
+const refuses = (receiptId: string, signerId: number) => refused.get(receiptId)?.includes(signerId) ?? false;
 
 const confirmations: SubmitterConfirmations = {
   awaiting: async () => awaiting,
   confirm: async (receiptId, reimburseePersonId, signer, reason) => {
     if (!awaiting.some((a) => a.receiptId === receiptId && a.reimburseePersonId === reimburseePersonId)) return false;
+    if (refuses(receiptId, signer.id)) throw new ServiceError(403, "signer already signs another step on this expense");
     confirmed.push({ receiptId, reimburseePersonId, signerId: signer.id, ...(reason ? { reason } : {}) });
     awaiting = awaiting.filter((a) => a.receiptId !== receiptId);
     return true;
   },
+  confirmable: async (receiptIds, signerId) =>
+    receiptIds.filter((id) => awaiting.some((a) => a.receiptId === id) && !refuses(id, signerId)),
 };
 
 const reimbursees: ReceiptReimbursees = {
@@ -39,6 +47,7 @@ beforeEach(async () => {
   ports = recordingPorts();
   awaiting = [];
   confirmed = [];
+  refused = new Map();
   configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, submitterConfirmations: confirmations, reimbursees });
 });
 
@@ -303,6 +312,18 @@ describeDb("confirming again once the expense exists", () => {
     expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, reimburseePersonId: BOB.id, changedFields: ["reimbursee"] })]);
     await receiptService.confirmAsReimbursee(id);
     expect(confirmed).toEqual([{ receiptId: id, reimburseePersonId: BOB.id, signerId: BOB.id }]);
+  });
+
+  it("a Board member the expense refuses the seat, as the one who recorded its Board authorization, is not offered it; another Board member is", async () => {
+    const id = await sentFor(NO_ACCOUNT.id);
+    refused.set(id, [AUTHORIZER.id]);
+    actAs(AUTHORIZER);
+    expect(await receiptService.listConfirmations()).toEqual([]);
+    expect(await receiptService.countToConfirm(AUTHORIZER.id, true)).toBe(0);
+    await expect(receiptService.confirmAsReimbursee(id, "no account")).rejects.toMatchObject({ status: 403 });
+    actAs(BOARD);
+    expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, onBehalf: true })]);
+    expect(await receiptService.countToConfirm(BOARD.id, true)).toBe(1);
   });
 
   it("is refused when nothing waits for it", async () => {

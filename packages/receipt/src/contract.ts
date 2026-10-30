@@ -122,6 +122,8 @@ export interface SubmitterConfirmations {
    * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.
    */
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  /** The given receipts whose expense waits for a confirmation `signerUserId` may sign, by the same rules `confirm` refuses with. */
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */

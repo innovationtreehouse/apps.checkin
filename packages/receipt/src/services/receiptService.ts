@@ -473,7 +473,8 @@ async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"se
 
 /**
  * Reimbursements a Board member may confirm on behalf of a reimbursee with no account, before
- * finance and once their expense exists, with what finance changed; none the member is party to.
+ * finance and once their expense exists, with what finance changed; none the member is party to,
+ * and none whose expense refuses them the submitter seat.
  */
 async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: Array<ReceiptRow & { reimburseePersonId: number }>; changed: Map<string, string[]> }> {
   if (!actor.isBoardMember) return { rows: [], changed: new Map() };
@@ -487,8 +488,11 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
     ...inReview.map((r) => ({ ...r, reimburseePersonId: r.reimburseePersonId! })),
     ...sent.map((r) => ({ ...r, reimburseePersonId: reimburseeOnExpense.get(r.id)! })),
   ];
-  const rows: Array<ReceiptRow & { reimburseePersonId: number }> = [];
-  for (const r of candidates) if ((await confirmerRole(r, actor)) === "on_behalf") rows.push(r);
+  const onBehalf: Array<ReceiptRow & { reimburseePersonId: number }> = [];
+  for (const r of candidates) if ((await confirmerRole(r, actor)) === "on_behalf") onBehalf.push(r);
+  const sentIds = new Set(sent.map((r) => r.id));
+  const signable = new Set(await ports().submitterConfirmations.confirmable(onBehalf.filter((r) => sentIds.has(r.id)).map((r) => r.id), actor.id));
+  const rows = onBehalf.filter((r) => !sentIds.has(r.id) || signable.has(r.id));
   return { rows, changed: new Map(awaited.map((a) => [a.receiptId, a.changedFields])) };
 }
 
