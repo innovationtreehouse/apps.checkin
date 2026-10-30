@@ -265,6 +265,13 @@ Things the app takes as true because they are handled outside it.
   finance never approved the new amount.
   [Decision]
 
+### Capital register
+
+- The capital register holds one row per physical asset: a line of three units
+  gets three rows and three numbers. An asset number is used once per org, and
+  loading a number already on the register changes nothing.
+  [Decision]
+
 ### Finance review
 
 - Finance works from one queue. Each reason for finance or the Board to act is
@@ -476,6 +483,12 @@ the parts specific to expenses.
 
 - Every expense reaches the books charged to the budget it was spent from, so
   each program's spending can be read against its budget.
+  [Decision]
+
+- Each expense line reaches the books on one account, with its share of tax,
+  shipping and discount. Nothing splits a line across accounts or categories. A
+  line the mappings do not resolve to exactly one account waits for finance to
+  set it.
   [Decision]
 
 - A reimbursement counts as paid only when the accounting system shows it fully

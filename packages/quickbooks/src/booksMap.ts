@@ -2,7 +2,7 @@
  * The books map: which QuickBooks account each named role books to, and which
  * QuickBooks Class each budget bucket books to. Finance edits it in the host;
  * income, gifts of goods and expense read it through this port, which the host
- * binds. Donation deposits still take their bank account from the host's settings.
+ * binds. Income books a donation disbursement's deposit to the BENEVITY_BANK role.
  */
 
 /** The named roles a line or a deposit books to, one QuickBooks account each. */
