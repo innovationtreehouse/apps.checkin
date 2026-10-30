@@ -20,6 +20,11 @@ export function rosterPerson<P extends { email: string | null; dateOfBirth: Date
     return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
 }
 
+/** Nulls the email of a person the rule hides, wherever the response lists them. */
+export function withholdEmail<P extends { id: number; email: string | null }>(person: P, emailWithheldFrom: ReadonlySet<number>): P {
+    return emailWithheldFrom.has(person.id) ? { ...person, email: null } : person;
+}
+
 /**
  * A roster household as the route ships it: an enrolled participant listed among
  * its leads keeps the same email rule as on their own roster row. Everyone else
@@ -31,6 +36,6 @@ export function rosterHousehold<M extends { id: number; email: string | null }, 
 ): H {
     return {
         ...household,
-        householdMembers: household.householdMembers.map(m => emailWithheldFrom.has(m.id) ? { ...m, email: null } : m),
+        householdMembers: household.householdMembers.map(m => withholdEmail(m, emailWithheldFrom)),
     };
 }

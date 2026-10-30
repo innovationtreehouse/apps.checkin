@@ -4,7 +4,7 @@
  * Board ruling B15, 2026-10-27: a participant's own email is hidden from
  * program leaders while the participant is under 13.
  */
-import { leaderMaySeeEmail, rosterHousehold, rosterPerson } from "@/lib/person/leaderEmail";
+import { leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 
 beforeAll(() => {
     jest.useFakeTimers({ now: new Date("2026-10-27T17:00:00Z"), doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
@@ -44,5 +44,12 @@ describe("rosterHousehold", () => {
             { id: 1, email: null },
             { id: 2, email: "parent@example.com" },
         ]);
+    });
+});
+
+describe("withholdEmail", () => {
+    it("nulls a withheld person's email and leaves others alone", () => {
+        expect(withholdEmail({ id: 1, email: "kid@example.com" }, new Set([1])).email).toBeNull();
+        expect(withholdEmail({ id: 2, email: "adult@example.com" }, new Set([1])).email).toBe("adult@example.com");
     });
 });

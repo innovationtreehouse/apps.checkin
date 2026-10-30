@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { leaderMaySeeEmail, rosterHousehold, rosterPerson } from "@/lib/person/leaderEmail";
+import { leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 
@@ -204,7 +204,10 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         delete metadata.participants;
         return { Program: metadata };
     }
-    if (isPrivileged) return { Program: { ...program, participants: roster } };
+    if (isPrivileged) {
+        const volunteers = program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
+        return { Program: { ...program, volunteers, participants: roster } };
+    }
 
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
     // lead's for their own household. The stripper can't express "own household",

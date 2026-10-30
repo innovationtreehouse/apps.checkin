@@ -185,3 +185,39 @@ describe("an enrolled participant who is also a household lead", () => {
         });
     });
 });
+
+describe("an enrolled participant who also volunteers on the program", () => {
+    const ADULT_VOLUNTEER = { id: 60, name: "Adult", email: "adult@example.com" };
+    const volunteerRow = ({ id, name, email }: { id: number; name: string; email: string }) => ({ programId: PROGRAM_ID, personId: id, isCore: false, person: { id, name, email } });
+    const volunteerEmails = async () => {
+        const res = await programGET(new Request(`http://localhost/api/programs/${PROGRAM_ID}`) as never, { params: Promise.resolve({ id: String(PROGRAM_ID) }) });
+        const { volunteers } = await res.json() as { volunteers: { personId: number; person: { email?: string | null } }[] };
+        return Object.fromEntries(volunteers.map(v => [v.personId, v.person.email ?? null]));
+    };
+
+    beforeEach(() => {
+        db.program.findUnique.mockResolvedValue({
+            ...programRow(),
+            volunteers: [UNDER_13, EXACTLY_13, UNKNOWN_DOB, ADULT_VOLUNTEER].map(volunteerRow),
+        });
+    });
+
+    it("follows the participant rule on the volunteer list for the lead mentor", async () => {
+        asLead();
+        expect(await volunteerEmails()).toMatchObject({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+        });
+    });
+
+    it("leaves the volunteer list whole for the board", async () => {
+        asBoard();
+        expect(await volunteerEmails()).toEqual({
+            [UNDER_13.id]: UNDER_13.email,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: UNKNOWN_DOB.email,
+            [ADULT_VOLUNTEER.id]: ADULT_VOLUNTEER.email,
+        });
+    });
+});
