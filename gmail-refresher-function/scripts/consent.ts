@@ -1,7 +1,7 @@
 // One-time gmail.readonly consent, run by an operator. Catches Google's redirect on a local server,
 // proves the grant opens the named mailbox, and writes the token secret's JSON to a new 0600 file.
 // Run: npm run consent -w gmail-refresher-function
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { createGmailReader } from "@checkin/receipt/gmail";
@@ -11,6 +11,8 @@ const { GMAIL_CLIENT_ID: clientId, GMAIL_CLIENT_SECRET: clientSecret, GMAIL_MAIL
 if (!clientId || !clientSecret || !mailbox) throw new Error("GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_MAILBOX must be set");
 const redirectUri = process.env.GMAIL_REDIRECT_URI ?? "http://localhost:8087/callback";
 const tokenFile = process.env.GMAIL_TOKEN_FILE ?? "gmail-token.json";
+// The final write refuses an existing file, by which point the one-time code is already spent.
+if (existsSync(tokenFile)) throw new Error(`${tokenFile} already exists; seed the secret from it or delete it, then re-run`);
 const state = randomBytes(16).toString("hex");
 const redirect = new URL(redirectUri);
 
