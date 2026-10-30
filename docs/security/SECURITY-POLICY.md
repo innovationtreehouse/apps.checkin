@@ -190,11 +190,9 @@ Accepted 2026-07-21. After a sysadmin revokes someone's staging exception (`canA
 
 This happens because the middleware gates pages by decoding the cookie, which holds the claims from the last refresh, and never consults the database. API routes do not share this window for the exception: they rebuild the session from the database on every request, so the revocation applies to the next API call. A page that opens during the window therefore has its data calls refused.
 
-## Known gaps, not accepted
-
 ### Lost org standing keeps API access on ops-stg
 
-No one has accepted this gap; the owner is deciding what to do about it. Someone admitted to ops-stg as a verified org member (`hd`, `emailVerified`) keeps that admission after losing org standing at Google, on API routes as well as pages.
+Acceptance confirmed by the owner 2026-10-30. Someone admitted to ops-stg as a verified org member (`hd`, `emailVerified`) keeps that admission after losing org standing at Google, on API routes as well as pages.
 
 Both claims are written to the token only at sign-in or at a dev persona mint, and the rebuild on each API request does not refresh them. API access therefore lasts until the session ends, at most 8 hours from sign-in. Page access lasts until the cookie's own expiry, which the refreshes described above can push past that point.
 
