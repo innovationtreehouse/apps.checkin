@@ -172,7 +172,7 @@ export const GET = fileHandler('GET /api/things/[id]/file', async ({ params }) =
 | `application/pdf` | `inline` | none (Chrome's PDF viewer refuses a sandboxed document) |
 | `text/plain` (sent as `; charset=utf-8`) | `attachment` | none |
 
-The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `scripts/migrated-routes.txt`. The handler does not audit, check magic bytes, or stream from storage; those are the route's job (see `docs/in-design/1265_RECEIPT_INTEGRATION.md` §3).
+The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `scripts/migrated-routes.txt`. The handler does not audit, check magic bytes, or stream from storage; those are the route's job (see `docs/architecture/RECEIPT.md`, "File storage").
 
 ## What this layer does NOT cover (yet)
 
