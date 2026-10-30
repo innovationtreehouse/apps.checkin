@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
@@ -341,8 +342,7 @@ export const POST = withAuth(
                     });
                 } catch (e) {
                     if (e instanceof PaymentError) {
-                        const status = e.code === "forbidden" ? 403 : e.code === "not_found" ? 404 : 409;
-                        return apiError(e.message, status);
+                        return apiError(e.message, PAYMENT_ERROR_STATUS[e.code]);
                     }
                     throw e; // unexpected → outer catch → 500
                 }

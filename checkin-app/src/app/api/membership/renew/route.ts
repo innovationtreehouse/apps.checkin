@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { beginRenewalForUser, RenewalError } from "@/lib/membership/renewal";
 import { apiError } from "@/lib/api-response";
+import { renewalErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -17,8 +18,7 @@ export const POST = withAuth({}, async (_req, auth) => {
         return NextResponse.json({ process: { id: process.id, kind: process.kind, status: process.status } });
     } catch (error) {
         if (error instanceof RenewalError) {
-            const status = error.code === "not_found" ? 404 : error.code === "not_lead" ? 403 : 409;
-            return NextResponse.json({ error: error.message, code: error.code }, { status });
+            return renewalErrorResponse(error);
         }
         logger.error("Renewal begin error:", error);
         return apiError("Internal Server Error", 500);

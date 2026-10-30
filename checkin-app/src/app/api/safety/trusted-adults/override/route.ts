@@ -3,16 +3,9 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { overrideReview, TrustedAdultError } from "@/lib/trusted-adult/service";
 import { apiError } from "@/lib/api-response";
+import { trustedAdultErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
-
-const STATUS_FOR: Record<TrustedAdultError["code"], number> = {
-    not_found: 404,
-    bad_input: 400,
-    wrong_phase: 409,
-    forbidden: 403,
-    already_open: 409,
-};
 
 /**
  * POST /api/safety/trusted-adults/override — board/isSysadmin force a review to a
@@ -34,7 +27,7 @@ export const POST = withAuth({ roles: ["isBoardMember", "isSysadmin"] }, async (
         return NextResponse.json({ status: outcome.status });
     } catch (error) {
         if (error instanceof TrustedAdultError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: STATUS_FOR[error.code] });
+            return trustedAdultErrorResponse(error);
         }
         logger.error("Trusted adult override error:", error);
         return apiError("Internal Server Error", 500);
