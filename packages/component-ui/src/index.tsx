@@ -70,7 +70,7 @@ export function createClient(base: string) {
     const loadRef = useRef(load);
     useEffect(() => { loadRef.current = load; });
     useEffect(() => {
-      if (!path) return;
+      if (path === null) return;
       const mine = ++seq.current;
       loadRef.current(path)
         .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })

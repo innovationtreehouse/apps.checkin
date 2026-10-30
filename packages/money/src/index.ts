@@ -70,7 +70,8 @@ export function formatCents(cents: number | null | undefined, currency = "USD"):
     currency: currency || "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(cents / 100);
+    // Adding 0 turns -0 into 0, which Intl would print as "-$0.00".
+  }).format(cents / 100 + 0);
 }
 
 /** @deprecated Use `formatCents`. Retained as an identical alias for existing call sites. */
