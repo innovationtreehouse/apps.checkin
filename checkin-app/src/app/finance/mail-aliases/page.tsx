@@ -72,8 +72,8 @@ export default function MailAliasesPage() {
       </Text>
       <form onSubmit={add}>
         <Group align="flex-end">
-          <TextInput required label="Person's sign-in email" value={personEmail} onChange={(e) => setPersonEmail(e.currentTarget.value)} />
-          <TextInput required label="Address to add" value={address} onChange={(e) => setAddress(e.currentTarget.value)} />
+          <TextInput required type="email" label="Person's sign-in email" value={personEmail} onChange={(e) => setPersonEmail(e.currentTarget.value)} />
+          <TextInput required type="email" label="Address to add" value={address} onChange={(e) => setAddress(e.currentTarget.value)} />
           <Button type="submit">Add</Button>
         </Group>
       </form>

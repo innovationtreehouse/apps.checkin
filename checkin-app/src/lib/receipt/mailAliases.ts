@@ -77,7 +77,7 @@ export async function addMailAlias(actorId: number, input: unknown) {
   return added;
 }
 
-/** Same person's dot and plus variants pass: resolution is by exact address. */
+/** Why this address cannot be added. The same person's dot and plus variants are allowed: each is its own exact address. */
 async function addRefusal(
   tx: Parameters<typeof lockMailAliasKey>[0],
   person: { id: number; email: string | null },
@@ -139,8 +139,8 @@ export async function approveMailAlias(actorId: number, id: number) {
         ...personActor(actorId),
         action: "EDIT",
         tableName: MAIL_ALIAS_REFUSAL_TABLE,
-        affectedEntityId: alias.personId,
-        secondaryAffectedEntity: id,
+        affectedEntityId: id,
+        secondaryAffectedEntity: alias.personId,
         newData: { attempted: "approve", reason: "no_assigned_passing_item" },
       },
     });

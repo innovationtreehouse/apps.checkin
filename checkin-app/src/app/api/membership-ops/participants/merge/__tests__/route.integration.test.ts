@@ -567,6 +567,17 @@ describe("Merge Participants API", () => {
         expect(newData.moved.mailAliases).toEqual({ migrated: [work.id], deduped: [sameAsKeeper.id] });
     });
 
+    it("keeps a moved alias's approval", async () => {
+        const approvedAt = new Date("2026-10-01T00:00:00Z");
+        const alias = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "approved@example.com", canonicalKey: "approved@example.com", addedById: actorId, approvedAt, approvedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.findUnique({ where: { id: alias.id }, select: { personId: true, approvedAt: true, approvedById: true } }))
+            .toEqual({ personId: pKeepId, approvedAt, approvedById: actorId });
+    });
+
     it("deletes an alias already on the keeper that equals the keeper's sign-in address", async () => {
         const onKeeper = await prisma.personMailAlias.create({ data: { personId: pKeepId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
 

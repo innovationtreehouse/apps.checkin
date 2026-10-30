@@ -110,7 +110,7 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   if (matches.length !== 1 || exact.length !== 1) return null;
   const [person] = exact;
   // The org-account claim follows the sign-in email, including for mail from an alias.
-  const claims: JWT = { id: person.id, email: person.email, hd: person.email?.split("@")[1], emailVerified: true };
+  const claims: JWT = { id: person.id, email: person.email, hd: person.email?.toLowerCase().split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
   if (claims.denied || !canSubmitReceipts(claims)) return null;
   const leadsActiveProgram = person.programsLed.some((p) => p.phase !== "FINISHED");

@@ -77,6 +77,12 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(await boundConfig().people?.submitterByEmail('staff.personal@gmail.com')).toMatchObject({ id: 7 });
     });
 
+    it('lowercases a legacy mixed-case sign-in email for the org claim', async () => {
+        const staff = person({ email: 'Staff@InnovationTreehouse.org', household: { orgMembership: null } });
+        prisma.person.findMany = jest.fn().mockResolvedValue([staff]);
+        expect(await boundConfig().people?.submitterByEmail('staff@innovationtreehouse.org')).toMatchObject({ id: 7 });
+    });
+
     it('answers null for an address that is neither the sign-in email nor an approved alias', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([person({ email: 'other@example.org' })]);
         expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toBeNull();

@@ -110,7 +110,7 @@ describe("mail aliases", () => {
             await expect(approveMailAlias(actor.id, alias.id)).rejects.toMatchObject({ status: 409 });
             expect(passingItem).toHaveBeenCalledWith("first@example.com", pat.id);
             expect((await prisma.personMailAlias.findUniqueOrThrow({ where: { id: alias.id } })).approvedAt).toBeNull();
-            expect(await prisma.auditLog.count({ where: { tableName: MAIL_ALIAS_REFUSAL_TABLE, secondaryAffectedEntity: alias.id } })).toBe(1);
+            expect(await prisma.auditLog.count({ where: { tableName: MAIL_ALIAS_REFUSAL_TABLE, affectedEntityId: alias.id, secondaryAffectedEntity: pat.id } })).toBe(1);
         });
 
         it("refuses the alias holder themself", async () => {
