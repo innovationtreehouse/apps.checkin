@@ -241,9 +241,9 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedVia: "SCANNER", departedVia: "SCANNER" });
         await PATCH(req("PATCH", { arrivedAt: "2026-07-20T12:00:00Z" }), ctx as never);
 
-        const html = (emailBoardMembers as jest.Mock).mock.calls[0][1];
-        expect(html).not.toContain("<a href");
-        expect(html).toContain("&lt;a href=&quot;http://evil&quot;&gt;");
+        const [key, values] = (emailBoardMembers as jest.Mock).mock.calls[0];
+        expect(key).toBe("attendance.selfCorrectionFlag");
+        expect(values.actorName).toBe('<a href="http://evil">Pay membership fee here</a>');
     });
 
     it("never reopens a closed visit", async () => {
@@ -400,7 +400,7 @@ describe("household-lead correction of a member's visit", () => {
         // 100 by proxy is over it.
         const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:50:00Z" }), ctx as never);
         expect(res.status).toBe(200);
-        expect((emailBoardMembers as jest.Mock).mock.calls[0][0]).toContain("household-edit");
+        expect((emailBoardMembers as jest.Mock).mock.calls[0][1]).toMatchObject({ scope: "household", change: "edit" });
     });
 
     it("tombstones a member's visit, stamping the LEAD as the deleter", async () => {

@@ -302,7 +302,7 @@ describe("expense posting binding", () => {
     const bound = await (await ports()).posting();
     await bound!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
     expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
-    expect(notifyFinanceAlert.mock.calls[0][1]).toContain("since 2026-10-01");
+    expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
   it("matches Purchases against the same books-map account", async () => {

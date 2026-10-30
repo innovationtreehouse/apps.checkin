@@ -111,9 +111,7 @@ it('welcomes an INITIAL household on activation', async () => {
 
     await activateByProcessId(PROCESS_ID, 'order-3', true);
 
-    const [, subject, body] = emailHouseholdLeads.mock.calls[0];
-    expect(subject).toBe('Welcome to the Treehouse — your membership is active!');
-    expect(body).toContain('Welcome to the Innovation Treehouse community');
+    expect(emailHouseholdLeads.mock.calls[0][1]).toBe('membership.welcome');
 });
 
 it('thanks a RENEWAL household for renewing instead of welcoming it', async () => {
@@ -123,10 +121,7 @@ it('thanks a RENEWAL household for renewing instead of welcoming it', async () =
 
     await activateByProcessId(PROCESS_ID, 'order-4', true);
 
-    const [, subject, body] = emailHouseholdLeads.mock.calls[0];
-    expect(subject).toBe('Thank you for renewing — your Treehouse membership is active!');
-    expect(subject).not.toContain('Welcome');
-    expect(body).toContain('Thank you for renewing');
+    expect(emailHouseholdLeads.mock.calls[0][1]).toBe('membership.renewed');
 });
 
 it('a manual (board) activation is exempt from the membership-item check', async () => {

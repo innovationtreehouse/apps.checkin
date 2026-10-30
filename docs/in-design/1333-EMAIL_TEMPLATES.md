@@ -95,12 +95,12 @@ export const REGISTRY: Record<string, TemplateSpec> = { ... }
 ### 4. Render + send — one door, `sendTemplated`
 
 ```
-sendTemplated(key, to, ctx) → Promise<boolean> {
+sendTemplated(key, to, ctx, headers?) → Promise<boolean> {
   row   = EmailTemplate[key]  ?? REGISTRY[key].{defaultSubject,defaultBody}   // never blank
   subj  = substitute(row.subject, ctx, REGISTRY[key], { escape: false })      // RAW — subject isn't HTML
   body  = substitute(row.body,    ctx, REGISTRY[key], { escape: true }) → split blank lines → <p>
   html  = baseEmailLayout(body)                                               // branding for free
-  return sendEmail(to, subj, html)                                            // existing choke-point, returns boolean
+  return sendEmail(to, subj, html, headers)                                   // existing choke-point, returns boolean
 }
 ```
 
@@ -158,9 +158,9 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (39)
+## Key list (47)
 
-37 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+45 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
@@ -216,11 +216,26 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > See sub-decision B (blurb) below.
 
-### finance — 2
+### finance — 8
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
+| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
+| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
+| `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
+| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
+| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
+
+### receipt — 2
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `receipt.mailReplyCredited` | `sendMailReply`, the person a mailed receipt is credited to | credited person | creditedName, from, when, `actionLink` ("Review it in My receipts") |
+| `receipt.mailReplySender` | `sendMailReply`, a sender whose receipt is credited to someone else | sender | when, creditedName |
+
+> Both carry the `Auto-Submitted: auto-replied` header, which is why `sendTemplated` takes optional
+> headers.
 
 ### shopify — 1
 | key | trigger | recipient | tokens |

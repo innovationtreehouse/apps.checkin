@@ -16,12 +16,10 @@ import { config } from "@/lib/config";
  * automatically.)
  */
 export async function notifyBoardPaidReject(processId: number): Promise<void> {
-    const base = config.baseUrl();
-    await emailBoardMembers(
-        "Membership: a paid application was blocked at background check",
-        `<p>A household that already paid did not pass background-check review (application #${processId}). The membership has <strong>not</strong> been activated and a refund may be needed — please review and contact the household. <a href="${base}/membership-ops/applications">Open applications</a></p>`,
-        "Paid-reject board ping failed:",
-    );
+    await emailBoardMembers("board.paidReject", {
+        processId: String(processId),
+        actionLink: `${config.baseUrl()}/membership-ops/applications`,
+    }, "Paid-reject board ping failed:");
 }
 
 /** One-line human description per payment-exception kind, for the board email. */
@@ -57,11 +55,10 @@ export async function notifyBoardPaymentException(
     exceptionId: number,
 ): Promise<void> {
     if (severity !== "CRITICAL") return; // WARN → dashboard + red-dot only.
-    const base = config.baseUrl();
-    const blurb = EXCEPTION_BLURB[kind] ?? "a payment problem was detected";
-    await emailBoardMembers(
-        `Payment problem (${kind}) — board action needed`,
-        `<p>A payment problem needs the board's attention: ${blurb} (#${exceptionId}). Nothing was changed automatically. <a href="${base}/finance-ops/payments">Open payment problems</a></p>`,
-        "Payment-exception board ping failed:",
-    );
+    await emailBoardMembers("board.paymentException", {
+        kind,
+        blurb: EXCEPTION_BLURB[kind] ?? "a payment problem was detected",
+        exceptionId: String(exceptionId),
+        actionLink: `${config.baseUrl()}/finance-ops/payments`,
+    }, "Payment-exception board ping failed:");
 }

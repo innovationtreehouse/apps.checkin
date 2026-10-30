@@ -27,29 +27,29 @@ describe('sendNotification return contract', () => {
 
     it('returns true and sends nothing when email is disabled (no forever-retry)', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: { email: false } });
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 
     it('returns sendEmail boolean when enabled', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: {} });
         mockSendEmail.mockResolvedValue(true);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
 
         mockSendEmail.mockResolvedValue(false);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(false);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(false);
     });
 
     it('returns false when sendEmail throws (retryable)', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: {} });
         mockSendEmail.mockRejectedValue(new Error('boom'));
         jest.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(false);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(false);
     });
 
     it('returns true when user not found (nothing to ever send)', async () => {
         mockFindUnique.mockResolvedValue(null);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 

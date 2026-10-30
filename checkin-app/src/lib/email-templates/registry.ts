@@ -181,6 +181,60 @@ export const REGISTRY = {
         defaultBody: "Today's income run created {{created}} QuickBooks deposit(s) and stopped at its per-run {{limit}} cap; {{remaining}} payout(s) are still waiting. Nothing else was posted. {{actionLink}}",
     },
 
+    "finance.receiptMailAgeing": {
+        // since: ", the oldest received <date>", or empty when the date is unknown.
+        allowedTokens: { messages: text, since: text, actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { messages: "6", since: ", the oldest received Sat, 07 Mar 2026 10:05:00 GMT", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: mailed receipts are about to be missed",
+        defaultBody: "Today's mail run did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They leave the 3-day reading window before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
+    },
+    "finance.incomeBucketUnusable": {
+        allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },
+        sampleCtx: { bucketName: "Robotics", issue: "is archived", itemCount: "4", actionLink: SAMPLE_URL },
+        defaultSubject: "Income: a budget-owner bucket can't take sales",
+        defaultBody: "The budget-owner bucket {{bucketName}} {{issue}}. {{itemCount}} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. {{actionLink}}",
+    },
+    "finance.incomeSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open income reconciliation") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Income: the daily check for stray QuickBooks deposits could not see them all",
+        defaultBody: "QuickBooks returned more deposits created since {{since}} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. {{actionLink}}",
+    },
+    "finance.expensePaymentAccount": {
+        // accountKind: "a <type> account", or "not in QuickBooks".
+        allowedTokens: { accountId: text, accountKind: text, actionLink: link("Open the books map") },
+        sampleCtx: { accountId: "35", accountKind: "a Expense account", actionLink: SAMPLE_URL },
+        defaultSubject: "Expenses: QuickBooks posting is off until the payment account is fixed",
+        defaultBody: "The books map's \"Organisation card\" account (QuickBooks id {{accountId}}) is {{accountKind}}. Expenses post only from a Bank or Credit Card account, so none are posting. {{actionLink}}",
+    },
+    "finance.expenseSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open expenses") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Expenses: the daily check for stray QuickBooks entries could not see them all",
+        defaultBody: "QuickBooks returned more purchases or bills created since {{since}} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. {{actionLink}}",
+    },
+    "finance.inKindSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open the in-kind queue") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
+        defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
+    },
+
+    // ── receipt ─────────────────────────────────────────────────────────────
+    "receipt.mailReplyCredited": {
+        // from: "you emailed", or "emailed from <address>" when another address sent it.
+        allowedTokens: { creditedName: text, from: text, when: text, actionLink: link("Review it in My receipts") },
+        sampleCtx: { creditedName: "Alex Rivera", from: "you emailed", when: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt received",
+        defaultBody: "Hi {{creditedName}}, a receipt {{from}} on {{when}} is now in your receipts, credited to you. {{actionLink}}.\n\nNot yours? Discard it there, and reply to this message to tell us.",
+    },
+    "receipt.mailReplySender": {
+        allowedTokens: { when: text, creditedName: text },
+        sampleCtx: { when: "March 7, 2026", creditedName: "Alex Rivera" },
+        defaultSubject: "Receipt received",
+        defaultBody: "We received the receipt you emailed on {{when}}. It is credited to {{creditedName}}, who reviews it.\n\nIf you did not send this email, reply to this message and tell us.",
+    },
+
     // ── shopify ─────────────────────────────────────────────────────────────
     "shopify.error": {
         allowedTokens: { intro: text, errorDetail: text },
@@ -279,3 +333,6 @@ export const REGISTRY = {
 } satisfies Record<string, TemplateSpec>;
 
 export type TemplateKey = keyof typeof REGISTRY;
+
+/** The values a key's body and subject take: every allowed token, as a string. */
+export type TemplateCtx<K extends TemplateKey> = Record<keyof (typeof REGISTRY)[K]["allowedTokens"], string>;

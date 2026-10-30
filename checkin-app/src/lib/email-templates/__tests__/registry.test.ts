@@ -6,7 +6,7 @@ const used = (s: string) => [...s.matchAll(TOKEN_RE)].map((m) => m[1]);
 
 describe("email template registry", () => {
     it("holds every templated email", () => {
-        expect(Object.keys(REGISTRY)).toHaveLength(37);
+        expect(Object.keys(REGISTRY)).toHaveLength(45);
     });
 
     describe.each(Object.entries(REGISTRY))("%s", (_key, spec) => {

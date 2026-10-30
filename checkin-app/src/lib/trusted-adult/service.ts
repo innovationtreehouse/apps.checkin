@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
+import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
 import { AUTHORIZED_REVIEW, expiringApprovals } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
@@ -419,7 +419,7 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
     });
 
     if (input.decision === "REQUEST_INFO") {
-        await notifyHouseholdFamily(result.householdId, "The board needs more information about a trusted adult", input.note?.trim());
+        await notifyHouseholdFamily(result.householdId, "trustedAdult.requestInfo", { note: input.note?.trim() ?? "", actionLink: trustedAdultsUrl() });
     }
     // Every denial notifies the family. The message depends on what survives the deny:
     // a live approval left standing (a rejected change), nothing left (a plain rejection),
@@ -429,8 +429,8 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         if (input.revokePriorApprovals) {
             await notifyHouseholdFamily(
                 result.householdId,
-                `Trusted adult no longer authorized: ${name}`,
-                `The board did not approve ${name}, and any prior approval has been revoked. They are no longer authorized at the front desk. You may submit a new request if things change.`,
+                "trustedAdult.deniedRevoked",
+                { adultName: name, actionLink: trustedAdultsUrl() },
             );
         } else {
             // Mirror /operational's rule: a surviving APPROVED review = still authorized.
@@ -442,14 +442,14 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
                 const until = live.reviewBy ? ` (valid until ${live.reviewBy.toISOString().slice(0, 10)})` : "";
                 await notifyHouseholdFamily(
                     result.householdId,
-                    `Trusted adult change not approved: ${name}`,
-                    `The board did not approve your recent change to ${name}. The previously approved arrangement${until} remains in effect. You can submit a new change any time.`,
+                    "trustedAdult.changeNotApproved",
+                    { adultName: name, until, actionLink: trustedAdultsUrl() },
                 );
             } else {
                 await notifyHouseholdFamily(
                     result.householdId,
-                    `Trusted adult not approved: ${name}`,
-                    `The board did not approve ${name}. You may submit a new request if things change.`,
+                    "trustedAdult.notApproved",
+                    { adultName: name, actionLink: trustedAdultsUrl() },
                 );
             }
         }
@@ -518,8 +518,8 @@ export async function overrideReview(
         const name = review.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
             review.trustedAdult.householdId,
-            `Trusted adult no longer authorized: ${name}`,
-            `The board has ${action === "revoke" ? "revoked" : "denied"} ${name}. They are no longer authorized at the front desk. You may submit a new request if things change.`,
+            "trustedAdult.overrideDecided",
+            { adultName: name, action: action === "revoke" ? "revoked" : "denied", actionLink: trustedAdultsUrl() },
         );
     }
     return updated;
@@ -562,8 +562,8 @@ export async function runExpirySweep(now: Date) {
         const due = r.reviewBy ? r.reviewBy.toISOString().slice(0, 10) : "soon";
         await notifyHouseholdFamily(
             r.householdId,
-            "A trusted adult approval is expiring soon",
-            `This board-approved trusted adult expires on ${due}. You can resubmit it for board review in one click — no need to re-enter anything.`,
+            "trustedAdult.expiring",
+            { deadline: due, actionLink: trustedAdultsUrl() },
         );
         await prisma.trustedAdultReview.update({ where: { id: r.id }, data: { expiryWarningSentAt: now } });
         warned++;
@@ -595,8 +595,8 @@ export async function runExpirySweep(now: Date) {
         const name = r.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
             r.householdId,
-            `Trusted adult approval expired: ${name}`,
-            `The board's approval of ${name} has expired. They are no longer authorized at the front desk. You can resubmit them for board review in one click — no need to re-enter anything.`,
+            "trustedAdult.expired",
+            { adultName: name, actionLink: trustedAdultsUrl() },
         );
     }
 
@@ -614,19 +614,20 @@ export async function assertHouseholdLead(householdId: number, actorId: number) 
 
 /** Email every board member that a trusted-adult review is waiting. */
 async function notifyBoard(): Promise<void> {
-    const base = config.baseUrl();
     await emailBoardMembers(
-        "Trusted adult: a disclosure needs board review",
-        `<p>A trusted-adult disclosure is awaiting board review. <a href="${base}/safety/trusted-adults">Review it</a>.</p>`,
+        "trustedAdult.boardReview",
+        { actionLink: `${config.baseUrl()}/safety/trusted-adults` },
         "Board trusted-adult ping failed:",
     );
 }
 
 /** Email the household's leads (the "family"). */
-async function notifyHouseholdFamily(householdId: number, subject: string, body?: string): Promise<void> {
-    const base = config.baseUrl();
-    const html = `<p>${escapeHtml(body ?? "")}</p><p><a href="${base}/trusted-adults">View your trusted adults</a>.</p>`;
-    await emailHouseholdLeads(householdId, subject, html, "Family trusted-adult ping failed:");
+async function notifyHouseholdFamily<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>): Promise<void> {
+    await emailHouseholdLeads(householdId, key, ctx, "Family trusted-adult ping failed:");
+}
+
+function trustedAdultsUrl(): string {
+    return `${config.baseUrl()}/trusted-adults`;
 }
 
 function audit(

@@ -78,7 +78,7 @@ describe("GET /api/cron/post-event", () => {
         expect(sendEmail).toHaveBeenCalledWith(
             "lead@example.com",
             `Action Required: Confirm Attendance for Past Event`,
-            expect.stringContaining("Review & Confirm Attendance")
+            expect.stringContaining("Review &amp; Confirm Attendance")
         );
 
         // Check DB

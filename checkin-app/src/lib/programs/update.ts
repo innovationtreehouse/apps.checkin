@@ -8,7 +8,6 @@ import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
@@ -448,10 +447,10 @@ async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): 
     });
     if (misfits.length === 0) return;
 
-    const rows = misfits.map(m => `<li>${escapeHtml(m.name ?? "Unnamed")}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})</li>`).join("");
-    await emailBoardMembers(
-        `Program "${after.name}": ${misfits.length} enrolled no longer fit its ages`,
-        `<p>An edit to the dates or age limits of <strong>${escapeHtml(after.name)}</strong> leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.</p><ul>${rows}</ul><p><a href="${config.baseUrl()}/program-ops/programs/${after.id}">Open the program</a></p>`,
-        "Program age re-check board alert failed:",
-    );
+    await emailBoardMembers("board.programAgeMisfit", {
+        programName: after.name,
+        count: String(misfits.length),
+        people: misfits.map(m => `${m.name ?? "Unnamed"}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})`).join("\n"),
+        actionLink: `${config.baseUrl()}/program-ops/programs/${after.id}`,
+    }, "Program age re-check board alert failed:");
 }

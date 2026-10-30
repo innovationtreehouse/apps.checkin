@@ -143,20 +143,16 @@ describe('receipt runtime: mail intake bindings', () => {
 
     it('alerts finance when mail is about to leave the window unread', async () => {
         await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
-        const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
-        expect(subject).toMatch(/about to be missed/);
-        expect(html).toContain('4 message(s)');
-        expect(html).toContain('25 Oct 2026');
-        expect(html).toContain('/receipts/mail');
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(key).toBe('finance.receiptMailAgeing');
+        expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
     });
 
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
-        const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
-        expect(subject).toMatch(/stopped holding mail/);
-        expect(html).toContain('500');
-        expect(html).toContain('3 more');
-        expect(html).toContain('/receipts/mail');
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(key).toBe('finance.receiptMailCeiling');
+        expect(values).toMatchObject({ unresolved: '500', refused: '3', actionLink: expect.stringContaining('/receipts/mail') });
     });
 });
 

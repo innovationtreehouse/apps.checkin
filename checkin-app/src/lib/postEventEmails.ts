@@ -1,8 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { sendEmail } from "@/lib/email";
 import { config } from "@/lib/config";
-import { postEventTemplate } from "@/lib/email-templates/post-event";
+import { sendTemplated } from "@/lib/email-templates/send";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 interface ProcessPostEventEmailsOptions {
@@ -117,18 +116,12 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             const baseUrl = config.baseUrl();
             const eventLink = `${baseUrl}/program-ops/sessions/${event.id}`;
 
-            const emailHtml = postEventTemplate({
+            const success = await sendTemplated("event.postEvent", recipientEmail, {
                 eventName: event.name,
-                attendingRsvps,
-                actualVisits,
-                eventLink
+                rsvpCount: String(attendingRsvps),
+                checkinCount: String(actualVisits),
+                actionLink: eventLink,
             });
-
-            const success = await sendEmail(
-                recipientEmail,
-                `Action Required: Confirm Attendance for ${event.name}`,
-                emailHtml
-            );
 
             if (success) {
                 await prisma.event.update({

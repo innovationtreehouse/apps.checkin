@@ -202,6 +202,7 @@ const KNOWN_INTENTIONAL = [
   /In HTML, .+ cannot be a (child|descendant) of/, // React DOM-nesting validation
   /cannot contain a nested/,               // React DOM-nesting validation (alt phrasing)
   // Bracketed service log namespaces (incidental negative-path logs).
+  /^\[Email Template\]/,                    // sendTemplated falls back to the default under a prisma mock with no emailTemplate
   /^\[Shopify/,                            // [Shopify], [Shopify Error], [Shopify API Error]
   /^\[s-read diagnose\]/,                  // shopify-read diagnostics probes
   /^\[enroll\]/,                           // program enroll compensation logs

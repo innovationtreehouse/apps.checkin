@@ -2,7 +2,6 @@ import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { orgCalendarDay } from "@/lib/time";
 import { reportShopifyFailure } from "@/lib/shopify/client";
@@ -40,7 +39,7 @@ async function endDueSales(now: Date): Promise<number> {
                 "saleSweep.noClaimantProduct",
                 new Error(`Program ${program.id} has no reserved-seat product`),
                 { programId: program.id, shopifyProductId: program.shopifyProductId },
-                `The sale for <strong>${escapeHtml(program.name)}</strong> has ended, but its public store product was left on sale because the program has no reserved-seat product for families who already claimed a place. Create one with Sync to Shopify on the program page, then take the public product off sale in Shopify by hand.`,
+                `The sale for ${program.name} has ended, but its public store product was left on sale because the program has no reserved-seat product for families who already claimed a place. Create one with Sync to Shopify on the program page, then take the public product off sale in Shopify by hand.`,
             );
         }
     }
@@ -97,14 +96,11 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
             data: { unpaidClaimsNotifiedAt: now },
         });
         if (count === 0 || program.participants.length === 0) continue;
-        const names = program.participants
-            .map((p) => `<li>${escapeHtml(p.person.name ?? "Unnamed")}</li>`)
-            .join("");
-        await emailBoardMembers(
-            `Unpaid program claims: ${program.name}`,
-            `<p>The sale for <strong>${escapeHtml(program.name)}</strong> ended a week ago. These claims are still unpaid:</p><ul>${names}</ul><p><a href="${config.baseUrl()}/program-ops/programs/${program.id}">Open the program</a></p>`,
-            "Unpaid-claims board ping failed:",
-        );
+        await emailBoardMembers("board.unpaidClaims", {
+            programName: program.name,
+            names: program.participants.map((p) => p.person.name ?? "Unnamed").join("\n"),
+            actionLink: `${config.baseUrl()}/program-ops/programs/${program.id}`,
+        }, "Unpaid-claims board ping failed:");
         notified++;
     }
     return notified;

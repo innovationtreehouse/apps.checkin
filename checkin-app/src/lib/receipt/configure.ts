@@ -186,20 +186,19 @@ function receiptMailbox(): MailboxReader | undefined {
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(
-      "Receipts: mail intake stopped holding mail",
-      `<p>${unresolved} mailed item(s) are held or deferred in the incoming receipt queue, the most the receipt mailbox holds. Today's mail run did not store ${refused} more file(s) from unknown or unverified senders, or from members over their daily upload limit; they stay in the mailbox only. Receipts from members within their limit are still read. Resolve or release queued items to resume holding. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
-      "Receipt mail ceiling alert failed:",
-    );
+    await notifyFinanceAlert("finance.receiptMailCeiling", {
+      unresolved: String(unresolved),
+      refused: String(refused),
+      actionLink: `${config.baseUrl()}/receipts/mail`,
+    }, "Receipt mail ceiling alert failed:");
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    const since = oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "";
-    await notifyFinanceAlert(
-      "Receipts: mailed receipts are about to be missed",
-      `<p>Today's mail run did not finish reading ${messages} message(s) in the receipt mailbox${since}. They leave the 3-day reading window before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. <a href="${config.baseUrl()}/receipts/mail">Open the incoming receipt queue</a></p>`,
-      "Receipt mail ageing alert failed:",
-    );
+    await notifyFinanceAlert("finance.receiptMailAgeing", {
+      messages: String(messages),
+      since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
+      actionLink: `${config.baseUrl()}/receipts/mail`,
+    }, "Receipt mail ageing alert failed:");
   },
 };
 

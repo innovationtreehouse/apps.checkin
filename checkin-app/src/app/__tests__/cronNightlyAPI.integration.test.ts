@@ -169,7 +169,7 @@ describe('Cron Nightly API Integration Tests', () => {
             expect(sendEmail).toHaveBeenCalledWith(
                 'board-nightly@example.com',
                 `Action Required: Confirm Attendance for Test Event - Nightly`,
-                expect.stringContaining('Review & Confirm Attendance')
+                expect.stringContaining('Review &amp; Confirm Attendance')
             );
         });
 

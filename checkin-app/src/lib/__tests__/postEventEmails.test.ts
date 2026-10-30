@@ -1,7 +1,6 @@
 import { processPostEventEmails } from "../postEventEmails";
 import prisma from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
-import { postEventTemplate } from "@/lib/email-templates/post-event";
 
 // Mock dependencies
 jest.mock("@/lib/prisma", () => {
@@ -28,10 +27,6 @@ jest.mock("@/lib/config", () => ({
     config: {
         baseUrl: jest.fn().mockReturnValue("http://localhost:3000")
     }
-}));
-
-jest.mock("@/lib/email-templates/post-event", () => ({
-    postEventTemplate: jest.fn().mockReturnValue("<html>Mock HTML</html>")
 }));
 
 describe("processPostEventEmails", () => {
@@ -160,18 +155,16 @@ describe("processPostEventEmails", () => {
             select: { id: true, email: true }
         });
 
-        expect(postEventTemplate).toHaveBeenCalledWith({
-            eventName: "Test Event",
-            attendingRsvps: 1,
-            actualVisits: 2,
-            eventLink: "http://localhost:3000/program-ops/sessions/10"
-        });
-
         expect(sendEmail).toHaveBeenCalledWith(
             "lead@example.com",
             "Action Required: Confirm Attendance for Test Event",
-            "<html>Mock HTML</html>"
+            expect.any(String),
         );
+        const html = (sendEmail as jest.Mock).mock.calls[0][2];
+        expect(html).toContain("Event Completed: Test Event");
+        expect(html).toContain("RSVPs (Attending): 1");
+        expect(html).toContain("Logged Check-ins: 2");
+        expect(html).toContain('<a href="http://localhost:3000/program-ops/sessions/10">Review &amp; Confirm Attendance</a>');
 
         expect(prisma.event.update).toHaveBeenCalledWith({
             where: { id: 10 },

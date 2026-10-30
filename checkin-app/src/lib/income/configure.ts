@@ -90,29 +90,28 @@ const payoutMirror: PayoutMirror = {
 const alerts: IncomeAlerts = {
   async postCapReached({ cap, created, remaining }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    const limit = cap === "count" ? "number of deposits" : "dollar total";
-    await notifyFinanceAlert(
-      "Income: deposit creation stopped at its per-run cap",
-      `<p>Today's income run created ${created} QuickBooks deposit(s) and stopped at its per-run ${limit} cap; ${remaining} payout(s) are still waiting. Nothing else was posted. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
-      "Income cap alert failed:",
-    );
+    await notifyFinanceAlert("finance.incomePostCap", {
+      created: String(created),
+      limit: cap === "count" ? "number of deposits" : "dollar total",
+      remaining: String(remaining),
+      actionLink: `${config.baseUrl()}/income/reconciliation`,
+    }, "Income cap alert failed:");
   },
   async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
-    const [{ notifyFinanceAlert }, { escapeHtml }] = await Promise.all([import("@/lib/emailRecipients"), import("@/lib/email-templates/base")]);
-    const name = escapeHtml(bucketName ?? `#${budgetOwnerId}`);
-    await notifyFinanceAlert(
-      "Income: a budget-owner bucket can't take sales",
-      `<p>The budget-owner bucket ${name} ${escapeHtml(issue)}. ${itemCount} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. <a href="${config.baseUrl()}/income/items">Open income items</a></p>`,
-      "Income bucket alert failed:",
-    );
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.incomeBucketUnusable", {
+      bucketName: bucketName ?? `#${budgetOwnerId}`,
+      issue,
+      itemCount: String(itemCount),
+      actionLink: `${config.baseUrl()}/income/items`,
+    }, "Income bucket alert failed:");
   },
   async sweepIncomplete({ since }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(
-      "Income: the daily check for stray QuickBooks deposits could not see them all",
-      `<p>QuickBooks returned more deposits created since ${since.toISOString().slice(0, 10)} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
-      "Income sweep alert failed:",
-    );
+    await notifyFinanceAlert("finance.incomeSweepIncomplete", {
+      since: since.toISOString().slice(0, 10),
+      actionLink: `${config.baseUrl()}/income/reconciliation`,
+    }, "Income sweep alert failed:");
   },
 };
 

@@ -141,10 +141,9 @@ describe('program sale sweep', () => {
         await runSaleSweep(NOW);
 
         expect(emailBoard).toHaveBeenCalledTimes(1);
-        const [subject, html] = emailBoard.mock.calls[0];
-        expect(subject).toContain(`${TAG} unpaid`);
-        expect(html).toContain('Unpaid Kid');
-        expect(html).not.toContain('Paid Kid');
+        const [key, values] = emailBoard.mock.calls[0];
+        expect(key).toBe('board.unpaidClaims');
+        expect(values).toMatchObject({ programName: expect.stringContaining(`${TAG} unpaid`), names: 'Unpaid Kid' });
         expect((await prisma.program.findUniqueOrThrow({ where: { id: recent.id } })).unpaidClaimsNotifiedAt).toBeNull();
     });
 

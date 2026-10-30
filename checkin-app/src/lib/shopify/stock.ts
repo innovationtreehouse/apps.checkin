@@ -5,7 +5,6 @@ import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import type { TxClient } from "@/lib/db-client";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { config } from "@/lib/config";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { programVariantIds } from "@/lib/programs/variants";
@@ -469,7 +468,7 @@ async function alertStockPush(programId: number, variantId: string, reason: stri
         "adjustProgramInventory",
         error,
         { programId, shopifyVariantId: variantId, reason },
-        `Shopify stock for program ${programId} needs a push (${escapeHtml(reason)}): a change could not be confirmed and is still owed. The daily Shopify reconcile retries it.`,
+        `Shopify stock for program ${programId} needs a push (${reason}): a change could not be confirmed and is still owed. The daily Shopify reconcile retries it.`,
     );
 }
 
@@ -542,7 +541,7 @@ async function pushProgramStock(
                 "adjustProgramInventory",
                 new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
                 { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, parked: row?.shopifyStockParked ?? null },
-                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Shopify &gt; Unconfirmed Shopify stock.`,
+                `A Shopify stock write for program ${programId} (key ${result.expiredKey}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops > Shopify > Unconfirmed Shopify stock.`,
             );
         }
         return result.error === null && result.expiredKey === null;
@@ -868,7 +867,7 @@ export async function syncProgramPrice(
     if (variantIds.length === 0) return true;
 
     const context = { programId: program.id, variantIds, basePriceCents };
-    const emailIntro = `The Shopify price for program <strong>${escapeHtml(program.name)}</strong> is out of date. Set it by hand in Shopify on every variant listed below.`;
+    const emailIntro = `The Shopify price for program ${program.name} is out of date. Set it by hand in Shopify on every variant listed below.`;
 
     if (!basePriceCents || basePriceCents <= 0) {
         await reportShopifyFailure(
