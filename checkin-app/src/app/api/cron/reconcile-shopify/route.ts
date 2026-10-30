@@ -164,5 +164,6 @@ export const GET = withCron(async () => {
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
     const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
-    return NextResponse.json({ success: true, ...result, failed: result.failed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
+    const sweepRowsFailed = [receipt, receiptStuck].reduce((sum, sweep) => sum + ("failed" in sweep ? sweep.failed : 0), 0);
+    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
 });

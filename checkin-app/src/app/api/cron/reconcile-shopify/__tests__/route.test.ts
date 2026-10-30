@@ -214,6 +214,16 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
     });
 
+    it('records the cron run as failed for receipt rows the sweeps could not move', async () => {
+        jest.mocked(sweepInterruptedOcr).mockResolvedValue({ swept: 0, failed: 1 });
+        jest.mocked(sweepStuckUploaded).mockResolvedValue({ swept: 0, failed: 2 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 3 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
+    });
+
     it('records a clean run when the mailbox was read', async () => {
         await GET(req());
 

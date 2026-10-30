@@ -630,16 +630,20 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
       select: { id: true, gmailMessageId: true, receivedAt: true },
     });
-    // A capped run stores only a lower bound, so each due row is re-dated from its own message; one that cannot be fetched keeps its stored date.
-    const dated = await Promise.all(
-      due.map(async (row) => {
-        const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
-        if (!message) return row;
-        const receivedAt = new Date(Number(message.internalDate));
-        await db.receiptMailAtRisk.update({ where: { id: row.id }, data: { receivedAt } });
-        return { ...row, receivedAt };
-      }),
-    );
+    // A capped run stores only a lower bound, so each due row is re-dated from its own message, one at a time to spare Gmail; one that cannot be fetched keeps its stored date.
+    const dated: typeof due = [];
+    for (const row of due) {
+      const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
+      if (!message) {
+        dated.push(row);
+        continue;
+      }
+      const receivedAt = new Date(Number(message.internalDate));
+      dated.push({ ...row, receivedAt });
+      await db.receiptMailAtRisk
+        .update({ where: { id: row.id }, data: { receivedAt } })
+        .catch((err) => console.error("[receipt] mail ageing re-date failed for one row:", err));
+    }
     const rows = dated.filter((r) => !r.receivedAt || r.receivedAt.getTime() < lastChance);
     if (rows.length === 0) return;
     const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
