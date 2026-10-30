@@ -19,6 +19,29 @@ async function isStreamedBodyTooLarge(pathname: string, body: ReadableStream<Uin
     }
 }
 
+/** NextAuth's session cookie, under its secure prefix and its chunk suffixes. */
+const SESSION_COOKIE = /^(__Secure-)?next-auth\.session-token(\.\d+)?$/;
+
+function signInRedirect(req: NextRequest): NextResponse {
+    const signInUrl = new URL('/signin', req.url);
+    signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
+    return NextResponse.redirect(signInUrl);
+}
+
+/**
+ * Sends a session whose token the jwt callback emptied to /signin and expires its cookie,
+ * since /signin forwards any session it still sees back to the callbackUrl.
+ */
+function endEmptiedSession(req: NextRequest): NextResponse {
+    const res = signInRedirect(req);
+    for (const { name } of req.cookies.getAll()) {
+        if (SESSION_COOKIE.test(name)) {
+            res.cookies.set(name, '', { path: '/', maxAge: 0, secure: name.startsWith('__Secure-') });
+        }
+    }
+    return res;
+}
+
 /**
  * Site-wide org-login gate for the cloud dev instance (docs/ops/dev-instance.md, "Running the
  * cloud dev instance")
@@ -75,6 +98,12 @@ export async function middleware(req: NextRequest) {
         return NextResponse.redirect(new URL('/access-denied', req.url));
     }
 
+    // The jwt callback empties the token of a person merged away or deleted, and getToken()
+    // skips that callback. Every signed-in token names a subject; the dev guest's is 'guest'.
+    if (token && !token.sub) {
+        return endEmptiedSession(req);
+    }
+
     if (appConfig.isStaging()) {
         // getToken() decodes the cookie without the jwt callback, so these claims can be stale;
         // see "Accepted risks" in docs/security/SECURITY-POLICY.md.
@@ -93,9 +122,7 @@ export async function middleware(req: NextRequest) {
         // completes Google login lands on /access-denied then — with a token, so this
         // branch doesn't retry and there is no loop.
         if (!token) {
-            const signInUrl = new URL('/signin', req.url);
-            signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
-            return NextResponse.redirect(signInUrl);
+            return signInRedirect(req);
         }
         return NextResponse.redirect(new URL('/access-denied', req.url));
     }
@@ -109,9 +136,7 @@ export async function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    const signInUrl = new URL('/signin', req.url);
-    signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
-    return NextResponse.redirect(signInUrl);
+    return signInRedirect(req);
 }
 
 export const config = {

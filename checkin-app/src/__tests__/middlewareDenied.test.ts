@@ -15,9 +15,23 @@ jest.mock('next-auth/jwt', () => ({ getToken: jest.fn() }));
 // next/jest shims next/server and its NextResponse statics aren't callable under jest.
 // Replace them with a minimal functional stub so we can assert which branch the
 // middleware takes (redirect target vs. pass-through) without the real edge runtime.
+type SetCookie = { name: string; value: string; options: Record<string, unknown> };
+
 jest.mock('next/server', () => ({
     NextResponse: {
-        redirect: (url: URL) => ({ kind: 'redirect', location: url.toString() }),
+        redirect: (url: URL) => {
+            const setCookies: SetCookie[] = [];
+            return {
+                kind: 'redirect',
+                location: url.toString(),
+                setCookies,
+                cookies: {
+                    set: (name: string, value: string, options: Record<string, unknown>) => {
+                        setCookies.push({ name, value, options });
+                    },
+                },
+            };
+        },
         next: () => ({ kind: 'next', location: null }),
     },
 }));
@@ -25,12 +39,15 @@ jest.mock('next/server', () => ({
 // Imported after the mocks so the middleware binds to the stubbed NextResponse.
 import { middleware, config as middlewareConfig } from '@/middleware';
 
-const mockToken = (token: unknown) => (getToken as jest.Mock).mockResolvedValue(token);
+// Every signed-in token names a subject, so the mock supplies one unless the test overrides it.
+const mockToken = (token: Record<string, unknown> | null) =>
+    (getToken as jest.Mock).mockResolvedValue(token && { sub: '1', ...token });
 
-// The middleware only touches nextUrl.pathname, nextUrl.search, and url.
-const reqFor = (pathname: string, search = ''): NextRequest => ({
+// The middleware only touches nextUrl.pathname, nextUrl.search, url, and cookies.
+const reqFor = (pathname: string, search = '', cookieNames: string[] = []): NextRequest => ({
     nextUrl: { pathname, search },
     url: `http://localhost:4000${pathname}${search}`,
+    cookies: { getAll: () => cookieNames.map((name) => ({ name, value: 'x' })) },
 } as unknown as NextRequest);
 
 describe('middleware household-denial gate', () => {
@@ -57,6 +74,74 @@ describe('middleware household-denial gate', () => {
         const res = await middleware(reqFor('/membership-ops/households')) as unknown as { location: string | null };
 
         expect(res.location).not.toBe('http://localhost:4000/access-denied');
+    });
+});
+
+/**
+ * The jwt callback empties the token of a person merged away or deleted, but getToken()
+ * decodes the cookie without running it, so the middleware is what keeps page navigation
+ * off a signed-in shell whose every API call answers 401.
+ */
+describe('middleware emptied-session gate', () => {
+    // prod, where the dev org gate can't confound these: the emptied-session gate runs in every env.
+    const ORIGINAL_ENV = process.env.CHECKIN_ENV;
+    beforeEach(() => { process.env.CHECKIN_ENV = 'prod'; });
+    afterEach(() => { process.env.CHECKIN_ENV = ORIGINAL_ENV; });
+
+    type Res = { kind: string; location: string | null; setCookies?: SetCookie[] };
+
+    // What NextAuth encodes when the jwt callback returns `{}`: only its own claims.
+    const emptiedToken = { iat: 1, exp: 2, jti: 'j' };
+
+    it('redirects an emptied token to /signin and expires the session cookie', async () => {
+        (getToken as jest.Mock).mockResolvedValue(emptiedToken);
+
+        const res = await middleware(reqFor(
+            '/events', '?tab=roster',
+            ['__Secure-next-auth.session-token.0', '__Secure-next-auth.session-token.1', 'other'],
+        )) as unknown as Res;
+
+        expect(res.kind).toBe('redirect');
+        expect(res.location).toBe('http://localhost:4000/signin?callbackUrl=%2Fevents%3Ftab%3Droster');
+        expect(res.setCookies).toEqual([
+            { name: '__Secure-next-auth.session-token.0', value: '', options: { path: '/', maxAge: 0, secure: true } },
+            { name: '__Secure-next-auth.session-token.1', value: '', options: { path: '/', maxAge: 0, secure: true } },
+        ]);
+    });
+
+    it('expires an unprefixed session cookie without the secure flag', async () => {
+        (getToken as jest.Mock).mockResolvedValue(emptiedToken);
+
+        const res = await middleware(reqFor('/events', '', ['next-auth.session-token'])) as unknown as Res;
+
+        expect(res.setCookies).toEqual([
+            { name: 'next-auth.session-token', value: '', options: { path: '/', maxAge: 0, secure: false } },
+        ]);
+    });
+
+    it('lets a normal signed-in token through', async () => {
+        mockToken({ sub: '42', id: 42 });
+
+        const res = await middleware(reqFor('/events')) as unknown as Res;
+
+        expect(res.kind).toBe('next');
+    });
+
+    it('lets the dev logged-out guest persona through, though it carries no person id', async () => {
+        mockToken({ sub: 'guest', impersonatedBy: 'real@example.org' });
+
+        const res = await middleware(reqFor('/events')) as unknown as Res;
+
+        expect(res.kind).toBe('next');
+    });
+
+    it('lets the guest persona through the dev org gate with the claims a dev mint stamps', async () => {
+        process.env.CHECKIN_ENV = 'dev';
+        mockToken({ sub: 'guest', impersonatedBy: 'real@example.org', hd: ORG_DOMAIN, emailVerified: true });
+
+        const res = await middleware(reqFor('/events')) as unknown as Res;
+
+        expect(res.kind).toBe('next');
     });
 });
 
