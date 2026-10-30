@@ -10,7 +10,8 @@ import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
 import { backToQueue, lineWaitsOnViewer } from "../lib/backToQueue";
 import { lineCents } from "../qb-write";
-import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/api";
+import { api, goTo, send, useLoad, useRoles } from "../components/api";
+import { bucketChoices, type Bucket as LocalOwner } from "../lib/buckets";
 import { LoadError } from "@checkin/component-ui";
 import NonInventoryBadge from "../components/NonInventoryBadge";
 import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
@@ -460,7 +461,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
   const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
   const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
-  const bucketOptions = useBuckets(isFinance || isBoard);
+  const owners = useLoad<LocalOwner[]>(isFinance || isBoard ? "/local-owners" : null);
+  const bucketOptions = bucketChoices(owners.data);
   const [dialog, setDialog] = useState<{ action: LineAction; approval: Approval } | null>(null);
   const [text, setText] = useState("");
   const [bucket, setBucket] = useState<string | null>(null);
@@ -536,6 +538,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   // Settling an exception, finance may make the bucket final; that takes a note.
   const canMakeFinal = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "finance-assign";
   const finalNoteMissing = canMakeFinal && final && !text.trim();
+  const ownersError = owners.error && <LoadError what="the bucket list" message={owners.error} onRetry={owners.reload} />;
   const waitingOnYou = e.lineItems.filter((l) => statusOf.get(l.id)?.actions.some((a) => a.primary)).length;
   const reviews = (e.flags ?? []).flatMap((flag) => {
     const kind = flag.checkedOffAt ? null : reviewKindOf(flag);
@@ -624,6 +627,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
+      {approvals.error && <LoadError what="the bucket approvals" message={approvals.error} onRetry={approvals.reload} />}
       {signoffs.error && <LoadError what="the line actions" message={signoffs.error} onRetry={signoffs.reload} />}
       {waitingOnYou > 0 && <Text size="sm" fw={600}>{waitingOnYou} of {e.lineItems.length} lines wait on you.</Text>}
       <ApproveAllButton base={base} statuses={signoffs.data ?? []} approvals={approvalRows} onDone={() => void decided()} />
@@ -650,6 +654,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             const s = statusOf.get(l.id);
             const main = s?.actions.find((x) => x.primary);
             const more = s?.actions.filter((x) => !x.primary) ?? [];
+            // Every act but a signature works on the line's approval row, so it waits for the approvals to load.
+            const waitsForApproval = (x: LineAction) => x.act !== "sign" && !a;
             return (
               <Table.Tr key={l.id} fw={main ? 700 : undefined} data-waiting-on-you={main ? true : undefined}>
                 <Table.Td>{main && <span aria-label="Waits on you">→ </span>}{l.lineNumber}</Table.Td>
@@ -685,7 +691,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td>
                   <Group gap={4} wrap="nowrap">
                     {main && (
-                      <Button size="compact-xs" onClick={() => take(l.id, main, a)}>{actLabel(main)}</Button>
+                      <Button size="compact-xs" disabled={waitsForApproval(main)} onClick={() => take(l.id, main, a)}>{actLabel(main)}</Button>
                     )}
                     {more.length > 0 && (
                       <Menu position="bottom-end">
@@ -694,7 +700,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                         </Menu.Target>
                         <Menu.Dropdown>
                           {more.map((x) => (
-                            <Menu.Item key={`${x.act}-${x.seat ?? ""}`} onClick={() => take(l.id, x, a)}>{actLabel(x)}</Menu.Item>
+                            <Menu.Item key={`${x.act}-${x.seat ?? ""}`} disabled={waitsForApproval(x)} onClick={() => take(l.id, x, a)}>{actLabel(x)}</Menu.Item>
                           ))}
                         </Menu.Dropdown>
                       </Menu>
@@ -742,6 +748,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
             </Marked>
           </Text>
+          {!!e.reimburseePersonId && vendor.error && (
+            <LoadError what="the reimbursee's QuickBooks vendor" message={vendor.error} onRetry={vendor.reload} />
+          )}
           {!e.reimburseePersonId && <ReimburseePicker base={base} onSet={() => void decided()} />}
           {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
             ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
@@ -752,6 +761,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       {isFinance && (e.state === "capital_review" || e.state === "set_depreciation_cycle") && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">{e.state === "capital_review" ? "Capital review" : "Depreciation cycle"}</Text>
+          {e.state === "set_depreciation_cycle" && ownersError}
           {capitalRows
             .filter(({ line }) => e.state === "capital_review" || line.isCapital)
             .map(({ line, value }) => (
@@ -794,6 +804,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         <Stack>
           {needsBucket ? (
             <>
+              {ownersError}
               <Select label="Bucket" data={bucketOptions} value={bucket} onChange={setBucket} searchable />
               {canMapPart && (
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />

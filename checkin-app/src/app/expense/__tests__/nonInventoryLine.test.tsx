@@ -7,7 +7,6 @@ let mockLoads: Record<string, unknown> = {};
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  useBuckets: () => [{ value: "3", label: "Robotics" }],
   paged: (path: string, page: number) => `${path}?page=${page}`,
   PAGE_SIZE: 50,
   send: jest.fn(),
@@ -45,6 +44,7 @@ async function openAssignDialog(line: { gtin13: string | null; nonInventory: boo
       approvals: [],
     },
     "/expenses/e1/line-item-approvals": [{ id: 10, lineItemId: 1, ownerId: null, status: "pending" }],
+    "/local-owners": [{ id: 3, name: "Robotics", archivedAt: null }],
     "/expenses/e1/signoffs": [
       { lineItemId: 1, filled: [], missing: [], blocked: [], actions: [{ act: "assign-bucket", primary: true, noteRequired: false }], awaiting: [], mayRecordBoardAuthorization: false },
     ],
