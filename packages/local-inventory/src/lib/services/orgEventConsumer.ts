@@ -116,11 +116,15 @@ async function consumeInSweep(ev: OrgEventRecord): Promise<ConsumeResult> {
   }
 }
 
+/** The part of a run's cap that failed rows may take ahead of new events. */
+const RETRY_FIRST_SHARE = 0.1;
+
 /**
- * Catch-up sweep: retries failed events, then pages through all the org's catalog events and
- * consumes those not in the ledger, then reconciles pending provisionals that have a stored
- * resolution. Reading from the start means no event is missed however late it committed or
- * however many later ids were received. What stays undone is retried on the next run. A person
+ * Catch-up sweep: retries a small share of the failed events, pages through all the org's catalog
+ * events and consumes those not in the ledger, retries more failed events with the budget left,
+ * then reconciles pending provisionals that have a stored resolution. Reading from the start means
+ * no event is missed however late it committed or however many later ids were received, and the
+ * capped share means permanently failed rows can't crowd out new events. What stays undone is retried on the next run. A person
  * is alerted once per run for an event newly failed, an unreadable catalog, or a capped run that
  * processed nothing; a capped run that made progress drains itself on later runs, and a retry that
  * fails again only stays failed in the ledger and the counts. The host's daily reconcile cron step calls it. Capped; counts only.
@@ -130,14 +134,17 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
   const allPending = await repo.findPending(orgId);
-  const pending = allPending.slice(0, limit);
-  for (const r of pending) {
-    counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
-  }
+  const retry = async (rows: typeof allPending) => {
+    for (const r of rows) {
+      counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
+    }
+  };
+  const firstRetries = allPending.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
 
-  let unprocessed = allPending.length - pending.length;
+  let unprocessed = 0;
   let unreadable = false;
-  let budget = limit - pending.length;
+  let budget = limit - firstRetries.length;
   let newlyFailed = 0;
   try {
     // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
@@ -163,6 +170,10 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
     unreadable = true;
     console.error("[local-inventory/org-events] catalog events could not be read", err);
   }
+
+  const laterRetries = allPending.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += allPending.length - firstRetries.length - laterRetries.length;
 
   const reconciled = await reconcilePendingProvisionals(orgId, limit);
   const stalled = unprocessed > 0 && counts.processed === 0;
