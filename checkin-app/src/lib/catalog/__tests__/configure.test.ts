@@ -35,6 +35,12 @@ describe("configureCatalogRuntime", () => {
     await boot();
     expect(findUnique).not.toHaveBeenCalled();
   });
+
+  it("gives the catalog the host's org, resolved from the seeded Org row", async () => {
+    const org = { id: "treehouse", name: "Innovation Treehouse" };
+    findUnique.mockResolvedValue(org);
+    await expect((await boot()).org()).resolves.toEqual(org);
+  });
 });
 
 describe("S5 consumers", () => {
