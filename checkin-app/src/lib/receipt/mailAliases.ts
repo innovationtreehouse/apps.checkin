@@ -1,6 +1,6 @@
 /**
  * The back-office list of extra addresses a person's receipt mail may come from
- * (1265_RECEIPT_MAIL_ALIASES.md). Routes gate on finance-or-board. Audit rows carry no address.
+ * (docs/rules/people-households.md, Identity and age). Routes gate on finance-or-board. Audit rows carry no address.
  */
 import { mailQueueService } from "@checkin/receipt";
 import { z } from "zod";

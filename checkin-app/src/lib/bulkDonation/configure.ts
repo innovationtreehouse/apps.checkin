@@ -1,5 +1,5 @@
 /**
- * Wire the bulk-donation library into checkin (#1280 §3/§6), called once at
+ * Wire the bulk-donation library into checkin (#1280), called once at
  * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, and binds the owner directory to checkin's
  * BudgetOwner table, read per call. The no-receipt in-kind path's crossings are

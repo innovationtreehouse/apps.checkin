@@ -175,6 +175,9 @@ however many times it is sent.
 - **A retry or catch-up only finishes what is missing.** It never replays what
   already happened.
 
+- **A record whose create may have landed looks for its own entry first,** before
+  anything creates, matches, skips or dismisses it.
+
 - **Where the system cannot tell a repeat from a new event, it holds the event
   for a person.**
 
