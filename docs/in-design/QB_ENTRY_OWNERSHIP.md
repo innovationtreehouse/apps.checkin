@@ -271,7 +271,7 @@ PR 2. With all four, every run passed.
    because the deployed release still reads them. It touches no boundary file:
    the four registry entries are left with no route, which is the inert
    register-first state.
-4. **Registry removal.** Remove those four donation registry entries and the
+4. **Registry removal (done).** Remove those four donation registry entries and the
    donation candidate view's classification. Boundary only. The decommission
    certifier reads `registry.ts` alone, not `registry/donation.ts`, so this
    ships on its own, with tests.
