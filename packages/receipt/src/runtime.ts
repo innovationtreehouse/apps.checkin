@@ -3,6 +3,7 @@ import type {
   OcrProvider,
   OrgIdentity,
   ReceiptConfig,
+  ReceiptFileStore,
   MailboxReader,
   ReceiptHouseholds,
   ReceiptAlerts,
@@ -91,6 +92,18 @@ export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, error: "OCR is not configured" }),
 };
 
+export const inertFileStore: ReceiptFileStore = {
+  put: async () => {
+    throw new NotWiredError("ReceiptFileStore.put");
+  },
+  get: async () => {
+    throw new NotWiredError("ReceiptFileStore.get");
+  },
+  delete: async () => {
+    throw new NotWiredError("ReceiptFileStore.delete");
+  },
+};
+
 export const receiptRuntime = defineRuntime<ReceiptConfig, ReceiptPrincipal>("receipt");
 const requireRuntime = receiptRuntime.require;
 
@@ -104,7 +117,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -118,6 +131,14 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
   };
+}
+
+export function fileStore(): ReceiptFileStore {
+  return requireRuntime().fileStore ?? inertFileStore;
+}
+
+export function storesNewFilesInBucket(): boolean {
+  return requireRuntime().storeNewFilesInBucket === true;
 }
 
 /** The receipt mailbox, or null when mail intake is unbound. */

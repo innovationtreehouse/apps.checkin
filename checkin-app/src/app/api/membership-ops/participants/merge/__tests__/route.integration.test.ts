@@ -567,6 +567,38 @@ describe("Merge Participants API", () => {
         expect(newData.moved.mailAliases).toEqual({ migrated: [work.id], deduped: [sameAsKeeper.id] });
     });
 
+    it("keeps a moved alias's approval", async () => {
+        const approvedAt = new Date("2026-10-01T00:00:00Z");
+        const alias = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "approved@example.com", canonicalKey: "approved@example.com", addedById: actorId, approvedAt, approvedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.findUnique({ where: { id: alias.id }, select: { personId: true, approvedAt: true, approvedById: true } }))
+            .toEqual({ personId: pKeepId, approvedAt, approvedById: actorId });
+    });
+
+    it("deletes an alias already on the keeper that equals the keeper's sign-in address", async () => {
+        const onKeeper = await prisma.personMailAlias.create({ data: { personId: pKeepId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+
+        expect(await prisma.personMailAlias.count({ where: { id: onKeeper.id } })).toBe(0);
+    });
+
+    it("reads the keeper's sign-in address after a field choice swaps it", async () => {
+        const keeperOld = await prisma.personMailAlias.create({ data: { personId: pMergeId, address: "keep@example.com", canonicalKey: "keep@example.com", addedById: actorId } });
+        const keeperNew = await prisma.personMailAlias.create({ data: { personId: pKeepId, address: "merge@example.com", canonicalKey: "merge@example.com", addedById: actorId } });
+
+        const res = await POST(mergeReq(pKeepId, pMergeId, { name: "keep", identity: "merge" }));
+        expect(res.status).toBe(200);
+
+        expect((await prisma.person.findUnique({ where: { id: pKeepId } }))?.email).toBe("merge@example.com");
+        expect(await prisma.personMailAlias.findMany({ where: { id: { in: [keeperOld.id, keeperNew.id] } }, select: { id: true, personId: true } }))
+            .toEqual([{ id: keeperOld.id, personId: pKeepId }]);
+    });
+
     // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.
     it("auto-dedupes past RSVP collisions, refuses future RSVP collisions", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });

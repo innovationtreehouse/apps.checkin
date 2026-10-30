@@ -1,3 +1,4 @@
+import { formatCents } from "@checkin/money";
 /**
  * A submitter's tax or date edits, told apart as entered (the field was blank) or changed (it held
  * a value). A plain module, so the server's review reason and the receipt page word them alike.
@@ -17,7 +18,6 @@ export interface SubmitterCorrection {
 }
 
 const isBlank = (value: string | null) => value === null || value.trim() === "" || value === "null";
-const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /**
  * The corrections a receipt's submitter made, from their audited field edits oldest first. Only a
@@ -33,8 +33,8 @@ export function submitterCorrections(edits: FieldEdit[], current: { taxCents: nu
   }
   const tax = first("taxCents");
   if (tax) {
-    const before = isBlank(tax.valueBefore) ? null : dollars(Number(tax.valueBefore));
-    corrections.push({ field: "tax", kind: before === null ? "entered" : "changed", before, after: dollars(current.taxCents ?? 0) });
+    const before = isBlank(tax.valueBefore) ? null : formatCents(Number(tax.valueBefore));
+    corrections.push({ field: "tax", kind: before === null ? "entered" : "changed", before, after: formatCents(current.taxCents ?? 0) });
   }
   return corrections;
 }

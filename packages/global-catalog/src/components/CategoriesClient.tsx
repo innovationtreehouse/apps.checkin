@@ -8,7 +8,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconPlus } from "@tabler/icons-react";
 import { api, errorMessage, useCanManage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { CategoryRow, SubcategoryRow } from "./viewTypes";
 
 function ListItem({ label, isArchived, isSelected, canEdit, onSelect, onEdit, onArchive, onUnarchive }: {

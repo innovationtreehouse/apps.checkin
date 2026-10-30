@@ -632,6 +632,24 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(activateByProcessId).toHaveBeenCalledWith(44, '98770', { appliesToYear: 2031 });
     });
 
+    it('takes the year from processed_at, not from when the webhook arrives', async () => {
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)) } });
+        try {
+            const body = JSON.stringify({
+                financial_status: 'paid',
+                id: 98772,
+                // Before the 2020 renewal window opens on 1 June, so still the year opened in August 2019.
+                processed_at: '2020-05-15T12:00:00Z',
+                line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID }],
+                note_attributes: [{ name: 'Membership_Process_ID', value: '46' }],
+            });
+            expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        } finally {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
+        }
+        expect(activateByProcessId).toHaveBeenCalledWith(46, '98772', { appliesToYear: 2019 });
+    });
+
     it('forwards no membership line for a variant in no year\'s row', async () => {
         const body = JSON.stringify({
             financial_status: 'paid',

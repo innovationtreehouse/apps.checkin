@@ -16,6 +16,7 @@ import { signInEmailHelp } from "@/lib/person/signInEmail";
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
+jest.mock("@/lib/person/mailAliases", () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/leads", () => ({

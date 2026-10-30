@@ -25,14 +25,14 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
-const TABS = ["Finance review", "Expenses", "Flow status", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Donated Equipment", "Budgets", "Books map", "Incoming receipt queue", "Receipt settings"];
+const TABS = ["Finance review", "Expenses", "Flow status", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Donated Equipment", "Budgets", "Books map", "Incoming receipt queue", "Receipt settings", "Mail aliases"];
 const BOARD_TABS = TABS.filter((t) => t !== "Incoming receipt queue");
 const EXPENSE_SCREENS = ["Expenses", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Donated Equipment", "Budgets", "Books map"];
 
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
 describe("Finance section", () => {
-  it("shows the queue first, then the expense list, flow status, setup screens, budgets, mail and receipt settings", () => {
+  it("shows the queue first, then the expense list, flow status, setup screens, budgets, mail, receipt settings and mail aliases", () => {
     expect(names(visibleLinks(FINANCE, finance, released))).toEqual(TABS);
     expect(names(visibleLinks(FINANCE, board, released))).toEqual(BOARD_TABS);
     expect(visibleLinks(FINANCE, finance, released)[0].href).toBe("/finance/review");

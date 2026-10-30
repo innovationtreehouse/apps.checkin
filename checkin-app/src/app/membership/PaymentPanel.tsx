@@ -1,5 +1,6 @@
 "use client";
 
+import { formatCents } from "@checkin/money";
 import { Alert, Anchor, Button, Card, Group, Modal, Radio, Stack, Text, Title } from "@mantine/core";
 import DevMockPaymentButton from "@/components/dev/DevMockPaymentButton";
 import { useIsLocalInstance } from "@/components/EnvProvider";
@@ -26,7 +27,7 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
       {payment ? (
         <>
           <Text c="dimmed">
-            Your annual household membership fee is <strong>${(payment.amountCents / 100).toFixed(2)}</strong>.
+            Your annual household membership fee is <strong>{formatCents(payment.amountCents)}</strong>.
           </Text>
           {awaitingPayment ? (
             <Stack gap="xs" mt="md" align="flex-start">

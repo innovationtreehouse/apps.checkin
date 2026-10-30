@@ -1,5 +1,6 @@
 // Shopify products: storefront variant lookup and program product creation.
 
+import { centsToDecimalString } from "@checkin/money";
 import { config } from "@/lib/config";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
 import { outboundCall } from "@/security/outbound";
@@ -213,7 +214,7 @@ export async function createShopifySingleVariantProgram(
                             status: 'active',
                             product_type: "Educational Services",
                             variants: [{
-                                price: (program.nonOrgMemberPriceCents / 100).toFixed(2),
+                                price: centsToDecimalString(program.nonOrgMemberPriceCents),
                                 requires_shipping: false,
                                 inventory_management: program.maxParticipants != null ? 'shopify' : null,
                                 inventory_policy: program.maxParticipants != null ? 'deny' : 'continue',
@@ -323,7 +324,7 @@ export async function createClaimantProduct(
                                 published: true,
                                 product_type: "Educational Services",
                                 variants: [{
-                                    price: (program.nonOrgMemberPriceCents / 100).toFixed(2),
+                                    price: centsToDecimalString(program.nonOrgMemberPriceCents),
                                     requires_shipping: false,
                                     inventory_management: null,
                                     inventory_policy: 'continue',

@@ -76,12 +76,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     const storeDomain = config.shopifyStoreDomain();
     if (!variantId || !storeDomain) return { amountCents, checkoutUrl: null };
 
-    // TODO(#278): the code is appended to a public cart link, so entitlement is
-    // currently honor-system — nothing stops a non-volunteer from reusing it, and
-    // the orders/paid webhook does not validate it (see
-    // api/webhooks/shopify/route.ts). Long-term: gate the coupon to an
-    // auto-managed Shopify customer segment of volunteer households so Shopify
-    // enforces who can redeem it.
+    // Anyone holding this code can redeem it; reconciliation flags unentitled use afterwards.
     const discountCode = membership.isVolunteerFamily ? settings?.volunteerFamilyDiscountCode ?? null : null;
     return { amountCents, checkoutUrl: buildMembershipCheckoutUrl(storeDomain, variantId, processId, discountCode) };
 }
@@ -133,7 +128,8 @@ export type ActivateOutcome =
  * - Any other paid order — duplicate, after certify, after close, before payment
  *   was due — records nothing and returns `nothing_due`.
  *
- * The move out of PENDING_PAYMENT records the membership year the settlement bought.
+ * Recording a payment records the membership year it bought, on BLOCKED too: a
+ * board reset and clearance can still activate that row.
  */
 async function settle(
     processId: number,
@@ -184,7 +180,7 @@ async function settle(
             // Stays BLOCKED (stageEnteredAt untouched); refund needed.
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("BLOCKED"), paidAt: null },
-                data: { paidAt: now, ...payMeta },
+                data: { paidAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta },
             });
             if (count === 0) return { outcome: "nothing_due" as const };
             await tx.auditLog.create({

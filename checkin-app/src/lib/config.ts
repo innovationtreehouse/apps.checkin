@@ -241,6 +241,9 @@ export const config = {
     // unavailable (503), the same failure as a missing object. The key has a
     // default so only the bucket must be wired per-env.
     agreementPdfBucket: (): string | null => process.env.AGREEMENT_PDF_S3_BUCKET || null,
+    // Receipt files: the private bucket, and the flag sending new files to it.
+    receiptFilesBucket: (): string | null => process.env.RECEIPT_FILES_S3_BUCKET || null,
+    receiptFilesS3: (): boolean => process.env.RECEIPT_FILES_S3 === 'true',
     agreementPdfKey: (): string => process.env.AGREEMENT_PDF_S3_KEY || 'membership-agreement.pdf',
 
     // Zoho Sign — membership-agreement e-signing. The three OAuth secrets are

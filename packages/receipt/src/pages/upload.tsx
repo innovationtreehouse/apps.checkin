@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import {
   ActionIcon,
@@ -66,8 +66,7 @@ const SELF = "self";
  */
 export default function UploadPage() {
   const router = useRouter();
-  const { data: session } = useSession();
-  const user = session?.user as { id?: number; ageBand?: string; isFinance?: boolean; isOperations?: boolean; isBoardMember?: boolean } | undefined;
+  const user = useViewer();
   const isAdult = user?.ageBand === "adult";
   const addsPeople = !!(user?.isFinance || user?.isOperations || user?.isBoardMember);
 

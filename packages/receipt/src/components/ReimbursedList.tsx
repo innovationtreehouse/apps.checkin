@@ -1,6 +1,7 @@
 "use client";
 import { Alert, Table, Text } from "@mantine/core";
-import { dollars, latestOutcome, useLoad, type PurchaseOutcomeView } from "./api";
+import { latestOutcome, useLoad, type PurchaseOutcomeView } from "./api";
+import { formatCents } from "@checkin/money";
 
 /** A reimbursement naming the caller that someone else uploaded, once finance has settled its receipt. */
 export interface ReimbursedRow {
@@ -53,7 +54,7 @@ export default function ReimbursedList() {
               <Table.Tr key={r.id}>
                 <Table.Td>{r.receiptDate ?? "—"}</Table.Td>
                 <Table.Td>{r.retailer ?? "—"}</Table.Td>
-                <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
+                <Table.Td>{formatCents(r.receiptTotalCents)}</Table.Td>
                 <Table.Td><Text size="sm" c={s.color}>{s.text}</Text></Table.Td>
                 <Table.Td>{paid(r)}</Table.Td>
               </Table.Tr>

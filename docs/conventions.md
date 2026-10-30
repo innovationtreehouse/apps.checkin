@@ -183,6 +183,18 @@ missed a row stored at a different time of day.
 
 ---
 
+## A library's pages share one client kit
+
+- **Package UIs take their fetch helpers, `LoadError`, `Pager` and paging from
+  `@checkin/component-ui`, and format money with `@checkin/money`.** Each
+  package binds its route base once with `createClient`.
+- **A package page learns who is looking from `useViewer()`, never from the
+  host's session.** The host maps its session onto `Viewer` once, in
+  `checkin-app/src/components/AuthProvider.tsx`. A new role a package needs is
+  a new `Viewer` field.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never

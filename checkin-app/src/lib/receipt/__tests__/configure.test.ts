@@ -9,6 +9,7 @@ import { sessionUser } from '@/lib/components/host';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
+jest.mock('@aws-sdk/client-s3', () => ({ S3Client: jest.fn() }));
 jest.mock('@checkin/receipt', () => ({
     configureReceipt: jest.fn(),
     createAnthropicOcr: jest.fn(),
@@ -33,6 +34,7 @@ function person(over: Record<string, unknown> = {}) {
         householdId: 1,
         isHouseholdLead: true,
         canAccessStaging: false,
+        mailAliases: [],
         roles: [],
         toolStatuses: [],
         programsLed: [],
@@ -61,8 +63,29 @@ describe('receipt runtime: mail intake bindings', () => {
         const found = await boundConfig().people?.submitterByEmail('pat@example.org');
         expect(found).toEqual({ id: 7, name: 'Pat Example', firstName: 'Pat', lastName: 'Example', isAdult: true, raisedMailLimit: false });
         expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
-            where: { mergedIntoId: null, accounts: { some: {} }, email: { equals: 'pat@example.org', mode: 'insensitive' } },
+            where: {
+                mergedIntoId: null,
+                accounts: { some: {} },
+                OR: [{ email: { equals: 'pat@example.org', mode: 'insensitive' } }, { mailAliases: { some: { address: 'pat@example.org', approvedAt: { not: null } } } }],
+            },
         });
+    });
+
+    it('resolves a Treehouse-account staff member from a personal alias, taking the org claim from the sign-in email', async () => {
+        const staff = person({ email: 'staff@innovationtreehouse.org', mailAliases: [{ id: 1 }], household: { orgMembership: null } });
+        prisma.person.findMany = jest.fn().mockResolvedValue([staff]);
+        expect(await boundConfig().people?.submitterByEmail('staff.personal@gmail.com')).toMatchObject({ id: 7 });
+    });
+
+    it('lowercases a legacy mixed-case sign-in email for the org claim', async () => {
+        const staff = person({ email: 'Staff@InnovationTreehouse.org', household: { orgMembership: null } });
+        prisma.person.findMany = jest.fn().mockResolvedValue([staff]);
+        expect(await boundConfig().people?.submitterByEmail('staff@innovationtreehouse.org')).toMatchObject({ id: 7 });
+    });
+
+    it('answers null for an address that is neither the sign-in email nor an approved alias', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([person({ email: 'other@example.org' })]);
+        expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toBeNull();
     });
 
     it.each([

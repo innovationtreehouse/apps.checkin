@@ -28,8 +28,9 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@checkin/money": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@prisma/adapter-pg": "^7.8.0",

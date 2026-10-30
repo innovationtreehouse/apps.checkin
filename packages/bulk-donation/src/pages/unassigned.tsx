@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Button, Checkbox, Group, Select, Table, Text, Title } from "@mantine/core";
-import { act, api, cents, paged, useCanWrite, useLoad, useOwners } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { act, api, paged, useCanWrite, useLoad, useOwners } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError, Pager } from "@checkin/component-ui";
 import type { GiftRow } from "./transactions";
 
 /** /donations/unassigned — gifts that still need an owner or an organizational-level mark. */
@@ -48,8 +48,8 @@ export default function UnassignedPage() {
               <Table.Td>{[g.donorFirstName, g.donorLastName].filter(Boolean).join(" ") || "—"}</Table.Td>
               <Table.Td>{g.companyName ?? "—"}</Table.Td>
               <Table.Td>{g.donorComment ?? "—"}</Table.Td>
-              <Table.Td>{cents(g.donationAmountCents)}</Table.Td>
-              <Table.Td>{cents(g.matchAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.donationAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.matchAmountCents)}</Table.Td>
               {canWrite && (
                 <Table.Td>
                   <Group gap="xs" wrap="nowrap">

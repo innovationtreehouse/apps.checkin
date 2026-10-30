@@ -93,6 +93,6 @@ out of scope.
   stable across redeploys, so there is no re-register on deploy.
 - **O4.** Decided: leave the dev store's `BoardSettings` variant and discount
   empty, as prod is configured.
-- **O5.** Volunteer discount / per-process checkout token (#278) stays
-  honor-system; a dev store lets us *test* the flow but doesn't fix the token
-  gap — tracked in #278, out of scope here.
+- **O5.** A dev store lets us *test* the checkout flow but doesn't change who can
+  redeem the volunteer code (#278) or which process a payment credits (#2694).
+  Both are out of scope here.

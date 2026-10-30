@@ -201,7 +201,7 @@ describe('BLOCKED', () => {
             where: { id: PROCESS_ID, status: 'BLOCKED', paidAt: null },
             data: expect.objectContaining({ shopifyOrderId: 'order-5' }),
         });
-        expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data).not.toHaveProperty('appliesToYear');
+        expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear).toBe(2026);
         expect(notifyBoardPaidReject).toHaveBeenCalledWith(PROCESS_ID);
     });
 

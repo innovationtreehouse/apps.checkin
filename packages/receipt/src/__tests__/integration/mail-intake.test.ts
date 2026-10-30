@@ -13,10 +13,12 @@ import {
   INLINE_FLOOR_BYTES,
   readMailbox,
 } from "../../services/mailIntake";
+import { createMemoryFileStore } from "../../lib/fileStorage";
+import { mailQueueService } from "../../services/mailQueueService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { actAs, ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -100,7 +102,7 @@ describeDb("mail intake", () => {
 
     const [receipt] = await db.receipt.findMany();
     expect(receipt).toMatchObject({ intakeSource: "email", uploadedByUserId: ALICE.id, mimeType: "application/pdf" });
-    expect(Buffer.from(receipt.fileBlob).toString()).toBe(pdf("m1"));
+    expect(Buffer.from(receipt.fileBlob ?? []).toString()).toBe(pdf("m1"));
     expect(await stateOf(receipt.id)).toBe("submitter_review");
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "assigned", receiptId: receipt.id, senderAddress: "alice@example.org", fileBlob: null });
@@ -134,7 +136,7 @@ describeDb("mail intake", () => {
     send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5.00") } }] });
     send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43 total 7.50</p>") } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
-    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob).toString()]);
+    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob ?? []).toString()]);
     expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5.00"], ["text/plain", "<p>Order 43 total 7.50</p>"]]));
   });
 
@@ -753,5 +755,99 @@ describeDb("mail intake over a sender's daily upload limit", () => {
       "no-record": ["held", "none"],
       "no-from": ["held", "fail"],
     });
+  });
+});
+
+describeDb("mail intake with files in the store", () => {
+  let store: ReturnType<typeof createMemoryFileStore>;
+
+  function configureStore(limits: Partial<ReceiptLimits> = {}): void {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      limits,
+      fileStore: store,
+      storeNewFilesInBucket: true,
+      people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
+    });
+  }
+
+  const stored = (key: string | null) => Buffer.from(store.objects.get(key ?? "") ?? []).toString();
+
+  /** Mails two files from Alice under a limit of one: one receipt, and one item deferred in the store. */
+  async function deferOne() {
+    configureStore({ mailUploadsPerPersonPerDay: 1 });
+    send("m1");
+    send("m2");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow({ where: { status: "deferred" } });
+    expect(item).toMatchObject({ fileBlob: null, fileSize: pdf("m2").length });
+    expect(item.fileKey).toMatch(/^mail-items\//);
+    expect(stored(item.fileKey)).toBe(pdf("m2"));
+    mail.messages.clear();
+    return item;
+  }
+
+  beforeEach(() => {
+    store = createMemoryFileStore();
+    configureStore();
+  });
+
+  it("stores a mailed receipt's file, leaving no mail object", async () => {
+    send("m1");
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const receipt = await db.receipt.findFirstOrThrow();
+    expect(receipt).toMatchObject({ fileBlob: null, fileKey: `receipts/${receipt.id}` });
+    expect([...store.objects.keys()]).toEqual([receipt.fileKey]);
+  });
+
+  it("holds an unknown sender's file in the store and not in the row", async () => {
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow();
+    expect(item).toMatchObject({ status: "held", fileBlob: null, fileSize: pdf("m1").length });
+    expect(stored(item.fileKey)).toBe(pdf("m1"));
+  });
+
+  it("a held file the store refuses leaves no row", async () => {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      storeNewFilesInBucket: true,
+      fileStore: { ...store, put: async () => Promise.reject(new Error("s3 down")) },
+      people: { submitterByEmail: async () => null },
+    });
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 0, failed: 1 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("a retried deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const after = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(after).toMatchObject({ status: "assigned", fileKey: null, fileBlob: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${after.receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a released deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    actAs(FINANCE);
+    const { receiptId } = await mailQueueService.assign(item.id, { release: true });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "assigned", fileKey: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a deferred item whose object is gone counts as failed and stays deferred", async () => {
+    const item = await deferOne();
+    store.objects.delete(item.fileKey ?? "");
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, failed: 1 });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "deferred" });
   });
 });
