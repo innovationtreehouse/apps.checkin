@@ -20,7 +20,7 @@
  *   8. Wrap in envelope, emit.
  *
  * Errors thrown from the user fn are caught:
- *   - `ApiResponseError` → mapped to its declared status & message.
+ *   - `ApiResponseError` → mapped to its declared status, message & optional code.
  *   - any other error    → opaque 500 (closes #127/#122 class).
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
@@ -37,10 +37,16 @@ import { stripBag } from './stripper';
 import './registry';
 
 export class ApiResponseError extends Error {
-    constructor(public readonly status: number, message: string) {
+    constructor(public readonly status: number, message: string, public readonly code?: string) {
         super(message);
         this.name = 'ApiResponseError';
     }
+}
+
+/** The error body: `{ error }`, plus `code` only when the thrower set one. */
+export function renderApiResponseError(err: ApiResponseError): NextResponse {
+    if (err.code === undefined) return apiError(err.message, err.status);
+    return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
 }
 
 export const notFound = (message = 'Not found') => new ApiResponseError(404, message);
@@ -167,7 +173,7 @@ export function handler<P extends Record<string, string> = Record<string, string
         try {
             bag = await fn({ req, auth, params, role: chosenRole });
         } catch (err) {
-            if (err instanceof ApiResponseError) return apiError(err.message, err.status);
+            if (err instanceof ApiResponseError) return renderApiResponseError(err);
             console.error(`[${endpoint}] handler error:`, err);
             return apiError('Internal Server Error', 500);
         }
