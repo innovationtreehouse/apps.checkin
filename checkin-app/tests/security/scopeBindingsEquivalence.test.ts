@@ -301,6 +301,11 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * postdate the switch, which has no case for them. Each is bound `their_own` on
  * uploadedByUserId === selfId, so on such a row the resolver adds their_own
  * where the snapshot did not. That is the fifth expected diff.
+ *
+ * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: Key Volunteer
+ * Agreement models postdate the switch. Each is bound `their_own` on
+ * personId === selfId, so on such a row the resolver adds their_own where the
+ * snapshot did not. That is the sixth expected diff.
  */
 function expectedFromSnapshot(
     model: string,
@@ -348,6 +353,15 @@ function expectedFromSnapshot(
     ) {
         expected.add('their_own');
     }
+    if (
+        (model === 'KeyVolunteerSelfStatus' || model === 'KeyVolunteerSigning') &&
+        row &&
+        typeof row === 'object' &&
+        typeof row.personId === 'number' &&
+        row.personId === callerCtx.selfId
+    ) {
+        expected.add('their_own');
+    }
     return expected;
 }
 
@@ -374,6 +388,6 @@ describe('S1 — scopesHeld ≡ frozen switch + intentional deltas (personas × 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(23); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265) +2 receipt confirmation (#2432) +1 reimbursed (#2467)
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(25); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265) +2 receipt confirmation (#2432) +1 reimbursed (#2467) +2 key volunteer (#1317)
     });
 });
