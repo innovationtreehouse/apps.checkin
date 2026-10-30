@@ -241,8 +241,13 @@ describeDb("mailed receipt acknowledgements", () => {
     );
   });
 
-  it("does not treat a mail signature as a refused file", async () => {
-    mailWith("m1", [{ mimeType: "application/pkcs7-signature", filename: "smime.p7s", body: { attachmentId: "a", size: 100 } }]);
+  it("does not treat what a mail client attaches on its own as a refused file", async () => {
+    mailWith("m1", [
+      { mimeType: "application/pkcs7-signature", filename: "smime.p7s", body: { attachmentId: "a", size: 100 } },
+      { mimeType: "text/calendar", filename: "invite.ics", body: { attachmentId: "b", size: 100 } },
+      { mimeType: "text/vcard", filename: "me.vcf", body: { attachmentId: "c", size: 100 } },
+      { mimeType: "application/ms-tnef", filename: "winmail.dat", body: { attachmentId: "d", size: 100 } },
+    ]);
     await readMailbox();
     expect(sent).toEqual([]);
   });
@@ -255,6 +260,14 @@ describeDb("mailed receipt acknowledgements", () => {
     await readMailbox();
     expect(sent).toEqual([]);
     expect(await db.receiptMailReply.count()).toBe(0);
+  });
+
+  it("never sends a stored refusal to a sender who may not be replied to", async () => {
+    await db.receiptMailReply.create({
+      data: { orgId: TEST_ORG_ID, gmailMessageId: "m1", senderAddress: "alice@example.org", receivedAt: new Date(), replyToSender: false, refusals: [{ file: "x.pdf", reason: "empty" }] },
+    });
+    await sendMailReplies();
+    expect(sent).toEqual([]);
   });
 
   it("covers accepted and refused files in one reply", async () => {

@@ -254,8 +254,17 @@ function ownParts(part: MailPart): MailPart[] {
 /** Messages attached whole (forwarded as attachment): never opened. */
 const forwardedParts = (part: MailPart): MailPart[] => (isForwarded(part) ? [part] : (part.parts ?? []).flatMap(forwardedParts));
 
-/** Signatures a mail client attaches on its own: never a refused receipt. */
-const SIGNATURE_TYPES = new Set(["application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature"]);
+/** What a mail client attaches on its own (signatures, invites, contact cards, Outlook's wrapper): never a refused receipt. */
+const CLIENT_ATTACHMENT_TYPES = new Set([
+  "application/pkcs7-signature",
+  "application/x-pkcs7-signature",
+  "application/pgp-signature",
+  "text/calendar",
+  "application/ics",
+  "text/vcard",
+  "text/x-vcard",
+  "application/ms-tnef",
+]);
 
 const isAttachment = (p: MailPart) =>
   !!p.filename && !/^\s*inline/i.test(headerValues(p.headers, "Content-Disposition")[0] ?? "");
@@ -297,7 +306,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const forwarded = forwardedParts(msg.payload);
   let ignored = inline.length - sized.length + forwarded.length;
   const refused: MailRefusal[] = [
-    ...parts.filter((p) => isAttachment(p) && !ACCEPTED_TYPES.has(typeOf(p)) && !SIGNATURE_TYPES.has(typeOf(p))).map((p) => ({ file: fileName(p, "an attachment"), reason: "wrong_type" as const })),
+    ...parts.filter((p) => isAttachment(p) && !ACCEPTED_TYPES.has(typeOf(p)) && !CLIENT_ATTACHMENT_TYPES.has(typeOf(p))).map((p) => ({ file: fileName(p, "an attachment"), reason: "wrong_type" as const })),
     ...forwarded.map((p) => ({ file: fileName(p, "an attached email"), reason: "forwarded" as const })),
   ];
 

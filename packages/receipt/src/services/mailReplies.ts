@@ -60,7 +60,7 @@ type Send = { fields: ("senderSentAt" | "creditedSentAt" | "refusalSentAt")[]; a
  */
 async function owedSends(out: ReceiptReplies, id: number, receiptId: string | null): Promise<Send[]> {
   const row = await db.receiptMailReply.findUniqueOrThrow({ where: { id } });
-  const refused = row.refusalSentAt ? [] : (row.refusals as unknown as MailRefusal[]);
+  const refused = row.refusalSentAt || !row.replyToSender ? [] : (row.refusals as unknown as MailRefusal[]);
   const base = { senderAddress: row.senderAddress, receivedAt: row.receivedAt };
   const notice = refused.length > 0 ? ["refusalSentAt" as const] : [];
   const sends: Send[] = [];
@@ -124,7 +124,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
     WHERE r.org_id = ${orgId} AND r.done_at IS NULL AND r.claimed_at IS NULL AND r.attempts < ${REPLY_ATTEMPTS}
       AND (
         EXISTS (SELECT 1 FROM receipt_mail_items i WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL)
-        OR (r.refusals <> '[]'::jsonb AND r.refusal_sent_at IS NULL)
+        OR (r.reply_to_sender AND r.refusals <> '[]'::jsonb AND r.refusal_sent_at IS NULL)
       )
     ORDER BY r.id
     LIMIT ${REPLY_CAP}`;
