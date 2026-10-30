@@ -128,22 +128,25 @@ export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 export type SensitiveTier = 'pii' | 'personal' | 'internal';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
 
-export type Scope =
-    | 'everyones'
-    | 'their_own'
-    | 'their_households'
+const SCOPES = [
+    'everyones',
+    'their_own',
+    'their_households',
     // Caller LEADS the household the row belongs to. Deliberately distinct from
     // their_households, which is household-WIDE (a non-lead member holds it):
     // this one is the "may act for another member" relationship, so it is the
     // right token wherever sharing a home is not by itself enough.
-    | 'led_households'
-    | 'their_program_participants'
+    'led_households',
+    'their_program_participants',
     // Caller leads/core-vols a program that a child of this row's household is
     // enrolled in (used for Trusted Adult pickup notes).
-    | 'their_program_households'
+    'their_program_households',
     // Caller is a isKeyholder (global — front-desk staff). Unconditional per-row.
-    | 'keyholders'
-    | 'all_current_visitors';
+    'keyholders',
+    'all_current_visitors',
+] as const;
+
+export type Scope = (typeof SCOPES)[number];
 
 export type Token = 'public' | 'member' | `${Scope}:${SensitiveTier}`;
 
@@ -151,43 +154,7 @@ export type Token = 'public' | 'member' | `${Scope}:${SensitiveTier}`;
  * Role vocabulary. Roles are properties of the caller (sometimes parameterised
  * by request params), not of any row. Per-row data scoping lives in `Scope`.
  */
-export type Role =
-    | 'anyone'
-    | 'unauthenticated'
-    | 'authenticated'
-    | 'kiosk'
-    | 'isSysadmin'
-    | 'isBoardMember'
-    | 'isKeyholder'
-    | 'isBackgroundCheckReviewer'
-    | 'isOperations'
-    // Curates the global catalog. A Person role boolean, stamped on
-    // the session like the others; grants the manager view on catalog routes.
-    | 'isInventoryManager'
-    // Finance staff. A Person role boolean, stamped on the session
-    // like the others; grants the finance view on finance-library routes.
-    | 'isFinance'
-    // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
-    // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
-    | 'certifier'
-    | 'householdLead'
-    | 'programLeadMentor'
-    | 'programCoreVolunteer';
-
-const VALID_SCOPES = new Set<Scope>([
-    'everyones',
-    'their_own',
-    'their_households',
-    'led_households',
-    'their_program_participants',
-    'their_program_households',
-    'keyholders',
-    'all_current_visitors',
-]);
-const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
-// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES:
-// a role added to BusinessRole must be added here too.
-export const VALID_ROLES = new Set<Role>([
+export const ROLES = [
     'anyone',
     'unauthenticated',
     'authenticated',
@@ -197,13 +164,24 @@ export const VALID_ROLES = new Set<Role>([
     'isKeyholder',
     'isBackgroundCheckReviewer',
     'isOperations',
+    // Curates the global catalog. A Person role boolean, stamped on
+    // the session like the others; grants the manager view on catalog routes.
     'isInventoryManager',
+    // Finance staff. A Person role boolean, stamped on the session
+    // like the others; grants the finance view on finance-library routes.
     'isFinance',
+    // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
+    // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     'certifier',
     'householdLead',
     'programLeadMentor',
     'programCoreVolunteer',
-]);
+] as const;
+
+export type Role = (typeof ROLES)[number];
+
+const SCOPE_NAMES: ReadonlySet<string> = new Set(SCOPES);
+const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
 
 export function parseToken(
     t: string,
@@ -214,13 +192,16 @@ export function parseToken(
     if (colon < 1) return null;
     const scope = t.slice(0, colon);
     const tier = t.slice(colon + 1);
-    if (!VALID_SCOPES.has(scope as Scope)) return null;
+    if (!SCOPE_NAMES.has(scope)) return null;
     if (!VALID_SENSITIVE_TIERS.has(tier as SensitiveTier)) return null;
     return { scope: scope as Scope, tier: tier as SensitiveTier };
 }
 
+// Fails to compile if a session flag, BusinessRole included, is not a Role.
+type RoleSubset<T extends Role> = T;
+
 /** Roles backed by a Person role flag on the session — what `anyRole` checks. */
-export type SessionFlagRole = BusinessRole | 'isInventoryManager' | 'isFinance';
+export type SessionFlagRole = RoleSubset<BusinessRole | 'isInventoryManager' | 'isFinance'>;
 
 /**
  * Admission gate — who is allowed to *call* the endpoint. Distinct from
@@ -514,7 +495,7 @@ function assertValidRegistration(
     }
     const seenRoles = new Set<string>();
     for (const [role, tokens] of orderedView) {
-        if (!VALID_ROLES.has(role)) {
+        if (!ROLES.includes(role)) {
             throw new Error(`Route ${endpoint}: unknown role '${role}'`);
         }
         if (seenRoles.has(role)) {
