@@ -11,7 +11,7 @@
  */
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
-import { refuseSelfGrant } from '@/lib/membership/selfGrantGuard';
+import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
 
 const txMembershipProcess = { findMany: jest.fn(), create: jest.fn() };
 const txAuditLog = { create: jest.fn() };
@@ -20,7 +20,8 @@ const txQueryRaw = jest.fn();
 // with mintPersonId(tx) — #1693). Same delegate object as the root mock below,
 // so the assertions in this file stay pointed at one place.
 const mockPerson = { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() };
-const tx = { $queryRaw: txQueryRaw, person: mockPerson, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
+const mockHousehold = { update: jest.fn() };
+const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
 
@@ -30,7 +31,7 @@ jest.mock('@/lib/prisma', () => ({
         // A getter, not a direct reference: jest hoists this factory above the
         // `const mockPerson` above, so reading it eagerly is a TDZ error.
         get person() { return mockPerson; },
-        household: { update: jest.fn() },
+        get household() { return mockHousehold; },
         orgMembershipProcess: { findFirst: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
@@ -55,10 +56,12 @@ jest.mock('@/lib/membership/renewal', () => ({
 }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
+    lockAndFindDeniedHousehold: jest.fn(),
     raiseDeniedHouseholdActivity: jest.fn(),
 }));
+jest.mock('@/lib/getFullAttendance', () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock('@/lib/membership/review', () => ({ applyVolunteerFamilyStatus: jest.fn() }));
-jest.mock('@/lib/membership/selfGrantGuard', () => ({ refuseSelfGrant: jest.fn() }));
+jest.mock('@/lib/membership/selfGrantGuard', () => ({ findSelfGrantRefusal: jest.fn(), recordSelfGrantRefusal: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const prisma = require('@/lib/prisma').default;
@@ -67,7 +70,7 @@ const { getExternalStatus } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/emergencyContacts/service');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
+const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { householdBgIsFresh } = require('@/lib/membership/renewal');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -390,12 +393,12 @@ describe('saveIntake', () => {
         });
 
         expect(prisma.household.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { line1: '1 Main St' } });
-        expect(upsertPrimaryContact).toHaveBeenCalledWith(prisma, 7, {
+        expect(upsertPrimaryContact).toHaveBeenCalledWith(tx, 7, {
             name: 'Aunt May',
             phone: '555-555-2000',
             email: undefined,
         });
-        expect(reconcileHouseholdConflicts).toHaveBeenCalledWith(prisma, 7);
+        expect(reconcileHouseholdConflicts).toHaveBeenCalledWith(tx, 7);
     });
 
     it('household notes persist as intakeNotes (trimmed; empty → null)', async () => {
@@ -478,7 +481,7 @@ describe('saveIntake', () => {
             where: { id: 4 },
             data: { name: 'Existing Parent' },
         });
-        expect(addHouseholdLead).toHaveBeenCalledWith(prisma, 7, 4);
+        expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 4);
     });
 
     it('secondary parent is new → create + addLeadOrRecord', async () => {
@@ -489,7 +492,7 @@ describe('saveIntake', () => {
         expect(prisma.person.create).toHaveBeenCalledWith({
             data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', dateOfBirth: null, isDeclaredAdult: false, allergies: null },
         });
-        expect(addHouseholdLead).toHaveBeenCalledWith(prisma, 7, 55);
+        expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 55);
     });
 
     it('rejects blanking an existing secondary parent name on update', async () => {
@@ -528,13 +531,15 @@ describe('saveIntake', () => {
     });
 
     it('a sysadmin who does not lead the household cannot promote a guardian through intake', async () => {
-        jest.mocked(refuseSelfGrant).mockResolvedValue(true);
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
         prisma.person.create.mockResolvedValue({ id: 4 });
         prisma.person.findUnique.mockResolvedValueOnce({ ...user, isHouseholdLead: false, isSysadmin: true });
 
         const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
 
-        expect(refuseSelfGrant).toHaveBeenCalledWith(prisma, 1, { personId: expect.any(Number), householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { personId: expect.any(Number), householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
         expect(addHouseholdLead).not.toHaveBeenCalled();
         expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
     });
@@ -548,6 +553,52 @@ describe('saveIntake', () => {
             { section: 'secondaryParent', code: 'household_denied', message: expect.stringContaining('denied membership') },
         ]);
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, personId: 4 }));
+    });
+
+    it('a youth second parent is a rejection, kept as a household member', async () => {
+        prisma.person.create.mockResolvedValue({ id: 55 });
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadYouthError(7, 55));
+
+        const result = await saveIntake(1, { secondaryParent: { name: 'Young Person', dob: '2015-01-01' } });
+
+        expect(prisma.person.create).toHaveBeenCalled();
+        expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'youth', message: expect.stringContaining('under 18') }]);
+    });
+
+    it('raises a denied promotion only after the transaction commits', async () => {
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+        const committed = jest.fn();
+        prisma.$transaction.mockImplementationOnce(async (cb: (t: unknown) => unknown) => {
+            const out = await cb(tx);
+            expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
+            committed();
+            return out;
+        });
+
+        await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
+
+        expect(committed).toHaveBeenCalled();
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('a rollback drops the denied raise', async () => {
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+        prisma.person.update.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('write failed'));
+
+        await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ id: 4, name: 'Child' }] })).rejects.toThrow('write failed');
+
+        expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
+    });
+
+    it('a rollback still records a self-grant refusal', async () => {
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+        prisma.person.update.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('write failed'));
+
+        await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ id: 4, name: 'Child' }] })).rejects.toThrow('write failed');
+
+        expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
     });
 
     it('child already a household member → update; a new named child → create', async () => {
