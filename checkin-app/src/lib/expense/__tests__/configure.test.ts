@@ -23,7 +23,7 @@ class QuickBooksNotConnectedError extends Error {}
 jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId, QuickBooksNotConnectedError }));
 const createVendor = jest.fn();
 jest.mock("@checkin/quickbooks", () => ({ createVendor }));
-jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
+jest.mock("@/lib/components/host", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
 const booksMapAccounts = jest.fn();

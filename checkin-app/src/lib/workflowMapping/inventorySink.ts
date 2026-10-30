@@ -6,36 +6,7 @@
  */
 import { ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
 import type { InventorySink, OrgIdentity } from "@checkin/workflow-mapping";
-import {
-  createInventoryRepository,
-  createProvisionalItemRepository,
-  createProvisionalItemService,
-  createProvisionalResolutionRepository,
-  createReceiptService,
-  createReceiveQueueRepository,
-  db as inventoryDb,
-  type ReceiptService,
-} from "@checkin/local-inventory";
-
-let receiptService: ReceiptService | undefined;
-
-/** local-inventory's apply service, built once and shared by X4 and X11. */
-export function inventoryReceipts(): ReceiptService {
-  if (receiptService) return receiptService;
-  const inventoryRepo = createInventoryRepository(inventoryDb);
-  receiptService = createReceiptService({
-    provisionalItemService: createProvisionalItemService({
-      provisionalRepo: createProvisionalItemRepository(inventoryDb),
-      resolutionRepo: createProvisionalResolutionRepository(inventoryDb),
-      inventoryRepo,
-      db: inventoryDb,
-    }),
-    inventoryRepo,
-    receiveQueueRepo: createReceiveQueueRepository(inventoryDb),
-    db: inventoryDb,
-  });
-  return receiptService;
-}
+import { inventoryApply } from "@checkin/local-inventory";
 
 export function createLocalInventorySink(org: () => Promise<OrgIdentity>): InventorySink {
   return {
@@ -43,7 +14,7 @@ export function createLocalInventorySink(org: () => Promise<OrgIdentity>): Inven
       const delta = ResolvedInventoryDeltaSchema.parse(input);
       const { id: orgId } = await org();
       if (delta.orgId !== orgId) throw new Error("inventory delta orgId does not match this org");
-      await inventoryReceipts().applyReceipt(orgId, delta.receiptId, delta.retailer ?? undefined, delta.lineItems);
+      await inventoryApply.applyReceipt(orgId, delta.receiptId, delta.retailer ?? undefined, delta.lineItems);
     },
   };
 }

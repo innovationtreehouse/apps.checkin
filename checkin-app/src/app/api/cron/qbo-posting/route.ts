@@ -1,6 +1,6 @@
 import { logger } from "@/lib/logger";
 import { cronJobName, recordCronRun } from "@/lib/cronRuns";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg } from "@/lib/components/host";
 import { handler } from "@/security/handler";
 import { runExpenseQbPosting } from "@checkin/expense";
 import { runDonationDepositHandOver, runInKindQbPosting } from "@checkin/bulk-donation";

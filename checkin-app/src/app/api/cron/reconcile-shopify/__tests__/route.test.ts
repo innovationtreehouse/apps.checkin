@@ -24,7 +24,7 @@ jest.mock('@checkin/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn(), swe
 jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), sweepStuckUploaded: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify/stock', () => ({ healProgramStock: jest.fn() }));
-jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
+jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 
 const SECRET = 'cron-secret-under-test';
 const RECONCILED = { configured: true, ordersScanned: 2, reversalsRaised: 0, failed: 0 };

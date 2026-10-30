@@ -1,11 +1,11 @@
 /**
  * Wire the local-inventory library into checkin, called once at
- * server boot from instrumentation.ts. It shares the catalog's principal and
+ * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, so both libraries stamp the same org id and
  * person ids, and boot stays DB-free. The S5 replay read is bound to the catalog's events.
  */
 import { configureLocalInventory } from "@checkin/local-inventory";
-import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
+import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
 
 export function configureLocalInventoryRuntime(): void {
   configureLocalInventory({ auth: { getPrincipal }, org: getOrg, catalogEventSource: { eventsSince: catalogEventsSince } });
