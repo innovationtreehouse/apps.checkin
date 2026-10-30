@@ -7,7 +7,7 @@
  * (payment-first) and a second approval after the refund (check-last).
  */
 
-import { attest } from '@/lib/membership/review';
+import { attest, boardResetReview } from '@/lib/membership/review';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
@@ -221,5 +221,19 @@ describe('a refunded order never activates', () => {
         await attest(revB, checkLast.processId, { result: 'APPROVE', subjectPersonIds: [checkLast.leadId] });
         expect((await processOf(checkLast.processId))?.status).toBe('ACTIVE');
         expect(await membershipStatusOf(checkLast.orgMembershipId)).toBe('ACTIVE');
+    });
+
+    it('a payment on a blocked application keeps its year through a board reset and clearance', async () => {
+        const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'BLOCKED' });
+
+        expect((await activateByProcessId(processId, orderId('BlkYear'), { appliesToYear: 2026 })).outcome).toBe('paid_while_blocked');
+        expect((await boardResetReview(processId, board)).status).toBe('PENDING_BG_CLEARANCE');
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+        const proc = await processOf(processId);
+        expect(proc?.status).toBe('ACTIVE');
+        expect(proc?.appliesToYear).toBe(2026);
+        expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
 });
