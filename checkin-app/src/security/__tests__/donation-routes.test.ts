@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Admission and file-only coverage for the bulk-donation registry (#1280 §5,
+ * Admission and file-only coverage for the bulk-donation registry (#1280,
  * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
  * except the in-kind decision, which admits FINANCE or BOARD. Ops (OPERATIONS,
  * INVENTORY_MANAGER) reaches only the no-receipt in-kind entry routes, and never

@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the bulk-donation schema under checkin's security regime (design #1280 §4):
+// Brings the bulk-donation schema under checkin's security regime (#1280):
 // the same generator emits a classifications map, merged in
 // checkin-app/src/security/core.ts. Output lands beside checkin's own
 // generated map; paths are relative to this schema file.

@@ -1,4 +1,4 @@
-// The in-kind accept step (design #2182): every gift, with or without a receipt, is accepted,
+// The in-kind accept step (docs/rules/revenue.md, Donations): every gift, with or without a receipt, is accepted,
 // refused or returned by a finance holder who is outside the uploader's or recorder's household,
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";

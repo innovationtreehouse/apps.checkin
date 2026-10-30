@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the bulk-donation classifications (#1280 §4). Tiers are
+ * Boundary coverage for the bulk-donation classifications (#1280). Tiers are
  * per field: gift amounts are `internal`, donor identity is `pii`. A view that
  * grants `internal` but not `pii` is the de-identified view — amounts with no
  * names — and the FINANCE/BOARD view (pii + internal) sees both.

@@ -174,7 +174,7 @@ describe("resolveAccess 'kiosk'", () => {
     });
 });
 
-// H4 finance vocabulary (#1272 §6, #1280 §4, #1265 §6). One persona per audience:
+// H4 finance vocabulary (#1272 §6, #1280, #1265 §6). One persona per audience:
 // finance, board, inventory manager, sysadmin-only, a Treehouse Volunteer (keyholder), and a plain
 // household member with no role.
 describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole', () => {

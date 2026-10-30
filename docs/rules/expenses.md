@@ -183,8 +183,12 @@ Things the app takes as true because they are handled outside it.
   [Decision — deliberate limit]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
-  needs no spending sign-off.
+  needs no spending sign-off. It is a donation, not an expense record.
   [Decision]
+
+- Donated equipment goes through the same capital thresholds, review and register
+  as purchased equipment.
+  [Decision — owner]
 
 - Finance may record old receipts for purchases already in the books. Doing so
   never reimburses anyone and never books anything a second time.

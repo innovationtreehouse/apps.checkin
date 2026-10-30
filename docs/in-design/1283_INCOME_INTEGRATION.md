@@ -31,7 +31,7 @@ checkin, and every decision is audited.
   the history the API can't reach is loaded into the mirror once, by the
   source's own conversion script (`1283_INCOME_INTEGRATION-migration.md`).
 - **The QuickBooks side is net-new and matches before it creates.** The source
-  has no QuickBooks code. Income uses the same rule as bulk donation (#1280 §7):
+  has no QuickBooks code. Income uses the same rule as bulk donation (#1280):
   line payouts up with existing deposits first. The newest payout finance booked
   by hand marks where the app takes over; the app creates deposits for unmatched
   payouts after it and sends unmatched ones before it to finance. There is no
@@ -144,7 +144,7 @@ whose id the script could not recover has no transactions, so it lands as
 
 Income applies the matching model the owner set for every lane that books to
 QuickBooks (expense, bulk donation and in-kind), first worked out by bulk
-donation for this problem (#1280 §7). Its rules are stated in full here: our
+donation for this problem (#1280). Its rules are stated in full here: our
 own unmatched records drive narrow searches, a QuickBooks entry is claimed by
 one record at most, finance can exclude an entry for good, and more than one
 candidate always goes to a person. Finance
@@ -294,7 +294,7 @@ recovery sweep, no schedule of its own. A `FINANCE` "run now" route and the
 Certain items have to book to their own QuickBooks category (owner decision).
 A QuickBooks category is a **budget-owner bucket**: checkin owns that table, its
 QuickBooks reference is a **Class** id (owner decision), and the expense lane
-builds it (#1280 §6). Income reuses it instead of keeping a second
+builds it (#1280). Income reuses it instead of keeping a second
 list:
 
 - **Bucket list:** income declares the same read port bulk donation does,

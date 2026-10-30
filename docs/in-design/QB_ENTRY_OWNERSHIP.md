@@ -197,8 +197,7 @@ refuses any account outside the in-kind roles.
 Finance's earlier hand bookings went through a clearing account as a Deposit
 and a Purchase. In-kind matches those pairs, but only entries in the clearing
 account, which no other lane books to, so the rule above still holds: income
-and expense never see them. Details are in `2182_IN_KIND_EXPENSE.md`, Posting to
-QuickBooks.
+and expense never see them. The rules are in `docs/rules/revenue.md`, Donations.
 
 ## Migration
 
