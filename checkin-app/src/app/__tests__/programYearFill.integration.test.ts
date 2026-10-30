@@ -14,7 +14,7 @@ const TAG = `year-fill-${Date.now()}`;
 
 function fillStatements(): string[] {
     const block = fs.readFileSync(MIGRATION_SQL, 'utf8').split('-- >>> FILL START')[1].split('-- >>> FILL END')[0];
-    return block.match(/DO \$\$[\s\S]*?\$\$;|[^;]+;/g)!.map((s) => s.trim()).filter(Boolean);
+    return block.trim().match(/DO \$\$[\s\S]*?\$\$;|[^;]+;/g)!.map((s) => s.trim());
 }
 
 async function runFill(): Promise<void> {
@@ -52,7 +52,7 @@ describe('program membership year fill', () => {
         const late = await addProgram('late', '2027-09-01', '2027-12-01');
         const ordinary = await addProgram('ordinary', '2026-01-01', '2026-03-01');
 
-        await expect(runFill()).rejects.toThrow('program year fill');
+        await expect(runFill()).rejects.toThrow('P0001');
 
         expect(await yearOf(late)).toBeNull();
         expect(await yearOf(ordinary)).toBeNull();

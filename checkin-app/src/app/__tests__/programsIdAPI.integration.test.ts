@@ -116,7 +116,7 @@ describe('Individual Program API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { appliesToYear: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).getUTCFullYear() - 1, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
