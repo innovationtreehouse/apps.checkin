@@ -2,14 +2,15 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
-import { api, BASE, dollars, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { api, BASE, errorMessage, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { formatCents } from "@checkin/money";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
@@ -74,7 +75,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const router = useRouter();
   const queueParam = useSearchParams().get("queue");
   const fromReview = queueParam !== null && queueBase !== undefined;
-  const { data: session } = useSession();
+  const viewer = useViewer();
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
@@ -122,8 +123,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     reason === "submitter_correction" && corrections.length > 0
       ? corrections.map(describeCorrection).join("; ")
       : (REVIEW_REASON_LABELS[reason] ?? reason);
-  const own = (session?.user as { id?: unknown } | undefined)?.id === r.uploadedByUserId;
-  const isAdult = (session?.user as { ageBand?: string } | undefined)?.ageBand === "adult";
+  const own = viewer?.id === r.uploadedByUserId;
+  const isAdult = viewer?.ageBand === "adult";
   const reimburseeConfirms = confirmedByReimbursee(r);
   // `decides` marks an action that moves the receipt out of the queue it was opened from.
   const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
@@ -291,8 +292,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         <Stack miw={280}>
           <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>
           <Text>
-            Total: {dollars(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {dollars(r.taxCents)}</Flagged>{correctionNote(correctionOf("tax"))}, shipping {dollars(r.shippingCents)}
-            {r.discountCents ? `, discount ${dollars(r.discountCents)}` : ""})
+            Total: {formatCents(r.receiptTotalCents)} (<Flagged on={taxFlagged}>tax {formatCents(r.taxCents)}</Flagged>{correctionNote(correctionOf("tax"))}, shipping {formatCents(r.shippingCents)}
+            {r.discountCents ? `, discount ${formatCents(r.discountCents)}` : ""})
           </Text>
           {r.needsReimbursement && <Text>Reimbursement owed{r.reimbursementFor ? ` to ${r.reimbursementFor}` : ""}</Text>}
           {!editing && (
@@ -305,7 +306,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   <Table.Tr key={l.id}>
                     <Table.Td>{l.description}{l.isDelayed && <Badge ml="xs" size="xs" color="orange">Backordered</Badge>}</Table.Td>
                     <Table.Td>{l.quantity}</Table.Td>
-                    <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
+                    <Table.Td>{formatCents(l.totalPriceCents)}</Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>

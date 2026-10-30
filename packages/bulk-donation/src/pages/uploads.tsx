@@ -2,8 +2,7 @@
 import { useState } from "react";
 import { Anchor, Button, FileInput, Group, Paper, Table, Text, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface FileRow {
   id: number;

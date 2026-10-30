@@ -1,7 +1,34 @@
 "use client";
 
-import { SessionProvider } from "next-auth/react";
+import { useMemo } from "react";
+import type { Session } from "next-auth";
+import { SessionProvider, useSession } from "next-auth/react";
+import { ViewerProvider, type Viewer } from "@checkin/component-ui";
+
+/** The one place checkin's session shape meets the package UIs' viewer. */
+export function viewerFromSession(session: Session | null | undefined): Viewer | null {
+    const user = session?.user;
+    if (!user) return null;
+    return {
+        id: user.id,
+        ageBand: user.ageBand ?? "unknown",
+        isFinance: user.isFinance === true,
+        isBoardMember: user.isBoardMember === true,
+        isOperations: user.isOperations === true,
+        isInventoryManager: user.isInventoryManager === true,
+    };
+}
+
+function SessionViewer({ children }: { children: React.ReactNode }) {
+    const { data } = useSession();
+    const viewer = useMemo(() => viewerFromSession(data), [data]);
+    return <ViewerProvider viewer={viewer}>{children}</ViewerProvider>;
+}
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-    return <SessionProvider>{children}</SessionProvider>;
+    return (
+        <SessionProvider>
+            <SessionViewer>{children}</SessionViewer>
+        </SessionProvider>
+    );
 }

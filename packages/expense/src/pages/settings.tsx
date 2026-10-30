@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button, NumberInput, Paper, Stack, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { send, useLoad, useRoles } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 import { financeCeilingCents } from "../lib/threshold-rules";
 
 const FIELDS = [

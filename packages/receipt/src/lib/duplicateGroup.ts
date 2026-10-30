@@ -1,3 +1,4 @@
+import { formatCents } from "@checkin/money";
 import { db, type Db } from "../db";
 import { Prisma } from "../generated/prisma/client";
 import { BODY_COPY_DISCARDED } from "./receipt-flow";
@@ -85,7 +86,7 @@ type Described = { retailer: string | null; receiptDate: string | null; receiptT
 /** A receipt in a line of text: its vendor, receipt date and total, as "Home Depot, 3 Oct, $84.12". */
 export function describeReceipt(r: Described): string {
   const date = r.receiptDate && /^\d{4}-\d{2}-\d{2}$/.test(r.receiptDate) ? day(new Date(`${r.receiptDate}T00:00:00Z`)) : r.receiptDate;
-  const total = r.receiptTotalCents == null ? null : `$${(r.receiptTotalCents / 100).toFixed(2)}`;
+  const total = r.receiptTotalCents == null ? null : formatCents(r.receiptTotalCents);
   return [r.retailer?.trim() || "Receipt", date, total].filter(Boolean).join(", ");
 }
 

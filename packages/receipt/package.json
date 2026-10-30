@@ -30,6 +30,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",

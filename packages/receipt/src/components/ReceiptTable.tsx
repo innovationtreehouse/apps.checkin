@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { dollars, isDiscardedDuplicate, receiptStateLabel, type ReceiptListRow } from "./api";
+import { isDiscardedDuplicate, receiptStateLabel, type ReceiptListRow } from "./api";
+import { formatCents } from "@checkin/money";
 import { SUBMITTER_ACTION_STATES } from "../nav";
 import { confirmedByReimbursee } from "./ConfirmationList";
 
@@ -45,7 +46,7 @@ export default function ReceiptTable({
                 <Anchor component={Link} href={detailHref(r.id)}>{new Date(r.uploadedAt).toLocaleDateString()}</Anchor>
               </Table.Td>
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
-              <Table.Td>{dollars(r.receiptTotalCents)}</Table.Td>
+              <Table.Td>{formatCents(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
                 {receiptStateLabel(r)}
                 {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (

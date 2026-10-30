@@ -2,7 +2,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { BASE, dollars, STATE_LABELS } from "./api";
+import { BASE, STATE_LABELS } from "./api";
+import { formatCents } from "@checkin/money";
 import ReceiptFile from "./ReceiptFile";
 
 export interface CompareLine {
@@ -58,10 +59,10 @@ const ROWS: Row[] = [
   { label: "Date", value: (r) => r.receiptDate },
   { label: "Receipt #", value: (r) => r.receiptNumber },
   { label: "Order #", value: (r) => r.orderNumber },
-  { label: "Shipping", value: (r) => dollars(r.shippingCents) },
-  { label: "Tax", value: (r) => dollars(r.taxCents) },
-  { label: "Discount", value: (r) => dollars(r.discountCents) },
-  { label: "Total", value: (r) => `${dollars(r.receiptTotalCents)}${r.currency && r.currency !== "USD" ? ` ${r.currency}` : ""}` },
+  { label: "Shipping", value: (r) => formatCents(r.shippingCents) },
+  { label: "Tax", value: (r) => formatCents(r.taxCents) },
+  { label: "Discount", value: (r) => formatCents(r.discountCents) },
+  { label: "Total", value: (r) => `${formatCents(r.receiptTotalCents)}${r.currency && r.currency !== "USD" ? ` ${r.currency}` : ""}` },
   { label: "File type", value: (r) => r.mimeType },
   { label: "Uploaded", value: (r) => new Date(r.uploadedAt).toLocaleString() },
 ];
@@ -89,8 +90,8 @@ function Lines({ title, lines }: { title: string; lines: CompareLine[] }) {
                 <Table.Td>{l.description}</Table.Td>
                 <Table.Td>{l.partNumber ?? "—"}</Table.Td>
                 <Table.Td>{l.quantity}</Table.Td>
-                <Table.Td>{dollars(l.unitPriceCents)}</Table.Td>
-                <Table.Td>{dollars(l.totalPriceCents)}</Table.Td>
+                <Table.Td>{formatCents(l.unitPriceCents)}</Table.Td>
+                <Table.Td>{formatCents(l.totalPriceCents)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

@@ -8,7 +8,7 @@ import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {

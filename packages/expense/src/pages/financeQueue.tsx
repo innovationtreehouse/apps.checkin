@@ -1,4 +1,5 @@
 "use client";
+import { formatCents } from "@checkin/money";
 import { useEffect } from "react";
 import Link from "next/link";
 import { Anchor, Badge, Chip, Group, Table, Text } from "@mantine/core";
@@ -47,7 +48,6 @@ function waited(since: string): string {
   return days < 1 ? "today" : days === 1 ? "1 day" : `${days} days`;
 }
 
-const money = (cents: number, currency: string) => (cents / 100).toLocaleString("en-US", { style: "currency", currency });
 
 /** Where a row opens: the expense, carrying the tab and the page to return to, or the reason's own link. */
 function rowHref(row: FinanceQueueRow, queue: string, returnHref: string): string {
@@ -114,7 +114,7 @@ export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: 
                   <Anchor component={Link} href={rowHref(row, queue, returnHref)}>{row.date ?? "No date"}</Anchor>
                 </Table.Td>
                 <Table.Td>{row.vendorName ?? "Unknown vendor"}</Table.Td>
-                <Table.Td>{money(row.amountCents, row.currency)}</Table.Td>
+                <Table.Td>{formatCents(row.amountCents, row.currency)}</Table.Td>
                 <Table.Td>
                   {row.reasons.map((x) => (
                     <Badge key={x.code} variant="light" color="gray" mr={4} style={{ textTransform: "none" }}>{x.text}</Badge>

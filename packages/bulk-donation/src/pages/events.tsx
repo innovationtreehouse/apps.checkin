@@ -2,8 +2,7 @@
 import { useState } from "react";
 import { Table, Text, Title } from "@mantine/core";
 import { paged, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface EventRow { id: number; disbursementId: string; payload: string; createdAt: string }
 

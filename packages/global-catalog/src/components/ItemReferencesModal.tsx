@@ -7,7 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the

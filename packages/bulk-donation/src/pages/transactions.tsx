@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
 import { SegmentedControl, Table, Title } from "@mantine/core";
-import { cents, ownerName, paged, useLoad, useOwners } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { ownerName, paged, useLoad, useOwners } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 export interface GiftRow {
   id: number;
@@ -46,8 +46,8 @@ export default function TransactionsPage() {
               <Table.Td>{g.donationDate ?? "—"}</Table.Td>
               <Table.Td>{[g.donorFirstName, g.donorLastName].filter(Boolean).join(" ") || "—"}</Table.Td>
               <Table.Td>{g.companyName ?? "—"}</Table.Td>
-              <Table.Td>{cents(g.donationAmountCents)}</Table.Td>
-              <Table.Td>{cents(g.matchAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.donationAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.matchAmountCents)}</Table.Td>
               <Table.Td>{g.isOrganizationalLevel ? "Organizational level" : ownerName(owners.data, g.ownerId)}</Table.Td>
             </Table.Tr>
           ))}

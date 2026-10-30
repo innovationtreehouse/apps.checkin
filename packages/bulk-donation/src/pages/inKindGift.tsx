@@ -3,8 +3,9 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { api, cents, errorMessage, useCanWrite, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
+import { api, errorMessage, useCanWrite, useLoad, when } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface GiftLine {
@@ -157,7 +158,7 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
         <Stack gap={4} miw={280}>
           <Text>Donor: {donorName(g)}</Text>
           <Text>Date: {g.receiptDate ?? g.donationDate ?? "—"}</Text>
-          <Text>Value: {g.totalValueCents === null ? "Not set yet" : cents(g.totalValueCents)}</Text>
+          <Text>Value: {g.totalValueCents === null ? "Not set yet" : formatCents(g.totalValueCents)}</Text>
           <Text>
             Source:{" "}
             {isManual ? (
@@ -188,8 +189,8 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
               <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
               <Table.Td>{l.gtin13 ?? "—"}</Table.Td>
               <Table.Td>{l.quantity}</Table.Td>
-              <Table.Td>{l.valueCents === null ? "—" : cents(l.valueCents)}</Table.Td>
-              {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : cents(l.suggestedValueCents)}</Table.Td>}
+              <Table.Td>{l.valueCents === null ? "—" : formatCents(l.valueCents)}</Table.Td>
+              {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}
             </Table.Tr>
           ))}
         </Table.Tbody>

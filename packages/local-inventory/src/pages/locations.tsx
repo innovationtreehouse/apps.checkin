@@ -6,7 +6,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconArrowsExchange, IconEdit, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { api, errorMessage, useCanManage, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { LoadError } from "@checkin/component-ui";
 
 interface LocationRow {
   id: number;

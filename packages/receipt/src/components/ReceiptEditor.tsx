@@ -1,4 +1,5 @@
 "use client";
+import { formatCents } from "@checkin/money";
 import { Button, Checkbox, Divider, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
@@ -11,7 +12,6 @@ import {
   lineCents,
   lineFromServer,
   roundingAllowed,
-  signedDollars,
   type Draft,
   type DraftLine,
   type Header,
@@ -29,7 +29,7 @@ interface Props {
 
 const lineTotal = (line: DraftLine) => {
   const cents = lineCents(line);
-  return cents === null ? "—" : signedDollars(Math.round(cents));
+  return cents === null ? "—" : formatCents(Math.round(cents));
 };
 
 function balanceText(math: ReceiptMath | null): string {
@@ -140,11 +140,11 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
         <Divider />
         <Stack gap={6} align="flex-end">
-          <Text size="sm">Lines subtotal: <Text span ff="monospace">{subtotal === null ? "—" : signedDollars(Math.round(subtotal))}</Text></Text>
+          <Text size="sm">Lines subtotal: <Text span ff="monospace">{subtotal === null ? "—" : formatCents(Math.round(subtotal))}</Text></Text>
           {amount("+ Shipping", "shipping")}
           {amount("+ Tax", "tax")}
           {amount("− Discount", "discount")}
-          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : signedDollars(Math.round(calculated))}</Text></Text>
+          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : formatCents(Math.round(calculated))}</Text></Text>
           {amount("Receipt total", "receiptTotal")}
           <Text size="sm" fw={600} c={math?.balanced ? "green" : "red"}>
             {balanceText(math)}

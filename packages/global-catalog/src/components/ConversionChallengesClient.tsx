@@ -4,7 +4,7 @@ import { Button, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatItemId } from "../lib/gtin";
 import { api, errorMessage } from "./api";
-import LoadError from "./LoadError";
+import { LoadError } from "@checkin/component-ui";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
