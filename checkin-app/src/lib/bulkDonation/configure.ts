@@ -1,6 +1,6 @@
 /**
  * Wire the bulk-donation library into checkin (#1280 §3/§6), called once at
- * server boot from instrumentation.ts. It shares the catalog's principal and
+ * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, and binds the owner directory to checkin's
  * BudgetOwner table, read per call. The no-receipt in-kind path's crossings are
  * bound in-process: the catalog lookup (X10) to the catalog's reads and the
@@ -16,22 +16,15 @@
  * keeps donated equipment at or over its thresholds. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting, OwnerInfo } from "@checkin/bulk-donation";
-import { getOrg, getPrincipal } from "@/lib/catalog/configure";
+import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
+import { getOrg, getPrincipal } from "@/lib/components/host";
+import { booksMap, budgetOwners, quickBooks } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-
-async function listOwners(): Promise<OwnerInfo[]> {
-  const { default: prisma } = await import("@/lib/prisma");
-  return prisma.budgetOwner.findMany({
-    select: { id: true, name: true, archivedAt: true, quickBooksClassId: true },
-    orderBy: { name: "asc" },
-  });
-}
 
 /** What handing Benevity deposits to income lacks, in plain words; empty when it binds. Income's books map holds the bank. */
 export function donationPostingMissing(): string[] {
@@ -64,11 +57,8 @@ export async function inKindPostingMissing(): Promise<string[]> {
 function inKindQbPosting(): InKindQbPosting | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
-    client: async () => (await import("@/lib/quickbooks/client")).getQuickBooks(),
-    booksMap: {
-      accounts: async () => (await import("@/lib/finance/booksMap")).booksMap.accounts(),
-      classes: async () => (await import("@/lib/finance/booksMap")).booksMap.classes(),
-    },
+    client: quickBooks,
+    booksMap,
     async sweepIncomplete({ since }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert(
@@ -114,7 +104,7 @@ export function configureRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal },
     org: getOrg,
-    owners: { list: listOwners },
+    owners: budgetOwners,
     catalog: { search: catalogReader.searchItems, getItem: catalogReader.getItem },
     inventory: createLocalInventoryApply(getOrg),
     inKindQb: inKindQbPosting(),

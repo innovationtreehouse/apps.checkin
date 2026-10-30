@@ -13,6 +13,7 @@ import { createReceiveQueueRepository } from "./lib/repositories/receiveQueueRep
 import { createInventoryService } from "./lib/services/inventoryService";
 import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
+import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
 import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
 
@@ -41,19 +42,19 @@ function buildServices() {
   const inventoryRepo = createInventoryRepository(db);
   const inventoryService = createInventoryService({ inventoryRepo, db });
   const provisionalRepo = createProvisionalItemRepository(db);
+  const receiveQueueRepo = createReceiveQueueRepository(db);
+  const provisionalItemService = createProvisionalItemService({
+    provisionalRepo,
+    resolutionRepo: createProvisionalResolutionRepository(db),
+    inventoryRepo,
+    db,
+  });
   return {
     inventoryService,
     locationService: createLocationService({ locationRepo: createLocationRepository(db), db }),
-    provisionalItemService: createProvisionalItemService({
-      provisionalRepo,
-      resolutionRepo: createProvisionalResolutionRepository(db),
-      inventoryRepo,
-      db,
-    }),
-    receiveQueueService: createReceiveQueueService({
-      receiveQueueRepo: createReceiveQueueRepository(db),
-      db,
-    }),
+    provisionalItemService,
+    receiptService: createReceiptService({ provisionalItemService, inventoryRepo, receiveQueueRepo, db }),
+    receiveQueueService: createReceiveQueueService({ receiveQueueRepo, db }),
   };
 }
 
@@ -64,6 +65,12 @@ export function getServices(): ReturnType<typeof buildServices> {
   services ??= buildServices();
   return services;
 }
+
+/** What the host binds its inventory crossings to: stock applied once per receipt or donation. */
+export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation"> = {
+  applyReceipt: (...args) => getServices().receiptService.applyReceipt(...args),
+  applyDonation: (...args) => getServices().receiptService.applyDonation(...args),
+};
 
 /** The host nav's pill counts for the current org: open receive-queue lines. */
 export async function getNavCounts(): Promise<{ openBackorders: number }> {

@@ -3,7 +3,7 @@
  * instrumentation.ts. Binding touches no database and no network: every port
  * reads lazily inside a request (or the daily cron).
  *
- * - auth/org: the catalog's principal and lazy Org-registry accessor, so every
+ * - auth/org: the host kit's principal and lazy Org-registry accessor, so every
  *   library stamps the same person and org ids.
  * - mirror: the s-read Shopify mirror, bound only where it is wired. Unbound,
  *   a run answers "unbound" instead of reading an empty mirror and reopening
@@ -39,12 +39,12 @@ import {
   type IncomeAlerts,
   type IncomePosting,
   type MirrorPayout,
-  type OwnerDirectory,
   type PayoutMirror,
   type QbClassSource,
   type QbDepositSource,
 } from "@checkin/income";
-import { getOrg, getPrincipal } from "@/lib/catalog/configure";
+import { getOrg, getPrincipal } from "@/lib/components/host";
+import { booksMap, budgetOwners } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -57,7 +57,7 @@ import {
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-import { BOOKS_MAP_ROLES, type BooksMap } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -84,22 +84,6 @@ const payoutMirror: PayoutMirror = {
   },
   async itemsSeen() {
     return (await incomeItemsSeen()).map((i) => ({ ...i, title: i.title ?? "" }));
-  },
-};
-
-const owners: OwnerDirectory = {
-  async list() {
-    const { default: prisma } = await import("@/lib/prisma");
-    return prisma.budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
-  },
-};
-
-const booksMap: BooksMap = {
-  async accounts() {
-    return (await import("@/lib/finance/booksMap")).booksMap.accounts();
-  },
-  async classes() {
-    return (await import("@/lib/finance/booksMap")).booksMap.classes();
   },
 };
 
@@ -191,7 +175,7 @@ export function configureRuntime(): void {
     mirror: mirrorConfigured() ? payoutMirror : undefined,
     deposits: depositSource(),
     posting: posting(),
-    owners,
+    owners: budgetOwners,
     booksMap,
     classes: classSource(),
     alerts,

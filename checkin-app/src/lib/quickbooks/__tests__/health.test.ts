@@ -13,7 +13,7 @@ jest.mock("@/lib/bulkDonation/configure", () => ({ inKindPostingMissing }));
 const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const getOrg = jest.fn();
-jest.mock("@/lib/catalog/configure", () => ({ getOrg }));
+jest.mock("@/lib/components/host", () => ({ getOrg }));
 // The libraries' root entries pull in their generated Prisma clients, which the jest env does not build.
 const postingOnAt = jest.fn();
 jest.mock("@checkin/income", () => ({ postingOnAt }));

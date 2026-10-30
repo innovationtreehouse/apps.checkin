@@ -4,7 +4,7 @@
  * income's own database inside a request.
  */
 import { reconciliationService } from "@checkin/income";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg } from "@/lib/components/host";
 
 export async function incomeOpenCount(): Promise<number> {
   return reconciliationService.countQueue((await getOrg()).id);
