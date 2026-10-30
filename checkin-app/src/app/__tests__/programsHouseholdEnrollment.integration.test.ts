@@ -4,7 +4,7 @@
 /**
  * Integration tests for MULTI-SELECT household enrollment (PR #541).
  *
- * The feature lives client-side in programs/[id]/page.tsx: it loops the
+ * The feature lives client-side in programs/[id]/useProgramEnrollment.ts: it loops the
  * single-participant POST /api/programs/[id]/participants once per selected
  * household member. The server route only ever sees one id, so the loop's
  * emergent behavior — several sequential POSTs by one household lead into one

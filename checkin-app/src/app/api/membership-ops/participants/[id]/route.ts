@@ -70,9 +70,8 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row
-        // that holds both — bulk import writes a DOB without touching the flag — is
-        // repaired on its next edit instead of being unsaveable, since the edit form
-        // resubmits the whole record.
+        // that holds both is repaired on its next edit instead of being unsaveable, since
+        // the edit form resubmits the whole record.
         if (updateData.isDeclaredAdult === true && priorDob) {
             updateData.isDeclaredAdult = false;
         }

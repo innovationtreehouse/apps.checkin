@@ -1,7 +1,7 @@
-// Pure helpers for the multi-select household enrollment flow on
-// programs/[id]/page.tsx. Extracted so the money-path logic — 409-as-success
+// Pure helpers for the multi-select household enrollment flow in
+// useProgramEnrollment.ts. Kept apart so the money-path logic — 409-as-success
 // idempotency, per-member error aggregation, and the Shopify cart assembly —
-// is unit-testable without rendering the page. The page imports both; tests in
+// is unit-testable without rendering the page. The hook imports them; tests in
 // __tests__/enroll.test.ts exercise them directly.
 
 export type EnrollOutcome = {
