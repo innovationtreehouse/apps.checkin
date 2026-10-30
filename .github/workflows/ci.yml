@@ -701,6 +701,7 @@ jobs:
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
           npm run typecheck -w qbo-refresher-function
+          npm run typecheck -w gmail-refresher-function
 
       # Packages share checkin-app's root eslint.config.mjs (one rule set).
       - name: Lint packages

@@ -245,6 +245,12 @@ jobs:
         with:
           environment: dev
 
+      # The Gmail token refresher Lambda, on the same terms as qbo-refresher.
+      - name: Deploy gmail-refresher (dev)
+        uses: ./.github/actions/deploy-gmail-refresher
+        with:
+          environment: dev
+
       - name: Report result on the PR
         if: always()
         env:
