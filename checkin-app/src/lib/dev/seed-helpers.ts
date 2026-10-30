@@ -1,6 +1,8 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { addHouseholdLead } from "@/lib/household/leads";
-import { setRoleFlag, type RoleFlag } from "@/lib/roles";
+import { KEY_VOLUNTEER_GATED_FLAGS, setRoleFlag, type RoleFlag } from "@/lib/roles";
+import { systemActor } from "@/lib/auditActor";
+import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
 import { programYearsTouched } from "@/lib/programYear";
@@ -33,8 +35,26 @@ function yearsAgo(years: number): Date {
 // System bypass: dev seed fixtures are the trusted source of their own grants — there is
 // no requesting user's authority to check, so this always passes a system actor (the
 // last-board-member guard still applies inside setRoleFlag; only the matrix is skipped).
+// A role only a Key Volunteer can hold makes the person a signed Key Volunteer first.
 async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<void> {
+    if (KEY_VOLUNTEER_GATED_FLAGS.includes(flag)) await seedSignedKeyVolunteer(prisma, personId);
     await setRoleFlag(prisma, personId, flag, true, { system: "system:dev-seed" });
+}
+
+/**
+ * Gives a person KEY_VOLUNTEER and a Key Volunteer Agreement signed at the current
+ * version, recorded with no Zoho request. Idempotent.
+ */
+export async function seedSignedKeyVolunteer(prisma: Db, personId: number): Promise<void> {
+    await setRoleFlag(prisma, personId, "isKeyVolunteer", true, { system: "system:dev-seed" });
+    if (await hasSignedCurrentKva(prisma, personId)) return;
+    const open = (await findOpenKva(prisma, personId))
+        ?? (await createKva(prisma, personId, await currentKvaVersion(prisma), systemActor("system:dev-seed")));
+    const signedAt = new Date();
+    await prisma.orgMembershipProcess.update({
+        where: { id: open.id },
+        data: { status: "ACTIVE", contractSignedAt: signedAt, stageEnteredAt: signedAt },
+    });
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import RolesPage from "../page";
 
 beforeEach(() => resetRtl());
 
-const people = [
+const people: Record<string, unknown>[] = [
     { id: 1, name: "Ann Admin", email: "ann@example.com", isYouth: false, isSysadmin: true, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false },
     { id: 2, name: "Bob Board", email: "bob@example.com", isYouth: false, isSysadmin: false, isBoardMember: true, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false },
 ];
@@ -34,7 +34,7 @@ describe("RolesPage — holders-first roles editor", () => {
 
     it("person-picker opens the edit modal for the picked person, and a save updates the group", async () => {
         setSession({ id: 99, isBoardMember: true });
-        const cara = { id: 3, name: "Cara Candidate", email: "cara@example.com", isSysadmin: false, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false };
+        const cara = { id: 3, name: "Cara Candidate", email: "cara@example.com", isYouth: false, isSysadmin: false, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false, isKeyVolunteer: true, kvaSignedCurrent: true };
         const getFetch = mockFetchJson({ "/api/roles": { people }, "/api/people/search": { people: [cara] } });
         renderWithProviders(<RolesPage />);
         await screen.findByText("Ann Admin");
@@ -47,11 +47,11 @@ describe("RolesPage — holders-first roles editor", () => {
 
         // Route the PATCH before triggering it — modals.openConfirmModal is mocked to
         // auto-confirm synchronously from inside the Save click handler.
-        const patchFetch = jest.fn(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }),
-        }));
+        const patchFetch = jest.fn(async () => {
+            // The page refetches /api/roles after a save; it now lists Cara.
+            people.push({ ...cara, isKeyholder: true });
+            return { ok: true, status: 200, json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }) };
+        });
         global.fetch = ((...args: Parameters<typeof fetch>) => {
             const init = args[1] as RequestInit | undefined;
             if (init?.method === "PATCH") return patchFetch();

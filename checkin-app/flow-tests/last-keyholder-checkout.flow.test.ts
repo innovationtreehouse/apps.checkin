@@ -81,6 +81,19 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         otherId = other.personaId;
         childId = (await loginAs("child.family@example.com")).personaId;
 
+        // Keyholder goes only to a Key Volunteer who has signed the agreement: grant
+        // the role, record the agreement signed by hand, then grant Keyholder.
+        const volunteer = await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyVolunteer: true }) });
+        expect(volunteer.status).toBe(200);
+        const roles = await api<{ people: { id: number; kvaOpenProcessId: number | null }[] }>(board, "/api/roles");
+        const row = roles.json.people.find((p) => p.id === leadMemberId);
+        if (row?.kvaOpenProcessId) {
+            const signed = await api(board, "/api/membership-ops/applications/external", {
+                method: "POST",
+                body: JSON.stringify({ processId: row.kvaOpenProcessId, action: "mark-contract" }),
+            });
+            expect(signed.status).toBe(200);
+        }
         const grant = await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyholder: true }) });
         expect(grant.status).toBe(200);
     });
@@ -89,7 +102,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
 
     afterAll(async () => {
         await emptyBuilding();
-        await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyholder: false }) });
+        await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyholder: false, isKeyVolunteer: false }) });
     });
 
     it("only a badge at the door opens the building; a keyholder inside can check in someone without their badge", async () => {

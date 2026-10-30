@@ -12,6 +12,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
+import { KeyVolunteerAgreementCard } from "@/components/admin/KeyVolunteerAgreementCard";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -24,6 +25,7 @@ interface Settings {
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
+  keyVolunteerAgreementVersion: number;
 }
 
 // Next occurrence (>= now) of the stored boundary's month/day, as a label.
@@ -68,6 +70,7 @@ export default function MembershipSettingsPage() {
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
+  const [kvaVersion, setKvaVersion] = useState(1);
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
   const load = useCallback(() => fetch("/api/settings/membership")
@@ -95,6 +98,7 @@ export default function MembershipSettingsPage() {
         setDiscountCode(snap.discountCode);
         setSigningTarget(snap.signingTarget);
         setReleasedLibraries(settings.releasedLibraries ?? []);
+        setKvaVersion(settings.keyVolunteerAgreementVersion ?? 1);
         setInitial(snap);
       }
     })
@@ -361,6 +365,8 @@ export default function MembershipSettingsPage() {
           </Card>
 
           {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
+
+          {isBoardMember && <KeyVolunteerAgreementCard key={kvaVersion} initialVersion={kvaVersion} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

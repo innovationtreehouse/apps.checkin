@@ -239,7 +239,6 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | RB2 | Role: **Finance** | CREATE | DECISION | S | ? | B | #1314 (open) |
 | RB3 | Role: **Operations (Ops)** | CREATE | DECISION | S | ? | B | #1315 (open) |
 | RB4 | Role: **Catalog Manager** | CREATE | DECISION | S | ? | B | #1316 (open) |
-| RB5 | Role: **Key Volunteer** (non-RBAC; assignment → triggers contract signing) | CREATE | NEEDS-DESIGN | M | ? | B | #1317 (open) |
 | RB6 | Role: **Assistant Lead** (attendance/roster + move meetings; NOT settings/pricing/enrollment). NOTE (PR #963 interview): the PL4 EC-access re-cut **needs assistant-lead modeled** (it's an intended grantee alongside lead + core-vol) — currently unbuilt | CREATE | NEEDS-DESIGN | M | ? | C,D2 | #437-ref |
 | RB7 | **Admin role ambiguity** 🔴 ("admin" = isSysadmin some files, +isBoardMember others) — resolve, security-sensitive | ENHANCE | NEEDS-DESIGN | M | ? | C | #1318 (open) |
 | RB8 | Declarative **row-visibility** enforcement (query-side), complements field-tier stripping (has shipped real leaks). PARTIAL relief merged (#957: stops raw-row echoes on household **write** routes + lead-gates renewal) — a slice of the leak class; the broad declarative query-side enforcement remains | ENHANCE | NEEDS-DESIGN | L | ? | C,F,merged | #1134 (open) |
@@ -322,6 +321,8 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 | **M9 — Corporate / Org-Partner membership** | Not needed in a real timeframe (Q33). | Q33 |
 
 ## Dropped — confirmed built (not backlog)
+
+**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer, Keyholder and Finance. Rules in `docs/rules/membership.md` § Key Volunteers.
 
 **RB19** — pentest email-enumeration oracle: verified **already closed / not exploitable** (fix-chip made no code change, 2026-07-21). Dropped.
 

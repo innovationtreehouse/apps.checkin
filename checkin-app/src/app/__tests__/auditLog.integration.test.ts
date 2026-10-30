@@ -345,7 +345,7 @@ describe('AuditLog Integration Tests', () => {
 
         const req = new Request('http://localhost:4000/api/roles', {
             method: 'PATCH',
-            body: JSON.stringify({ targetUserId: target.id, isKeyholder: true }),
+            body: JSON.stringify({ targetUserId: target.id, isOperations: true }),
         });
 
         const res = await updateRoles(req as never);
@@ -356,7 +356,7 @@ describe('AuditLog Integration Tests', () => {
         });
         expect(logs).toHaveLength(1);
         expect(logs[0].actorId).toBe(testAdminId);
-        expect((logs[0].newData as { isKeyholder?: boolean }).isKeyholder).toBe(true);
+        expect((logs[0].newData as { isOperations?: boolean }).isOperations).toBe(true);
     });
 
     it('participant merge (POST /admin/participants/merge) writes one AuditLog tombstoning the merged id', async () => {

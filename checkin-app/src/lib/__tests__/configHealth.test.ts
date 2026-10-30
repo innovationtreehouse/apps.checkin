@@ -47,6 +47,8 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["zoho-esign"].detail).toContain("ZOHO_CLIENT_ID");
         expect(c["agreement-pdf-s3"].ok).toBe(false);
         expect(c["agreement-pdf-s3"].detail).toContain("AGREEMENT_PDF_S3_BUCKET");
+        expect(c["kva-pdf-s3"].ok).toBe(false);
+        expect(c["kva-pdf-s3"].detail).toContain("KVA_PDF_S3_KEY");
         expect(c["zoho-webhook-secret"].ok).toBe(false);
         expect(c["zoho-webhook-secret"].detail).toContain("ZOHO_WEBHOOK_SECRET");
         expect(c["resend-email"].ok).toBe(false);
@@ -55,7 +57,7 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["s-read-trigger"].detail).toContain("S_READ_TRIGGER_FUNCTION");
         expect(c["s-read-mirror"].ok).toBe(false);
         expect(c["s-read-mirror"].detail).toContain("SHOPIFY_READ_DB");
-        expect(openConfigIssues(checks)).toBe(6);
+        expect(openConfigIssues(checks)).toBe(7);
     });
 });
 
