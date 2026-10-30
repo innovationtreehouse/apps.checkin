@@ -1141,7 +1141,7 @@ model Program {
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
-// reads it yet). See docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
+// reads it yet). See docs/in-design/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
 // The offering columns are mirrored here so a later phase can repoint the child
 // FKs (programId → instanceId) as a pure RENAME off the id-aliased backfill.
 // ponytail: two offering columns the design lists are deliberately deferred to a

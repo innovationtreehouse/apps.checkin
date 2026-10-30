@@ -196,7 +196,7 @@ effectiveOrgMemberOnly = program.orgMemberOnly || (instance.orgMemberOnly ?? fal
 
 ## 4. Data migration
 
-The app is live; every step runs against real rows and follows `checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`: expand first, cut over every reader and writer, contract in a later release, hand-written SQL, `BEGIN;`/`COMMIT;` (CI-linted for new migrations).
+The app is live; every step runs against real rows and follows `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`: expand first, cut over every reader and writer, contract in a later release, hand-written SQL, `BEGIN;`/`COMMIT;` (CI-linted for new migrations).
 
 **Id-aliasing is kept; the RENAME is not.** P1 made `instance.id = program.id` for every existing program, so a child's `instanceId` equals its `programId`. The earlier draft used that to turn the child FK move into `ALTER TABLE … RENAME COLUMN programId TO instanceId`. Rule 3 forbids that: old tasks in the drain window still read and write `programId`, so a rename of a column old code touches is a contract step, and the code that reads `instanceId` cannot ship before the column exists. The child move is therefore expand → cut over → contract: add `instanceId`, fill it by copying `programId` (a straight copy, thanks to the alias), dual-write, move readers, then drop `programId` and swap the composite PK to `[instanceId, personId]` in P5.
 
