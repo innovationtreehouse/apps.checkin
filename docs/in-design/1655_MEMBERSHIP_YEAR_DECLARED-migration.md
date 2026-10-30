@@ -78,8 +78,9 @@ Shopify products.
 
 - **Files:**
   - `checkin-app/src/lib/membership/payment.ts`: `settle` takes `appliesToYear:
-    number | null` and writes it in the same update as `paidAt` on the move out of
-    `PENDING_PAYMENT`; the `BLOCKED` branch writes none. `activateByProcessId`
+    number | null` and writes it in the same update as `paidAt`, on the move out of
+    `PENDING_PAYMENT` and on the `BLOCKED` branch, because a board reset and
+    clearance can activate a paid `BLOCKED` row. `activateByProcessId`
     takes the year instead of `hasMembershipItem` (no year means no membership
     item). `certifyPaymentPlan` takes an optional year and records it; without
     one it records the live year
@@ -153,8 +154,9 @@ Shopify products.
   list moves.
 - **Migration safety:** no schema change. Before merging, run in production: count
   the paid `INITIAL`/`RENEWAL` rows with no year whose `stageEnteredAt` is inside
-  the live year's window. It must be zero, or those households lose coverage at
-  deploy.
+  the live year's window, plus the paid `BLOCKED` rows with no year at any date. PR 3
+  does not fill the `BLOCKED` rows, and a reset and clearance would activate one with
+  no year. The count must be zero, or those households lose coverage.
 - **Blocked on:** PR 3 run in production and the count above.
 
 ### PR 5: grant buttons name their year [app]

@@ -133,7 +133,8 @@ export type ActivateOutcome =
  * - Any other paid order — duplicate, after certify, after close, before payment
  *   was due — records nothing and returns `nothing_due`.
  *
- * The move out of PENDING_PAYMENT records the membership year the settlement bought.
+ * Recording a payment records the membership year it bought, on BLOCKED too: a
+ * board reset and clearance can still activate that row.
  */
 async function settle(
     processId: number,
@@ -184,7 +185,7 @@ async function settle(
             // Stays BLOCKED (stageEnteredAt untouched); refund needed.
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("BLOCKED"), paidAt: null },
-                data: { paidAt: now, ...payMeta },
+                data: { paidAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta },
             });
             if (count === 0) return { outcome: "nothing_due" as const };
             await tx.auditLog.create({
