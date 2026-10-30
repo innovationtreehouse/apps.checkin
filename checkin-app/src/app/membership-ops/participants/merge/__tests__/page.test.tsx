@@ -80,6 +80,39 @@ describe("membership-ops/participants/merge page", () => {
     expect(screen.getByText("Sam Three", { exact: false })).toBeInTheDocument();
   });
 
+  describe("background-check notice in the preview", () => {
+    async function openPreview(bgNotice: unknown) {
+      setSession({ id: 1, isSysadmin: true });
+      mockFetchJson({
+        "/api/membership-ops/participants/merge/analyze": { participants: [participantA, participantB], bgNotice },
+        "/api/people/search?q=Alice": { people: [participantA] },
+        "/api/people/search?q=Bob": { people: [participantB] },
+      });
+      renderWithProviders(<MergeParticipants />);
+      await selectBoth();
+      fireEvent.click(await screen.findByRole("button", { name: "Proceed to Preview" }));
+      await screen.findByText("Preview & Confirm Merge");
+    }
+
+    it("names the date for the kept record's direction, without blocking", async () => {
+      await openPreview({ aAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: false }, bAsKeeper: null });
+      const notice = screen.getByRole("alert");
+      expect(notice).toHaveTextContent("3/5/2026");
+      expect(notice).not.toHaveTextContent("may advance");
+      expect(screen.getByRole("button", { name: /Confirm Merge/ })).toBeEnabled();
+    });
+
+    it("adds the application outcome when the household's check becomes valid", async () => {
+      await openPreview({ aAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: true }, bAsKeeper: null });
+      expect(screen.getByRole("alert")).toHaveTextContent("an application waiting on the check may advance, and a paid one may activate the household");
+    });
+
+    it("shows nothing when the kept record's date stands", async () => {
+      await openPreview({ aAsKeeper: null, bAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: true } });
+      expect(screen.queryByText("Background-check date will change")).not.toBeInTheDocument();
+    });
+  });
+
   it("previews and confirms the merge", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockRoutes();

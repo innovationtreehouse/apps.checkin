@@ -186,14 +186,16 @@ export function resolveKeeperUpdate(keep: MergeFields, merge: MergeFields, choic
     // Compliance dates: always take the newer one. Same human — an older check
     // is never the right survivor. Never a radio.
     for (const field of ['lastBackgroundCheck', 'lastWaiverSign'] as const) {
-        const keepVal = keep[field];
-        const mergeVal = merge[field];
-        if (mergeVal != null && (keepVal == null || mergeVal.getTime() > keepVal.getTime())) {
-            data[field] = mergeVal;
-        }
+        const carried = carriedComplianceDate(keep[field], merge[field]);
+        if (carried) data[field] = carried;
     }
 
     return data;
+}
+
+/** The merge side's compliance date when the keeper would adopt it, else null. */
+export function carriedComplianceDate(keepVal: Date | null, mergeVal: Date | null): Date | null {
+    return mergeVal != null && (keepVal == null || mergeVal.getTime() > keepVal.getTime()) ? mergeVal : null;
 }
 
 /** The household-lead, membership and role refusals, in that order, or null. */
