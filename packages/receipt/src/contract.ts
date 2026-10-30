@@ -239,10 +239,14 @@ export interface MailHoldCeilingEvent {
 /** Mail the run did not fully read that will be out of the window by the next daily run. */
 export interface MailAgingOutEvent {
   orgId: string;
-  /** Messages at risk: partly read or failed ones, and every message the run did not reach. One that cannot be fetched counts, since its age is unknown. */
+  /** Messages at risk: partly read or failed ones, and every message a run did not reach. One that cannot be fetched counts, since its age is unknown. */
   messages: number;
   /** When the oldest dated at-risk message arrived; null when none could be dated. */
   oldestReceivedAt: Date | null;
+}
+
+export interface MailListingFailedEvent {
+  orgId: string;
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
@@ -269,6 +273,7 @@ export interface ReceiptReplies {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
+  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
 }
 
 export interface ReceiptConfig {

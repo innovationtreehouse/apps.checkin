@@ -153,6 +153,13 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(html).toContain('/receipts/mail');
     });
 
+    it('alerts finance when the mailbox cannot be listed', async () => {
+        await boundConfig().alerts?.mailListingFailed({ orgId: 'org' });
+        const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(subject).toMatch(/could not be read/);
+        expect(html).toContain('/receipts/mail');
+    });
+
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
         const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
