@@ -12,12 +12,19 @@ interface MailItem {
   senderAddress: string;
   status: string;
   holdReason: string | null;
+  dmarcVerdict: string | null;
   mimeType: string;
 }
 
 const HOLD_REASONS: Record<string, string> = {
   unverified_sender: "Sender could not be verified: the mail may not be from this address",
   not_a_submitter: "Verified sender, but no one who may submit receipts uses this address",
+};
+
+const DMARC_VERDICTS: Record<string, string> = {
+  pass: "Sender check: passed",
+  fail: "Sender check: failed",
+  none: "Sender check: the sender's domain publishes no DMARC record",
 };
 
 interface IgnoredFile {
@@ -87,6 +94,7 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
           <Text c="dimmed">{new Date(item.receivedAt).toLocaleString()}</Text>
         </Group>
         {item.status === "held" && <Text size="sm">{HOLD_REASONS[item.holdReason ?? ""] ?? "Reason not recorded"}</Text>}
+        <Text size="sm">{DMARC_VERDICTS[item.dmarcVerdict ?? ""] ?? "Sender check: not recorded"}</Text>
         <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
         {item.status === "deferred" && (
           <Group>

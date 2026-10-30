@@ -1,4 +1,4 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../db";
 import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
@@ -219,5 +219,42 @@ describeDb("mailbox ignore list", () => {
     expect(await mailQueueService.listIgnored()).toEqual([]);
     expect((await ignoreRows())[1]).toMatchObject({ receiptId: null, userId: FINANCE.id, action: "file_unignored", valueBefore: "logo", valueAfter: "newsletter logo" });
     await expect(mailQueueService.removeIgnored(entry.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  describe("assignedPassingItem", () => {
+    const FROM = "stranger@elsewhere.test";
+    const assignedTo = async (email: string, verdict: string | null = "pass", senderAddress = FROM) => {
+      const id = await holdItem("held", senderAddress);
+      await db.receiptMailItem.update({ where: { id }, data: { dmarcVerdict: verdict } });
+      await mailQueueService.assign(id, { email });
+      return id;
+    };
+
+    it("finds a passing item from the address assigned to the person", async () => {
+      const id = await assignedTo("alice@example.org");
+      expect(await mailQueueService.assignedPassingItem(FROM, ALICE.id)).toEqual({ id });
+    });
+
+    it("refuses another person, another address, and a held item", async () => {
+      await assignedTo("alice@example.org");
+      const held = await holdItem();
+      await db.receiptMailItem.update({ where: { id: held }, data: { dmarcVerdict: "pass" } });
+      expect(await mailQueueService.assignedPassingItem(FROM, BOB.id)).toBeNull();
+      expect(await mailQueueService.assignedPassingItem("other@elsewhere.test", ALICE.id)).toBeNull();
+    });
+
+    it.each(["fail", "none", null])("refuses a %s verdict", async (verdict) => {
+      await assignedTo("alice@example.org", verdict);
+      expect(await mailQueueService.assignedPassingItem(FROM, ALICE.id)).toBeNull();
+    });
+
+    it("refuses a discarded receipt, but finds a later live one", async () => {
+      const first = await assignedTo("alice@example.org");
+      const { receiptId } = await db.receiptMailItem.findUniqueOrThrow({ where: { id: first } });
+      await db.receiptDetail.updateMany({ where: { receipt: { id: receiptId ?? "" } }, data: { state: "discarded" } });
+      expect(await mailQueueService.assignedPassingItem(FROM, ALICE.id)).toBeNull();
+      const second = await assignedTo("alice@example.org");
+      expect(await mailQueueService.assignedPassingItem(FROM, ALICE.id)).toEqual({ id: second });
+    });
   });
 });

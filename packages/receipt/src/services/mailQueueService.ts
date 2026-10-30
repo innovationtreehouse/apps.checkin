@@ -8,12 +8,12 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrg, ports, requireActor } from "../runtime";
-import { intakeDeferred, STORED_STATUSES } from "./mailIntake";
+import { intakeDeferred, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { closeUnreplyable } from "./mailReplies";
 import { ServiceError } from "@checkin/component-kit";
 
-const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, mimeType: true, receiptId: true } as const;
+const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true } as const;
 
 const AssignSchema = z.union([
   z.object({ email: z.string().trim().min(1).max(320) }).strict(),
@@ -95,7 +95,7 @@ export const mailQueueService = {
   },
 
   /**
-   * Make the stored file a receipt uploaded by the submitter with this sign-in email, or, with
+   * Make the stored file a receipt uploaded by the submitter this email resolves to, or, with
    * `release`, make a deferred file a receipt by its own sender now, outside their daily upload
    * limit for this file only. Nobody assigns or releases a receipt to themself or their own
    * household. The item flips to `assigned` in the receipt's own insert, so a concurrent assign,
@@ -133,6 +133,28 @@ export const mailQueueService = {
       await auditClaim(tx, newId);
     }, { mailAllowance: false });
     return { ...shown, status: "assigned", receiptId };
+  },
+
+  /**
+   * An item from exactly this address that passed the sender check and became a receipt of this
+   * person's, else null. A discarded receipt does not count: discarding is how a credited person
+   * says the mail is not theirs.
+   */
+  async assignedPassingItem(address: string, personId: number): Promise<{ id: number } | null> {
+    await requireActor();
+    const orgId = (await getOrg()).id;
+    const items = await db.receiptMailItem.findMany({
+      where: { orgId, senderAddress: address, status: "assigned", dmarcVerdict: "pass" satisfies DmarcVerdict, receiptId: { not: null } },
+      select: { id: true, receiptId: true },
+      orderBy: { id: "asc" },
+    });
+    const counted = await db.receipt.findMany({
+      where: { id: { in: items.flatMap((i) => (i.receiptId ? [i.receiptId] : [])) }, orgId, uploadedByUserId: personId, details: { isNot: { state: "discarded" } } },
+      select: { id: true },
+    });
+    const ids = new Set(counted.map((r) => r.id));
+    const item = items.find((i) => i.receiptId && ids.has(i.receiptId));
+    return item ? { id: item.id } : null;
   },
 
   /**
