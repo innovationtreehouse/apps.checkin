@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Alert, Box, Button, Card, Checkbox, Group, NumberInput, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { PROGRAM_OPS_ROLES } from '@/lib/nav/sections/programOps';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
@@ -18,7 +19,7 @@ type ParticipantOption = {
 };
 
 export default function CreateProgramPage() {
-  const { user, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember'], { redirectTo: '/system-status' });
+  const { user, ready, loading: authLoading } = useRequireRole(PROGRAM_OPS_ROLES, { redirectTo: '/system-status' });
   const router = useRouter();
 
   const [name, setName] = useState("");

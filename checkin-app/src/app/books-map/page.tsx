@@ -6,6 +6,7 @@ import { notifications } from "@mantine/notifications";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 interface ClassRow {
@@ -52,7 +53,7 @@ function choices(options: Option[] | null, saved: string | null) {
 }
 
 export default function BooksMapPage() {
-  const { user, loading: authLoading, ready } = useRequireRole(["isFinance", "isBoardMember"]);
+  const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
 
   const [classRows, setClassRows] = useState<ClassRow[]>([]);

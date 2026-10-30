@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Badge, Group, Stack, Table, Text, Title, Tooltip } from "@mantine/core";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { summarizeResidue, type Disposition } from "@/lib/person/tombstoneResidue";
 
@@ -34,7 +35,7 @@ const DISPOSITION_TOOLTIP: Record<Disposition, string> = {
 };
 
 export default function TombstoneCensus() {
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const [bag, setBag] = useState<CensusBag | null>(null);
   const [error, setError] = useState<string | null>(null);
 

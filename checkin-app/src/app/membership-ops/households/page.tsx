@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -36,7 +37,7 @@ const fmtDate = (s?: string | null) =>
   s ? formatDateOnly(s, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
 export default function AdminHouseholdsPage() {
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { user: me, ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
   // would certify — coming-year always, current-year at PENDING_PAYMENT — is hidden
   // from anyone else. A current-year Grant that only opens an application stays.

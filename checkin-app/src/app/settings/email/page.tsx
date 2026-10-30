@@ -6,6 +6,7 @@ import { notifications } from "@mantine/notifications";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
 
@@ -25,7 +26,7 @@ export default function EmailSettingsPage() {
   // The sender identity is editable by board + sysadmin (same as the /settings layout
   // admits). Gate the page client-side and redirect anyone else, rather than letting them
   // load the form and only discover the 403 on save.
-  const { authorized, ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { authorized, ready, loading: authLoading } = useRequireRole(SETTINGS_ADMIN_ROLES);
 
   const [emailFrom, setEmailFrom] = useState("");
   const [emailReplyTo, setEmailReplyTo] = useState("");

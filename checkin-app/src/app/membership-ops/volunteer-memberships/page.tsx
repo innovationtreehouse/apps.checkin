@@ -5,6 +5,7 @@ import { Badge, Button, Card, Chip, Group, Stack, Switch, Text, TextInput, Title
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { notifications } from "@mantine/notifications";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
@@ -36,7 +37,7 @@ const memberSinceText = (iso: string | null) => (iso ? formatDateOnly(iso) : "â€
 type AddressHolder = { personName: string; householdId: number; householdName: string; hasMembership: boolean; signInVerified: boolean };
 
 export default function VolunteerMembershipsPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   // A designation's createdAt is an instant, so it renders in the org's display zone.
   const { formatDate } = useOrgTime();
   const [rows, setRows] = useState<VolunteerRow[]>([]);
