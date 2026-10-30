@@ -370,6 +370,10 @@ model Household {
   /// @sensitivity:pii
   intakeNotes String?
 
+  /// When the family left the organisation permanently; null means active.
+  /// @sensitivity:public
+  archivedAt DateTime?
+
   householdMembers  Person[]
   orgMembership     OrgMembership?
   trustedAdults     TrustedAdult[]
