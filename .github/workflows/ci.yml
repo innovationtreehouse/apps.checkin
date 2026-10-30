@@ -479,10 +479,17 @@ jobs:
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no coverage to gate; reporting success."
 
-      # No checkout: nothing here reads repo source, only the two coverage
-      # artifacts (below) and node/npx. That also means no `cache: npm` on
-      # setup-node — that cache needs a lockfile to hash and none is checked
-      # out in this job.
+      # Only the coverage floor is checked out: nothing else here reads repo
+      # source, and a repo-root package.json or .nycrc would configure nyc. With
+      # no lockfile present there is no `cache: npm` on setup-node.
+      - name: Check out the coverage floor
+        if: needs.changes.outputs.app == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
+          sparse-checkout: checkin-app/coverage-floor.json
+          sparse-checkout-cone-mode: false
+
       - name: Setup Node.js
         if: needs.changes.outputs.app == 'true'
         uses: actions/setup-node@v5
@@ -558,18 +565,8 @@ jobs:
           # nyc's internal path handling (confirmed by hand against nyc 18).
           npx -y nyc report --temp-dir merged --reporter=json-summary --reporter=text-summary --report-dir merged-report
 
-      # Same floors as checkin-app/jest.config.js `coverageThreshold.global`
-      # (lines 85 / branches 75 / functions 75 — that object has no
-      # `statements` entry, so none here either). MUST-MATCH: change both
-      # together, or this gate silently drifts from what jest.config.js
-      # actually declares.
-      #
-      # Not derived at runtime: jest.config.js's export is `module.exports =
-      # async () => {...}`, composed through next/jest (loads next.config.js
-      # / .env, requires `next` to be installed) — extracting the numbers
-      # that way would mean checking out the repo and running `npm ci` in
-      # this job, which defeats the point of a fast, checkout-less gate.
-      # Hardcoded instead and read straight from that file above.
+      # checkin-app/coverage-floor.json is also jest.config.js's coverageThreshold.
+      # It has no `statements` entry, so none here either.
       - name: Enforce merged coverage threshold
         if: needs.changes.outputs.app == 'true'
         run: |
@@ -583,7 +580,11 @@ jobs:
             echo "::error::merged coverage contains zero lines — path mismatch between the test jobs' workspaces and this gate; refusing to pass an empty report."
             exit 1
           fi
-          npx -y nyc check-coverage --temp-dir merged --lines 85 --branches 75 --functions 75
+          # jq -e fails the step on a missing key: nyc given no floor would pass anything.
+          LINES=$(jq -e .lines checkin-app/coverage-floor.json)
+          BRANCHES=$(jq -e .branches checkin-app/coverage-floor.json)
+          FUNCTIONS=$(jq -e .functions checkin-app/coverage-floor.json)
+          npx -y nyc check-coverage --temp-dir merged --lines "$LINES" --branches "$BRANCHES" --functions "$FUNCTIONS"
 
       # Coverage summary on the run's own Summary page — reuses the old `test`
       # job's script, pointed at the merged report instead of a single tier's
@@ -597,8 +598,7 @@ jobs:
             const path = "merged-report/coverage-summary.json";
             if (!fs.existsSync(path)) { console.log("No merged coverage-summary.json — the merge/report step likely failed before this ran."); process.exit(0); }
             const t = JSON.parse(fs.readFileSync(path, "utf8")).total;
-            // MUST-MATCH checkin-app/jest.config.js coverageThreshold.global — see the enforcement step above.
-            const floor = { lines: 85, branches: 75, functions: 75 };
+            const floor = JSON.parse(fs.readFileSync("checkin-app/coverage-floor.json", "utf8"));
             const mark = (k) => (floor[k] === undefined ? "" : t[k].pct >= floor[k] ? " ✅" : " ❌");
             const lines = [
               "### Coverage (merged unit + integration)",
@@ -608,7 +608,7 @@ jobs:
                 (k) => `| ${k} | ${t[k].covered}/${t[k].total} | ${t[k].pct}%${mark(k)} |`
               ),
               "",
-              "Gate (jest.config.js coverageThreshold): lines ≥85%, branches ≥75%, functions ≥75%.",
+              `Gate (checkin-app/coverage-floor.json): lines ≥${floor.lines}%, branches ≥${floor.branches}%, functions ≥${floor.functions}%.`,
             ];
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
           '
@@ -695,13 +695,7 @@ jobs:
       # can't merge green. Each imports a generated client, generated above.
       - name: Typecheck functions
         if: needs.changes.outputs.packages == 'true'
-        run: |
-          npm run typecheck -w s-read-function
-          npm run typecheck -w s-replay-function
-          npm run typecheck -w monitoring-relay-function
-          npm run typecheck -w monitoring-watchdog-function
-          npm run typecheck -w qbo-refresher-function
-          npm run typecheck -w gmail-refresher-function
+        run: npm run typecheck:functions
 
       # Packages share checkin-app's root eslint.config.mjs (one rule set).
       - name: Lint packages

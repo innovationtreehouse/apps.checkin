@@ -9,7 +9,8 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
-    }
+    },
+    "./vitest-plugin": "./src/vitestPlugin.mjs"
   },
   "scripts": {
     "build": "tsc",
