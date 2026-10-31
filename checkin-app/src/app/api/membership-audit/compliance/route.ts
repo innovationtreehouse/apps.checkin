@@ -13,13 +13,12 @@ export const dynamic = "force-dynamic";
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
 /**
- * The people merged INTO this survivor, from whichever record still holds them
- * (§6, #1456 phase 2b).
+ * The people merged INTO this survivor, from whichever record still holds them.
  *
- * The PersonMerge archive wins over the tombstone `Person` row: the archive is
- * the record that survives 2b-3's delete, and while both exist they say the same
- * thing. `mergedFrom` then covers only merges that predate the archive, keyed by
- * id so the same merge is never counted twice.
+ * The PersonMerge archive wins over the tombstone `Person` row: the archive
+ * outlives a deleted tombstone, and while both exist they say the same thing.
+ * `mergedFrom` then covers only merges with no archive row, keyed by id so the
+ * same merge is never counted twice.
  */
 function mergeSourceIdentities(s: {
     mergedFrom: { id: number; name: string | null; lastBackgroundCheck: Date | null }[];
@@ -59,9 +58,9 @@ function mergeSourceIdentities(s: {
  * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
  * of an ACTIVE member household.
  *
- * And two lists of background-check dates that trace to no named person (#1260):
- *   blanketStamped          — households cleared before per-adult subjects existed,
- *                             where every lead was stamped. One-time cleanup; narrow
+ * And two lists of background-check dates that trace to no named person:
+ *   blanketStamped          — households cleared with no per-adult subject, where
+ *                             every lead was stamped. One-time cleanup; narrow
  *                             it with ?bgClearedSince=YYYY-MM-DD.
  *   mergeInheritedBgChecks  — survivors of a person merge who took the merged-away
  *                             record's date. A standing list: it is how the board
@@ -173,8 +172,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         }
     }
 
-    // 5. Blanket-stamped background checks (#1260). Before per-adult subjects, clearing
-    //    a household check stamped EVERY lead from the same `new Date()` that set the
+    // 5. Blanket-stamped background checks: a household clearance with no per-adult
+    //    subject, where EVERY lead carries the same `new Date()` that set the
     //    process's bgClearedAt. They are compared by UTC DAY, not instant:
     //    `Person.lastBackgroundCheck` is `@db.Date` and truncates to midnight, while
     //    `bgClearedAt` keeps its time, so an equality join matches nothing at all.
@@ -262,12 +261,10 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    standing: every merge can add a row, and it is how the board spots a merge of
     //    two different people.
     //
-    //    Both the predicate and `fromName` used to come from the tombstone Person
-    //    row, which #1456 phase 2b-3 deletes — taking this list's answer with it.
-    //    So the PersonMerge archive is the preferred source and the tombstone is
-    //    the fallback, for as long as both exist: merges from before the archive
-    //    shipped have only a tombstone, merges after 2b-3 have only an archive, and
-    //    right now a merge writes both. `mergedArchive: { some: {} }` is unfiltered
+    //    The PersonMerge archive is the preferred source for both the predicate and
+    //    `fromName`, and the tombstone Person row is the fallback: an older merge may
+    //    have only a tombstone, a deleted tombstone leaves only the archive, and a
+    //    merge writes both. `mergedArchive: { some: {} }` is unfiltered
     //    because the date lives inside a Json blob — the match happens below, over
     //    a handful of rows.
     const survivors = await prisma.person.findMany({

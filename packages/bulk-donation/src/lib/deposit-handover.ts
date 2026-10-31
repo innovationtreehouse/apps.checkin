@@ -2,13 +2,11 @@
 // disbursement's deposit to income and re-sends any income does not know.
 import { DisbursementPayloadV1 } from "@checkin/donations";
 import { sumCents } from "@checkin/money";
+import { TEST_PREFIX } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { DonationDepositLine, DonationExpectedDeposit, IncomeDeposits } from "../contract";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { getIncomeDeposits } from "../runtime";
-
-/** Outside prod only these disbursements are handed over; prod never hands one over. */
-export const TEST_DISBURSEMENT_PREFIX = "TEST-";
 
 /** Disbursement ids per depositStatus read. */
 const STATUS_BATCH = 200;
@@ -16,7 +14,8 @@ const STATUS_BATCH = 200;
 const ROLE = { donation: "BENEVITY_DONATIONS", match: "BENEVITY_MATCHES", fees: "BENEVITY_FEES" } as const;
 const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches", fees: "Benevity fees" } as const;
 
-const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_DISBURSEMENT_PREFIX) !== deposits.prod;
+/** Outside prod only a TEST_PREFIX disbursement is handed over; prod never hands one over. */
+const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
 
 /**
  * The deposit a completed disbursement should land as: one line per kind and bucket,

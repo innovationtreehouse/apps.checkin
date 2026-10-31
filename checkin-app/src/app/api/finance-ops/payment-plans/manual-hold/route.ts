@@ -39,7 +39,7 @@ export const POST = withAuth(
             // concurrent approve/deny/manual-hold that already moved it 409s
             // instead of double-stamping.
             const { count } = await prisma.programParticipant.updateMany({
-                // T3m manual-hold CAS: from-state status from the definition (#1080); held/req narrowing stays literal.
+                // Manual-hold CAS: from-state status from the definition; held/req narrowing stays literal.
                 where: { programId, personId: participantId, ...fromWhere('PENDING_HOLD_FAILED'), inventoryHeldAt: null, isPaymentPlanRequested: true },
                 data,
             });

@@ -1,6 +1,6 @@
 // What the caller may do on each expense line, and what the line waits on otherwise. Pure: the
 // page draws only these acts, so every eligibility rule an act depends on lives here.
-import { CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { APPROVABLE_STATUSES as APPROVABLE, CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import type { LineHold } from "./signoff-facts";
 
 export type LineAct = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
@@ -48,9 +48,6 @@ export interface LineActions {
 
 const SEAT_NAME: Record<Seat, string> = { SUBMITTER: "Submitter", TREASURER: "Treasurer", BOARD: "Board" };
 
-/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
-const APPROVABLE = new Set(["pending", "finance_assigned"]);
-
 /** Everyone who could take some part on the line. */
 function pool(facts: SignoffFacts): number[] {
   return [...new Set([facts.submitterId, ...facts.approvers, ...facts.finance, ...facts.board])];
@@ -84,7 +81,7 @@ function callerActs(input: LineActionsInput): LineAction[] {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
     // Choosing a bucket is open to a conflicted FINANCE holder; raising or rejecting an exception is not.
-    if (!conflicted && deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
+    if (!conflicted && deciding && !expense.reimburseeUnknown && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
       if (!conflicted) add("reject-exception", { noteRequired: true });

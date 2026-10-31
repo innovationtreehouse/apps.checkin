@@ -123,11 +123,10 @@ SELF_UPDATE_STATE_FILE = ".self_update_last_target"
 RELEASE_TAG_GLOB = "v[0-9]*"
 
 # A release is adopted only if its own kiosk.sh tracks releases too. The marker
-# is that line, in this file's sibling script. Without the gate the changeover
-# oscillates: the newest release still pulls main, so a Pi that checked it out
-# would be pulled straight back to main, and back to the release, once per poll
-# -- restarting the kiosk every time. Until a release carries the marker the
-# channel stays on main, exactly as before.
+# is that line, in this file's sibling script. Without the gate a Pi could
+# oscillate: a release whose kiosk.sh pulls main sends the Pi back to main, and
+# main sends it back to the release, once per poll -- restarting the kiosk every
+# time. While the newest release lacks the marker, the Pi follows main.
 RELEASE_CHANNEL_MARKER = "release-channel: tags"
 
 def load_config(path="config.json"):
@@ -1519,7 +1518,7 @@ def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
 
 def _write_last_restart_target(remote_head, path=SELF_UPDATE_STATE_FILE):
     # True only once the sha reads back off disk; the caller must not exit
-    # on False or the next boot forgets this attempt and loops (#1616).
+    # on False or the next boot forgets this attempt and loops.
     try:
         with open(path, "w") as f:
             f.write(remote_head)

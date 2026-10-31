@@ -20,7 +20,7 @@ import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
 export const dynamic = 'force-dynamic';
 
-// Emergency contacts are their own entity now; the admin editor still works in
+// Emergency contacts are their own entity; the admin editor works in
 // terms of a single primary contact, so map the household's primary valid contact
 // back onto the flat emergencyContactName/Phone shape the client expects. Include
 // it inline (below) with this where/order so Prisma infers the result type.

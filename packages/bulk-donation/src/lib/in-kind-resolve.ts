@@ -3,7 +3,7 @@
 // match look first for the app's own entry when a create may have landed. Clear answers a note.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { appKeyOf } from "@checkin/quickbooks";
+import { appKeyOf, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { recordEvent } from "../repositories/audit";
@@ -15,7 +15,6 @@ import {
   lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
-import { readCloseDate } from "./qb-gate";
 
 const qbId = z.string().trim().min(1).max(64);
 

@@ -24,6 +24,11 @@ export interface ExternalStatus {
   deepLinkUrl: string | null;
 }
 
+export interface OwnBackgroundCheck {
+  consented: boolean;
+  deepLinkUrl: string | null;
+}
+
 export interface MembershipProcess {
   id: number;
   kind: string;
@@ -39,6 +44,8 @@ export interface IntakeState {
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
   personAgreement: { id: number; started: boolean } | null;
+  /** The caller's own background check awaiting their consent, outside any household application. */
+  ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
 }
 

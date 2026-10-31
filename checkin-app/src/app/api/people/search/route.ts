@@ -20,9 +20,9 @@ export const GET = withAuth(
 
             // Roster mode: every ACTIVE member org-wide, ignoring `q`.
             // Badge display names have to disambiguate against the whole membership, not
-            // against whichever rows the search box happened to return (#1625). A mode on
-            // this route rather than a new one: `GET /api/people/search` is already on the
-            // legacy-authz baseline, so no new method key and no registry change, and the
+            // against whichever rows the search box happened to return. A mode on this
+            // route, not a route of its own: `GET /api/people/search` is on the
+            // legacy-authz baseline, so it needs no method key or registry entry, and the
             // shape here is a strict subset of what the search below already returns.
             // ponytail: unbounded — ACTIVE members only (hundreds). Paginate if that changes.
             // Roster years: the distinct membership years that have at least one
@@ -108,7 +108,7 @@ export const GET = withAuth(
                         },
                     },
                 });
-                // Ops sees `year`: Operations prints badges (#1623), so it has to see which
+                // Ops sees `year`: Operations prints badges, so it has to see which
                 // households renewed. It derives from OrgMembershipProcess.status and
                 // stageEnteredAt (both @sensitivity:internal) but exposes only the printed
                 // year string — no process row, no dates, no payment detail.

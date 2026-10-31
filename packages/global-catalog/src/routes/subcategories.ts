@@ -1,4 +1,4 @@
-/** Subcategory route factories (#1286). */
+/** Subcategory route factories. */
 import { httpError, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";

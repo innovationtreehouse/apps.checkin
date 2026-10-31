@@ -17,8 +17,8 @@ import { systemActor } from "@/lib/auditActor";
 import { specTrace } from "@/lib/specTrace";
 
 // GET is kiosk-first with distinct signature-failure semantics (403 on bad signature,
-// not 401), so it keeps its own kiosk plumbing rather than moving to withAuth. The one
-// thing it was missing — the denied-household gate — is applied inline below.
+// not 401), so it has its own kiosk plumbing instead of withAuth. The denied-household
+// gate is applied inline below.
 export async function GET(req: NextRequest) {
     try {
         // Determine caller identity. getOptionalSessionUser applies the shared
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
         // on this kiosk-tolerant route a denied member can't read counts/safety.
         const user = await getOptionalSessionUser(req);
 
-        // ops-stg ACCESS GATE (finding 2026-07-20): must run BEFORE the kiosk
+        // Staging access gate: must run BEFORE the kiosk
         // branch below. This route re-verifies kiosk auth directly via
         // verifyKioskSignature rather than through authenticateRequest — the one
         // place that happens outside the chokepoint — so without this early
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
 
         if (isAdmin) {
-            // ⚠ corner count for the door display (§2 D7): parked scans awaiting
+            // ⚠ corner count for the door display: parked scans awaiting
             // a human. An aggregate only — names and reasons stay on the panel.
             const needReview = await prisma.rawBadgeLog.count({
                 where: { reviewReason: { not: null }, reviewedAt: null },

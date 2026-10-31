@@ -1,4 +1,4 @@
-// Gmail intake (#1265 §2a): the last catch-up step of the host's daily cron. Each mailed file
+// Gmail intake: the last catch-up step of the host's daily cron. Each mailed file
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";

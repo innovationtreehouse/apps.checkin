@@ -82,13 +82,14 @@ export const orgEventConsumer = {
  * provisional row is otherwise applied only by the reconcile right after the creating commit.
  * Idempotent, since reconcile skips a provisional that already left pending. Capped.
  */
-async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; reconcileFailed: number }> {
+async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; stuck: { gtin13: string; name: string }[] }> {
   // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
   const pending = await db.inventoryProvisionalItem.findMany({
     where: { orgId, status: "pending" },
-    select: { provisionalGtin13: true },
+    select: { provisionalGtin13: true, name: true },
   });
-  if (pending.length === 0) return { reconciled: 0, reconcileFailed: 0 };
+  if (pending.length === 0) return { reconciled: 0, stuck: [] };
+  const nameByGtin = new Map(pending.map((p) => [p.provisionalGtin13, p.name]));
   const resolved = await db.inventoryProvisionalResolution.findMany({
     where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13) } },
     select: { provisionalGtin13: true },
@@ -97,17 +98,17 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   });
   const service = getServices().provisionalItemService;
   let reconciled = 0;
-  let reconcileFailed = 0;
+  const stuck: { gtin13: string; name: string }[] = [];
   for (const { provisionalGtin13 } of resolved) {
     try {
       await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
       reconciled++;
     } catch (err) {
-      reconcileFailed++;
+      stuck.push({ gtin13: provisionalGtin13, name: nameByGtin.get(provisionalGtin13) ?? "" });
       console.error(`[local-inventory/org-events] reconcile of provisional ${provisionalGtin13} failed`, err);
     }
   }
-  return { reconciled, reconcileFailed };
+  return { reconciled, stuck };
 }
 
 /**
@@ -131,9 +132,9 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
     onUnreadable: (err) => console.error("[local-inventory/org-events] catalog events could not be read", err),
   });
 
-  const reconciled = await reconcilePendingProvisionals(orgId, limit);
-  if (sweep.needsAlert || reconciled.reconcileFailed > 0) {
-    await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, reconcileFailed: reconciled.reconcileFailed });
+  const { reconciled, stuck } = await reconcilePendingProvisionals(orgId, limit);
+  if (sweep.needsAlert || stuck.length > 0) {
+    await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, stuckProvisionals: stuck });
   }
-  return { ...sweep.counts, ...reconciled, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
+  return { ...sweep.counts, reconciled, reconcileFailed: stuck.length, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
 }

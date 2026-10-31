@@ -213,8 +213,7 @@ export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrde
  * This is the reconciler's replica of the webhook's membership/program-item
  * check ("lines whose variant is one of checkin's known ids"). Lines with a null
  * variant_legacy_id (custom/deleted product, or a row synced before variant mirroring and not
- * yet backfilled) are dropped, so an EMPTY result means "no attributable variant
- * ids" — the reconciler reads that as pre-backfill and falls back to its amount gate.
+ * yet backfilled) are dropped, so an EMPTY result means the order carries no item checkin sells.
  */
 export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
     const db = await getClient();

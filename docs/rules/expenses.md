@@ -128,7 +128,7 @@ Things the app takes as true because they are handled outside it.
   Board member without a conflict signs it, after the Treasurer. Settling an
   exception without making it final adds no Board signature, because the new
   bucket's approver may still raise an exception.
-  [Decision — owner]
+  [Decision — owner ruling 2026-10-30]
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
@@ -363,7 +363,7 @@ Things the app takes as true because they are handled outside it.
   not a signature at any step and is not refused for a conflict. It does not
   stop whoever moved it, or their household, from signing a step on the
   expense.
-  [Decision — owner]
+  [Decision — owner ruling 2026-10-30]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line.

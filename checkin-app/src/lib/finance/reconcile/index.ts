@@ -31,9 +31,7 @@ import { reconcileReversals } from "./reversals";
  * Membership recovery replicates the webhook's variant-id check that the order
  * really contains the membership product: the mirror's order lines carry variant
  * ids, so recovery gates on the order containing one of checkin's known
- * membership variants — the exact set the webhook builds — not on order total.
- * (Orders synced before variant mirroring and not yet backfilled carry no line variant ids;
- * those fall back to a discount-aware membership fee amount gate — see reconcileForwardMembership.)
+ * membership variants — the exact set the webhook builds — never on order total.
  * Nothing is guessed: an attribute naming an unknown process, an ambiguous email
  * match, or an order with no membership item raises a problem for the board rather
  * than activating. One policy check rides on top of the variant gate: a

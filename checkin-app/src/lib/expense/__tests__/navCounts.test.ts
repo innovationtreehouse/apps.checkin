@@ -7,6 +7,7 @@ const mockQueueCount = jest.fn();
 jest.mock("@checkin/expense", () => ({
   getExpenseRuntime: () => ({ signoff: { bucketsApprovedBy: (id: number) => mockBuckets(id) } }),
   financeQueueActionable: () => mockQueueCount(),
+  approvalPoll: () => async () => [],
   signoffsAwaitingCount: async () => 4,
   expenseActionCounts: (p: unknown) => mockActionCounts(p),
 }));

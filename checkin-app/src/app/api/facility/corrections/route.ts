@@ -7,11 +7,11 @@ import { MAX_ROWS } from "@/lib/corrections";
 import { SYSTEM_ACTOR } from "@/lib/auditActor";
 
 /**
- * Board/sysadmin review of attendance corrections (AT12, #1258). Reads the
- * existing AuditLog trail for tableName='Visit' — nothing new is stored.
+ * Board/sysadmin review of attendance corrections. Reads the
+ * AuditLog trail for tableName='Visit' — nothing new is stored.
  * Governing rules: docs/rules/attendance-checkin.md, "The visit record".
  *
- * The bag is SYNTHESIZED, not passed through (§4):
+ * The bag is SYNTHESIZED, not passed through:
  * `oldData`/`newData` are internal-tier JSON blobs that carry personal-tier
  * Visit times inside them, and the stripper cannot see through JSON. So this
  * handler reads the blobs and rebuilds each bag entry from named fields —

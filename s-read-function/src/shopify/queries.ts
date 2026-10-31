@@ -5,10 +5,9 @@
  * `associatedOrder`, `sourceOrderTransactionId`, `associatedPayout`) and the `processed_at`
  * search filter all exist.
  *
- * CONFIRMED live (2026-07-13, first dev payouts run): ShopifyPaymentsPayoutSummary has NO
- * `refundsGross` — the gross-refunds field is named `refundsFeeGross` (sic; Shopify's naming,
- * verified against the schema docs and the live API). GraphQL rejects the ENTIRE request on an
- * unknown field. Internally we still call it refundsGrossCents, because that's what it is.
+ * ShopifyPaymentsPayoutSummary has NO `refundsGross` — the gross-refunds field is named
+ * `refundsFeeGross` (sic; Shopify's naming). GraphQL rejects the ENTIRE request on an
+ * unknown field. Internally it is refundsGrossCents, because that's what it is.
  */
 
 const MONEY_BAG = `{ shopMoney { amount currencyCode } }`;
@@ -143,7 +142,7 @@ export const PAYOUTS_PROBE_QUERY = `
 
 /**
  * Balance-transactions probe — selects the exact fields the real sync depends on,
- * including the previously-unverified payout↔order bridge fields (associatedPayout,
+ * including the payout↔order bridge fields (associatedPayout,
  * associatedOrder, sourceOrderTransactionId). A clean result validates the full
  * BALANCE_TRANSACTIONS_QUERY against the live schema.
  */

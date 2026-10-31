@@ -660,6 +660,18 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(activateByProcessId).toHaveBeenCalledWith(45, '98771', null);
     });
 
+    it('forwards no membership line for an order of only custom or deleted products that covers the fee', async () => {
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98773,
+            total_price: '500.00',
+            line_items: [{ variant_id: null, product_id: null, title: 'Custom membership', price: '500.00', quantity: 1 }],
+            note_attributes: [{ name: 'Membership_Process_ID', value: '47' }],
+        });
+        expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(47, '98773', null);
+    });
+
     it('activates the program seat AND the membership when one order carries both', async () => {
         await setPending(p1);
         const body = JSON.stringify({

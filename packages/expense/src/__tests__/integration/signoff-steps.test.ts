@@ -4,9 +4,9 @@
  */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat } from "../helpers/seed";
-import { recordBoardAuthorization, signLine } from "../../services/signoffService";
-import { approveLine, financeAssign } from "../../services/approvalService";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat, ORG } from "../helpers/seed";
+import { recordBoardAuthorization, setReimbursee, signLine } from "../../services/signoffService";
+import { approveLine, financeAssign, raiseException } from "../../services/approvalService";
 
 const refused = (pattern: RegExp) => ({ status: 403, message: expect.stringMatching(pattern) });
 
@@ -95,5 +95,33 @@ describeDb("one step per signer across an expense's lines", () => {
     await approveLine(principal(7), id, approvalId);
     await signLine(principal(9, { isFinance: true }), li, "TREASURER");
     await signLine(principal(6, { isBoard: true }), li, "BOARD");
+  });
+
+  it("a bucket approver with FINANCE may settle an exception into their own bucket, make it final, and approve the line", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [3] }, finance: [3, 9] }) });
+    const id = await seedExpense({ state: "owner_approval" });
+    const li = await seedLineItem(id);
+    const approvalId = await seedApproval(id, li, { ownerId: 100, status: "exception_raised" });
+
+    await financeAssign(principal(3, { isFinance: true }), id, approvalId, 101, true, "budget line 4");
+    await approveLine(principal(3, { isFinance: true }), id, approvalId);
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject(refused(/another (seat|step)|approved the line/));
+    await signLine(principal(9, { isFinance: true }), li, "TREASURER");
+  });
+});
+
+describeDb("no exception is raised while the reimbursee is unknown", () => {
+  it("refuses an approver and FINANCE until the reimbursee is named; then the conflict check sees them", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+    const approvalId = await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    const unknown = { status: 409, message: expect.stringMatching(/reimbursee is unknown/) };
+
+    await expect(raiseException(principal(2), id, approvalId, "not ours")).rejects.toMatchObject(unknown);
+    await expect(raiseException(principal(3, { isFinance: true }), id, approvalId, "not ours")).rejects.toMatchObject(unknown);
+
+    await setReimbursee(ORG, id, { personId: 3 }, principal(4, { isFinance: true }));
+    await expect(raiseException(principal(3, { isFinance: true }), id, approvalId, "not ours")).rejects.toMatchObject({ status: 403 });
+    await raiseException(principal(2), id, approvalId, "not ours");
   });
 });

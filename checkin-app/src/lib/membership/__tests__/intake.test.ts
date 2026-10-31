@@ -44,7 +44,7 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn(), getOwnBackgroundCheck: jest.fn() }));
 jest.mock('@/lib/emergencyContacts/service', () => ({
     upsertPrimaryContact: jest.fn(),
     reconcileHouseholdConflicts: jest.fn(),
@@ -80,7 +80,7 @@ const { householdBgIsFresh } = require('@/lib/membership/renewal');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { advanceExternalIfComplete } = require('@/lib/membership/external');
+const { advanceExternalIfComplete, getOwnBackgroundCheck } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ensureHouseholdMembership, raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
@@ -221,6 +221,17 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toEqual([]);
     });
 
+    it("returns the caller's own background check as the external service reads it", async () => {
+        const caller = { id: 1, householdId: null, household: null, isHouseholdLead: false, isSysadmin: false };
+        prisma.person.findUnique.mockResolvedValue(caller);
+        getOwnBackgroundCheck.mockResolvedValue({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+
+        const state = await getIntakeState(1);
+
+        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(caller);
+        expect(state.ownBackgroundCheck).toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+    });
+
     it('loads only live (unmerged) household members', async () => {
         prisma.person.findUnique.mockResolvedValue({ id: 1, householdId: null, household: null });
 
@@ -358,6 +369,47 @@ describe('saveIntake', () => {
         prisma.person.findUnique.mockResolvedValue(baseUser);
         getExternalStatus.mockResolvedValue(null);
         prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
+    });
+
+    describe('age fields', () => {
+        const youthDob = new Date(new Date().getFullYear() - 14, 0, 1);
+        const asYouth = { ...baseUser, dateOfBirth: youthDob };
+        const declared = { dob: '', over25: true };
+
+        beforeEach(() => mockPerson.update.mockClear());
+
+        it.each([
+            ['primary parent', { primaryParent: declared }],
+            ['second parent', { secondaryParent: { id: 1, ...declared } }],
+            ['child', { children: [{ id: 1, dob: '' }] }],
+        ])('leaves a youth\'s own record unwritten when named as the %s, and says so', async (_section, input) => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            const { rejections } = await saveIntake(1, input);
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([expect.objectContaining({ section: 'primaryParent', code: 'youth' })]);
+        });
+
+        it('still saves the rest of a youth\'s form', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            await saveIntake(1, { primaryParent: declared, children: [{ id: 4, name: 'Kid' }] });
+            expect(mockPerson.update).toHaveBeenCalledTimes(1);
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+
+        it('stores no declaration beside the primary parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...baseUser, dateOfBirth: new Date(new Date().getFullYear() - 22, 0, 1) });
+            await saveIntake(1, { primaryParent: { over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
+
+        it('stores no declaration beside the second parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({
+                ...baseUser,
+                household: { ...baseUser.household, householdMembers: [{ id: 1, isHouseholdLead: true }, { id: 4, isHouseholdLead: false, dateOfBirth: youthDob }] },
+            });
+            await saveIntake(1, { secondaryParent: { id: 4, over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
     });
 
     // Designated addresses are set on a person only by the board.

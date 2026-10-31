@@ -1,4 +1,4 @@
-// The finance queue's expense tabs (#2481): every reason is read from the record's own state when
+// The finance queue's expense tabs: every reason is read from the record's own state when
 // the queue is read, so doing the thing a reason asks for is what takes it out of the queue. The
 // reasons are the expense page's (reasonService), so the queue and the page always agree.
 import { db } from "../db";

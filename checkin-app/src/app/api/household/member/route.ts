@@ -9,6 +9,7 @@ import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
+import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
@@ -42,7 +43,7 @@ export const PATCH = withAuth(
                 return apiError(PHONE_ERROR, 400);
             }
 
-            // A submitted-but-blank name is rejected, not silently dropped (Decision 5).
+            // A submitted-but-blank name is rejected, not silently dropped.
             if (name !== undefined && !nameWrite(name)) {
                 return apiError("Name cannot be blank", 400);
             }
@@ -82,6 +83,10 @@ export const PATCH = withAuth(
             });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
                 return apiError("That household member was not found", 404);
+            }
+
+            if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth)) {
+                return apiError("Youth profiles are read-only.", 403);
             }
 
             // A sysadmin manages their own household without leading it, so making
@@ -134,7 +139,7 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        ...normalizeAdultDob(dob, over25),
+                        ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,
@@ -147,7 +152,7 @@ export const PATCH = withAuth(
                 }
 
                 // Set when the field edits saved but the requested promotion to lead
-                // was declined by the per-household cap (#269). We report this back
+                // was declined by the per-household cap. We report this back
                 // rather than 400 the whole edit, so the form can say the member's
                 // details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;

@@ -12,7 +12,7 @@
 //   3. service_heartbeat   — one upserted freshness row per watched service. Services
 //                            PUSH here when a data run finishes; the watchdog READS it
 //                            instead of holding a credential to every service's own
-//                            financial database (review finding F7). The monitor's blast
+//                            financial database. The monitor's blast
 //                            radius is therefore this DB alone, not the whole fleet.
 
 datasource db {
@@ -103,16 +103,14 @@ model Outbox {
   @@map("monitoring_outbox")
 }
 
-/// Push-based freshness signal — the inversion of the old pull probe (review finding F7).
+/// Push-based freshness signal.
 /// Each watched service upserts its own row when a *data* run reaches a terminal state
 /// (services write across to this shared monitoring DB); the watchdog reads these rows
 /// instead of connecting to each service's financial database. One row per (service, env).
 ///
-/// Success and failure are tracked in separate columns so the watchdog can still detect
-/// "erroring" (a failure newer than the last success) the same way the old two-query probe
-/// did. ADMIN runs (replay / reset-watermark) deliberately never write here — mirroring the
-/// probe's `kind <> 'ADMIN'` exclusion — so an operator action can neither reset the
-/// freshness clock nor look like a pipeline fault.
+/// Success and failure are tracked in separate columns so the watchdog can detect
+/// "erroring" (a failure newer than the last success). ADMIN runs (replay / reset-watermark)
+/// never write here, so an operator action can neither reset the freshness clock nor look like a pipeline fault.
 model ServiceHeartbeat {
   /// Pipeline/service name — must match the watchdog registry's `service`. Also the metric dim.
   service       String

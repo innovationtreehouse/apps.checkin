@@ -11,9 +11,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 // window) and the kiosk (live, badge-driven) cannot record. Unlike the
 // self-service route the target personId IS taken from the body — that is the
 // point of the endpoint — so the role gate is the whole boundary. Declared in
-// the security registry (POST /api/facility/visits/insert); it sits on its own
-// path rather than as a POST on the sibling /api/facility/visits for the
-// lint-ordering reason recorded there and in #1491.
+// the security registry (POST /api/facility/visits/insert).
 export const POST = handler('POST /api/facility/visits/insert', async ({ req, auth }) => {
     if (auth.type !== 'session') throw unauthorized();
 
@@ -59,7 +57,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
                 arrivedAt: ar.value,
                 departedAt: dr.value,
                 // Typed clocks, staff actor. How is TYPED; who is the audit
-                // actor vs subject (#1624). Not LEAD_MARKED (that is an event
+                // actor vs subject. Not LEAD_MARKED (that is an event
                 // window, no clock).
                 arrivedVia: "TYPED",
                 departedVia: "TYPED",

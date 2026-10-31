@@ -1,7 +1,7 @@
 /**
- * Item-reference proposal route factories (#1286). Action routes (approve /
+ * Item-reference proposal route factories. Action routes (approve /
  * reject) return an empty bag: the services return void, so the response is a
- * bare 200 and the client refetches the list (track 5 owns that UI).
+ * bare 200 and the client refetches the list.
  */
 import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";

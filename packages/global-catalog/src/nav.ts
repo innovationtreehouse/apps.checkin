@@ -1,5 +1,5 @@
 /**
- * Nav descriptors for the catalog (#1286 §7). The library declares its screens
+ * Nav descriptors for the catalog. The library declares its screens
  * (labels, hrefs, section-tab icons) and the top-level entry's label/href; the
  * host (checkin) PLACES them — it decides sidebar order, supplies the top-level
  * icon component, and supplies the viewer predicate. The library never dictates

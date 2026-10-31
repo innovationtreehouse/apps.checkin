@@ -273,6 +273,29 @@ export const REGISTRY = {
         defaultBody: "We read the email you sent to the receipt mailbox on {{when}}.",
     },
 
+    // receipt: "your receipt" to its uploader, "a receipt for your reimbursement" to the person reimbursed.
+    "receipt.rejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt not accepted",
+        defaultBody: "Hi {{name}},\n\nFinance did not accept {{receipt}}.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nThe reason is on the receipt. {{actionLink}}",
+    },
+
+    // ── expense ─────────────────────────────────────────────────────────────
+    // receipt: as for receipt.rejected.
+    "expense.lineRejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt reviewed: a line was not approved",
+        defaultBody: "Hi {{name}},\n\nFinance has finished reviewing {{receipt}}, and at least one of its lines was not approved.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nWhat was not approved, and why, is on the receipt. {{actionLink}}",
+    },
+    "expense.reimbursementComplete": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Reimbursement approved",
+        defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
+    },
+
     // ── shopify ─────────────────────────────────────────────────────────────
     "shopify.error": {
         allowedTokens: { intro: text, errorDetail: text },

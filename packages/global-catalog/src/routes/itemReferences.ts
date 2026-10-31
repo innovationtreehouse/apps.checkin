@@ -1,4 +1,4 @@
-/** Item-reference route factories (#1286). Returns ItemReference model bags. */
+/** Item-reference route factories. Returns ItemReference model bags. */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { ItemReference, Prisma } from "../generated/prisma/client";

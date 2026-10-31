@@ -8,10 +8,9 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
+import { approvableByCallerWhere, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, conflictedParties, signoffFactsByLine } from "../lib/signoff-facts";
-import { APPROVABLE_STATUSES } from "./approvalService";
-import { callerLines } from "./signoffService";
+import { callerLinesFor } from "./signoffService";
 
 /** The most expenses a sign-off badge or list reports for one caller. */
 export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
@@ -27,33 +26,28 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval, newest first. Candidates are expenses in owner approval,
- * not the caller's own receipt and not a reimbursement with no reimbursee (the approve service
- * refuses both), with a line waiting for approval in the caller's buckets, or in any bucket for a
- * Board member. "Waiting on you" lists all of them (allExpensesAwaitingMyApproval); a badge poll
- * reads a bounded slice (expensesAwaitingMyApproval).
+ * caller (from lineActions) is approval, newest first. Candidates are the expenses the query can
+ * tell have a line the caller may approve (approvableByCallerWhere); their facts are read
+ * together and lineActions decides. "Waiting on you" lists all of them
+ * (allExpensesAwaitingMyApproval); a badge poll reads a bounded slice (expensesAwaitingMyApproval).
  */
 async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
-  const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
+  const dir = getExpenseRuntime().signoff;
+  const buckets = await dir.bucketsApprovedBy(me);
   if (buckets.length === 0 && !principal.isBoard) return [];
-  const where: Prisma.ExpenseWhereInput = {
-    orgId: await getOrgId(),
-    backfill: false,
-    state: "owner_approval",
-    submitterId: { not: me },
-    NOT: { needsReimbursement: true, reimburseePersonId: null },
-    approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
-  };
+  const where = approvableByCallerWhere(me, await dir.householdIds(me), buckets, principal.isBoard);
   const candidates = await db.expense.findMany({
-    where,
+    where: { orgId: await getOrgId(), ...where },
     orderBy: [{ submittedAt: "desc" }, { id: "asc" }],
     ...(bounded ? { take: SIGNOFF_BADGE_CANDIDATE_CAP } : {}),
   });
+  const linesOf = await callerLinesFor(principal, candidates, true);
   const out: ExpenseAwaitingApproval[] = [];
   for (const expense of candidates) {
     if (bounded && out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
-    const lineItemIds = (await callerLines(principal, expense, true))
+    const lineItemIds = linesOf
+      .get(expense.id)!
       .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
       .map((line) => line.lineItemId);
     if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
@@ -76,26 +70,32 @@ export function allExpensesAwaitingMyApproval(principal: ExpensePrincipal): Prom
   return awaitingApproval(principal, false);
 }
 
+/** One nav poll's expensesAwaitingMyApproval, read on first use and shared by the approver pill and the owner-approval count. */
+export function approvalPoll(principal: ExpensePrincipal): () => Promise<ExpenseAwaitingApproval[]> {
+  let read: Promise<ExpenseAwaitingApproval[]> | undefined;
+  return () => (read ??= expensesAwaitingMyApproval(principal));
+}
+
 /** The approver pill: lines waiting on the caller's approval (expensesAwaitingMyApproval). */
-export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promise<number> {
-  return (await expensesAwaitingMyApproval(principal)).reduce((n, e) => n + e.lineItemIds.length, 0);
+export async function signoffsAwaitingCount(principal: ExpensePrincipal, awaiting = approvalPoll(principal)): Promise<number> {
+  return (await awaiting()).reduce((n, e) => n + e.lineItemIds.length, 0);
 }
 
 /**
  * Per expense list view, the expenses the caller can act on. Assigning buckets, settling
  * exceptions, capital review and depreciation are FINANCE steps; owner approval counts the
- * expenses waiting on the caller's approval (expensesAwaitingMyApproval). Each FINANCE view counts
+ * expenses waiting on the caller's approval (expensesAwaitingMyApproval, through `awaiting`). Each FINANCE view counts
  * every expense in it: a conflicted FINANCE holder may still choose a line's bucket, and capital
  * review and depreciation are bookkeeping. A view whose count fails is logged and left out, so the
  * others still show.
  */
-export async function expenseActionCounts(principal: ExpensePrincipal): Promise<Partial<Record<ExpenseActionView, number>>> {
+export async function expenseActionCounts(principal: ExpensePrincipal, awaiting = approvalPoll(principal)): Promise<Partial<Record<ExpenseActionView, number>>> {
   const orgId = await getOrgId();
   const finance = principal.isFinance;
   const count = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { orgId, ...where } });
   const tasks: Record<ExpenseActionView, () => Promise<number>> = {
     assign_ownership: async () => (finance ? count({ state: "assign_ownership", approvals: { some: { ownerId: null } } }) : 0),
-    owner_approval: async () => (await expensesAwaitingMyApproval(principal)).length,
+    owner_approval: async () => (await awaiting()).length,
     // An exception is not terminal, so it holds its expense in owner_approval, where FINANCE settles it.
     owner_exception: async () => (finance ? count({ approvals: { some: { status: "exception_raised" } } }) : 0),
     capital_review: async () => (finance ? count({ state: "capital_review" }) : 0),

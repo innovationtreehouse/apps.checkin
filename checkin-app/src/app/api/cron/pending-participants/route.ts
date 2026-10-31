@@ -8,9 +8,9 @@ import { sendTemplated } from "@/lib/email-templates/send";
 /**
  * Non-payment sweep for PENDING_UNPAID enrollments: warns the household at day
  * 1/3/6 and flags day-7+ rows as overdue for the board. The cron NEVER removes
- * anyone — reviewer decision: this is core customer service, and a computer
- * isn't enough here. Removal is a human action, done by the board via the
- * existing program-participants admin surface (`DELETE
+ * anyone: this is core customer service, and a computer isn't enough here.
+ * Removal is a human action, done by the board via the
+ * program-participants admin surface (`DELETE
  * /api/programs/[id]/participants`), which routes through the hold-ledger
  * release helper in `lib/program/capacity.ts` (see
  * docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §3).
@@ -78,7 +78,7 @@ export const GET = withCron(async () => {
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)); // Calculate total full days
 
             if (diffDays >= 7) {
-                // No longer auto-removed — flagged for the board to act on.
+                // Never auto-removed: flagged for the board to act on.
                 overdueCount++;
                 overdueDigest.push({ name: record.person.name ?? "(no name on file)", programName: record.program.name, diffDays });
             } else if (diffDays === 6 || diffDays === 3 || diffDays === 1) {
