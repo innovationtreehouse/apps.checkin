@@ -253,6 +253,11 @@ describe("holds", () => {
     expect(r.awaiting).not.toContain("Awaiting approval");
   });
 
+  it("no exception is raised while the reimbursee is unknown", () => {
+    expect(acts({ caller: 2, reimburseeUnknown: true })).toEqual([]);
+    expect(acts({ caller: 3, reimburseeUnknown: true })).toEqual([]);
+  });
+
   it("nothing is approved before the line has a bucket", () => {
     expect(run({ caller: 2, state: "assign_ownership", approval: { status: "pending", ownerId: null } }).actions).toEqual([]);
   });

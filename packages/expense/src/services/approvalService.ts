@@ -196,16 +196,15 @@ export async function raiseException(
   notes: string,
 ): Promise<void> {
   const actor = actorOf(principal);
-  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
   if (approval.bucketFinal) throw new ServiceError(409, BUCKET_FINAL);
   if (!principal.isFinance && !(await isBucketApprover(principal, approval.ownerId))) {
     throw new ServiceError(403, "This line item is not in a bucket you approve");
   }
-  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
-    await lockExpense(tx, expenseId);
+    await refuseConflicted(principal, await lockedInOwnerApproval(tx, expenseId));
     await transition(tx, approval, { status: "exception_raised", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, { expenseId, action: "exception_raised", lineItemId: approval.lineItemId, valueAfter: notes });
   });
