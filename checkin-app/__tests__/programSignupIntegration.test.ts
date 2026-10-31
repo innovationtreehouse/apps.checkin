@@ -113,7 +113,7 @@ describe('Full Program Signup Integration Flow', () => {
 
     it('should complete the full program signup flow', async () => {
         // 1. SysAdmin creates a program
-        mockGetSession.mockResolvedValue({ user: { id: sysAdminId, isSysadmin: true } });
+        mockGetSession.mockResolvedValue({ user: { id: sysAdminId, isSysadmin: true, isBoardMember: true } });
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true });
         (prisma.program.create as jest.Mock).mockResolvedValue({ id: programId, name: 'Integration Test Program' });
         (prisma.auditLog.create as jest.Mock).mockResolvedValue({});

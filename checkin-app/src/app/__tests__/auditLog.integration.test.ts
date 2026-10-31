@@ -148,7 +148,7 @@ describe('AuditLog Integration Tests', () => {
     beforeEach(() => {
         // Reset mocks and default to admin session
         (getServerSession as jest.Mock).mockResolvedValue({
-            user: { id: testAdminId, isSysadmin: true }
+            user: { id: testAdminId, isSysadmin: true, isBoardMember: true }
         });
     });
 

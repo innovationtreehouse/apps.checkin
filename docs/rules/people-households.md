@@ -204,6 +204,23 @@ Things the app takes as true because they are handled outside it.
 - A first sign-in through the sign-in service links to the person whose email
   matches, or creates a new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
 
+- An adult whose email a household added is asked at first sign-in whether to join it,
+  and nothing else opens until they answer. They are asked when someone else in that
+  household has already signed in; someone in a household where nobody has signed in
+  claims their record unasked. The question names the household and shows nothing of
+  the record.  [Decision — Board ruling B1/B2, 2026-10-27; scope per owner decision 2026-10-30]
+
+- A yes leaves them in the household. A no leaves the household's record where it is,
+  with everything on it and without the address, and gives the person a new empty record
+  in a household of their own, because nobody knows they are who the household meant.
+  Nothing from the old record reaches them, including any role it holds, and this is
+  the one change to a trusted person's sign-in email made without the Board. Neither answer
+  lands while the household is denied.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+
+- A youth stays in the household that added them, with no question, and cannot answer one. A youth
+  never adds themselves to a household. Age here is what the record says at
+  first sign-in.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
 - A person's identifier is opaque, and its only job is to be unique and to stay

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { useSession } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import { notifications } from '@mantine/notifications';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
@@ -12,6 +12,7 @@ import {
   Alert,
   Box,
   Button,
+  Group,
   Modal,
   Paper,
   Stack,
@@ -20,8 +21,67 @@ import {
   Title,
 } from '@mantine/core';
 
+function HouseholdQuestion() {
+  const [householdName, setHouseholdName] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/profile/household-question')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setHouseholdName(data?.householdName ?? null))
+      .catch(() => setError('Could not load this question. Please try again.'));
+  }, []);
+
+  const answer = async (join: boolean) => {
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/profile/household-question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ join }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || 'That answer could not be saved.');
+      } else if (join) {
+        window.location.reload();
+      } else {
+        await signOut({ callbackUrl: '/signin' });
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box p="xl">
+      <Paper withBorder p="lg" maw={520} mx="auto">
+        <Stack>
+          <Title order={3}>Join this household?</Title>
+          <Text>
+            A household added your email address{householdName ? `: ${householdName}` : ''}. Do you want to join it?
+          </Text>
+          <Text size="sm" c="dimmed">
+            If you say no, you get a new record of your own and sign in again.
+          </Text>
+          {error && <Alert color="red">{error}</Alert>}
+          <Group>
+            <Button loading={saving} onClick={() => answer(true)}>Yes, join</Button>
+            <Button loading={saving} variant="default" onClick={() => answer(false)}>No</Button>
+          </Group>
+        </Stack>
+      </Paper>
+    </Box>
+  );
+}
+
 export default function OnboardingGate({ children }: { children: React.ReactNode }) {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
+  const joinPending = session?.user?.householdJoinPending === true;
   const pathname = usePathname();
 
   const [loading, setLoading] = useState(true);
@@ -56,10 +116,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   []);
 
   useEffect(() => {
-    if (status === 'authenticated') {
+    if (status === 'authenticated' && !joinPending) {
       checkStatus();
     }
-  }, [status, pathname, checkStatus]);
+  }, [status, joinPending, pathname, checkStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +171,8 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
       setSaving(false);
     }
   };
+
+  if (joinPending) return <HouseholdQuestion />;
 
   const isBlocked = !loading && (needsPhone || needsEmergencyContact);
 

@@ -11,6 +11,7 @@ import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+import { isYouth } from "@/lib/time";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -99,6 +100,12 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             }
             updateData.emailVerified = null;
             updateData.googleId = null;
+        }
+
+        // A new address gets its own first sign-in, and a youth stays where they were added;
+        // only the Board's word closes a household question for someone who cannot answer it.
+        if (emailChanged || (auth.user.isBoardMember && isYouth(updateData.dateOfBirth as Date | null | undefined))) {
+            updateData.householdJoinPending = false;
         }
 
         const updatedParticipant = await prisma.$transaction(async (tx) => {
