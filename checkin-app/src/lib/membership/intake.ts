@@ -6,7 +6,7 @@ import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolatio
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
-import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
+import { getExternalStatus, advanceExternalIfComplete, getOwnBackgroundCheck } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere } from "@/lib/membership/lifecycle";
@@ -134,6 +134,7 @@ export async function getIntakeState(userId: number) {
     // independent of the household's own application state — an adult child in a settled
     // member household still has one to sign.
     const ownAgreement = await findOpenPersonAgreement(userId);
+    const ownBackgroundCheck = await getOwnBackgroundCheck(user);
 
     return {
         hasHousehold: !!household,
@@ -142,6 +143,7 @@ export async function getIntakeState(userId: number) {
         process: process ? { id: process.id, kind: process.kind, status: process.status, isPaymentPlanRequested: process.isPaymentPlanRequested } : null,
         external,
         personAgreement: ownAgreement ? { id: ownAgreement.id, started: !!ownAgreement.zohoEnvelopeId } : null,
+        ownBackgroundCheck,
         prefill: {
             household: household
                 ? {
