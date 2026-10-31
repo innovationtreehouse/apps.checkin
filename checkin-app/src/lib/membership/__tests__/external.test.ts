@@ -10,7 +10,8 @@
  *   - advanceExternalIfComplete: the volunteer-designation allowlist is matched
  *     at the PENDING_PAYMENT transition (#874) — and only by the race winner.
  */
-import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
+import { backgroundCheckProvider } from '@/lib/membership/background-check/manual-adapter';
+import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, getOwnBackgroundCheck, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -769,5 +770,47 @@ describe('resetSigning', () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null, zohoSignerPersonId: null });
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(zohoSign.recallRequest).not.toHaveBeenCalled();
+    });
+});
+
+describe('getOwnBackgroundCheck', () => {
+    const householdProcess = { id: 20, status: 'PENDING_EXTERNAL_ACTION' as const };
+    const adult = { id: 1, householdId: 7, isHouseholdLead: false, isSysadmin: false, household: { orgMembership: { processes: [householdProcess] } } };
+
+    beforeEach(() => {
+        jest.spyOn(backgroundCheckProvider, 'getConsentDeepLink').mockResolvedValue('https://averity.example/consent');
+    });
+
+    it('offers a non-lead their own check awaiting review, with the consent link', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        expect(prisma.orgMembershipProcess.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { kind: 'PERSON_BG', subjectPersonId: 1, status: 'PENDING_BG_REVIEW' }, select: { id: true, bgConsentAt: true } }),
+        );
+    });
+
+    it('reports consent already on file', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: new Date() });
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toMatchObject({ consented: true });
+    });
+
+    it('is null when the person has no check awaiting review', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toBeNull();
+    });
+
+    it("is null for a lead whose consent goes to the household's application", async () => {
+        await expect(getOwnBackgroundCheck({ ...adult, isHouseholdLead: true })).resolves.toBeNull();
+        expect(prisma.orgMembershipProcess.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("offers a lead their own check once the household's application no longer awaits consent", async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+        const lead = { ...adult, isHouseholdLead: true, household: { orgMembership: { processes: [{ ...householdProcess, status: 'PENDING_PAYMENT' as const }] } } };
+
+        await expect(getOwnBackgroundCheck(lead)).resolves.toMatchObject({ consented: false });
     });
 });

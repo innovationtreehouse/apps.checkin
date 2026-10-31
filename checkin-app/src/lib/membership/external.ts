@@ -225,6 +225,47 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
     return advanceExternalIfComplete(processId);
 }
 
+interface ConsentingPerson {
+    householdId: number | null;
+    isHouseholdLead: boolean;
+    isSysadmin: boolean;
+    household?: { orgMembership?: { processes: Pick<OrgMembershipProcess, "id" | "status">[] } | null } | null;
+}
+
+function canConsentForHousehold(person: ConsentingPerson) {
+    return !!person.householdId && (person.isHouseholdLead || person.isSysadmin);
+}
+
+/** The household application a person's consent goes to, ahead of any check of their own. */
+function householdConsentTarget(person: ConsentingPerson) {
+    return canConsentForHousehold(person) ? latestPendingExternal(person.household?.orgMembership?.processes) : undefined;
+}
+
+function findOwnPendingBg(personId: number) {
+    return prisma.orgMembershipProcess.findFirst({
+        where: { kind: "PERSON_BG", subjectPersonId: personId, status: "PENDING_BG_REVIEW" },
+        orderBy: { id: "desc" },
+        select: { id: true, bgConsentAt: true },
+    });
+}
+
+export interface OwnBackgroundCheck {
+    consented: boolean;
+    deepLinkUrl: string | null;
+}
+
+/**
+ * The person's own background check awaiting review, as /membership offers it for
+ * consent. Null when there is none, or when their consent would go to their
+ * household's application instead.
+ */
+export async function getOwnBackgroundCheck(person: ConsentingPerson & { id: number }): Promise<OwnBackgroundCheck | null> {
+    if (householdConsentTarget(person)) return null;
+    const process = await findOwnPendingBg(person.id);
+    if (!process) return null;
+    return { consented: !!process.bgConsentAt, deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink() };
+}
+
 /**
  * Applicant self-report that they submitted background-check consent on
  * Averity. Honor-system by design: Averity has no API, so the applicant's
@@ -246,9 +287,9 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
         },
     });
     if (!user) throw new ExternalError("not_found", "Application not found.");
-    const canAttestHousehold = !!user.householdId && (user.isHouseholdLead || user.isSysadmin);
+    const canAttestHousehold = canConsentForHousehold(user);
 
-    const householdProcess = canAttestHousehold ? latestPendingExternal(user.household?.orgMembership?.processes) : undefined;
+    const householdProcess = householdConsentTarget(user);
     if (householdProcess) {
         const updated = await markBgConsent(householdProcess.id, userId);
         if (!updated) throw new ExternalError("not_found", "Application not found.");
@@ -271,11 +312,7 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
  * board's submit path. Returns null when the caller has no such obligation.
  */
 async function selfAttestPersonBg(userId: number) {
-    const process = await prisma.orgMembershipProcess.findFirst({
-        where: { kind: "PERSON_BG", subjectPersonId: userId, status: "PENDING_BG_REVIEW" },
-        orderBy: { id: "desc" },
-        select: { id: true, bgConsentAt: true },
-    });
+    const process = await findOwnPendingBg(userId);
     if (!process) return null;
     const updated = await markBgConsent(process.id, userId, "PERSON_BG");
     if (!process.bgConsentAt) await notifyReviewers();

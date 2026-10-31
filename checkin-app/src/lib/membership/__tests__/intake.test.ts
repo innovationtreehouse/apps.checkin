@@ -44,7 +44,7 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn(), getOwnBackgroundCheck: jest.fn() }));
 jest.mock('@/lib/emergencyContacts/service', () => ({
     upsertPrimaryContact: jest.fn(),
     reconcileHouseholdConflicts: jest.fn(),
@@ -80,7 +80,7 @@ const { householdBgIsFresh } = require('@/lib/membership/renewal');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { advanceExternalIfComplete } = require('@/lib/membership/external');
+const { advanceExternalIfComplete, getOwnBackgroundCheck } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ensureHouseholdMembership, raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
@@ -219,6 +219,17 @@ describe('getIntakeState', () => {
         expect(state.prefill.primaryParent).toBeNull();
         expect(state.prefill.secondaryParent).toBeNull();
         expect(state.prefill.children).toEqual([]);
+    });
+
+    it("returns the caller's own background check as the external service reads it", async () => {
+        const caller = { id: 1, householdId: null, household: null, isHouseholdLead: false, isSysadmin: false };
+        prisma.person.findUnique.mockResolvedValue(caller);
+        getOwnBackgroundCheck.mockResolvedValue({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+
+        const state = await getIntakeState(1);
+
+        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(caller);
+        expect(state.ownBackgroundCheck).toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
     });
 
     it('loads only live (unmerged) household members', async () => {
