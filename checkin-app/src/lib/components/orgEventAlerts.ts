@@ -4,11 +4,13 @@ export function orgEventAlerts(
   errorLabel: string,
 ) {
   return {
-    async orgEventsStuck({ failed, unprocessed, unreadable }: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
+    async orgEventsStuck({ failed, unprocessed, unreadable, reconcileFailed = 0 }: { failed: number; unprocessed: number; unreadable: boolean; reconcileFailed?: number }): Promise<void> {
       const { emailBoardMembers } = await import("@/lib/emailRecipients");
-      const problem = unreadable
+      const events = unreadable
         ? "could not read the catalog's events"
-        : `found ${failed} newly failed and ${unprocessed} unprocessed catalog event(s)`;
+        : failed > 0 || unprocessed > 0 ? `found ${failed} newly failed and ${unprocessed} unprocessed catalog event(s)` : null;
+      const provisionals = reconcileFailed > 0 ? `could not apply the catalog's decision to ${reconcileFailed} provisional item(s)` : null;
+      const problem = [events, provisionals].filter(Boolean).join(" and ");
       await emailBoardMembers(template, { problem }, errorLabel);
     },
   };

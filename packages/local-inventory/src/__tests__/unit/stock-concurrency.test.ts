@@ -127,7 +127,7 @@ describeDb("stock write concurrency", () => {
       await gate;
     });
     await rowAdded;
-    const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4 }, 1);
+    const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4, expectedDesiredQuantity: 0 }, 1);
     await someoneBlocked();
     commit();
     await Promise.all([receipt, edit]);
