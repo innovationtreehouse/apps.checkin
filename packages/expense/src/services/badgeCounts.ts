@@ -27,15 +27,13 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval: the SIGNOFF_BADGE_EXPENSE_CAP newest such expenses among
- * the SIGNOFF_BADGE_CANDIDATE_CAP newest candidates. Candidates are expenses in owner approval, not
- * the caller's own receipt and not a reimbursement with no reimbursee (the approve service refuses
- * both), with a line waiting for approval in the caller's buckets, or in any bucket for a Board
- * member. Past either cap the result is a lower bound: it never lists a line the caller cannot
- * approve, but leaves out work older than the candidates read. The approver pill, its "Waiting on
- * you" view and the owner-approval view count all read this.
+ * caller (from lineActions) is approval, newest first. Candidates are expenses in owner approval,
+ * not the caller's own receipt and not a reimbursement with no reimbursee (the approve service
+ * refuses both), with a line waiting for approval in the caller's buckets, or in any bucket for a
+ * Board member. "Waiting on you" lists all of them (allExpensesAwaitingMyApproval); a badge poll
+ * reads a bounded slice (expensesAwaitingMyApproval).
  */
-export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
+async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
   const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
   if (buckets.length === 0 && !principal.isBoard) return [];
@@ -47,16 +45,35 @@ export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): P
     NOT: { needsReimbursement: true, reimburseePersonId: null },
     approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
   };
-  const candidates = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], take: SIGNOFF_BADGE_CANDIDATE_CAP });
+  const candidates = await db.expense.findMany({
+    where,
+    orderBy: [{ submittedAt: "desc" }, { id: "asc" }],
+    ...(bounded ? { take: SIGNOFF_BADGE_CANDIDATE_CAP } : {}),
+  });
   const out: ExpenseAwaitingApproval[] = [];
   for (const expense of candidates) {
-    if (out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
+    if (bounded && out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
     const lineItemIds = (await callerLines(principal, expense, true))
       .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
       .map((line) => line.lineItemId);
     if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
   }
   return out;
+}
+
+/**
+ * For the badges: the SIGNOFF_BADGE_EXPENSE_CAP newest expenses waiting on the caller's approval
+ * among the SIGNOFF_BADGE_CANDIDATE_CAP newest candidates. Past either cap it is a lower bound: it
+ * never counts a line the caller cannot approve, but leaves out work older than the candidates
+ * read. The approver pill and the owner-approval view count read this.
+ */
+export function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
+  return awaitingApproval(principal, true);
+}
+
+/** Every expense waiting on the caller's approval, for the "Waiting on you" list. */
+export function allExpensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
+  return awaitingApproval(principal, false);
 }
 
 /** The approver pill: lines waiting on the caller's approval (expensesAwaitingMyApproval). */
