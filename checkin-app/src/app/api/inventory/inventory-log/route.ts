@@ -1,4 +1,4 @@
-// Re-export stub (#1287): mounts a local-inventory route factory under
+// Re-export stub: mounts a local-inventory route factory under
 // /api/inventory/* through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/inventory.ts entry.
 import { handler } from "@/security/handler";
