@@ -173,7 +173,7 @@ function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee
   const [text, setText] = useState(initial);
   const [query, setQuery] = useState(initial.trim().length >= 2 ? initial.trim() : "");
   const [picked, setPicked] = useState<VendorOption | null>(null);
-  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null);
+  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null, { keepPrevious: true });
   const link = async (body: unknown) => { if (await send(`${base}/reimbursee-vendor`, "PUT", body, "Vendor linked")) onLinked(); };
 
   if (options.error === QB_OFF) return <Text size="sm" c="dimmed">{options.error}</Text>;
@@ -224,7 +224,7 @@ function ReimburseePicker({ base, onSet }: { base: string; onSet: () => void }) 
   const [picked, setPicked] = useState<PersonOption | null>(null);
   const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
   const term = search.trim();
-  const options = useLoad<PersonOption[]>(term.length >= 2 ? `${base}/reimbursee/options?q=${encodeURIComponent(term)}` : null);
+  const options = useLoad<PersonOption[]>(term.length >= 2 ? `${base}/reimbursee/options?q=${encodeURIComponent(term)}` : null, { keepPrevious: true });
   const body = newPerson ? { newPerson: { name: newPerson.name.trim(), isAdult: true } } : picked && { personId: picked.personId };
   const ready = newPerson ? newPerson.name.trim() !== "" && newPerson.isAdult : picked !== null;
   const people = [picked, ...(options.data ?? [])]

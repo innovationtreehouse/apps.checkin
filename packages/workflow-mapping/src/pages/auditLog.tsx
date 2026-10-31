@@ -76,7 +76,7 @@ function useLineLabels(rows: AuditRow[] | null): Map<number, ReceiptLineLabels> 
 /** /inventory/receiving/audit-log — every receipt transition and line decision, newest first. */
 export default function AuditLogPage() {
   const [limit, setLimit] = useState("100");
-  const log = useLoad<AuditRow[]>(`/audit-log?limit=${limit}`);
+  const log = useLoad<AuditRow[]>(`/audit-log?limit=${limit}`, { keepPrevious: true });
   const lines = useLineLabels(log.data);
 
   const lineCell = (e: AuditRow) => {

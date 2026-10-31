@@ -24,7 +24,7 @@ export interface GiftRow {
 export default function TransactionsPage() {
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const gifts = useLoad<GiftRow[]>(paged(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`, page));
+  const gifts = useLoad<GiftRow[]>(paged(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`, page), { keepPrevious: true });
   const owners = useOwners();
 
   return (

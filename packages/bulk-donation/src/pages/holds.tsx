@@ -17,7 +17,7 @@ interface HoldRow {
 export default function HoldsPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const holds = useLoad<HoldRow[]>(paged("/disbursement-holds", page));
+  const holds = useLoad<HoldRow[]>(paged("/disbursement-holds", page), { keepPrevious: true });
   const groups = new Map<string, HoldRow[]>();
   for (const h of holds.data ?? []) groups.set(h.disbursementId, [...(groups.get(h.disbursementId) ?? []), h]);
 

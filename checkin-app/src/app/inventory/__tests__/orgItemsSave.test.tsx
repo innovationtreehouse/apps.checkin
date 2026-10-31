@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
@@ -54,7 +55,7 @@ describe("Org item edit form", () => {
   });
 
   it("after a refused save shows the other manager's value and checks against it", async () => {
-    mockApi.mockRejectedValueOnce(new Error("This item changed since you loaded it"));
+    mockApi.mockRejectedValueOnce(new HttpError("This item changed since you loaded it", 409));
     mockApi.mockResolvedValue({ ...LOADED, desiredQuantity: 6 });
     openEdit();
     fireEvent.change(await desired(), { target: { value: "9" } });
