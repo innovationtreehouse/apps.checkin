@@ -247,7 +247,9 @@ windowed reader around its receipt date. A created entry is compared with what t
 app posted (amount, date, key, accounts, Vendor). A matched entry is compared with
 its baseline, and the accounts on it are compared only when the baseline recorded
 them, because they are finance's. Any difference, or a missing entry, raises
-`QB_DRIFT` with what QuickBooks showed. The check only reads.
+`QB_DRIFT` with what QuickBooks showed. The check only reads QuickBooks; its writes
+are in the expense database, where it raises the flags and stores a baseline for a
+matched entry that has none, raising nothing for that entry on that run.
 
 **Orphan sweep.** `sweepExpenseQbStrays` reads the Purchases and Bills created since
 the oldest create attempt in the last 30 days. An entry carrying an expense's key
