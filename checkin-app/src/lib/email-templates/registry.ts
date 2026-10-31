@@ -41,12 +41,6 @@ export const REGISTRY = {
         defaultSubject: "Attendance: significant {{scope}}-{{change}} of visit #{{visitId}}",
         defaultBody: "{{actorName}} {{verb}} {{whose}} visit (significance {{score}}).\n\n{{detail}}\n\nFull before/after is in the audit trail (Visit #{{visitId}}).",
     },
-    "attendance.keyholderHandover": {
-        allowedTokens: { leaverName: text, when: text, peopleInside: text },
-        sampleCtx: { leaverName: "Sam", when: "Mar 7, 5:40 PM", peopleInside: "3 people are" },
-        defaultSubject: "You were named as the keyholder in charge",
-        defaultBody: "{{leaverName}} checked out at {{when}} and named you as the keyholder they handed the building over to.\n\n{{peopleInside}} still recorded inside, and no keyholder is checked in. If you are there, check in; if not, let them know.",
-    },
 
     // ── programs ────────────────────────────────────────────────────────────
     "enrollment.confirm": {

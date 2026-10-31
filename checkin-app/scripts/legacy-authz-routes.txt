@@ -19,8 +19,6 @@ GET /api/admin/broken-households
 PUT /api/admin/settings/localization
 POST /api/attendance/manual
 GET /api/attendance
-POST /api/attendance
-DELETE /api/attendance
 # NextAuth's own sign-in/callback/session endpoints: NextAuth(authOptions)
 # serves them before any session exists, so handler() cannot front them.
 GET /api/auth/[...nextauth]

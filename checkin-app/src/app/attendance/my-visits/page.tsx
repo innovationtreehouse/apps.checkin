@@ -11,7 +11,6 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { AttendanceTabs } from "../AttendanceTabs";
-import { isCloseChoiceWarning, useCloseChoice } from "@/components/CloseChoiceDialog";
 
 type Visit = {
   id: number;
@@ -27,7 +26,6 @@ export default function MyVisits() {
   const { formatVisitRange } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole([]);
   const [visits, setVisits] = useState<Visit[] | null>(null);
-  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [arrivedAt, setArrived] = useState("");
@@ -60,15 +58,7 @@ export default function MyVisits() {
       const res = await fetch(`/api/attendance/manual/${id}`, init);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (isCloseChoiceWarning(data)) {
-          const answer = await askCloseChoice(data, { removal: init.method === "DELETE" });
-          if (answer) {
-            const body = JSON.parse(typeof init.body === "string" ? init.body : "{}");
-            await submit(id, { ...init, body: JSON.stringify({ ...body, ...answer }) }, okMessage);
-          }
-        } else {
-          setError(data.error || "Correction failed.");
-        }
+        setError(data.error || "Correction failed.");
       } else {
         notifications.show({ message: okMessage });
         setEditing(null);
@@ -103,7 +93,6 @@ export default function MyVisits() {
 
   return (
     <PageContainer>
-      {closeChoiceDialog}
       <AttendanceTabs />
       <Card withBorder radius="md" padding="lg">
         <Title order={1} mb="md">My Visits</Title>

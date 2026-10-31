@@ -20,13 +20,11 @@ import {
   IconAddressBook,
   IconUrgent,
 } from '@tabler/icons-react';
-import { notifications } from "@mantine/notifications";
 import { brand } from '@/brand';
 import DevLoginPicker from '@/components/DevLoginPicker';
 import { useIsDevInstance, useIsLocalInstance } from '@/components/EnvProvider';
 import JoinTreehouseBanner from '@/components/JoinTreehouseBanner';
 import Notifications from '@/components/Notifications';
-import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from '@/components/CloseChoiceDialog';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { BuildingUnconfirmedAlert } from '@/components/BuildingUnconfirmedAlert';
@@ -36,11 +34,6 @@ export default function Home() {
   const { data: session, status } = useSession();
   const isDevInstance = useIsDevInstance();
   const isLocalInstance = useIsLocalInstance();
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [isCheckedIn, setIsCheckedIn] = useState<boolean | null>(null);
-
-  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
 
   const [isLastKeyholder, setIsLastKeyholder] = useState(false);
   const [isTwoDeepViolation, setIsTwoDeepViolation] = useState(false);
@@ -55,19 +48,6 @@ export default function Home() {
     try {
       const res = await fetch('/api/attendance');
       const data = await res.json();
-      const currentUserId = session.user?.id;
-
-      // Works with both "full" and "limited" access responses
-      if (data.access === "full") {
-        const attendanceList = data.attendance || [];
-        const userActiveVisit = attendanceList.find(
-          (visit: { participant: { id: number } }) => visit.participant.id === currentUserId
-        );
-        setIsCheckedIn(!!userActiveVisit);
-      } else {
-        // Limited access — use self field
-        setIsCheckedIn(data.self !== null && data.self !== undefined);
-      }
 
       // Use server-computed safety flags
       const lastKeyholder = Boolean(data.safety?.isLastKeyholder && session.user?.isKeyholder);
@@ -112,42 +92,12 @@ export default function Home() {
   // ternary below as-is would flash the signed-out landing at a signed-in user.
   if (status === "loading") return <PageLoader />;
 
-  const handleToggleCheckin = async (answer?: CloseChoiceAnswer) => {
-    if (!session?.user) return;
-    setLoading(true);
-    setMessage("");
-    let next: CloseChoiceAnswer | null = null;
-    try {
-      const participantId = session.user?.id;
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId, ...answer })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setMessage(`${data.type === 'checkin' ? 'Successfully checked in!' : 'Successfully checked out!'}`);
-        await checkAttendanceStatus(); // Re-fetch the status securely
-      } else if (isCloseChoiceWarning(data)) {
-        next = await askCloseChoice(data);
-      } else {
-        setMessage(`Error: ${data.error || 'Failed to update attendance'}`);
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Failed to connect to API", autoClose: false });
-    }
-    setLoading(false);
-    if (next) await handleToggleCheckin(next);
-  };
 
   const user = session?.user;
-  const canSelfCheckin =
-    !!user?.isSysadmin || !!user?.isBoardMember || !!user?.isKeyholder || isDevInstance;
   const isPrivileged = !!user?.isSysadmin || !!user?.isKeyholder;
 
   return (
     <Container size="sm" py="xl">
-      {closeChoiceDialog}
       <Card withBorder shadow="sm" radius="md" padding="xl">
         <Stack align="center" gap="xs" mb="lg">
           <Title order={1} ta="center">
@@ -191,22 +141,9 @@ export default function Home() {
               )}
               {isLastKeyholder && (
                 <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="You are the last Keyholder present.">
-                  If others are still recorded inside when you check out, you will be asked
-                  whether to close the facility or leave having handed over.
+                  If others are still recorded inside when you badge out at the kiosk, it will
+                  offer to close the building.
                 </Alert>
-              )}
-
-              {/* Check-in Toggle Button — in production, only privileged users can self-check-in from the web */}
-              {isCheckedIn !== null && canSelfCheckin && (
-                <Button
-                  size="lg"
-                  fullWidth
-                  color={isCheckedIn ? 'red' : 'treehouseGreen'}
-                  onClick={() => handleToggleCheckin()}
-                  loading={loading}
-                >
-                  {isCheckedIn ? 'Check Out' : 'Check In'}
-                </Button>
               )}
 
               {/* Board Directory Button for Keyholders/Admins */}
@@ -259,12 +196,6 @@ export default function Home() {
             </Stack>
           )}
         </Stack>
-
-        {message && (
-          <Alert mt="lg" variant="light">
-            {message}
-          </Alert>
-        )}
       </Card>
     </Container>
   );

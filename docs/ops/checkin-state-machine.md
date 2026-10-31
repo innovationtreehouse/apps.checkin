@@ -7,7 +7,8 @@ The intended behaviour of check-in, check-out and closing the building.
 assembled from the owner's rulings and signed off by the owner on 2026-10-11
 and 2026-10-12; copied here 2026-10-12 from revision 12. That doc also lists
 where the code differed at `main@1f2b2c826`; those gaps are tracked as work,
-not here. Where this file and `docs/rules/attendance-checkin.md` disagree,
+not here. Updated for Board ruling B7/B14, 2026-10-27: nobody closes from the web, which
+replaces the 2026-10-11 sign-off on a web close. Where this file and `docs/rules/attendance-checkin.md` disagree,
 raise it with the owner.
 
 ## Principles
@@ -61,8 +62,7 @@ stateDiagram-v2
 
 ## Closing the building
 
-Only a keyholder closes the building, at the kiosk or on the web. A board
-member who needs to close it must be a keyholder.
+Only a keyholder closes the building, at the kiosk. A board member who needs to close it must be a keyholder.
 
 ```mermaid
 flowchart TD
@@ -71,9 +71,6 @@ flowchart TD
     B -- Yes, keyholder or not --> D[Kiosk: scan again within 15 s to close]
     D -- Same badge again, after 3 s --> C
     D -- No second scan, or another badge --> E[Only this keyholder leaves; the other scan is processed normally]
-    W[Keyholder on the web: Close building] --> F[Web shows who is recorded IN, asks to confirm]
-    F -- Confirm --> G[Close now]
-    F -- Cancel --> H[Nothing changes]
 ```
 
 1. **Kiosk, alone:** a keyholder's OUT when the kiosk shows nobody else IN
@@ -87,16 +84,12 @@ flowchart TD
 3. **Offline:** the same, using what the kiosk shows. The kiosk queues "close
    at t"; the server applies it whenever it arrives, with departures at t. A
    late close is not held for review.
-4. **Web:** a keyholder confirms against the list of who is recorded IN; the
-   close happens at that moment. Times are corrected afterwards on the visit
-   edit screen.
-5. **The server never second-guesses a close:** no freshness window, no
+4. **The server never second-guesses a close:** no freshness window, no
    server-issued token, and a comparison against its own records and clock only
    as `docs/rules/attendance-checkin.md` states.
-6. **The web cannot stop a kiosk close.** No web action (checking the keyholder
-   out, removing their visit, checking in another keyholder, changing roles)
-   prevents or undoes a close confirmed at the kiosk, live or queued.
-7. **Arrivals after a close** start a new visit. A close never departs a visit
+5. **The web cannot stop a kiosk close.** No web action (correcting a visit,
+   changing roles) prevents or undoes a close confirmed at the kiosk, live or queued.
+6. **Arrivals after a close** start a new visit. A close never departs a visit
    that began after its time t (allowing small clock skew).
 
 ## The kiosk
@@ -110,6 +103,8 @@ flowchart TD
 
 ## The web
 
+- **Reads.** No check-in, check-out, force checkout or close. Corrections apply
+  to closed visits; times are corrected on the visit edit screen.
 - **With a recent kiosk heartbeat:** shows who is in, whether the building is
   open, and supervision state. No-keyholder visits are shown as such and never
   make the building look open.
