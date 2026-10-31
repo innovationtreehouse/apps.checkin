@@ -13,7 +13,6 @@ export type {
   DisbursementEvent,
   DisbursementSnapshot,
   WorkflowEvent,
-  DonationQbMatchExclusion,
   ManualInKindDonation,
   ManualInKindDonationLine,
   InKindDonationLine,
