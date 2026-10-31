@@ -21,17 +21,23 @@ interface OrgItemRow {
   location: LocationRef | null;
   backstockLocation: LocationRef | null;
 }
-interface ItemForm {
-  gtin13: string;
-  /** The on-hand count when the form was loaded; a changed count is checked against it. */
-  loadedQuantity: number;
-  existingQuantity: number;
-  desiredQuantity: number;
-  locationId: string | null;
-  backstockLocationId: string | null;
-}
 
 const toId = (v: string | null) => (v ? Number(v) : null);
+
+/** A row's editable values, in the form's types. */
+const editableValues = (item: OrgItemRow | null) => ({
+  existingQuantity: item?.existingQuantity ?? 0,
+  desiredQuantity: item?.desiredQuantity ?? 0,
+  locationId: item?.locationId ? String(item.locationId) : null,
+  backstockLocationId: item?.backstockLocationId ? String(item.backstockLocationId) : null,
+});
+type EditableValues = ReturnType<typeof editableValues>;
+
+interface ItemForm extends EditableValues {
+  gtin13: string;
+  /** The values when the form was loaded; a save sends only what differs, checked against these. */
+  loaded: EditableValues;
+}
 
 /** The columns the org-items route can order by. */
 type SortCol = "gtin13" | "location" | "backstock";
@@ -85,35 +91,37 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
 
   function openEdit(item: OrgItemRow | null) {
     setIsNew(item === null);
-    setForm({
-      gtin13: item?.gtin13 ?? "",
-      loadedQuantity: item?.existingQuantity ?? 0,
-      existingQuantity: item?.existingQuantity ?? 0,
-      desiredQuantity: item?.desiredQuantity ?? 0,
-      locationId: item?.locationId ? String(item.locationId) : null,
-      backstockLocationId: item?.backstockLocationId ? String(item.backstockLocationId) : null,
-    });
+    const loaded = editableValues(item);
+    setForm({ gtin13: item?.gtin13 ?? "", loaded, ...loaded });
   }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
     setSaving(true);
-    const body = {
-      desiredQuantity: form.desiredQuantity,
-      locationId: toId(form.locationId),
-      backstockLocationId: toId(form.backstockLocationId),
+    const { loaded } = form;
+    const changes = {
+      ...(form.existingQuantity !== loaded.existingQuantity && { existingQuantity: form.existingQuantity, expectedQuantity: loaded.existingQuantity }),
+      ...(form.desiredQuantity !== loaded.desiredQuantity && { desiredQuantity: form.desiredQuantity, expectedDesiredQuantity: loaded.desiredQuantity }),
+      ...(form.locationId !== loaded.locationId && { locationId: toId(form.locationId), expectedLocationId: toId(loaded.locationId) }),
+      ...(form.backstockLocationId !== loaded.backstockLocationId && {
+        backstockLocationId: toId(form.backstockLocationId),
+        expectedBackstockLocationId: toId(loaded.backstockLocationId),
+      }),
     };
-    const count = form.existingQuantity === form.loadedQuantity
-      ? {}
-      : { existingQuantity: form.existingQuantity, expectedQuantity: form.loadedQuantity };
     try {
       await (isNew
         ? api("/org-items", {
           method: "POST",
-          body: JSON.stringify({ gtin13: form.gtin13.replace(/\D/g, ""), existingQuantity: form.existingQuantity, ...body }),
+          body: JSON.stringify({
+            gtin13: form.gtin13.replace(/\D/g, ""),
+            existingQuantity: form.existingQuantity,
+            desiredQuantity: form.desiredQuantity,
+            locationId: toId(form.locationId),
+            backstockLocationId: toId(form.backstockLocationId),
+          }),
         })
-        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify({ ...body, ...count }) }));
+        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(changes) }));
       notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
       setForm(null);
       reload();
@@ -125,11 +133,24 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     }
   }
 
-  /** Refresh the open form's on-hand count from the server, keeping the manager's other edits. */
+  /** Show what moved on the server in the open form and check against it, keeping the manager's other edits. */
   async function reloadForm(gtin13: string) {
     reload();
-    const fresh = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
-    if (fresh) setForm((f) => (f ? { ...f, loadedQuantity: fresh.existingQuantity, existingQuantity: fresh.existingQuantity } : f));
+    const row = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
+    if (!row) return;
+    const fresh = editableValues(row);
+    setForm((f) => {
+      if (!f) return f;
+      const latest = <K extends keyof EditableValues>(field: K) => (fresh[field] !== f.loaded[field] ? fresh[field] : f[field]);
+      return {
+        ...f,
+        loaded: fresh,
+        existingQuantity: latest("existingQuantity"),
+        desiredQuantity: latest("desiredQuantity"),
+        locationId: latest("locationId"),
+        backstockLocationId: latest("backstockLocationId"),
+      };
+    });
   }
 
   async function remove() {
