@@ -22,6 +22,7 @@ export const PAYMENT_ERROR_STATUS: Record<PaymentError["code"], number> = {
     forbidden: 403,
 };
 
+// 503 means contract signing isn't ready yet (Zoho secrets or the agreement PDF), so the applicant is told to check back.
 export const EXTERNAL_ERROR_STATUS: Record<ExternalError["code"], number> = {
     not_configured: 503,
     agreement_unavailable: 503,
