@@ -9,6 +9,7 @@ import {
   draftProblem,
   EMPTY_DRAFT,
   EMPTY_LINE,
+  hasTypedDetails,
   isDirty,
   parseCents,
   planSave,
@@ -155,5 +156,19 @@ describe("roundingAllowed", () => {
   it("names the rounding allowed, and says nothing when none was", () => {
     expect(roundingAllowed(0)).toBe("");
     expect(roundingAllowed(2)).toBe(" (rounding of up to $0.02 allowed)");
+  });
+});
+
+describe("hasTypedDetails", () => {
+  const blank: ServerReceipt = { retailer: null, receiptDate: null, receiptTotalCents: null, taxCents: 0, shippingCents: 0, discountCents: 0, lineItems: [] };
+
+  it("is false for a receipt holding nothing but its defaults", () => {
+    expect(hasTypedDetails(blank)).toBe(false);
+  });
+
+  it("is true for any one detail, a typed $0 total and a single line included", () => {
+    for (const typed of [{ retailer: "Acme" }, { receiptDate: "2026-10-01" }, { receiptTotalCents: 0 }, { taxCents: 1 }, { shippingCents: 1 }, { discountCents: 1 }, { lineItems: [line(1, 1, 100)] }]) {
+      expect(hasTypedDetails({ ...blank, ...typed })).toBe(true);
+    }
   });
 });
