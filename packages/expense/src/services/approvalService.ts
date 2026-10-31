@@ -49,7 +49,7 @@ function requireStatus(approval: { status: string }, status: string): void {
   if (approval.status !== status) throw new ServiceError(400, `Item is not in ${status} status`);
 }
 
-/** Refuses a decision by the submitter, the reimbursee, or anyone in their households. */
+/** Refuses an exception's raising or rejection by the submitter, the reimbursee, or anyone in their households. */
 async function refuseConflicted(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
   if ((await conflictedParties(expense)).includes(callerId(principal))) {
     throw new ServiceError(403, "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for");
@@ -241,7 +241,8 @@ export async function rejectException(
 /**
  * FINANCE settles an exception by moving the line to another bucket; it is not an approval, so the
  * line waits for that bucket's approver. Made `final`, with a required note kept on the approval
- * and its audit row, the line takes no further exception.
+ * and its audit row, the line takes no further exception; made final by a FINANCE holder conflicted
+ * on the expense, the line also takes the Board seat (signoff-facts reads the audit row).
  */
 export async function financeAssign(
   principal: ExpensePrincipal,
@@ -256,9 +257,8 @@ export async function financeAssign(
   const finalNote = note?.trim() || null;
   if (final && !finalNote) throw new ServiceError(400, "Say why finance makes this bucket final");
   await requireLiveBuckets([ownerId]);
-  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
-  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
@@ -302,21 +302,15 @@ export async function assignOwner(
   if (approval.ownerId !== null && approval.status !== "pending") {
     throw new ServiceError(400, "This item already has an owner assigned");
   }
-  await refuseConflicted(principal, expense);
 
   const lineItem = await expenseRepo.findLineItemById(approval.lineItemId);
   const gtin13 = permanent && !lineItem?.nonInventory ? (lineItem?.gtin13 ?? null) : null;
-  const [sameExpense, listed] = gtin13
+  const [sameExpense, siblings] = gtin13
     ? await Promise.all([
         expenseRepo.listSameExpenseUnassignedApprovalsByGtin13(expenseId, gtin13, approvalId),
         expenseRepo.listSiblingApprovals(expense.orgId, gtin13, expenseId),
       ])
     : [[], []];
-  // A sibling on an expense the caller is conflicted on stays unassigned for someone else.
-  const caller = callerId(principal);
-  const conflicted = await Promise.all(listed.map(async (s) => (await conflictedParties(s)).includes(caller)));
-  const siblings = listed.filter((_, i) => !conflicted[i]);
-
   const assigned = { ownerId, status: "pending", decidedAt: new Date(), decidedByUserId: actor.userId };
 
   await db.$transaction(async (tx) => {
@@ -361,9 +355,8 @@ export async function resolveUnknown(
   requireFinance(principal);
   const actor = actorOf(principal);
   await requireLiveBuckets([ownerId]);
-  const { expense, approval } = await loadApproval(expenseId, approvalId);
+  const { approval } = await loadApproval(expenseId, approvalId);
   requireStatus(approval, "unknown");
-  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);

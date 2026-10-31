@@ -13,9 +13,9 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import crypto from 'crypto';
 import prisma from '@/lib/prisma';
 import { config, isStagingAccessAllowed } from '@/lib/config';
+import { constantTimeEqual } from '@/lib/signatureCompare';
 import { householdLeadship } from '@/lib/household/leads';
 import type { AuthResult } from '@/types/auth';
 import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
@@ -258,15 +258,12 @@ export interface ResolverContext {
 
 /**
  * `Authorization: Bearer <secret>` against the named secret's env var. Unset or
- * empty fails closed. Both sides are hashed first so the compare is fixed-length
- * and timing-safe without leaking the secret's length.
+ * empty fails closed.
  */
 function cronSecretMatches(name: CronSecretName, authorization: string | null | undefined): boolean {
     const secret = process.env[CRON_SECRET_ENV[name]];
     if (!secret || !authorization) return false;
-    const provided = crypto.createHash('sha256').update(authorization).digest();
-    const expected = crypto.createHash('sha256').update(`Bearer ${secret}`).digest();
-    return crypto.timingSafeEqual(provided, expected);
+    return constantTimeEqual(authorization, `Bearer ${secret}`);
 }
 
 /**

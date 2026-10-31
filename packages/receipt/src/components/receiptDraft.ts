@@ -208,6 +208,11 @@ function lineBody(line: Partial<DraftLine>, fields: (keyof DraftLine)[]): Record
   return body;
 }
 
+/** Whether a receipt OCR could not read holds details: a failed reading saves nothing, so a person typed them. */
+export function hasTypedDetails(r: ServerReceipt): boolean {
+  return Boolean(r.retailer || r.receiptDate || r.taxCents || r.shippingCents || r.discountCents) || r.receiptTotalCents !== null || r.lineItems.length > 0;
+}
+
 export function isDirty(r: ServerReceipt, draft: Draft): boolean {
   return planSave(r, draft).length > 0;
 }

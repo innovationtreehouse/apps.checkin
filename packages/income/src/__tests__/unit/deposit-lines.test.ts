@@ -14,7 +14,7 @@ const txn = (type: string, orderGid: string | null, amountCents: number, feeCent
 });
 
 const line = (orderGid: string, variantId: string | null, priceCents: number, quantity = 1, discountCents = 0): MirrorOrderLine => ({
-  orderGid, variantId, title: "item", sku: null, quantity, priceCents, discountCents,
+  orderGid, variantId, title: "item", sku: null, quantity, currentQuantity: quantity, priceCents, discountCents,
 });
 
 const sum = (lines: DepositLine[]) => lines.reduce((s, l) => s + l.amountCents, 0);

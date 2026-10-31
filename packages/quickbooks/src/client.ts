@@ -376,20 +376,26 @@ export class QuickBooksClient {
   /**
    * Every `entity` QuickBooks created since `since`, oldest first and once each. `since` comes from
    * the app's clock and CreateTime from QuickBooks', so the read starts CREATED_SINCE_MARGIN_MS
-   * earlier, and callers get entries from before `since`. `full` means the read stopped at
-   * CREATED_SINCE_MAX_PAGES and more entries may exist. Creation time is kept when finance edits
-   * an entry's date, so this finds an entry a dated window misses.
+   * earlier, and callers get entries from before `since`. Each page starts at the last row's
+   * CreateTime, inclusive, so a deleted entry or a tie at a page edge skips nothing. `full` means
+   * more entries may exist: the read reached CREATED_SINCE_MAX_PAGES, or a full page gave it no
+   * later CreateTime to start from. Creation time is kept when finance edits an entry's date, so
+   * this finds an entry a dated window misses.
    */
   async createdSince<E extends keyof CreatedEntity>(entity: E, since: Date): Promise<{ entries: CreatedEntity[E][]; full: boolean }> {
     if (Number.isNaN(since.getTime())) throw new Error("QBO createdSince needs a valid time");
-    const at = `${new Date(since.getTime() - CREATED_SINCE_MARGIN_MS).toISOString().slice(0, 19)}Z`;
+    const toSecond = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+    let at = toSecond(since.getTime() - CREATED_SINCE_MARGIN_MS);
     const byId = new Map<string, CreatedEntity[E]>();
     for (let page = 0; page < CREATED_SINCE_MAX_PAGES; page++) {
       const rows = await this.query<CreatedEntity[E]>(
-        `SELECT * FROM ${entity} WHERE MetaData.CreateTime >= '${at}' ORDERBY MetaData.CreateTime STARTPOSITION ${page * PAGE_SIZE + 1} MAXRESULTS ${PAGE_SIZE}`,
+        `SELECT * FROM ${entity} WHERE MetaData.CreateTime >= '${at}' ORDERBY MetaData.CreateTime STARTPOSITION 1 MAXRESULTS ${PAGE_SIZE}`,
       );
       for (const row of rows) byId.set(row.Id, row);
       if (rows.length < PAGE_SIZE) return { entries: [...byId.values()], full: false };
+      const last = Date.parse(rows[rows.length - 1].MetaData?.CreateTime ?? "");
+      if (Number.isNaN(last) || toSecond(last) <= at) break;
+      at = toSecond(last);
     }
     return { entries: [...byId.values()], full: true };
   }

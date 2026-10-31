@@ -6,7 +6,7 @@ import { openPersonBg } from "@/lib/membership/personBgTriggers";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 /**
- * Manual "record an external background check → submit for review" — the Phase 3
+ * Manual "record an external background check → submit for review" — the
  * board-driven path. Mirrors the household BG flow: an external check exists and
  * the board asserts it; the system never sees the check itself.
  *

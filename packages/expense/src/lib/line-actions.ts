@@ -80,13 +80,14 @@ function callerActs(input: LineActionsInput): LineAction[] {
   const add = (act: LineAct, extra: Partial<LineAction> = {}) => acts.push({ act, primary: false, noteRequired: false, ...extra });
 
   if (mayApprove(input, caller.id)) add("approve", { noteRequired: approvesAsStandIn(facts, caller.id) && !facts.orgLevel });
-  if (approval && !conflicted) {
+  if (approval) {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
-    if (deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
+    // Choosing a bucket is open to a conflicted FINANCE holder; raising or rejecting an exception is not.
+    if (!conflicted && deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
-      add("reject-exception", { noteRequired: true });
+      if (!conflicted) add("reject-exception", { noteRequired: true });
     }
     if (caller.isFinance && approval.status === "unknown") add("resolve-bucket");
     else if (caller.isFinance && expense.state === "assign_ownership" && approval.ownerId === null) add("assign-bucket");

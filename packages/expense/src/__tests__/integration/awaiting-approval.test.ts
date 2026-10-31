@@ -1,13 +1,14 @@
 /**
  * The approver pill, its "Waiting on you" view and the owner-approval view count all come from
- * one rule (#2501 §8): per caller, the pill's lines are exactly the lines of the view's
- * expenses, and the owner-approval count is the number of those expenses.
+ * one rule (#2501 §8): per caller, below the badge caps, the pill's lines are exactly the lines of
+ * the view's expenses, and the owner-approval count is the number of those expenses. Past the
+ * caps the badges are a lower bound and the view still lists everything.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { expenses } from "../../routes";
-import { SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_CANDIDATE_CAP, SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
 // submitter 1 · approvers 2 and 9 (bucket 100), 6 (bucket 200) · org-level bucket 7 · finance 3 and 8 · board 5 · 8 and 9 in the submitter's household
@@ -53,6 +54,9 @@ async function viewIdsOrHidden(p: ExpensePrincipal): Promise<string[] | null> {
     throw err;
   }
 }
+
+/** A submission time after everything beforeEach seeds, `i` seconds apart, so the order never ties. */
+const later = (i: number) => new Date(Date.now() + 60_000 + i * 1000);
 
 async function seedLines(opts: Parameters<typeof seedExpense>[0], approvals: { ownerId: number | null; status?: string }[]): Promise<string> {
   const id = await seedExpense({ state: "owner_approval", submitterId: 1, ...opts });
@@ -137,11 +141,29 @@ describeDb("lines waiting on the caller's approval", () => {
     expect((await expenseActionCounts(CONFLICTED_APPROVER)).owner_approval).toBe(1);
   });
 
-  it("caps at the newest expenses that have work for the caller", async () => {
-    for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) await seedLines({}, [{ ownerId: 200 }]);
+  it("caps the badges at the newest expenses that have work for the caller, and still lists the rest", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) await seedLines({ submittedAt: later(i) }, [{ ownerId: 200 }]);
     as(OTHER_APPROVER);
-    expect(await viewIds(OTHER_APPROVER)).not.toContain(both);
     expect(await signoffsAwaitingCount(OTHER_APPROVER)).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
+    expect((await expenseActionCounts(OTHER_APPROVER)).owner_approval).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
+    expect(await viewIds(OTHER_APPROVER)).toContain(both);
+    expect(await viewIds(OTHER_APPROVER)).toHaveLength(SIGNOFF_BADGE_EXPENSE_CAP + 1);
+  });
+
+  it("reads at most the candidate cap for the badges, leaving older work out of the count but not the list", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP; i++) await seedLines({ submittedAt: later(i) }, [{ ownerId: 100 }]);
+    as(BOARD);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(0);
+    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(0);
+    expect(await viewIds(BOARD)).toEqual([orgLevel]);
+  });
+
+  it("counts a Board member's work while the candidates exactly fill the cap", async () => {
+    // beforeEach seeds five Board candidates: both, mixed, approversOwn, moved and orgLevel.
+    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP - 5; i++) await seedLines({ submittedAt: later(i) }, [{ ownerId: 100 }]);
+    as(BOARD);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
+    expect(await viewIds(BOARD)).toEqual([orgLevel]);
   });
 
   it("counts nothing for FINANCE outside its own buckets, and hides the view from it", async () => {

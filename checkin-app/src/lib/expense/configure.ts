@@ -1,8 +1,8 @@
 /**
- * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
+ * Wire the expense library into checkin, called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
- * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
+ * request. Bound crossings: catalog reads, the org-event replay read and the reimbursement
+ * status QuickBooks reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = the reader throws, no Vendors).
  * The posting writer resolves per run: the guarded client and the books map's EXPENSE_PAYMENT
  * account, which finance also reads matches against. With either missing, or an account that is
