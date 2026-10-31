@@ -190,7 +190,7 @@ describeDb("S5 catch-up: alerts", () => {
 
     expect(await catchUpOrgEvents()).toMatchObject({ unreadable: true, reconciled: 1 });
     expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true, reconcileFailed: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true, stuckProvisionals: [] });
   });
 
   it("alerts once for events that fail or don't fit this run, and leaves them for the next", async () => {
@@ -199,7 +199,7 @@ describeDb("S5 catch-up: alerts", () => {
 
     expect(await catchUpOrgEvents(2)).toMatchObject({ failed: 2, unprocessed: 1 });
     expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 2, unprocessed: 1, unreadable: false, reconcileFailed: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 2, unprocessed: 1, unreadable: false, stuckProvisionals: [] });
     expect(await db.inventoryReceivedOrgEvent.count({ where: { id: 3 } })).toBe(0);
   });
 
@@ -317,7 +317,7 @@ describeDb("S5 catch-up: stored resolutions", () => {
       await catchUpOrgEvents();
       await catchUpOrgEvents();
       expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-      expect(orgEventsStuck).toHaveBeenLastCalledWith({ failed: 0, unprocessed: 0, unreadable: false, reconcileFailed: 1 });
+      expect(orgEventsStuck).toHaveBeenLastCalledWith({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals: [{ gtin13: PROV, name: "Widget" }] });
 
       expect(await catchUpOrgEvents()).toMatchObject({ reconcileFailed: 0 });
       expect(orgEventsStuck).toHaveBeenCalledTimes(2);
