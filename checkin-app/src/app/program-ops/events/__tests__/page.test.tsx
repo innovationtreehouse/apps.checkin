@@ -44,4 +44,11 @@ describe("OneTimeEventsList", () => {
     renderWithProviders(<OneTimeEventsList />);
     expect(await screen.findByText("No one-time events found.")).toBeInTheDocument();
   });
+
+  it("shows the failure, not an empty list, when the load fails", async () => {
+    mockFetchJson({});
+    renderWithProviders(<OneTimeEventsList />);
+    expect(await screen.findByText("Couldn't load one-time events")).toBeInTheDocument();
+    expect(screen.queryByText("No one-time events found.")).not.toBeInTheDocument();
+  });
 });

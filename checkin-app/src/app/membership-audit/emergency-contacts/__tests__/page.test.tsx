@@ -1,7 +1,4 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
-
-import { screen, waitFor } from "@testing-library/react";
-import { notifications } from "@mantine/notifications";
+import { screen } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import MissingEmergencyContactsPage from "../page";
 
@@ -15,17 +12,12 @@ describe("membership-audit/emergency-contacts page", () => {
     expect(await screen.findByText(/Every active household has a valid emergency contact/)).toBeInTheDocument();
   });
 
-  it("toasts a network-error notification when the fetch rejects", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+  it("shows the failure, not the all-clear, when the load fails", async () => {
+    mockFetchJson({});
     renderWithProviders(<MissingEmergencyContactsPage />);
 
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error loading households." }),
-      ),
-    );
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
-    spy.mockRestore();
+    expect(await screen.findByText("Couldn't load households missing a contact")).toBeInTheDocument();
+    expect(screen.queryByText(/Every active household/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });
