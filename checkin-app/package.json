@@ -72,6 +72,7 @@
     "svix": "^1.84.1"
   },
   "devDependencies": {
+    "@checkin/pg-test-harness": "*",
     "@jest/test-sequencer": "^30.3.0",
     "@playwright/test": "1.63.0",
     "@prisma/generator-helper": "7.8.0",
