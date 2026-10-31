@@ -231,8 +231,25 @@ Income checks each online-store payout against the deposits in the books.
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
 - Sales are booked to the program or fund they belong to. Sales are booked as
-  general Treehouse income only where finance chose that for the item. A payout
-  with a sale of an item finance has not decided on waits until finance does.  [Decision]
+  general Treehouse income only where finance chose that for the item, with one
+  exception: a custom item, typed into an order with no store item behind it, books
+  as general income without asking, because custom items are rare. A payout with a
+  sale of any other item finance has not decided on waits until finance does, and
+  the next run books it once finance decides.  [Decision — owner]
+
+- Finance can decide on the app's program and membership items before their first
+  sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
+
+- An item can be assigned to a bucket only if the bucket is live and its Class is
+  active in the books. While the books can't be reached to check, the assignment is
+  refused. Choosing general income needs no check.  [Decision — owner]
+
+- When a run finds an assigned bucket archived or without an active Class, it alerts
+  finance once for that bucket and marks its items. A payout with a sale of those
+  items waits, in whole, until finance restores the bucket or reassigns the items.
+  The app never reassigns them. While Classes can't be read, a payout with a sale
+  assigned to any bucket waits. This check is part of booking, so it doesn't run
+  while posting is off or the closing date can't be read.  [Decision — owner]
 
 - A payout with a sale whose items the app can't see waits too, and never books
   itself as general income. It books once the order's items arrive. The same goes
