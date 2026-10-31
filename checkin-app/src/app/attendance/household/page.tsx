@@ -10,7 +10,6 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { AttendanceTabs } from "../AttendanceTabs";
-import { isCloseChoiceWarning, useCloseChoice } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type Visit = { id: number; person?: { name: string }; event?: { name: string }; arrivedAt: string; departedAt?: string };
@@ -21,7 +20,6 @@ export default function HouseholdCheckins() {
   const { formatVisitRange, formatDateTime } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);
   const [visits, setVisits] = useState<Visit[]>([]);
-  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
   const [filterDate, setFilterDate] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [arrivedAt, setArrived] = useState("");
@@ -59,15 +57,7 @@ export default function HouseholdCheckins() {
       const res = await fetch(`/api/attendance/manual/${id}`, init);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (isCloseChoiceWarning(data)) {
-          const answer = await askCloseChoice(data, { removal: init.method === "DELETE" });
-          if (answer) {
-            const body = JSON.parse(typeof init.body === "string" ? init.body : "{}");
-            await submit(id, { ...init, body: JSON.stringify({ ...body, ...answer }) }, okMessage);
-          }
-        } else {
-          setError(data.error || "Correction failed.");
-        }
+        setError(data.error || "Correction failed.");
       } else {
         notifications.show({ message: okMessage });
         setEditing(null);
@@ -102,7 +92,6 @@ export default function HouseholdCheckins() {
 
   return (
     <PageContainer>
-      {closeChoiceDialog}
       <AttendanceTabs />
       <Group justify="space-between" align="center" wrap="wrap" mb="xs">
         <Title order={1}>Household Check-ins</Title>

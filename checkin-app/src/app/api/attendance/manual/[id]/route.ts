@@ -1,34 +1,21 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
 import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import prisma from "@/lib/prisma";
-import type { FacilityCloseVia, Prisma } from "@/generated/prisma/client";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
-import { processVisitCheckout } from "@/lib/attendanceTransitions";
+import type { Prisma } from "@/generated/prisma/client";
+import { OPEN_VISIT_REFUSAL, parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { lockFacility } from "@/lib/facilityLock";
 import { correctCloseTime } from "@/lib/attendance/close";
-import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/attendance/keyholderGuard";
-import type { CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { logBackendError } from "@/lib/logger";
-import { apiError, apiJson } from "@/lib/api-response";
 import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
-
-// Side channel: handler() returns through stripBag, so the guard result
-// can't ride the bag. A WeakMap keyed on the request lets the wrapper
-// intercept a warning or run the facility close after the handler commits.
-type CloseGuardContext = { actorId: number; subjectId: number; visitId: number; closeTime?: Date; recorded?: boolean };
-const guardResults = new WeakMap<Request, CloseGuardContext & { guard: CloseGuardResult }>();
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
 // docs/rules/attendance-checkin.md): the edit always
 // applies — the only gates are validity (times parse, departure after arrival,
-// ≤ 24h, no reopening) and scope. Integrity is post-hoc: every change is
+// ≤ 24h, closed visits only) and scope. Integrity is post-hoc: every change is
 // audited, and a significant one (big delta × trusted old source, doubled when
 // an adult edits someone else's record, or any delete) is flagged to the board.
 // Recurring-audit note: arbitrary backdate is accepted on purpose here exactly
@@ -58,7 +45,7 @@ function flagBoard(kind: "edit" | "delete", visitId: number, actorName: string, 
     }, "Self-correction board flag failed:");
 }
 
-const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', async ({ req, auth, params }) => {
+export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', async ({ req, auth, params }) => {
     if (auth.type !== 'session') throw unauthorized();
     try {
         const userId = auth.user.id;
@@ -72,11 +59,12 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
 
         const visit = await loadEditableVisit(visitId, userId);
         if (!visit) throw notFound("Visit not found.");
+        if (!visit.departedAt) throw new ApiResponseError(409, OPEN_VISIT_REFUSAL);
         const byProxy = visit.personId !== userId;
 
         const now = new Date();
         let nextArrived = visit.arrivedAt;
-        let nextDeparted = visit.departedAt;
+        let nextDeparted: Date | null = visit.departedAt;
         let arrivalEdited = false;
         let departureEdited = false;
 
@@ -94,11 +82,6 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         }
         if (!arrivalEdited && !departureEdited) throw badRequest("Nothing to change.");
 
-        // A closed visit stays closed (same rule as the staff route): editing
-        // must never turn a historical record back into "in the building".
-        if (visit.departedAt && !nextDeparted) {
-            throw badRequest("Departure time is required to close this visit.");
-        }
         if (nextDeparted && !departureAfterArrival(nextArrived, nextDeparted)) {
             throw badRequest("Departure time must be after arrival time");
         }
@@ -108,24 +91,13 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
 
         const significance = editSignificance(visit, { arrivedAt: nextArrived, departedAt: nextDeparted }, { byProxy });
 
-        const closingOpenVisit = !visit.departedAt && !!nextDeparted;
-        const subject = closingOpenVisit
-            ? await prisma.person.findUnique({ where: { id: visit.personId }, select: { id: true, isKeyholder: true } })
-            : null;
-
         // Same per-person advisory lock as every other visit write: an edit
         // must not race the kiosk, the sweep, or a concurrent submit. The lock
         // is keyed on the visit's PERSON, not the actor — that is the key the
         // one-open-visit invariant is per, so a lead's edit serializes against
-        // the member's own kiosk scan. An edit that CLOSES an open visit also
-        // takes the facility lock, so the last-keyholder guard decides on the
-        // building as this checkout leaves it, and the close it chose commits
-        // with the checkout. The departure goes through processVisitCheckout,
-        // which refuses already-closed or tombstoned visits and owns the
-        // back-to-back event chunking.
+        // the member's own kiosk scan.
         const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
-            if (closingOpenVisit) await lockFacility(tx);
             // Scope and liveness re-asserted under the lock: a DELETE that
             // landed since the pre-check must not have its tombstone overwritten.
             const live = await tx.visit.findFirst({
@@ -145,15 +117,6 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             if (nextDeparted && !withinMaxDuration(nextArrived, nextDeparted)) {
                 throw badRequest("A visit cannot be longer than 24 hours.");
             }
-            let pending: (CloseGuardContext & { guard: CloseGuardResult }) | undefined;
-            if (subject) {
-                const guard = await lastKeyholderGuard(visitId, subject, closeActor(auth.user),
-                    { token: body.forceCloseToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx);
-                // A close departs everyone at the typed departure, as a late kiosk close does.
-                pending = { guard, actorId: userId, subjectId: subject.id, visitId, closeTime: nextDeparted! };
-                guardResults.set(req, pending);
-                if (guard.action !== 'proceed') return "guarded" as const;
-            }
             // A corrected time becomes a typed clock: an edited arrival stamps
             // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
             // Significance already read the pre-edit source above, so restamping
@@ -164,29 +127,19 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
                 where: { id: visitId },
                 data: {
                     ...(arrivalEdited ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
-                    ...(departureEdited && !closingOpenVisit ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
+                    ...(departureEdited ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                 },
             });
             // The closer correcting their own departure corrects the close they made.
-            if (departureEdited && !closingOpenVisit) {
+            if (departureEdited) {
                 const close = await tx.facilityClose.findFirst({
                     where: { closerVisitId: visitId, closedById: userId },
                     select: { id: true, closedAt: true, closedById: true },
                 });
                 if (close) await correctCloseTime(tx, close, userId, nextDeparted!);
             }
-            if (!closingOpenVisit) return edited;
-            // The checkout chunks a program-enrolled stay into per-event rows,
-            // replacing the original: the audit row and the response must name a
-            // row that survives.
-            const chunks = await processVisitCheckout(visitId, nextDeparted!, tx, "TYPED");
-            if (chunks.length === 0) throw notFound("Visit not found.");
-            if (pending?.guard.action === "proceed") {
-                pending.recorded = await recordWebClose(tx, pending.guard, { ...pending, via: "WEB_CORRECTION" });
-            }
-            return chunks[chunks.length - 1];
+            return edited;
         }, { maxWait: 5000, timeout: 15000 });
-        if (updated === "guarded") return {};
         if (!updated) throw notFound("Visit not found.");
         invalidateAttendanceCache();
         const surviving = updated;
@@ -222,31 +175,17 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
     }
 });
 
-const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', async ({ req, auth, params }) => {
+export const DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', async ({ auth, params }) => {
     if (auth.type !== 'session') throw unauthorized();
     try {
         const userId = auth.user.id;
         const visitId = Number(params.id);
         if (!Number.isInteger(visitId)) throw badRequest("Invalid visit id");
 
-        const body = await req.json().catch(() => null);
-
         const visit = await loadEditableVisit(visitId, userId);
         if (!visit) throw notFound("Visit not found.");
+        if (!visit.departedAt) throw new ApiResponseError(409, OPEN_VISIT_REFUSAL);
         const byProxy = visit.personId !== userId;
-
-        if (!visit.departedAt) {
-            const person = await prisma.person.findUnique({
-                where: { id: visit.personId },
-                select: { id: true, isKeyholder: true },
-            });
-            if (person) {
-                const guard = await lastKeyholderGuard(visitId, person, closeActor(auth.user),
-                    { token: body?.forceCloseToken, choice: body?.closeChoice }, { removal: true });
-                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId });
-                if (guard.action !== 'proceed') return {};
-            }
-        }
 
         const significance = deleteSignificance(visit, { byProxy });
 
@@ -279,7 +218,7 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
         // Every delete flags — the floor (§2).
         const timeZone = await resolveDisplayTimezone();
         flagBoard("delete", visitId, auth.user.name ?? `person #${userId}`, byProxy, significance.score,
-            `Visit ${formatDateTime(visit.arrivedAt, { timeZone })} – ${visit.departedAt ? formatDateTime(visit.departedAt, { timeZone }) : "(open)"} tombstoned.`);
+            `Visit ${formatDateTime(visit.arrivedAt, { timeZone })} – ${formatDateTime(visit.departedAt, { timeZone })} tombstoned.`);
 
         // Empty bag — a tombstone ships no model data, so the registry declares
         // `envelope: null` and the 200 body is `{}` (stripBag drops any
@@ -290,29 +229,3 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
         throw error;
     }
 });
-
-// Wrappers: intercept the close-guard side channel without changing
-// handler.ts (boundary file — must ship alone per the isolation rule).
-async function withCloseGuard(
-    req: NextRequest,
-    ctx: { params?: Promise<{ id: string }> } | undefined,
-    inner: (req: NextRequest, ctx?: { params?: Promise<{ id: string }> }) => Promise<NextResponse>,
-    via: FacilityCloseVia,
-): Promise<NextResponse> {
-    const result = await inner(req, ctx);
-    const pending = guardResults.get(req);
-    guardResults.delete(req);
-    if (!pending) return result;
-    const { guard, ...closeCtx } = pending;
-
-    if (guard.action === 'warn') return apiJson(guard.warning, 400);
-    if (guard.action === "refuse") return apiError(guard.error, guard.status);
-    if (result.ok) await finishCloseGuard(guard, { ...closeCtx, via });
-    return result;
-}
-
-const _guardedPATCH = (req: NextRequest, ctx?: { params?: Promise<{ id: string }> }) =>
-    withCloseGuard(req, ctx, _PATCH, "WEB_CORRECTION");
-const _guardedDELETE = (req: NextRequest, ctx?: { params?: Promise<{ id: string }> }) =>
-    withCloseGuard(req, ctx, _DELETE, "WEB_REMOVAL");
-export { _guardedPATCH as PATCH, _guardedDELETE as DELETE };

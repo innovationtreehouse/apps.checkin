@@ -21,7 +21,7 @@ function fakeDb(openVisit: { id: number } | null, badgeRow: { id: number } | nul
 }
 
 const participant = { id: 5, isKeyholder: false } as Person;
-const base = { participant, occurredAt: new Date(), authType: "kiosk", source: "SCANNER" as const };
+const base = { participant, occurredAt: new Date(), source: "SCANNER" as const };
 
 describe("applyPresenceIntent conflict parks", () => {
     it("puts a double IN on the review queue by its clientEventId", async () => {

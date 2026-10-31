@@ -3,15 +3,12 @@ import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { processCheckin, processCheckout, type LegacyKiosk, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/attendance/scan";
 import { processCloseRequest, executePendingCloses, type CloseKind, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/attendance/close";
-import { closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
-import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { lockFacility } from "@/lib/facilityLock";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { specTrace } from "@/lib/specTrace";
@@ -27,8 +24,6 @@ const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 // whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 
-// Outbox-only fields: they rewrite a scan's event time, skip its interrupts, or
-// inject review rows. Only a signed kiosk may send them.
 // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
 // lookup throw instead of matching nothing.
 const isPersonId = (v: unknown): v is number =>
@@ -53,8 +48,6 @@ async function openedByLiveBadge(tx: Prisma.TransactionClient, personId: number)
     }) > 0;
 }
 
-const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect", "shownEmpty", "close", "rosterAsOf"] as const;
-
 // F7: the out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
 // same-day/next-day resolution (D7) can write a departedAt newer than a
@@ -63,11 +56,13 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
     !a ? b : !b ? a : (a > b ? a : b);
 
 // High cap: kiosks burst and a whole facility may share one NAT IP. withKiosk
-// reads the raw body, authenticates it (kiosk signature OR session), rejects
-// unauthenticated, and hands us the parsed body + actor. We own authorization.
+// reads the raw body and authenticates it; only a signed kiosk scans
+// (docs/rules/attendance-checkin.md, Opening and closing).
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown; close?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown }, auth) => {
+    if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
+
     const startTime = Date.now();
 
     try {
@@ -79,15 +74,8 @@ export const POST = withKiosk(
             return apiError("A valid numeric participantId is required.", 400);
         }
 
-        if (auth.type !== 'kiosk') {
-            const sent = KIOSK_ONLY_FIELDS.filter((f) => body[f] !== undefined);
-            if (sent.length > 0) {
-                return apiError(`Only a kiosk may send: ${sent.join(", ")}.`, 400);
-            }
-        }
-
-        // Optional replay fields from a queued kiosk scan. Absent → exactly
-        // today's behavior (legacy/web callers). An unparseable scannedAt
+        // Optional replay fields from a queued kiosk scan. Absent → a live scan.
+        // An unparseable scannedAt
         // normalizes to null, which parks a replay below.
         const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
@@ -117,8 +105,8 @@ export const POST = withKiosk(
             return apiError("A dead-lettered scan requires a valid scannedAt.", 400);
         }
 
-        // The token a web caller echoes from the close-choice dialog. Anything
-        // that isn't a non-empty string is simply "no token".
+        // The token an older kiosk echoes on a close's second scan. Anything that
+        // isn't a non-empty string is simply "no token".
         const confirmToken =
             typeof body.forceCloseToken === 'string' && body.forceCloseToken.length > 0
                 ? body.forceCloseToken
@@ -129,9 +117,9 @@ export const POST = withKiosk(
         // echoes on the second scan of the same badge, is the same decision.
         const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
             ? body.close
-            : auth.type === 'kiosk' && (body.forceCloseConfirmed === true || confirmToken !== null)
+            : body.forceCloseConfirmed === true || confirmToken !== null
                 ? 'confirmed'
-                : auth.type === 'kiosk' && body.shownEmpty === true
+                : body.shownEmpty === true
                     ? 'alone'
                     : null;
         // Server time of the kiosk's last roster: a check-in after it is one the
@@ -179,7 +167,7 @@ export const POST = withKiosk(
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
         const clockSuspect = body.clockSuspect === true;
-        const slot = auth.type !== 'kiosk' ? "web" : (isReplay || isDead) ? "replay" : "live";
+        const slot = (isReplay || isDead) ? "replay" : "live";
         specTrace("ScanRequest", {
             slot, p: body.participantId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,
@@ -201,15 +189,14 @@ export const POST = withKiosk(
         // checkout decide the close (whether the kiosk showed anyone else inside,
         // else the server's records); from that generation on, only a close
         // request closes.
-        const legacyKiosk: LegacyKiosk | null = auth.type === 'kiosk'
-            && (typeof body.protocolVersion === 'number' ? body.protocolVersion : 1) < CLOSE_REQUEST_PROTOCOL_VERSION
+        const legacyKiosk: LegacyKiosk | null = (typeof body.protocolVersion === 'number' ? body.protocolVersion : 1) < CLOSE_REQUEST_PROTOCOL_VERSION
             ? { shownEmpty: typeof body.shownEmpty === 'boolean' ? body.shownEmpty : null, clientEventId }
             : null;
 
         // A dead-lettered read that names no person can never project. It still
         // lands in the review queue -- the scan is never discarded -- keyed by
         // the raw value read, so the kiosk can stop retrying it.
-        const wire = { signedRequest: auth.type === 'kiosk' };
+        const wire = { signedRequest: true };
         const parkUnresolvable = async (): Promise<Response> => {
             const raw = body.participantId;
             const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
@@ -234,16 +221,6 @@ export const POST = withKiosk(
         };
         if (participantId === null) {
             return await parkUnresolvable();
-        }
-
-        // Web session: refuse up front anyone who could only ever scan
-        // themselves, so the lookup below can't serve them as an id oracle.
-        // The full self/household check runs on the resolved participant.
-        const sessionUser = auth.type === 'session' && !(auth.user.isSysadmin || auth.user.isKeyholder || auth.user.isBoardMember)
-            ? auth.user
-            : null;
-        if (sessionUser && participantId !== Number(sessionUser.id) && !(sessionUser.householdId && sessionUser.householdLead)) {
-            return apiError("Forbidden: You are not authorized to scan this user.", 403);
         }
 
         // 3. Lookup participant. A badge still encoding a merged-away id must not
@@ -272,20 +249,6 @@ export const POST = withKiosk(
             });
         }
 
-        // Checked against the resolved id, so a merged-away id can't disguise
-        // a self scan as a household scan.
-        if (sessionUser) {
-            const isSelf = participant.id === Number(sessionUser.id);
-            // In production, only privileged users may self-check-in via web.
-            // Everyone else must use the kiosk badge scanner.
-            if (isSelf && config.isProd()) {
-                return apiError("Please use the kiosk badge scanner to check in.", 403);
-            }
-            if (!isSelf && !(sessionUser.householdLead && sessionUser.householdId && participant.householdId === sessionUser.householdId)) {
-                return apiError("Forbidden: You are not authorized to scan this user.", 403);
-            }
-        }
-
         // Steps 4–6 (debounce read → record event → find visit → check-in/out)
         // are a read-modify-write on this participant's visit state. Without
         // serialization, two near-simultaneous scans for the same participant
@@ -297,18 +260,6 @@ export const POST = withKiosk(
         // the top, so concurrent scans for the same participantId serialize: the
         // second blocks until the first commits, then observes committed state
         // and branches correctly. The lock auto-releases on commit/rollback.
-        const authType = auth.type;
-
-        // A session checkout's last-keyholder decision, set inside the transaction
-        // and acted on after it commits.
-        const web: { guard: Extract<CloseGuardResult, { action: "proceed" }> | null; visitId: number } = { guard: null, visitId: 0 };
-        // A web checkout's chosen close commits in the scan transaction, with the checkout.
-        const recordSessionClose = async (tx: Prisma.TransactionClient, result: ScanResult): Promise<ScanResult> => {
-            if (auth.type === 'session' && web.guard?.facilityClosed && result.kind === "checkout") {
-                await recordWebClose(tx, web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, via: "WEB_CHECKOUT" });
-            }
-            return result;
-        };
         let closeRefused = false;
 
         let result: ScanResult;
@@ -364,21 +315,14 @@ export const POST = withKiosk(
                 return processCloseRequest(participant, tx, eventTime, clientEventId, isReplay || isDead, closeKind, rosterAsOf);
             }
 
-            // A web caller echoing its close-choice token answers the dialog, and a
-            // scan following a fresh supervisionWarnedAt stamp IS the supervision
-            // confirm (#1347 PR-0, decision 7) -- both must skip the debounce below.
+            // A scan following a fresh supervisionWarnedAt stamp IS the supervision
+            // confirm (#1347 PR-0, decision 7) and must skip the debounce below.
             // Tied to the warning actually being shown, not badge adjacency. The
             // stamp side is floored at SUPERVISION_CONFIRM_DEADFRONT_MS: a USB
             // double-read of the warning scan itself lands well under that age and
             // must still debounce, or the room's warning would auto-confirm with no
             // human acknowledgment at all.
-            const isConfirm = async () => (confirmToken !== null && (await tx.visit.count({
-                where: {
-                    personId: participant.id,
-                    deletedAt: null,
-                    forceCloseToken: confirmToken,
-                },
-            })) > 0) || (await tx.visit.count({
+            const isConfirm = async () => (await tx.visit.count({
                 where: {
                     personId: participant.id,
                     departedAt: null,
@@ -536,45 +480,27 @@ export const POST = withKiosk(
                 orderBy: { arrivedAt: "desc" },
             });
 
-
-            // A web checkout runs the shared close choice, not the kiosk's badge
-            // confirm (docs/rules/attendance-checkin.md, Opening and closing),
-            // under the facility lock so no check-in or close lands between the
-            // choice and the checkout.
-            if (auth.type === 'session' && activeVisit && intent !== 'IN') {
-                await lockFacility(tx);
-                const guard = await lastKeyholderGuard(
-                    activeVisit.id, participant, closeActor(auth.user),
-                    { token: confirmToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx,
-                );
-                if (guard.action !== 'proceed') return { kind: "close_guard", guard };
-                web.guard = guard;
-                web.visitId = activeVisit.id;
-            }
-
             // 6. Project. Intent-carrying events apply IN/OUT as displayed
             // (conflicts park). Legacy callers without intent still toggle from
             // live state.
             if (intent) {
-                return recordSessionClose(tx, await applyPresenceIntent(tx, {
+                return applyPresenceIntent(tx, {
                     participant,
                     direction: intent,
                     occurredAt: eventTime,
-                    authType,
                     source: "SCANNER",
                     clientEventId,
                     isReplay,
                     clockSuspect,
-                    webClose: web.guard?.facilityClosed ?? false,
                     legacyKiosk,
                     // A close fences what came before it (processCheckin).
                     fenceClientEventId: isReplay && trustsReplays ? clientEventId : null,
-                }));
+                });
             }
 
             const outcome = activeVisit
-                ? await processCheckout(participant, activeVisit.id, authType, tx, eventTime, isReplay, web.guard?.facilityClosed ?? false, legacyKiosk)
-                : await processCheckin(participant, authType, tx, isReplay ? eventTime : undefined);
+                ? await processCheckout(participant, activeVisit.id, tx, eventTime, isReplay, legacyKiosk)
+                : await processCheckin(participant, tx, isReplay ? eventTime : undefined);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
             // toggle is PROJECTED; a park keeps its own class; a departure
@@ -593,7 +519,7 @@ export const POST = withKiosk(
                 clientEventId,
                 classification,
             });
-            return recordSessionClose(tx, outcome);
+            return outcome;
         }, {
             // maxWait: time a racing scan waits to acquire a connection / start.
             // timeout: ceiling on the whole locked section, including time spent
@@ -627,9 +553,6 @@ export const POST = withKiosk(
         // never blocks scans for other participants. Unconditional: a resend of
         // a close whose sweep was cut off dedups above and is carried out here.
         await executePendingCloses();
-        if (auth.type === 'session' && web.guard && result.kind === "checkout") {
-            await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT", recorded: true });
-        }
         if (result.kind === "checkin" || result.kind === "checkout") await notifyScanOutcome(result, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.

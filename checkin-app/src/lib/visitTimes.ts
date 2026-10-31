@@ -44,3 +44,6 @@ export function withinMaxDuration(arrived: Date, departed: Date): boolean {
 export function isUnchangedTime(submitted: Date, stored: Date | null): boolean {
   return stored !== null && Math.floor(submitted.getTime() / 60000) === Math.floor(stored.getTime() / 60000);
 }
+
+/** Why a reconciliation path refuses a visit still open: only the kiosk or the 11 PM close ends one. */
+export const OPEN_VISIT_REFUSAL = "This person is still checked in. They badge out at the kiosk, or the 11 PM close ends the visit.";

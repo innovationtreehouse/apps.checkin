@@ -19,12 +19,10 @@ export async function applyPresenceIntent(
         participant: Person;
         direction: PresenceDirection;
         occurredAt: Date;
-        authType: string;
         source: "SCANNER" | "TYPED";
         clientEventId?: string | null;
         isReplay?: boolean;
         clockSuspect?: boolean;
-        webClose?: boolean;
         legacyKiosk?: LegacyKiosk | null;
         /** A trusted replay's event id, for the close fence (processCheckin). */
         fenceClientEventId?: string | null;
@@ -53,7 +51,7 @@ export async function applyPresenceIntent(
             return { kind: "parked", reason: "conflict_double_in" };
         }
 
-        const outcome = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
+        const outcome = await processCheckin(args.participant, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
         await classifyCheckin(db, event.id, outcome, args.participant.id, args.clientEventId);
         return outcome;
     }
@@ -67,11 +65,9 @@ export async function applyPresenceIntent(
     const outcome = await processCheckout(
         args.participant,
         openVisit.id,
-        args.authType,
         db,
         args.occurredAt,
         args.isReplay ?? false,
-        args.webClose ?? false,
         args.legacyKiosk ?? null,
     );
     // Mirror the IN branch: PROJECTED only when someone actually left. A
@@ -102,8 +98,7 @@ export async function flagForReview(
 }
 
 /** Classify an IN event from processCheckin's actual outcome, queueing a
- *  double_in park for review. A refusal (a session check-in into a closed
- *  facility) stays unclassified. */
+ *  double_in park for review. */
 async function classifyCheckin(
     db: DbClient,
     eventId: number,

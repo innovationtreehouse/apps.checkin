@@ -141,7 +141,6 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim reconciliation check: `programParticipant.findFirst({ where: { shopifyOrderId } })` asks "has any enrollment already claimed this order". A merge-collision row left on a tombstone still holds the order — filtering it would falsely report the order unmatched and raise a spurious payment exception.',
     'lib/attendance/scan.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
     'lib/attendance/close.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
-    'lib/attendance/keyholderGuard.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
     'app/api/cron/nightly/route.ts': 'Nightly force-checkout sweep: must see every open visit, including a merge-orphaned tombstone\'s, or a stranded open visit is never released (same rationale as lifecycleDrift.ts\'s I1 heal).',
 
     // ── structural mass writes (the write rule\'s second exception) ────────────
@@ -151,7 +150,6 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/programs/[id]/participants/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id.',
     'app/api/programs/[id]/request-payment-plan/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id. (This file also nests `person: true` off a programParticipant `findUnique` by compound key — same excluded shape as a bare findUnique-by-id.)',
     'lib/trusted-adult/service.ts': 'assertHouseholdLead ANDs an explicit `id: actorId` into the where — at most one row, same shape as findUnique-by-id.',
-    'app/api/attendance/route.ts': 'Checkout POST loads the target visit via `visit.findUnique({ where: { id: visitId }, include: { person: true } })` — the outer query is a findUnique-by-id; nesting `person: true` off it is the same excluded one-row shape.',
     'lib/auth-options.ts': 'Dev persona mint ANDs an explicit `id: personaId` into the where (and is separately scoped to `@example.com`, mirroring dev-personas/route.ts) — at most one row, same shape as findUnique-by-id. The adapter\'s `account.findUnique({ include: { user: true } })` (Account.user is a Person relation) is the same excluded shape: one Person reached through a unique provider key.',
 
     // ── FK-pinned to-one Person relations (class 2, one row chosen by the FK) ──
