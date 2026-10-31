@@ -115,7 +115,6 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await page.getByRole("option", { name: bucketName }).click();
     await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(dialog).toBeHidden();
-    // A decision with nothing left for FINANCE returns to the list, so read the line afresh.
     await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
     await expect(line(page).getByText("pending", { exact: true })).toBeVisible();
     await noProblems(watch, "FINANCE assigns the bucket");
@@ -128,6 +127,8 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await lineAct(page, LINE, "Approve as Program approver");
     await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
+    // The approver's last decision returns them to the list once the page has refetched; a goto before that is aborted by it.
+    await page.waitForURL((url) => url.pathname === "/programs-i-lead/expense-approvals");
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
     await expect(line(page).getByText("approved", { exact: true })).toBeVisible();
     await noProblems(watch, "the owner approves");

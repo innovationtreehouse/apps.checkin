@@ -99,7 +99,8 @@ test.describe("expenses in the browser", () => {
     await dialog.getByLabel("Notes").fill("E2E: not ours");
     await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(dialog).toBeHidden();
-    // The approver's last decision returns them to the list, so read the line afresh.
+    // The approver's last decision returns them to the list once the page has refetched; a goto before that is aborted by it.
+    await ownerPage.waitForURL((url) => url.pathname === "/programs-i-lead/expense-approvals");
     await ownerPage.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(id)}`);
     await expect(lineRow(ownerPage, line).getByText("exception_raised", { exact: true })).toBeVisible();
     await expect(ownerPage.getByRole("button", { name: "Reject exception" })).toHaveCount(0);
@@ -115,7 +116,6 @@ test.describe("expenses in the browser", () => {
     await page.getByRole("dialog").getByLabel("Notes").fill("E2E: it is yours");
     await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
-    // A decision with nothing left for FINANCE returns to the list, so read the line afresh.
     await page.goto(detail);
     await expect(lineRow(page, line).getByText("rejected", { exact: true })).toBeVisible();
     await noProblems(watch, "FINANCE rejects the exception");
