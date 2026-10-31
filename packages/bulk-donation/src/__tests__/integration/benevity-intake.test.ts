@@ -44,7 +44,6 @@ beforeEach(async () => {
   await db.transaction.deleteMany({});
   await db.uploadedFile.deleteMany({});
   await db.accountMap.deleteMany({});
-  await db.donationQbMatchExclusion.deleteMany({});
   configureTestRuntime();
 });
 

@@ -50,7 +50,7 @@ function bind() {
 }
 
 const rowFor = (payoutGid: string, orgId = ORG_A) =>
-  db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId, payoutGid } } });
+  db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_source_payoutGid: { orgId, source: "shopify", payoutGid } } });
 
 beforeEach(async () => {
   await clearAll();
