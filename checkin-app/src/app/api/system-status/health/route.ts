@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
+import { orgCalendarDay } from "@/lib/time";
 
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember', 'isKeyholder'] },
@@ -29,16 +30,16 @@ export const GET = withAuth(
 
             const groupedByDay: Record<string, number[]> = {};
             
-            const today = new Date();
+            const today = orgCalendarDay();
             for (let i = 29; i >= 0; i--) {
                 const date = new Date(today);
-                date.setDate(date.getDate() - i);
+                date.setUTCDate(date.getUTCDate() - i);
                 const dateStr = date.toISOString().split('T')[0];
                 groupedByDay[dateStr] = [];
             }
 
             metrics.forEach((m: { timestamp: Date; value: number }) => {
-                const dateStr = m.timestamp.toISOString().split('T')[0];
+                const dateStr = orgCalendarDay(m.timestamp).toISOString().split('T')[0];
                 if (groupedByDay[dateStr]) {
                     groupedByDay[dateStr].push(m.value);
                 }
