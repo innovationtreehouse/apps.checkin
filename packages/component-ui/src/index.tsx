@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
 import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, scheduleRetry } from "./loadCache";
 
@@ -190,6 +191,26 @@ export function Pager({ page, onChange, rows }: { page: number; onChange: (page:
       <Pagination value={page} onChange={onChange} total={total} />
     </Group>
   );
+}
+
+/** An action that worked: goes away by itself, and waits its turn with a screen reader. */
+export function showSuccess(message: string, { title }: { title?: string } = {}): void {
+  notifications.show({ color: "green", role: "status", title, message });
+}
+
+/**
+ * An action that failed: stays until dismissed or cleared. `message` is the server's chosen words or
+ * fixed text, never exception text. The same `key` changes the message in place, so a repeat from a
+ * poll neither animates nor announces again; `show` ignores an id already on screen.
+ */
+export function showError(message: string, { key = message, title }: { key?: string; title?: string } = {}): void {
+  notifications.update({ id: key, title, message });
+  notifications.show({ id: key, color: "red", title, message, autoClose: false });
+}
+
+/** Removes the standing error under `key`, once a retry or a later attempt worked. */
+export function clearError(key: string): void {
+  notifications.hide(key);
 }
 
 /** A failed load: names what failed and offers a retry, so it never reads as an empty list. */
