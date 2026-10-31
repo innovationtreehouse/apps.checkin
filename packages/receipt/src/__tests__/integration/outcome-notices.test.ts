@@ -32,10 +32,10 @@ beforeEach(async () => {
   setup();
 });
 
-/** ALICE's receipt, moved straight to `state`, reimbursing `reimburseePersonId` when given. */
+/** ALICE's receipt, never pushed (its total disagrees with its lines), moved straight to `state`, reimbursing `reimburseePersonId` when given. */
 async function aliceReceiptIn(state: string, reimburseePersonId: number | null = null): Promise<string> {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02" }) });
+  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02", receiptTotal: "25.00" }) });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
   if (reimburseePersonId !== null) await db.receipt.update({ where: { id: r.id }, data: { needsReimbursement: true, reimburseePersonId } });
   return r.id;
@@ -92,7 +92,7 @@ describeDb("receipt outcome notices", () => {
     actAs(FINANCE);
     await receiptService.approveFinancial(approved);
     actAs(ALICE);
-    const finalized = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere", receiptTotal: "7.00" }) });
+    const finalized = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere" }) });
 
     expect(await stateOf(discarded)).toBe("discarded");
     expect(await stateOf(finalized.id)).toBe("receipt_finalized");
