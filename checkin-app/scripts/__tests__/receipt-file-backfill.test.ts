@@ -2,10 +2,11 @@
  * @jest-environment node
  */
 const mockBackfillFiles = jest.fn(async () => ({ mismatches: [], failures: [] }));
+const mockVerifyFiles = jest.fn();
 const mockQueryRaw = jest.fn(async () => 1);
 jest.mock("@checkin/receipt", () => ({
     backfillFiles: mockBackfillFiles,
-    verifyFiles: jest.fn(),
+    verifyFiles: mockVerifyFiles,
     getPrisma: () => ({ $queryRaw: mockQueryRaw }),
 }));
 jest.mock("../../src/lib/auroraResumeRetry", () => ({ retryP1001UntilDeadline: (run: () => unknown) => run() }));
@@ -46,6 +47,19 @@ describe("receipt-file-backfill start check", () => {
         expect(String(errors[0][0])).toContain("RECEIPT_FILES_S3_BUCKET");
         expect(mockQueryRaw).not.toHaveBeenCalled();
         expect(mockBackfillFiles).not.toHaveBeenCalled();
+    });
+
+    it("stops a --verify run the same way", async () => {
+        const savedArgv = process.argv;
+        process.argv = [...savedArgv, "--verify"];
+        try {
+            const { code } = await runScript({ CHECKIN_ENV: "dev" });
+            expect(code).toBe(1);
+            expect(mockQueryRaw).not.toHaveBeenCalled();
+            expect(mockVerifyFiles).not.toHaveBeenCalled();
+        } finally {
+            process.argv = savedArgv;
+        }
     });
 
     it("runs when a deployed instance has a bucket", async () => {

@@ -23,6 +23,13 @@ describe("orgEventAlerts", () => {
     });
   });
 
+  it("shortens a long provisional name to 80 characters", async () => {
+    const stuckProvisionals = [{ gtin13: "2000000000015", name: "x".repeat(81) }];
+    expect(await problemFor({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals })).toEqual({
+      problem: `could not apply the catalog's decision to 1 provisional item(s): ${"x".repeat(80)} (2000000000015)`,
+    });
+  });
+
   it("names at most 20 provisionals and counts the rest", async () => {
     const stuckProvisionals = Array.from({ length: 23 }, (_, i) => ({ gtin13: `gtin${i}`, name: `Item ${i}` }));
     const { problem } = (await problemFor({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals })) as { problem: string };
