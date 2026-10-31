@@ -639,6 +639,27 @@ describe("membership page", () => {
     expect(await screen.findByText("constraint violated")).toBeInTheDocument();
   });
 
+  it("reports the save and refetches when the save returns no state", async () => {
+    setSession({ id: 1 });
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/membership/intake") && init?.method === "PATCH") {
+        return { ok: true, json: async () => ({ state: null, rejections: [] }) } as Response;
+      }
+      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderWithProviders(<MembershipPage />);
+    await screen.findByText("Your household");
+    const reads = () => fetchMock.mock.calls.filter(([u]) => u === "/api/membership").length;
+    const readsBeforeSave = reads();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+
+    expect(await screen.findByText("Progress saved.")).toBeInTheDocument();
+    expect(reads()).toBe(readsBeforeSave + 1);
+  });
+
   it("shows a network error when saving progress throws", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

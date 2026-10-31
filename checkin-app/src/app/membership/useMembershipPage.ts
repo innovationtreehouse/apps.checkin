@@ -251,7 +251,10 @@ export function useMembershipPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        hydrate(data.state);
+        // A null state means saved but unread; refetch so new people get their ids
+        // and a second save updates them rather than creating them again.
+        if (data.state) hydrate(data.state);
+        else await fetchState();
         flash("Progress saved.");
         setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
       } else flash(apiError(data, "Could not save."), true);
