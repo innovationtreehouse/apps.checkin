@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
 import { audit, type Actor } from "../repositories/receipt";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 
 const MAX_SENDS = 3;
 
@@ -15,7 +15,7 @@ const MAX_SENDS = 3;
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     for (let attempt = 0; attempt < MAX_SENDS; attempt++) {
       const row = await db.receipt.findFirst({
         where: { id: receiptId, orgId },

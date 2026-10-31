@@ -1,7 +1,7 @@
 // Counts for the host's receipt flow status page: raw org-wide totals, not a queue or a viewer's share.
 import { db } from "../db";
 import { STATE_LABELS } from "../lib/stateLabels";
-import { getOrg } from "../runtime";
+import { getOrgId } from "../runtime";
 import { receiptMachine } from "../workflows/receipt.machine";
 
 export interface ReceiptStateCount {
@@ -22,7 +22,7 @@ export function tallyReceiptStates(rows: readonly { state: string; _count: { _al
 
 /** How many of the org's receipts sit in each state, and how many finalized ones receiving has not yet received. */
 export async function receiptStateCounts(): Promise<{ states: ReceiptStateCount[]; notDelivered: number }> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const [rows, notDelivered] = await Promise.all([
     db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
     db.receipt.count({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } } }),

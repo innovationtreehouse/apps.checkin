@@ -5,7 +5,7 @@
 import { db } from "../db";
 import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
-import { getOrg, replies } from "../runtime";
+import { getOrgId, replies } from "../runtime";
 
 /** Messages acknowledged per run; the rest wait for the next run. */
 export const REPLY_CAP = 50;
@@ -112,7 +112,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
   const out = replies();
   const counts = { sent: 0, failed: 0 };
   if (!out) return counts;
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   // The first receipt made from each waiting message, by ledger order.
   const owed = await db.$queryRaw<{ id: number; receiptId: string | null }[]>`
     SELECT r.id, (

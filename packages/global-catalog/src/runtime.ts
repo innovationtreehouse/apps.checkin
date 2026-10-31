@@ -7,7 +7,7 @@
 import { defineRuntime } from "@checkin/component-kit";
 import { db as defaultDb } from "./db";
 import type { PrismaClient } from "./generated/prisma/client";
-import type { CatalogRuntimeConfig, CatalogPrincipal, OrgEventConsumer, OrgIdentity } from "./contract";
+import type { CatalogRuntimeConfig, CatalogPrincipal, OrgEventConsumer } from "./contract";
 
 export const catalogRuntime = defineRuntime<CatalogRuntimeConfig, CatalogPrincipal>("global-catalog");
 
@@ -22,11 +22,6 @@ export const getPrincipal = catalogRuntime.getPrincipal;
 /** Registered S5 consumers; none when unconfigured, since it runs after a commit and consumers replay from their cursors. */
 export function getOrgEventConsumers(): Record<string, OrgEventConsumer> {
   return catalogRuntime.configured()?.orgEventConsumers ?? {};
-}
-
-/** Org identity for the current request (#1286 §6). */
-export function getOrg(): Promise<OrgIdentity> {
-  return catalogRuntime.require().org();
 }
 
 /**

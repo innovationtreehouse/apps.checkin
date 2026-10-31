@@ -3,7 +3,7 @@ import type { ReceiptPrincipal } from "../../contract";
 import { db } from "../../db";
 import { checkDuplicate } from "../../lib/receipt-flow";
 import { receiptRepo } from "../../repositories/receipt";
-import { getOrg } from "../../runtime";
+import { getOrgId } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -40,7 +40,7 @@ describeDb("duplicate detection", () => {
     const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme  Hardware", receiptDate: "2999-01-01" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "acme hardware ", receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "N-1" } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBe(first.id);
   });
 
@@ -48,7 +48,7 @@ describeDb("duplicate detection", () => {
     const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "" } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBeNull();
   });
 
@@ -58,7 +58,7 @@ describeDb("duplicate detection", () => {
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.update({ where: { id: first.id }, data: { [field]: a } });
     await db.receiptDetail.update({ where: { id: second.id }, data: { [field]: b } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     return { first: first.id, matched: row && (await checkDuplicate(row)) };
   }
 

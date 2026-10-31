@@ -9,7 +9,7 @@ import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipa
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrg, mailbox, ports } from "../runtime";
+import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -378,7 +378,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const started = Date.now();
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
   const ignoredHashes = new Set(

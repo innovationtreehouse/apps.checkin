@@ -2,7 +2,7 @@
 import { db } from "../db";
 import { receivedReceiptStateEnum } from "../db/schema";
 import { STATE_LABEL } from "../lib/stateLabels";
-import { getOrg } from "../runtime";
+import { getOrgId } from "../runtime";
 
 export interface ReceivingStateCount {
   state: string;
@@ -22,7 +22,7 @@ export function tallyReceivingStates(rows: readonly { state: string; _count: { _
 export async function receivingStateCounts(): Promise<ReceivingStateCount[]> {
   const rows = await db.receivedReceipt.groupBy({
     by: ["state"],
-    where: { orgId: (await getOrg()).id },
+    where: { orgId: await getOrgId() },
     _count: { _all: true },
   });
   return tallyReceivingStates(rows);

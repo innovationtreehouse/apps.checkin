@@ -19,7 +19,6 @@ export * as routes from "./routes";
 export {
   configureCatalog,
   getPrincipal,
-  getOrg,
   getDb,
 } from "./runtime";
 export type {
