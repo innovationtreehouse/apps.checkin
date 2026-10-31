@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { logger } from "@/lib/logger";
+import { logger, logBackendError } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError } from "@/lib/household/leads";
@@ -228,7 +228,14 @@ export const PATCH = withAuth(
             });
             invalidateAttendanceCache();
             if (deniedLead) {
-                await raiseDeniedHouseholdActivity({ householdId: deniedLead.householdId, personId: deniedLead.personId, what: "household lead promotion refused" });
+                const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
+                try {
+                    await raiseDeniedHouseholdActivity({ ...ref, what: "household lead promotion refused" });
+                } catch (error) {
+                    // The edit has committed, so this failure must not read as a failed save.
+                    logger.error("Household Member PATCH denied household raise failed:", ref, error);
+                    await logBackendError(error, "PATCH /api/household/member denied household raise", ref);
+                }
             }
 
             return NextResponse.json({
