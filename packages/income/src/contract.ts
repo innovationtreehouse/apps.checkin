@@ -52,8 +52,16 @@ export interface MirrorOrderLine {
   title: string;
   sku: string | null;
   quantity: number;
+  /** Units still on the line after edits and refunds. */
+  currentQuantity: number;
   priceCents: number;
   discountCents: number;
+}
+
+/** An order's current subtotal (shop_order): its lines after discounts, edits and refunds. */
+export interface MirrorOrderSubtotal {
+  orderGid: string;
+  subtotalCents: number;
 }
 
 /** A variant the mirror has seen, with its latest title and SKU. */
@@ -70,6 +78,7 @@ export interface PayoutMirror {
   payout(gid: string): Promise<MirrorPayout | null>;
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>;
   orderLines(orderGids: string[]): Promise<MirrorOrderLine[]>;
+  orderSubtotals(orderGids: string[]): Promise<MirrorOrderSubtotal[]>;
   itemsSeen(): Promise<MirrorItem[]>;
 }
 

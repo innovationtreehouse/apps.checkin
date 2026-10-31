@@ -560,6 +560,18 @@ export async function incomeOrderLines(orderGids: string[]): Promise<IncomeMirro
     return rows.map(({ variantLegacyId, currentQuantity, ...l }) => ({ ...l, variantId: variantLegacyId, currentQuantity: currentQuantity ?? l.quantity }));
 }
 
+/** The given orders' current subtotals. */
+export async function incomeOrderSubtotals(orderGids: string[]): Promise<{ orderGid: string; subtotalCents: number }[]> {
+    if (orderGids.length === 0) return [];
+    const db = await getClient();
+    if (!db) return [];
+    const rows = await db.shopOrder.findMany({
+        where: { shopifyGid: { in: orderGids } },
+        select: { shopifyGid: true, subtotalCents: true },
+    });
+    return rows.map((r) => ({ orderGid: r.shopifyGid, subtotalCents: r.subtotalCents }));
+}
+
 /** Every variant on a real order's line, with the title and SKU of its newest order. */
 export async function incomeItemsSeen(): Promise<IncomeMirrorItemRow[]> {
     const db = await getClient();

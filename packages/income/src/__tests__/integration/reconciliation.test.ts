@@ -37,6 +37,7 @@ const mirror: PayoutMirror = {
   payout: async (gid) => payouts.find((p) => p.payoutGid === gid) ?? null,
   transactions: async (gid) => txns[gid] ?? [],
   orderLines: async () => [],
+  orderSubtotals: async () => [],
   itemsSeen: async () => [],
 };
 

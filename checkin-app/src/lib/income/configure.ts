@@ -48,6 +48,7 @@ import { booksMap, budgetOwners } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
+  incomeOrderSubtotals,
   incomePaidPayoutsSince,
   incomePayout,
   incomePayoutTransactions,
@@ -82,6 +83,7 @@ const payoutMirror: PayoutMirror = {
   async orderLines(orderGids) {
     return (await incomeOrderLines(orderGids)).map((l) => ({ ...l, title: l.title ?? "" }));
   },
+  orderSubtotals: incomeOrderSubtotals,
   async itemsSeen() {
     return (await incomeItemsSeen()).map((i) => ({ ...i, title: i.title ?? "" }));
   },
