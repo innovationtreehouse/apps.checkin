@@ -3,6 +3,7 @@
  * resolution that arrives before its provisional row keeps the event's conversion factor.
  * Real Postgres; describeDb skips without one.
  */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
@@ -39,16 +40,6 @@ function services() {
     receipts: createReceiptService({ provisionalItemService, inventoryRepo, receiveQueueRepo, db }),
     queue: createReceiveQueueService({ receiveQueueRepo, db }),
   };
-}
-
-/** Resolves once at least `count` backends in this database are waiting on a lock. */
-async function someoneBlocked(count = 1): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n >= BigInt(count)) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error("no backend blocked on a lock");
 }
 
 async function qty(gtin13: string) {
@@ -96,16 +87,16 @@ describeDb("stock write concurrency", () => {
     // The first receipt on the real GTIN holds its new row uncommitted while the merge runs.
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let inserted!: () => void;
-    const rowInserted = new Promise<void>((r) => (inserted = r));
+    let inserted!: (pid: number) => void;
+    const rowInserted = new Promise<number>((r) => (inserted = r));
     const receipt = db.$transaction(async (tx) => {
       await applyQtyChangeIn(tx, TEST_ORG_ID, REAL, 3, { userId: null, changeType: "received", receiptId: "r-1" });
-      inserted();
+      inserted(await backendPid(tx));
       await gate;
     });
-    await rowInserted;
+    const holderPid = await rowInserted;
     const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
-    await someoneBlocked();
+    await waitersBehind(db, holderPid);
     commit();
     await Promise.all([receipt, merge]);
 
@@ -119,16 +110,16 @@ describeDb("stock write concurrency", () => {
 
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let added!: () => void;
-    const rowAdded = new Promise<void>((r) => (added = r));
+    let added!: (pid: number) => void;
+    const rowAdded = new Promise<number>((r) => (added = r));
     const receipt = db.$transaction(async (tx) => {
       await applyQtyChangeIn(tx, TEST_ORG_ID, GTIN, 1, { userId: null, changeType: "received", receiptId: "p-1" });
-      added();
+      added(await backendPid(tx));
       await gate;
     });
-    await rowAdded;
+    const holderPid = await rowAdded;
     const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4, expectedDesiredQuantity: 0 }, 1);
-    await someoneBlocked();
+    await waitersBehind(db, holderPid);
     commit();
     await Promise.all([receipt, edit]);
 
@@ -241,7 +232,7 @@ describeDb("stock write concurrency", () => {
       await db.$transaction(async (tx) => {
         await tx.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 3 } });
         resolving = provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1);
-        await someoneBlocked();
+        await waitersBehind(db, await backendPid(tx));
       });
       await resolving;
 
@@ -361,18 +352,18 @@ describeDb("merge after a concurrent resolution", () => {
     // Hold the provisional row so the merge queues on it first, then the fulfil behind it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const rowLocked = new Promise<void>((r) => (locked = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
     const holder = db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${TEST_ORG_ID} AND gtin13 = ${PROVISIONAL} FOR UPDATE`;
-      locked();
+      locked(await backendPid(tx));
       await gate;
     });
-    await rowLocked;
+    const holderPid = await rowLocked;
     const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 13, 1);
-    await someoneBlocked(1);
+    await waitersBehind(db, holderPid, 1);
     const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
-    await someoneBlocked(2);
+    await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, merge, fulfil]);
 
@@ -407,20 +398,49 @@ describeDb("merge after a concurrent resolution", () => {
     // Hold the provisional's row so the approve queues on it first, then the fulfil behind it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const rowLocked = new Promise<void>((r) => (locked = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
     const holder = db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
-      locked();
+      locked(await backendPid(tx));
       await gate;
     });
-    await rowLocked;
+    const holderPid = await rowLocked;
     const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 21, 1);
-    await someoneBlocked(1);
+    await waitersBehind(db, holderPid, 1);
     const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
-    await someoneBlocked(2);
+    await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, approve, fulfil]);
+
+    expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
+  it("an approve racing a fulfil that created the provisional's stock row carries that stock over", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "a-2", lineItemId: 1 },
+    });
+
+    // Hold the provisional's row so the fulfil queues on it first, then the approve behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked(await backendPid(tx));
+      await gate;
+    });
+    const holderPid = await rowLocked;
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await waitersBehind(db, holderPid, 1);
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 22, 1);
+    await waitersBehind(db, holderPid, 2);
+    release();
+    await Promise.all([holder, fulfil, approve]);
 
     expect(await qty(REAL)).toBe(3);
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
@@ -434,18 +454,18 @@ describeDb("merge after a concurrent resolution", () => {
     // Hold the provisional's row so the approve queues on it first, then the reject's claim behind it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const rowLocked = new Promise<void>((r) => (locked = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
     const holder = db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
-      locked();
+      locked(await backendPid(tx));
       await gate;
     });
-    await rowLocked;
+    const holderPid = await rowLocked;
     const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 23, 1);
-    await someoneBlocked(1);
+    await waitersBehind(db, holderPid, 1);
     const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
-    await someoneBlocked(2);
+    await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, approve]);
     await expect(reject).rejects.toMatchObject({ status: 409 });
