@@ -9,10 +9,6 @@ import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
 
-// An activated order may total a cent or two under the recorded membership fee (rounding,
-// a stale settings copy). Only a shortfall beyond this is a real mismatch.
-export const AMOUNT_TOLERANCE_CENTS = 100;
-
 /**
  * Raise what a membership payment's outcome needs the board to see. Shared by the
  * orders/paid webhook and the forward pass so a missed webhook raises the same row.
