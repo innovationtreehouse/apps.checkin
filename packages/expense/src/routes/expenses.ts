@@ -135,11 +135,8 @@ export const counts: ExpenseRouteHandler = async ({ principal }) => {
   const n = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { AND: [base, where] } });
   const visible = expenseViewsFor(await viewerOf(principal));
   const views = visible.filter((v): v is Exclude<StateView, "all"> => v !== "all" && v !== "awaiting_me");
-  const [values, holds] = await Promise.all([
-    Promise.all(views.map((v) => n(viewWhere(v, scope)))),
-    n({ holds: { some: { status: "PENDING" } } }),
-  ]);
-  return { ExpenseCounts: { ...Object.fromEntries(views.map((v, i) => [v, values[i]])), expense_holds: holds } };
+  const values = await Promise.all(views.map((v) => n(viewWhere(v, scope))));
+  return { ExpenseCounts: Object.fromEntries(views.map((v, i) => [v, values[i]])) };
 };
 
 export const detail: ExpenseRouteHandler = async ({ params, principal }) => {
