@@ -5,7 +5,7 @@ import type { EnrollmentStatus, ProgramPhase } from "@/generated/prisma/client";
 
 // Deliberately NOT in @/lib/notifications: the announce suites mock that module
 // with a single-export factory, and a helper living there would come back
-// undefined in every one of them (#1164 review, finding 7).
+// undefined in every one of them.
 
 type AnnounceState = {
     phase: ProgramPhase;
@@ -21,7 +21,7 @@ type AnnouncedProgram = AnnounceState & {
 };
 
 /**
- * Single gate for the "new program announced" email blast (#1153/#1158) —
+ * Single gate for the "new program announced" email blast —
  * called by both program-edit PATCH routes after their update commits.
  *
  * Fires only on the transition INTO (UPCOMING && OPEN) with announceOnOpen on,

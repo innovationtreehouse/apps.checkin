@@ -8,7 +8,7 @@ import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type Household
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
 
 /**
- * Board "Grant Membership" for the current year: money only (owner, 2026-10-12).
+ * Board "Grant Membership" for the current year: money only.
  *
  * Pays the household's in-flight application through the same certify path a
  * board-recorded payment takes, so the household goes ACTIVE only when that

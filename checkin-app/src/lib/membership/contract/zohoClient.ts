@@ -8,7 +8,7 @@ import { toZohoFields, type FieldPrefill } from "@/lib/membership/contract/signF
  * Flow: getAccessToken (OAuth refresh) → createRequest (upload PDF + register the
  * single SIGN recipient) → submitRequest (attach the agreement's signature fields)
  * → getEmbeddedSignUrl (mint a short-lived in-app signing session). The webhook
- * half lives in contract/zoho.ts + external.ts and is unchanged.
+ * half lives in contract/zoho.ts + external.ts.
  *
  * Server-only: reads OAuth secrets via config and is never imported client-side.
  */
@@ -248,7 +248,7 @@ export async function getEmbeddedSignUrl(params: {
     return signUrl;
 }
 
-/** Request states Zoho can never collect a signature from — a fresh request is required (#876). */
+/** Request states Zoho can never collect a signature from — a fresh request is required. */
 const TERMINAL_REQUEST_STATUSES = new Set(["declined", "expired", "recalled", "deleted"]);
 
 export type ZohoRequestState = "completed" | "in_progress" | "terminal";

@@ -140,13 +140,13 @@ export const DEV_MOCK_WEBHOOK_SECRET = 'dev-zoho-mock-webhook-secret';
  * the mock, regardless of whether creds happen to be set.
  *
  * Gated on the explicit env, NOT on cred presence — and on CHECKIN_ENV ALONE.
- * NODE_ENV was deliberately ELIMINATED as a second "build-level fuse" across this
- * file (#951 review): every deployed instance runs the same production image
- * (Dockerfile sets NODE_ENV=production), so the clause could never distinguish a
- * misconfigured prod box from a legitimate deployment — it only broke dev-instance
- * features (the Debug-nav 404 class) while "protecting" against exactly one thing:
- * a human explicitly setting CHECKIN_ENV=local on prod infra. That misconfig class
- * belongs to CHECKIN_ENV itself, which fails safe to prod for any unset or
+ * NODE_ENV is deliberately not a second "build-level fuse" anywhere in this file:
+ * every deployed instance runs the same production image (Dockerfile sets
+ * NODE_ENV=production), so such a clause can't distinguish a misconfigured prod box
+ * from a legitimate deployment — it only breaks dev-instance features (the Debug-nav
+ * 404 class) while "protecting" against exactly one thing: a human explicitly setting
+ * CHECKIN_ENV=local on prod infra. That misconfig class belongs to CHECKIN_ENV
+ * itself, which fails safe to prod for any unset or
  * unrecognized value (readCheckinEnv). One fuse, honestly owned.
  */
 function shopifyMockActiveEnv(): boolean {
@@ -159,7 +159,7 @@ function shopifyMockActiveEnv(): boolean {
  * Unlike a real dev store (which signs with Shopify's own per-store secret we
  * don't choose), the mock generates the payload locally, so a fixed constant is
  * enough for verifyShopifyHmac's real timing-safe compare — same rationale as
- * DEV_MOCK_WEBHOOK_SECRET. See §4 of the design: fixed ⇔ self-fired mock.
+ * DEV_MOCK_WEBHOOK_SECRET. Fixed ⇔ self-fired mock.
  *
  * Exported so tests that assert the mock's self-signed webhook verifies can
  * import it instead of duplicating the literal: the tests exercise the fallback
@@ -261,8 +261,8 @@ export const config = {
     // interstitial + its webhook endpoint. Always false in prod. See zohoMockActiveEnv.
     zohoMockActive: (): boolean => zohoMockActiveEnv(),
     // Sign flow is usable when real Zoho is configured OR the dev mock is active.
-    // Gates getOrCreateContractSigningUrl + syncContractStatus (replaces the bare
-    // zohoConfigured() checks so the mock can drive them in dev).
+    // Gates getOrCreateContractSigningUrl + syncContractStatus, rather than bare
+    // zohoConfigured() checks, so the mock can drive them in dev.
     zohoAvailable: (): boolean => zohoConfiguredEnv() || zohoMockActiveEnv(),
 
     // Cron — shared secret gating the session-less cron routes (see cronAuth.ts).

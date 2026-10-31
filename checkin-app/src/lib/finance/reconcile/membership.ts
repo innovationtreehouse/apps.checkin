@@ -61,15 +61,15 @@ export function findMembershipLine(years: Map<string, number | null>, lineVarian
 /**
  * Volunteer-coupon entitlement check. Shopify owns the discount ARITHMETIC
  * (variant-backed orders are never amount-gated); checkin owns the POLICY that
- * only volunteer households may use the volunteer-rate code — the #1074 variant
- * gate correctly stopped flagging couponed orders by amount, which also meant a
- * non-volunteer family redeeming the volunteer code activated cleanly with no flag.
+ * only volunteer households may use the volunteer-rate code. The variant gate
+ * doesn't flag couponed orders by amount, so without this check a non-volunteer
+ * family redeeming the volunteer code would activate cleanly with no flag.
  *
  * True iff the order's mirrored coupon list carries the board-configured volunteer
  * code (BoardSettings.volunteerFamilyDiscountCode — the same code the checkout link
  * appends for volunteer households) while the membership is NOT volunteer. Compared
  * case-insensitively (Shopify codes are). An EMPTY discountCodes list is never
- * evidence of anything — rows synced before #1048 mirror no codes — so only a
+ * evidence of anything — rows synced before code mirroring hold none — so only a
  * non-empty list can flag. Other codes (promos) are Shopify's business, not ours.
  */
 export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: string | null | undefined, isVolunteerFamily: boolean): boolean {
@@ -85,16 +85,16 @@ type ResolvedProcess = { id: number; orgMembershipId: number | null; awaiting: b
  * Which membership process (if any) is this order paying for?
  *
  * Preferred: the `Membership_Process_ID` cart attribute the checkout link itself
- * set — mirrored since #1029, and the exact same key the orders/paid webhook
+ * set — mirrored on the order, and the exact same key the orders/paid webhook
  * credits. Exact, so no ambiguity.
  *
  * Fallback: customer email → household lead → the family's single PENDING_PAYMENT
- * process. Only reached for orders synced before #1029 shipped (note_attributes is
+ * process. Only reached for orders synced before attribute mirroring (note_attributes is
  * null on those). Fuzzier, so it refuses to guess: zero or several pending
  * processes resolve to "none"/"ambiguous" rather than picking one.
  *
  * Either way the caller checks the order contains a membership variant before
- * activating (amount-gating only pre-#1048 orders). Only PENDING_PAYMENT and BLOCKED
+ * activating (amount-gating only orders without mirrored variant ids). Only PENDING_PAYMENT and BLOCKED
  * processes are `awaiting`; a paid order on any other process is raised, not recovered.
  */
 async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedProcess> {
@@ -192,10 +192,10 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // Membership-item gate, parity with the orders/paid webhook: recover only if the
     // order actually CONTAINS a membership product (its variant id), the same
     // membershipVariantYears the webhook builds — mirrored
-    // onto order lines since #1048. A variant id is stable and can't drift; the old
-    // total-price gate false-raised AMOUNT_MISMATCH on every couponed order (volunteer
-    // rate, promo), whose sub-fee total is indistinguishable from an underpayment by
-    // amount alone. See the H2 note in payment.ts and the webhook route.
+    // onto order lines. A variant id is stable and can't drift; a total-price gate
+    // would false-raise AMOUNT_MISMATCH on every couponed order (volunteer rate, promo),
+    // whose sub-fee total is indistinguishable from an underpayment by amount alone.
+    // See the webhook route.
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: {
@@ -239,7 +239,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // Coupon entitlement: the item gates above prove the order carries the membership
     // product, but not that the family was ALLOWED the code that priced it. Volunteer
     // code on a non-volunteer membership → tell the board, do NOT activate (parity
-    // with the NO_ITEM branch). Sits after both gates so a backfilled pre-#1048 row
+    // with the NO_ITEM branch). Sits after both gates so a backfilled row
     // with codes is covered too; pre-backfill rows mirror [] and pass through unjudged.
     if (usesVolunteerCodeUnentitled(order, settings?.volunteerFamilyDiscountCode, membership?.isVolunteerFamily ?? false)) {
         logger.warn(`[reconcile] volunteer discount code on non-volunteer order ${order.legacyId} (process ${proc.id})`);

@@ -224,7 +224,7 @@ export async function startIntake(userId: number) {
         if ("process" in outcome) return outcome.process;
         throw await startRefusal(outcome.refuse, householdId, userId);
     } catch (e) {
-        // A rolling deploy can leave a pre-lock instance inserting concurrently — the
+        // An insert that didn't take this lock can race it — the
         // partial unique index then rejects the duplicate with P2002. Return the winner.
         if (isPrismaError(e, "P2002")) {
             const winner = await prisma.orgMembershipProcess.findFirst({
@@ -277,7 +277,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
         }
     }
 
-    // Promote a guardian to household lead. The per-household cap (#269) is a
+    // Promote a guardian to household lead. The per-household cap is a
     // soft stop here, not a hard failure: the guardian's other details are still
     // saved (above), and the rest of the form (children) still saves below. We
     // collect the skipped promotion and hand it back so the form can say exactly
@@ -346,9 +346,9 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                 if (Object.keys(householdData).length > 0) {
                     await tx.household.update({ where: { id: householdId }, data: householdData });
                 }
-                // Emergency contact lives in its own table now; the single-field intake
+                // Emergency contact lives in its own table; the single-field intake
                 // form maps onto the household's primary contact. Tolerant of partial
-                // saves; rejects (direction A) a contact that is a household member.
+                // saves; rejects a contact that is a household member.
                 if (
                     input.household.emergencyContactName !== undefined ||
                     input.household.emergencyContactPhone !== undefined ||
@@ -365,7 +365,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // Primary parent is always the caller.
             if (input.primaryParent) {
                 // A submitted-but-blank name is rejected rather than silently dropped
-                // (Decision 5) — this is the caller's own name, always required.
+                // — this is the caller's own name, always required.
                 if (input.primaryParent.name !== undefined && !nameWrite(input.primaryParent.name)) {
                     throw new IntakeError("name_required", "Your name is required.", ["primaryName"]);
                 }
@@ -386,8 +386,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                 let spName: string | undefined;
                 if (sp.id && householdMemberIds.has(sp.id)) {
                     // A submitted (non-null) but blank name is rejected, not silently
-                    // dropped (Decision 5) — same rule as the primary parent/children
-                    // updates. `null` stays a no-op (#1688's existing carve-out).
+                    // dropped — same rule as the primary parent/children
+                    // updates. `null` stays a no-op.
                     if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
                         throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
                     }
@@ -430,7 +430,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             for (const child of input.children ?? []) {
                 let childName: string | undefined;
                 if (child.id && householdMemberIds.has(child.id)) {
-                    // Same rejection as the primary parent (Decision 5): an existing
+                    // Same rejection as the primary parent: an existing
                     // child's name can't be blanked through an update.
                     if (child.name !== undefined && !nameWrite(child.name)) {
                         throw new IntakeError("name_required", "A name is required for each child.", ["children"]);
@@ -518,7 +518,7 @@ export async function submitIntake(userId: number) {
 
     // Required-field validation is driven by the membership-initial profile (one
     // declarative source of truth shared across intake surfaces), not inline
-    // literals. Field keys + labels + order are unchanged from the hardcoded set.
+    // literals.
     const primary = household.householdMembers.find((p) => p.id === userId);
     const missing = missingRequiredFields(INTAKE_PROFILES["membership-initial"], {
         addressLine1: household.line1,
@@ -566,15 +566,15 @@ export async function submitIntake(userId: number) {
         });
 
         // Fresh-check shortcut ⇒ clearBackgroundCheck never runs this cycle, so match
-        // the volunteer-designation allowlist here or it would never be applied (#874).
+        // the volunteer-designation allowlist here or it would never be applied.
         if (bgFresh) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, household.id, false);
     });
 
     // The external actions (contract sign, BG consent) can already be satisfied the
     // moment we land at PENDING_EXTERNAL_ACTION: bgFresh stamps bgClearedAt above,
     // and the board can pre-mark contractSignedAt/bgConsentAt on the INTAKE row via
-    // the ops API (#878). advanceExternalIfComplete didn't re-fire on those marks
-    // (status wasn't PENDING_EXTERNAL_ACTION yet), so without this the process would
+    // the ops API. advanceExternalIfComplete doesn't fire on those marks
+    // (status isn't PENDING_EXTERNAL_ACTION yet), so without this the process would
     // strand here with its gate already met. Re-run the advance now — it's a no-op
     // (status guard, contract/BG checks) when the actions aren't actually done.
     return (await advanceExternalIfComplete(process.id)) ?? prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } });

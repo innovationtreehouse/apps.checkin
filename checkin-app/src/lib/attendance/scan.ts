@@ -11,12 +11,11 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { auditKioskLeave, closeVia, recordClose } from "@/lib/attendance/close";
 import { specTrace } from "@/lib/specTrace";
 
-/** Countdown on the supervision confirm (#1436). #1347 PR-0 extended the
- *  route's debounce exemption to a fresh `supervisionWarnedAt` stamp, so the
- *  full window is usable -- kiosk copy says "within 15 seconds". */
+/** Countdown on the supervision confirm. The route's debounce exemption covers
+ *  a fresh `supervisionWarnedAt` stamp, so the full window is usable -- kiosk copy says "within 15 seconds". */
 export const SUPERVISION_CONFIRM_MS = 15_000;
 
-/** Floor on the route's debounce exemption (Fable review, #1347 PR-0): a USB
+/** Floor on the route's debounce exemption: a USB
  *  hardware double-read of the warning scan lands ~300-800ms later with the
  *  stamp already fresh. Below this age, treat it as the same physical badge. */
 export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
@@ -145,8 +144,8 @@ export async function processCheckin(
     invalidateAttendanceCache();
     specTrace("VisitOpen", { p: participant.id, visitId: newVisit.id, t: arrivalTime.getTime(), live: !visitTime, fencedBy: null });
 
-    // A youth arriving into a room short of supervision is WARNED, never blocked
-    // (#1436): opening the door before the second adult is the keyholder's call to
+    // A youth arriving into a room short of supervision is WARNED, never blocked:
+    // opening the door before the second adult is the keyholder's call to
     // make, and the app's job is to tell the room. Only asked for youth, so an
     // ordinary adult check-in still costs no extra query.
     const isYouthArrival = !participant.isDeclaredAdult
@@ -264,7 +263,7 @@ export async function processCheckout(
         }
     }
 
-    // SUPERVISION INTERRUPT (#1436). Fires on every live badge departure.
+    // SUPERVISION INTERRUPT. Fires on every live badge departure.
     // Skipped when the facility is closing: that sweep departs everyone.
     // Skipped for a REPLAY: its 400 records nothing but the drain acks that
     // shape, so the queued departure would be dropped and the visit left open.
@@ -288,7 +287,7 @@ export async function processCheckout(
 }
 
 /**
- * The two-rung supervision ladder for a departure (#1436), keyed on how many
+ * The two-rung supervision ladder for a departure, keyed on how many
  * supervising adults would REMAIN — and only when this departure is what removes
  * one. A second adult from the same household leaving changes nothing, because
  * the household is still represented; that is the same-household rule.
@@ -302,7 +301,7 @@ export async function processCheckout(
  * The confirm is bound to the warning having been SHOWN, not to badge adjacency:
  * only a scan following a fresh `supervisionWarnedAt` stamp goes through, exactly
  * as the force-close confirm works. Countdown window is
- * {@link SUPERVISION_CONFIRM_MS}; #1347's explicit-confirm slice renders the tick.
+ * {@link SUPERVISION_CONFIRM_MS}.
  */
 async function supervisionInterrupt(
     activeVisitId: number,
@@ -315,7 +314,7 @@ async function supervisionInterrupt(
 
     if (remaining === MIN_SUPERVISING_ADULTS) return { remaining, confirm: false };
 
-    // The confirm rung is youth-gated (#1436, 2026-08-19): policy's floor is two
+    // The confirm rung is youth-gated: policy's floor is two
     // adults whenever a youth is, so an adult-only room locking up warns and goes.
     // Probed on this rung only — every quieter departure pays nothing for it.
     if (!(await youthIsPresent(db))) return { remaining, confirm: false };

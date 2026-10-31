@@ -1,5 +1,5 @@
 /**
- * The Finance section (#2481 §3): the finance queue, the expense list and the receipt flow
+ * The Finance section: the finance queue, the expense list and the receipt flow
  * status, the bookkeeping setup screens, budgets, the held-mail queue (FINANCE alone: it shows
  * sender addresses), and the receipt settings. FINANCE or BOARD. The expense settings sit
  * under Settings.

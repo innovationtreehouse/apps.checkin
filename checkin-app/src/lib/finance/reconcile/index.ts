@@ -24,15 +24,15 @@ import { reconcileReversals } from "./reversals";
  * exception upserts on (kind, order, person).
  *
  * Matching uses the SAME cart attribute the webhook credits — Membership_Process_ID
- * (or CheckMeIn_Account_ID + Program_ID), mirrored since #1029 — so attribution is
- * exact. Orders synced before that carry no attributes and fall back to customer
+ * (or CheckMeIn_Account_ID + Program_ID), mirrored on the order — so attribution is
+ * exact. Orders synced before the mirror carried attributes have none and fall back to customer
  * email → household lead → the family's single pending process.
  *
  * Membership recovery replicates the webhook's variant-id check that the order
  * really contains the membership product: the mirror's order lines carry variant
- * ids since #1048, so recovery gates on the order containing one of checkin's known
+ * ids, so recovery gates on the order containing one of checkin's known
  * membership variants — the exact set the webhook builds — not on order total.
- * (Orders synced before #1048 and not yet backfilled carry no line variant ids;
+ * (Orders synced before variant mirroring and not yet backfilled carry no line variant ids;
  * those fall back to a discount-aware membership fee amount gate — see reconcileForwardMembership.)
  * Nothing is guessed: an attribute naming an unknown process, an ambiguous email
  * match, or an order with no membership item raises a problem for the board rather
