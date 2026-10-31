@@ -22,7 +22,8 @@ per-environment deploy checklist are in `packages/quickbooks/README.md`.
 | `packages/quickbooks/src/client.ts` | The client: readers and the one create request |
 | `packages/quickbooks/src/write.ts` | `findOrCreate`, `findOrCreateInKindJournal`, `createVendor`; the closed-books gate |
 | `packages/quickbooks/src/match.ts` | `findMatch`: pure, no reads or writes |
-| `packages/quickbooks/src/guard.ts` | Which company a deployment may reach |
+| `packages/quickbooks/src/guard.ts` | Which company a deployment may reach; the test-data prefix |
+| `packages/quickbooks/src/drain.ts` | The fixed caps and timings, the closed-books gate, the run loop |
 | `packages/expense/src/lib/expense-qb-processor.ts` | Account resolution, allocation, the outbox commit, stranded recovery, finance's retry |
 | `packages/expense/src/qb-write.ts` | Composes the entry from rows the outbound gateway passed |
 | `packages/expense/src/lib/expense-qb-poster.ts` | Claim, call, settle; the drain and the orphan sweep |
