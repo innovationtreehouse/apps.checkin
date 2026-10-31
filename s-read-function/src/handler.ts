@@ -56,7 +56,7 @@ export async function handler(event: unknown = {}): Promise<Record<string, unkno
   // myshopifyDomain) and recorded in the `store` registry — not trusted from config.
   const { storeId } = await ensureStore(prisma, client, dbCfg.storeId);
 
-  // Push run freshness to the monitoring DB so the watchdog reads it there (F7), instead of
+  // Push run freshness to the monitoring DB so the watchdog reads it there, instead of
   // reaching into this service's own database. No-op when monitoring isn't configured.
   const heartbeat = buildHeartbeatSink();
 
