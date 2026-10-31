@@ -137,7 +137,8 @@ export function handler<P extends Record<string, string> = Record<string, string
         }
 
         const params = (ctx?.params ? await ctx.params : ({} as P)) ?? ({} as P);
-        const auth = await authenticateRequest(req);
+        const { allowJoinPending } = spec;
+        const auth = await authenticateRequest(req, undefined, { allowJoinPending });
         const callerCtx = await buildCallerContext(auth, spec.ctxNeeds);
 
         const { allowed } = await resolveAccess(spec.authorize, {
@@ -145,6 +146,7 @@ export function handler<P extends Record<string, string> = Record<string, string
             params,
             callerContext: callerCtx,
             authorization: req.headers.get('authorization'),
+            allowJoinPending,
         });
         if (!allowed) {
             return apiError(
@@ -156,7 +158,7 @@ export function handler<P extends Record<string, string> = Record<string, string
         let chosenRole: Role | undefined;
         let viewTokens: readonly Token[] = [];
         for (const [role, tokens] of spec.orderedView) {
-            if (callerHoldsRole(role, auth, params, callerCtx)) {
+            if (callerHoldsRole(role, auth, params, callerCtx, { allowJoinPending })) {
                 chosenRole = role;
                 viewTokens = tokens;
                 break;
