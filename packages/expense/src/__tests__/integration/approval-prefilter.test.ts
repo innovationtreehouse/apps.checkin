@@ -1,5 +1,5 @@
 /**
- * The approval prefilter over random expenses: it never drops an expense with a line
+ * The approval prefilter over random expenses: it keeps exactly the expenses with a line
  * approvalRefusal lets the caller approve, and the badge read through it finds exactly what reading
  * every open candidate with lineActions finds.
  */
@@ -13,17 +13,20 @@ import { allExpensesAwaitingMyApproval, approvalPoll, expenseActionCounts, signo
 import { callerLines } from "../../services/signoffService";
 import type { ExpensePrincipal } from "../../contract";
 
-// Households {1,2} {3,4,10} {6,7} {8,9}; 5 and 11 alone. Buckets 100, 200, 300 and org-level 7.
+// Households {1,2,12} {3,4,10} {6,7} {8,9}; 5 and 11 alone; 12 merged away into 1. Buckets 100, 200, 300 and org-level 7.
 const DIRECTORY = {
   approvers: { 100: [2, 3], 200: [4, 6], 300: [8] },
   owners: { 100: 2, 200: 4, 300: 11 },
   orgLevel: [7],
   finance: [3, 9],
   board: [5, 6],
-  households: [[1, 2], [3, 4, 10], [6, 7], [8, 9]],
+  households: [[1, 2, 12], [3, 4, 10], [6, 7], [8, 9]],
+  merged: { 12: 1 },
 };
-const PEOPLE = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-const CALLERS: ExpensePrincipal[] = PEOPLE.map((id) => principal(id, { isFinance: DIRECTORY.finance.includes(id), isBoard: DIRECTORY.board.includes(id) }));
+const PEOPLE = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const CALLERS: ExpensePrincipal[] = PEOPLE.filter((id) => id !== 12).map((id) => principal(id, { isFinance: DIRECTORY.finance.includes(id), isBoard: DIRECTORY.board.includes(id) }));
+
+const dir = directory(DIRECTORY);
 
 /** A small seeded PRNG (mulberry32), so a failing run reseeds the same expenses. */
 function random(seed: number) {
@@ -85,6 +88,12 @@ async function approvableByRule(p: ExpensePrincipal): Promise<Set<string>> {
   return out;
 }
 
+/** The ids of the expenses the prefilter keeps for the caller. */
+async function prefiltered(p: ExpensePrincipal): Promise<string[]> {
+  const where = approvableByCallerWhere(p.id, await dir.householdIds(p.id), await dir.bucketsApprovedBy(p.id), p.isBoard);
+  return (await db.expense.findMany({ where: { orgId: ORG, ...where }, select: { id: true } })).map((e) => e.id).sort();
+}
+
 /** What the badge read finds when it reads every open expense in owner approval with lineActions. */
 async function awaitingByEveryCandidate(p: ExpensePrincipal) {
   const expenses = await db.expense.findMany({
@@ -99,18 +108,16 @@ async function awaitingByEveryCandidate(p: ExpensePrincipal) {
   return out;
 }
 
-const dir = directory(DIRECTORY);
 
 describeDb("the approval prefilter", () => {
   for (const seed of [1, 2, 3]) {
-    it(`keeps every expense with a line the caller may approve (seed ${seed})`, async () => {
+    it(`keeps exactly the expenses with a line the caller may approve (seed ${seed})`, async () => {
       bindPorts({ signoff: dir });
       await seedRandomExpenses(seed, 60);
       for (const p of CALLERS) {
-        const where = approvableByCallerWhere(p.id, await dir.householdIds(p.id), await dir.bucketsApprovedBy(p.id), p.isBoard);
-        const kept = new Set((await db.expense.findMany({ where: { orgId: ORG, ...where }, select: { id: true } })).map((e) => e.id));
-        const dropped = [...(await approvableByRule(p))].filter((id) => !kept.has(id));
-        expect(dropped, `caller ${p.id}`).toEqual([]);
+        const kept = await prefiltered(p);
+        // Dropping an allowed expense loses work; keeping a refused one means a clause is missing.
+        expect(kept, `caller ${p.id}`).toEqual([...(await approvableByRule(p))].sort());
       }
     });
 
@@ -122,6 +129,19 @@ describeDb("the approval prefilter", () => {
       }
     });
   }
+});
+
+describeDb("the approval prefilter and a merged-away party", () => {
+  it("leaves out an expense whose merged-away submitter shares the caller's household", async () => {
+    bindPorts({ signoff: dir });
+    const id = await seedExpense({ state: "owner_approval", submitterId: 12 });
+    await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    const approver = CALLERS[1];
+    const { byLine, filled } = (await signoffFactsForExpenses(db, [await db.expense.findUniqueOrThrow({ where: { id } })])).get(id)!;
+    const [[lineId, facts]] = [...byLine];
+    expect(approvalRefusal(facts, filled.get(lineId) ?? [], approver.id)).not.toBeNull();
+    expect(await prefiltered(approver)).toEqual([]);
+  });
 });
 
 describeDb("one approval read per nav poll", () => {

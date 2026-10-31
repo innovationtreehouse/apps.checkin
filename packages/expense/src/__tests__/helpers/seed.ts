@@ -210,14 +210,17 @@ export function directory(d: {
   /** Adults the name search finds, whatever the query. */
   adults?: Array<{ personId: number; name: string }>;
 }): SignoffDirectory {
+  const households = d.households ?? [];
+  // A merged-away person stays in their household, but householdOf, like checkin's, returns only live members.
+  const live = (ids: number[]) => ids.filter((id) => d.merged?.[id] === undefined);
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [], owner: d.owners?.[b] ?? null }),
     bucketsApprovedBy: async (p) => Object.entries(d.approvers ?? {}).filter(([, a]) => a.includes(p)).map(([b]) => Number(b)),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
-    householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
-    householdsOf: async (ids) => new Map(ids.map((id) => [id, (d.households ?? []).filter((h) => h.includes(id)).flat()])),
-    householdIds: async (id) => (d.households ?? []).filter((h) => h.includes(id)).flat(),
+    householdOf: async (ids) => live(households.filter((h) => h.some((id) => ids.includes(id))).flat()),
+    householdsOf: async (ids) => new Map(ids.map((id) => [id, live(households.filter((h) => h.includes(id)).flat())])),
+    householdIds: async (id) => households.filter((h) => h.includes(id)).flat(),
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
     livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
