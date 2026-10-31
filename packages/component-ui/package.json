@@ -20,6 +20,7 @@
   },
   "peerDependencies": {
     "@mantine/core": "^7.17.8",
+    "@mantine/notifications": "^7.17.8",
     "react": "^19.2.3"
   },
   "devDependencies": {
