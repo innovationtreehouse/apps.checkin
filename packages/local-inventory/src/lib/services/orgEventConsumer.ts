@@ -78,13 +78,14 @@ export const orgEventConsumer = {
  * provisional row is otherwise applied only by the reconcile right after the creating commit.
  * Idempotent, since reconcile skips a provisional that already left pending. Capped.
  */
-async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; reconcileFailed: number }> {
+async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; stuck: { gtin13: string; name: string }[] }> {
   // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
   const pending = await db.inventoryProvisionalItem.findMany({
     where: { orgId, status: "pending" },
-    select: { provisionalGtin13: true },
+    select: { provisionalGtin13: true, name: true },
   });
-  if (pending.length === 0) return { reconciled: 0, reconcileFailed: 0 };
+  if (pending.length === 0) return { reconciled: 0, stuck: [] };
+  const nameByGtin = new Map(pending.map((p) => [p.provisionalGtin13, p.name]));
   const resolved = await db.inventoryProvisionalResolution.findMany({
     where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13) } },
     select: { provisionalGtin13: true },
@@ -93,17 +94,17 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   });
   const service = getServices().provisionalItemService;
   let reconciled = 0;
-  let reconcileFailed = 0;
+  const stuck: { gtin13: string; name: string }[] = [];
   for (const { provisionalGtin13 } of resolved) {
     try {
       await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
       reconciled++;
     } catch (err) {
-      reconcileFailed++;
+      stuck.push({ gtin13: provisionalGtin13, name: nameByGtin.get(provisionalGtin13) ?? "" });
       console.error(`[local-inventory/org-events] reconcile of provisional ${provisionalGtin13} failed`, err);
     }
   }
-  return { reconciled, reconcileFailed };
+  return { reconciled, stuck };
 }
 
 /** A ledger write that throws counts as failed; with no ledger row, the next sweep reads the event again. */
@@ -176,10 +177,10 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   await retry(laterRetries);
   unprocessed += allPending.length - firstRetries.length - laterRetries.length;
 
-  const reconciled = await reconcilePendingProvisionals(orgId, limit);
+  const { reconciled, stuck } = await reconcilePendingProvisionals(orgId, limit);
   const stalled = unprocessed > 0 && counts.processed === 0;
-  if (newlyFailed > 0 || stalled || unreadable || reconciled.reconcileFailed > 0) {
-    await alertStuck({ failed: newlyFailed, unprocessed, unreadable, reconcileFailed: reconciled.reconcileFailed });
+  if (newlyFailed > 0 || stalled || unreadable || stuck.length > 0) {
+    await alertStuck({ failed: newlyFailed, unprocessed, unreadable, stuckProvisionals: stuck });
   }
-  return { ...counts, ...reconciled, unprocessed, unreadable };
+  return { ...counts, reconciled, reconcileFailed: stuck.length, unprocessed, unreadable };
 }
