@@ -2,7 +2,6 @@ import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { sendTemplated } from "@/lib/email-templates/send";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 interface ProcessPostEventEmailsOptions {
     /**
@@ -48,7 +47,7 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                 program: {
                     include: {
                         volunteers: {
-                            where: { isCore: true, person: LIVE_PERSON },
+                            where: { isCore: true },
                             include: { person: true }
                         }
                     }
@@ -77,7 +76,6 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             const leadMentors = await prisma.person.findMany({
                 where: {
                     id: { in: leadMentorIds },
-                    ...LIVE_PERSON,
                 },
                 select: {
                     id: true,

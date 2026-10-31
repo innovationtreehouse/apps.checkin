@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { ACTIVE_ORG_MEMBER_PERSON_WHERE } from "@/lib/orgMembership";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +9,7 @@ export const GET = handler('GET /api/shop/org-members', async () => {
     // certifier the view holds only member+public, so the stripper drops email
     // and keeps name. Field-stripping — not the query — decides who sees what.
     const members = await prisma.person.findMany({
-        where: { ...ACTIVE_ORG_MEMBER_PERSON_WHERE, ...LIVE_PERSON },
+        where: ACTIVE_ORG_MEMBER_PERSON_WHERE,
         select: {
             id: true,
             name: true,

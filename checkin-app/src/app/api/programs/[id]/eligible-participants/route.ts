@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { MEMBERSHIP_FEE_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
 import { handler, notFound, badRequest } from "@/security/handler";
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { checkProgramAge } from "@/lib/programAge";
 
@@ -53,7 +53,7 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
     }
 
     const members = await prisma.person.findMany({
-        where: { AND: andClauses, ...LIVE_PERSON },
+        where: { AND: andClauses },
         select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
         orderBy: { name: 'asc' },
         take: 50

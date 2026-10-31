@@ -5,7 +5,6 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { withWebhook } from "@/lib/webhookAuth";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Verify Resend's inbound webhook — signed via Svix (svix-id/svix-timestamp/
@@ -61,7 +60,7 @@ function toAddresses(data: ResendWebhookEvent["data"]): string[] {
 async function findPersonIdsByEmail(address: string): Promise<number[]> {
     const normalized = canonicalizeEmail(address);
     const people = await prisma.person.findMany({
-        where: { email: { not: null }, ...LIVE_PERSON },
+        where: { email: { not: null } },
         select: { id: true, email: true },
     });
     return people.filter((p) => p.email && canonicalizeEmail(p.email) === normalized).map((p) => p.id);
@@ -88,7 +87,7 @@ export const POST = withWebhook({ provider: "resend", verify: verifyResendSignat
             for (const address of addresses) {
                 const ids = await findPersonIdsByEmail(address);
                 if (ids.length === 0) continue;
-                await prisma.person.updateMany({ where: { id: { in: ids }, ...LIVE_PERSON }, data: { emailUndeliverableAt: new Date() } });
+                await prisma.person.updateMany({ where: { id: { in: ids } }, data: { emailUndeliverableAt: new Date() } });
             }
             return NextResponse.json({ ok: true });
         }
@@ -96,7 +95,7 @@ export const POST = withWebhook({ provider: "resend", verify: verifyResendSignat
             for (const address of addresses) {
                 const ids = await findPersonIdsByEmail(address);
                 if (ids.length === 0) continue;
-                await prisma.person.updateMany({ where: { id: { in: ids }, ...LIVE_PERSON }, data: { emailUndeliverableAt: null } });
+                await prisma.person.updateMany({ where: { id: { in: ids } }, data: { emailUndeliverableAt: null } });
             }
             return NextResponse.json({ ok: true });
         }

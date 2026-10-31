@@ -6,7 +6,6 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -15,7 +14,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
  */
 async function refuseOwnHousehold(actorId: number, personId: number, programId: number, isCore: boolean) {
     // A merged-away record is no one to volunteer; its survivor is.
-    const subject = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
+    const subject = await prisma.person.findFirst({ where: { id: personId }, select: { householdId: true } });
     if (!subject) return apiError("Participant not found", 400);
     const refused = await refuseSelfGrant(prisma, actorId, { personId, householdId: subject.householdId }, { table: "ProgramVolunteer", attempted: { programId, isCore } });
     return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;

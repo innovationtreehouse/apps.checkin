@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { emailWithheldParticipants, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import {
@@ -58,7 +58,6 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                     name: true,
                     leadMentorId: true,
                     volunteers: {
-                        where: { person: LIVE_PERSON },
                         select: {
                             programId: true,
                             personId: true,
@@ -67,7 +66,7 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                         }
                     },
                     participants: {
-                        where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
+                        where: ENROLLED_PARTICIPANT,
                         select: {
                             programId: true,
                             personId: true,
@@ -86,7 +85,6 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                 select: { id: true, personId: true, arrivedAt: true, departedAt: true, associatedEventId: true }
             },
             rsvps: {
-                where: { person: LIVE_PERSON },
                 select: { eventId: true, personId: true, status: true }
             }
         }

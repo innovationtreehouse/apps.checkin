@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { householdLeadship } from "@/lib/household/leads";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export type VisitSubject = { id: number; isKeyholder: boolean };
 
@@ -18,7 +17,7 @@ export type VisitSubject = { id: number; isKeyholder: boolean };
  */
 export async function visitSubject(actorId: number, subjectId: number): Promise<VisitSubject | null> {
     const subject = await prisma.person.findFirst({
-        where: { id: subjectId, ...LIVE_PERSON },
+        where: { id: subjectId },
         select: { id: true, isKeyholder: true, householdId: true },
     });
     if (!subject) return null;

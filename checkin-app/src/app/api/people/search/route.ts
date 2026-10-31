@@ -5,7 +5,6 @@ import { withAuth } from "@/lib/auth";
 import { ACTIVE_ORG_MEMBER_PERSON_WHERE, personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { rolesToFlags } from "@/lib/roles";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { leaderAgeCutoff } from "@/lib/programAge";
 import { membershipYearCycle, membershipYearCycleForLabel, MAX_DATE } from "@/lib/membership/renewal";
@@ -85,7 +84,7 @@ export const GET = withAuth(
                     // never wear a badge, so they neither print by default nor count
                     // toward printed-name disambiguation. Role table, not the legacy
                     // mirror column — PersonRole is the source of truth.
-                    where: { ...LIVE_PERSON, ...ACTIVE_ORG_MEMBER_PERSON_WHERE, roles: { none: { role: 'SYSADMIN' } } },
+                    where: { ...ACTIVE_ORG_MEMBER_PERSON_WHERE, roles: { none: { role: 'SYSADMIN' } } },
                     select: {
                         id: true,
                         name: true,
@@ -141,7 +140,6 @@ export const GET = withAuth(
                 // first, and Prisma's recursive WhereInput accepts that without a type
                 // error. `?q=x&filter=adults` must apply both.
                 where: {
-                    ...LIVE_PERSON,
                     AND: [
                         ...(q ? [{
                             OR: [

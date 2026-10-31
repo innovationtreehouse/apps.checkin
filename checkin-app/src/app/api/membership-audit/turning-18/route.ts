@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { birthCutoff, memberYearStarts } from "@/lib/programYear";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +23,6 @@ export const dynamic = "force-dynamic";
  * Ships the classified INPUTS (dateOfBirth + the year boundary) and lets the page
  * derive both as-of ages: the stripper drops ad-hoc computed fields, so an
  * `ageAtNext` on the row would never reach the wire.
- *
- * LIVE_PERSON is load-bearing — a merged-away person keeps its row as a tombstone
- * and would otherwise show up as a second entry for someone already listed.
  */
 export const GET = handler('GET /api/membership-audit/turning-18', async () => {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -37,7 +34,6 @@ export const GET = handler('GET /api/membership-audit/turning-18', async () => {
 
     const people = await prisma.person.findMany({
         where: {
-            ...LIVE_PERSON,
             isHouseholdLead: false,
             OR: [
                 // 18 by the NEXT boundary is the superset — anyone already 18 at the

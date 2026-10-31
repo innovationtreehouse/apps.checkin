@@ -151,7 +151,7 @@ describe("processPostEventEmails", () => {
         const result = await processPostEventEmails();
 
         expect(prisma.person.findMany).toHaveBeenCalledWith({
-            where: { id: { in: [100] }, mergedIntoId: null },
+            where: { id: { in: [100] } },
             select: { id: true, email: true }
         });
 
@@ -239,7 +239,7 @@ describe("processPostEventEmails", () => {
         const result = await processPostEventEmails();
 
         expect(prisma.person.findMany).toHaveBeenCalledWith({
-            where: { id: { in: [101] }, mergedIntoId: null },
+            where: { id: { in: [101] } },
             select: { id: true, email: true }
         });
         expect(sendEmail).not.toHaveBeenCalled();

@@ -15,7 +15,6 @@ import {
     assertNotOwnHousehold,
 } from "@/lib/roles";
 import { personActor } from "@/lib/auditActor";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
 
@@ -36,7 +35,6 @@ export const GET = withAuth(
     async () => {
         try {
             const rows = await prisma.person.findMany({
-                where: LIVE_PERSON,
                 select: {
                     id: true,
                     email: true,

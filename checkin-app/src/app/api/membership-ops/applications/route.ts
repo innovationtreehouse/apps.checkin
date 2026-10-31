@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -41,9 +40,8 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
                     household: {
                         select: {
                             name: true,
-                            // Live only: the leads here are the selectable subjects of a
-                            // board force-approve, and the service rejects a tombstone.
-                            householdMembers: { where: LIVE_PERSON, select: { id: true, name: true, email: true, isHouseholdLead: true } },
+                            // The leads here are the selectable subjects of a board force-approve.
+                            householdMembers: { select: { id: true, name: true, email: true, isHouseholdLead: true } },
                         },
                     },
                 },

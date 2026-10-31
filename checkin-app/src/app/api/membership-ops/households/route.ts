@@ -15,7 +15,7 @@ import { personActor } from "@/lib/auditActor";
 import { closeForRestore, lockOpenApplications } from "@/lib/membership/archive";
 import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
@@ -51,7 +51,6 @@ export const GET = withAuth(
                     where: { id: parseInt(id) },
                     include: {
                         householdMembers: {
-                            where: LIVE_PERSON,
                             select: {
                                 id: true, name: true, email: true, isHouseholdLead: true, lastBackgroundCheck: true,
                                 // dateOfBirth: the Edit Info modal excludes youth from the
@@ -172,7 +171,6 @@ export const GET = withAuth(
                 where: whereClause,
                 include: {
                     householdMembers: {
-                        where: LIVE_PERSON,
                         // isHouseholdLead + lastBackgroundCheck drive the household-level "BG valid
                         // until" below. Board-only endpoint; lastBackgroundCheck rides along in the
                         // JSON at the same trust level as the rest of the row.
@@ -278,7 +276,7 @@ export const POST = withAuth(
                         // either seen here or refused by setRoleFlag's DENIED check.
                         await lockBoardRoles(tx);
                         const boardMemberInHousehold = await tx.person.findFirst({
-                            where: { householdId, isBoardMember: true, ...LIVE_PERSON },
+                            where: { householdId, isBoardMember: true },
                             select: { id: true }
                         });
                         if (boardMemberInHousehold) return "boardMember" as const;

@@ -23,7 +23,6 @@ import { nameWrite } from "@/lib/person/name";
 import type { TxClient } from "@/lib/db-client";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 /**
@@ -81,7 +80,7 @@ async function loadUserWithHousehold(userId: number) {
         include: {
             household: {
                 include: {
-                    householdMembers: { where: LIVE_PERSON, orderBy: { id: "asc" } },
+                    householdMembers: { orderBy: { id: "asc" } },
                     orgMembership: { include: { processes: true } },
                     emergencyContacts: { orderBy: [{ priority: "asc" }, { id: "asc" }] },
                 },

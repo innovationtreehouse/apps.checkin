@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler, unauthorized } from "@/security/handler";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { authorizedReview } from "@/lib/trusted-adult/filters";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -25,11 +25,11 @@ export const GET = handler("GET /api/trusted-adults/operational", async ({ auth 
         // Program leads: households of children enrolled in programs they lead or core-vol.
         const led = await prisma.program.findMany({
             where: { leadMentorId: u.id },
-            select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT }, select: { person: { select: { householdId: true } } } } },
+            select: { participants: { where: ENROLLED_PARTICIPANT, select: { person: { select: { householdId: true } } } } },
         });
         const coreVol = await prisma.programVolunteer.findMany({
             where: { personId: u.id, isCore: true },
-            select: { program: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT }, select: { person: { select: { householdId: true } } } } } } },
+            select: { program: { select: { participants: { where: ENROLLED_PARTICIPANT, select: { person: { select: { householdId: true } } } } } } },
         });
         const households = new Set<number>();
         for (const p of led) for (const pp of p.participants) households.add(pp.person.householdId);

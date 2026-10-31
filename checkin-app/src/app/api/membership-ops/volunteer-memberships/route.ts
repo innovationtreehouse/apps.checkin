@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, type ProcessStatus } from "@/lib/membership/lifecycle";
 import type { OrgMembershipStatus } from "@/generated/prisma/client";
@@ -84,7 +83,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
                         id: true,
                         name: true,
                         householdMembers: {
-                            where: { isHouseholdLead: true, ...LIVE_PERSON },
+                            where: { isHouseholdLead: true },
                             select: { name: true, email: true },
                             orderBy: { id: "asc" },
                         },
@@ -106,7 +105,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
     const wanted = new Set(designations.map((d) => canonicalizeEmail(d.email)));
     const leads = wanted.size
         ? await prisma.person.findMany({
-              where: { email: { not: null }, isHouseholdLead: true, ...LIVE_PERSON },
+              where: { email: { not: null }, isHouseholdLead: true },
               select: {
                   email: true,
                   household: {
@@ -121,7 +120,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
                               },
                           },
                           householdMembers: {
-                              where: { isHouseholdLead: true, ...LIVE_PERSON },
+                              where: { isHouseholdLead: true },
                               select: { name: true },
                               orderBy: { id: "asc" },
                           },

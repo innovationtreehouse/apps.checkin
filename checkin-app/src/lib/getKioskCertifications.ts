@@ -1,5 +1,4 @@
 import prisma from "@/lib/prisma";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidatableCache } from "@/lib/invalidatableCache";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
 
@@ -56,14 +55,13 @@ async function computeKioskCertifications(limitToPresent: boolean): Promise<Cert
 
     if (limitToPresent) {
         const activeVisits = await prisma.visit.findMany({
-            where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
+            where: { departedAt: null, deletedAt: null },
             include: { person: { select: personSelect } },
             orderBy: { arrivedAt: "desc" },
         });
         participantsData = activeVisits.map(v => v.person);
     } else {
         participantsData = await prisma.person.findMany({
-            where: LIVE_PERSON,
             select: personSelect,
         });
     }

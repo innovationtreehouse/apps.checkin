@@ -1,7 +1,6 @@
 import type { Person, PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import type { AuthenticatedUser } from "@/types/auth";
 import { KIND_TO_MIRROR } from "@/lib/roles";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock, roleMergeBlock } from "./guard";
 
 // Fields eligible for a per-field conflict radio: both sides non-null and different.
@@ -46,9 +45,7 @@ export const MERGE_INCLUDE = {
     ...SUBJECT_INCLUDE,
     household: {
         include: {
-            // The lead guard asks "would this leave live members leaderless" —
-            // tombstones are not members.
-            householdMembers: { where: LIVE_PERSON },
+            householdMembers: true,
             orgMembership: true,
         },
     },
@@ -206,8 +203,7 @@ export function subjectRefusal(keep: KeepSubject, merge: MergeSubject, actor: Au
         return { status: 400, error: "Cannot merge: the to-be-deleted participant is the lead of a household with other members." };
     }
 
-    // householdMembers is LIVE_PERSON-filtered, so this is the count of people
-    // who would still be left to use the household's membership.
+    // The count of people who would still be left to use the household's membership.
     const membershipBlock = membershipMergeBlock(
         { status: householdMembershipStatus(keep.household) },
         { status: householdMembershipStatus(merge.household), liveOthers: householdOthersCount },

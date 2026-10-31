@@ -83,7 +83,7 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * holder who typed it.
  */
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
       import("@/lib/prisma"),
       import("@/lib/person/filters"),
@@ -93,7 +93,6 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
     ]);
   const matches = await prisma.person.findMany({
     where: {
-      ...LIVE_PERSON,
       ...SIGN_IN_VERIFIED_PERSON,
       OR: [{ email: { equals: address, mode: "insensitive" } }, { mailAliases: { some: { address, approvedAt: { not: null } } } }],
     },
@@ -124,13 +123,12 @@ const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: t
 
 /** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
-  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
     import("@/lib/prisma"),
-    import("@/lib/person/filters"),
     import("@/lib/programAge"),
   ]);
   const matches = await prisma.person.findMany({
-    where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+    where: { name: { contains: query, mode: "insensitive" } },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });
@@ -138,19 +136,18 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
 }
 
 async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
-  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
     import("@/lib/prisma"),
-    import("@/lib/person/filters"),
     import("@/lib/programAge"),
   ]);
-  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: AGE_FIELDS });
+  const person = await prisma.person.findFirst({ where: { id: personId }, select: AGE_FIELDS });
   return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
 }
 
 /** Whether a live person has an account to sign in with. */
 async function reimburseeHasAccount(personId: number): Promise<boolean> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return (await prisma.person.count({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
 async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
@@ -235,8 +232,8 @@ const alerts: ReceiptAlerts = {
 
 /** A live, sign-in-verified person's email and name, for a mailed receipt's acknowledgement. */
 async function contactOf(personId: number): Promise<{ email: string; name: string } | null> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true, name: true } });
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true, name: true } });
   return person?.email ? { email: person.email, name: person.name } : null;
 }
 

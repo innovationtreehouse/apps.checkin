@@ -1,6 +1,5 @@
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { isYouth } from "@/lib/time";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 
@@ -138,7 +137,7 @@ async function addHouseholdLeadTx(
         throw new HouseholdLeadYouthError(householdId, participantId);
     }
 
-    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId), ...LIVE_PERSON } });
+    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId) } });
     if (count >= MAX_HOUSEHOLD_LEADS) {
         throw new HouseholdLeadLimitError(householdId);
     }
@@ -203,7 +202,7 @@ async function removeHouseholdLeadTx(
     }
     if (!person?.isHouseholdLead) return { removed: false, reason: "not_lead" };
 
-    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId), ...LIVE_PERSON } });
+    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId) } });
     if (count <= 1) return { removed: false, reason: "last_lead" };
 
     await tx.person.update({ where: { id: participantId }, data: { isHouseholdLead: false } });

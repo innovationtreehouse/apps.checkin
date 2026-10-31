@@ -5,7 +5,6 @@ import { withAuth } from "@/lib/auth";
 import { createParticipantWithHousehold } from "@/lib/auth-options";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 
@@ -59,7 +58,7 @@ export const POST = withAuth({ roles: ['isBoardMember', 'isOperations'] }, async
         // TypeErrors the Assign-household render path on the new row.
         const participant = await prisma.person.findUnique({
             where: { id: person.id },
-            include: { household: { include: { householdMembers: { where: LIVE_PERSON, select: { id: true, name: true, email: true } } } } },
+            include: { household: { include: { householdMembers: { select: { id: true, name: true, email: true } } } } },
         });
 
         return NextResponse.json({ success: true, participant });

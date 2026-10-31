@@ -6,7 +6,7 @@
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { sendTemplated } from "@/lib/email-templates/send";
-import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
+import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 
 export type PurchaseOutcome = "receipt_rejected" | "expense_line_rejected" | "reimbursement_complete";
 
@@ -65,7 +65,7 @@ export async function sendPurchaseOutcome(notice: PurchaseOutcomeNotice, to: Out
   if (personId === null) return true;
   try {
     const person = await prisma.person.findFirst({
-      where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON },
+      where: { id: personId, ...SIGN_IN_VERIFIED_PERSON },
       select: { email: true, name: true, notificationSettings: true },
     });
     if (!person?.email) return true;

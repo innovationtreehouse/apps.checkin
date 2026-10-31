@@ -6,7 +6,6 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
@@ -105,7 +104,7 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             // Conditional on the person still being live and still in the household locked
             // above, so a merge or another move that lands after the pre-check is refused.
             const { count } = await tx.person.updateMany({
-                where: { id: participantId, householdId: participant.householdId, ...LIVE_PERSON },
+                where: { id: participantId, householdId: participant.householdId },
                 data: {
                     householdId: targetHouseholdId,
                     ...(participant.householdId !== targetHouseholdId ? { isHouseholdLead: false } : {}),

@@ -11,7 +11,6 @@ import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib
 import { householdLeadship } from "@/lib/household/leads";
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -33,7 +32,7 @@ export const GET = withAuth(
                 include: {
                     household: {
                         include: {
-                            householdMembers: { where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
+                            householdMembers: { select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
                             orgMembership: true,
                         }
                     }

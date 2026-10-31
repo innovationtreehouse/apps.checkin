@@ -2,7 +2,7 @@ import type { TxClient } from "@/lib/db-client";
 import type { Prisma, ProgramParticipant, ProgramParticipantStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { changeProgramStockWith, type StockWriteOptions } from "@/lib/shopify/stock";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { ENROLLMENT_WRITES, STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
 
@@ -11,7 +11,6 @@ export function countStockTakenSeats(programId: number, db: TxClient = prisma): 
     return db.programParticipant.count({
         where: {
             programId,
-            person: LIVE_PERSON,
             OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
         },
     });
@@ -50,7 +49,7 @@ export async function lockProgramAndCheckCapacity(
 
     if (maxParticipants === null) return;
 
-    const count = await tx.programParticipant.count({ where: { programId, person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } });
+    const count = await tx.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
     if (count + seats > maxParticipants) {
         throw new ProgramCapacityError(Math.max(0, maxParticipants - count));
     }

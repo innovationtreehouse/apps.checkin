@@ -69,8 +69,7 @@ export const signoff: SignoffDirectory = {
   householdIds,
 
   async personExists(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    return (await (await db()).person.count({ where: { id: personId, ...LIVE_PERSON } })) > 0;
+    return (await (await db()).person.count({ where: { id: personId } })) > 0;
   },
 
   async liveIds(personIds) {
@@ -87,15 +86,15 @@ export const signoff: SignoffDirectory = {
   },
 
   async isAdult(personId) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { dateOfBirth: true, isDeclaredAdult: true } });
+    const { isKnownAdult } = await import("@/lib/programAge");
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { dateOfBirth: true, isDeclaredAdult: true } });
     return person !== null && isKnownAdult(person);
   },
 
   async searchAdults(query, limit) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
+    const { isKnownAdult } = await import("@/lib/programAge");
     const matches = await (await db()).person.findMany({
-      where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+      where: { name: { contains: query, mode: "insensitive" } },
       select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
@@ -176,8 +175,7 @@ const qbVendors: QbVendors = {
 
 const people: PeopleDirectory = {
   async nameOf(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { name: true } });
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { name: true } });
     return person?.name ?? null;
   },
 };

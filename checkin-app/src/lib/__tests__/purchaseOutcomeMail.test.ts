@@ -61,7 +61,7 @@ describe('recipients', () => {
     it('looks up only a live, sign-in-verified person', async () => {
         await sendPurchaseOutcome(notice(), 'reimbursee');
         expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: REIMBURSEE, mergedIntoId: null, accounts: { some: {} } },
+            where: { id: REIMBURSEE, accounts: { some: {} } },
         }));
     });
 

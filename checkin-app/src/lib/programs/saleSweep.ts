@@ -2,7 +2,6 @@ import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { orgCalendarDay } from "@/lib/time";
 import { reportShopifyFailure } from "@/lib/shopify/client";
 import { setProgramProductOffSale } from "@/lib/shopify/stock";
@@ -85,7 +84,7 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
             id: true,
             name: true,
             participants: {
-                where: { status: "PENDING", person: LIVE_PERSON },
+                where: { status: "PENDING" },
                 select: { person: { select: { name: true } } },
                 orderBy: { pendingSince: "asc" },
             },

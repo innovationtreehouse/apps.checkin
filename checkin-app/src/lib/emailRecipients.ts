@@ -3,7 +3,6 @@ import { sendEmail, runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { logger } from "@/lib/logger";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
@@ -28,7 +27,6 @@ export async function resolveHouseholdRecipients(
             where: {
                 householdId,
                 ...(alsoPersonId ? { OR: [{ isHouseholdLead: true }, { id: alsoPersonId }] } : { isHouseholdLead: true }),
-                ...LIVE_PERSON,
             },
             select: { email: true, notificationSettings: true },
         });
@@ -61,7 +59,7 @@ function fanOutEmails<K extends TemplateKey>(emails: string[], key: K, ctx: Temp
 export async function emailHouseholdLeads<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const leads = await prisma.person.findMany({
-            where: { householdId, isHouseholdLead: true, ...LIVE_PERSON },
+            where: { householdId, isHouseholdLead: true },
             select: { email: true },
         });
         const emails = leads.map((l) => l.email).filter((e): e is string => !!e);
@@ -73,7 +71,7 @@ export async function emailHouseholdLeads<K extends TemplateKey>(householdId: nu
 
 async function boardMemberEmails(): Promise<string[]> {
     const board = await prisma.person.findMany({
-        where: { isBoardMember: true, email: { not: null }, ...LIVE_PERSON },
+        where: { isBoardMember: true, email: { not: null } },
         select: { email: true },
     });
     return board.map((b) => b.email).filter((e): e is string => !!e);
@@ -121,7 +119,7 @@ export async function emailBoardMembersHtml(subject: string, html: string, error
 export async function notifyFinanceAlert<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const finance = await prisma.person.findMany({
-            where: { roles: { some: { role: "FINANCE" } }, email: { not: null }, ...LIVE_PERSON },
+            where: { roles: { some: { role: "FINANCE" } }, email: { not: null } },
             select: { email: true },
         });
         const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
