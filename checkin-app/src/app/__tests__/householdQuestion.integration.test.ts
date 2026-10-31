@@ -196,9 +196,9 @@ describe('refusals', () => {
 
     it('lets the Board close it for someone it marks a youth; a sysadmin off the Board cannot', async () => {
         const { added } = await addedAdult();
-        const dateOfBirth = youthDob().toISOString().slice(0, 10);
+        await prisma.person.update({ where: { id: added.id }, data: { dateOfBirth: youthDob() } });
         const edit = () => boardEdit(new Request(`http://localhost/api/membership-ops/participants/${added.id}`, {
-            method: 'PUT', body: JSON.stringify({ name: 'Corrected', dateOfBirth }),
+            method: 'PUT', body: JSON.stringify({ name: 'Corrected' }),
         }) as never, { params: Promise.resolve({ id: String(added.id) }) });
         const outsider = await addPerson(await household());
 

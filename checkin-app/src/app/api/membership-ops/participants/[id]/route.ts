@@ -102,9 +102,9 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.googleId = null;
         }
 
-        // A new address gets its own first sign-in, and a youth stays where they were added;
-        // only the Board's word closes a household question for someone who cannot answer it.
-        if (emailChanged || (auth.user.isBoardMember && isYouth(updateData.dateOfBirth as Date | null | undefined))) {
+        // A new address gets its own first sign-in, and a youth stays where they were added:
+        // a Board edit closes a household question that the record's youth cannot answer.
+        if (emailChanged || (auth.user.isBoardMember && isYouth(priorDob))) {
             updateData.householdJoinPending = false;
         }
 
