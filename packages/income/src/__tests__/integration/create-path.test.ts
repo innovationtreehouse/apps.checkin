@@ -972,6 +972,16 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 9830 });
   });
 
+  it("a decision made before an item's first sale is honoured on its first payout", async () => {
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+
+    const g = orderPayout(2);
+
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", reason: null });
+  });
+
   it("an item marked general income books without a Class and is not held", async () => {
     const g = orderPayout(2);
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });

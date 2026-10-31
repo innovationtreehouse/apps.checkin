@@ -64,7 +64,7 @@ export interface MirrorOrderSubtotal {
   subtotalCents: number;
 }
 
-/** A variant the mirror has seen, with its latest title and SKU. */
+/** A variant finance can decide on, with its latest title and SKU. */
 export interface MirrorItem {
   variantId: string;
   title: string;
@@ -79,6 +79,7 @@ export interface PayoutMirror {
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>;
   orderLines(orderGids: string[]): Promise<MirrorOrderLine[]>;
   orderSubtotals(orderGids: string[]): Promise<MirrorOrderSubtotal[]>;
+  /** Every variant sold, plus any the host holds that has not sold, with the id `MirrorOrderLine.variantId` carries. */
   itemsSeen(): Promise<MirrorItem[]>;
 }
 

@@ -11,7 +11,7 @@ import type { Actor } from "./reconciliationService";
  */
 export type ItemDecision = "bucket" | "general" | "undecided";
 
-/** A variant the mirror has seen, with the org's decision for it. */
+/** A variant the mirror port reports, with the org's decision for it. */
 export interface IncomeItem {
   variantId: string;
   title: string;
@@ -24,7 +24,7 @@ export interface IncomeItem {
 }
 
 export const itemCategoryService = {
-  /** Every item the mirror has seen, plus mapped items it no longer reports. */
+  /** Every item the mirror port reports, plus mapped items it no longer reports. */
   async listItems(orgId: string): Promise<IncomeItem[]> {
     const mirror = getIncomeConfig().mirror;
     const [seen, mappings, buckets, issues] = await Promise.all([
