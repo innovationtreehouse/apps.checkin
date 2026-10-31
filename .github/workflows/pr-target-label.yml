@@ -1,14 +1,13 @@
 name: PR target label
 
 # Label every PR `target:<base>` (target:main, target:rel/1.0, ...) so the PR
-# list shows at a glance which branch each PR ships to — worth surfacing now
-# that prod releases cut only from rel/* and hotfix PRs may target those
-# branches directly. rel/* targets get a loud color; everything else neutral.
+# list shows at a glance which branch each PR ships to: prod releases cut
+# only from rel/* and hotfix PRs may target those branches directly. rel/* targets get a loud color; everything else neutral.
 #
 # `edited` fires on base-branch retargets (and on title/body edits, which the
 # job-level `if` filters out); labels self-heal on retarget by dropping stale
-# target:* labels. The manual `workflow_dispatch` sweep backfills PRs that
-# were already open when this workflow landed.
+# target:* labels. The manual `workflow_dispatch` sweep labels every open
+# PR, including any the event triggers missed.
 #
 # Fork PRs: GITHUB_TOKEN is read-only there, so labeling would fail — fine for
 # this repo, where all PRs come from in-repo branches. Do not "fix" that by

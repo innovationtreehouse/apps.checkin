@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy-build smoke (#1967): boot the production image against a migrated
+# Deploy-build smoke: boot the production image against a migrated
 # Postgres and check that each wired library's HTTP errors keep their status
 # (400/409, never 500) under `next build` bundling.
 #
