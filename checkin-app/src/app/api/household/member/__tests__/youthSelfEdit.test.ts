@@ -127,3 +127,39 @@ describe("PATCH /api/household/member — youth self-edit", () => {
         expect(written()).not.toHaveProperty("dateOfBirth");
     });
 });
+
+describe("PATCH /api/household/member — declaring someone over 25", () => {
+    beforeEach(() => {
+        householdLeadship.mockResolvedValue({ householdId: 10, canManage: true });
+    });
+
+    it.each([[""], [null]])("refuses replacing an under-18 date with a declaration (dob %j), writing nothing", async (dob) => {
+        findPerson.mockResolvedValue(person(CHILD, YOUTH_DOB));
+        const res = await patch({ participantId: CHILD, dob, over25: true });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/under 18/);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("accepts a declaration in a later save once the date is cleared", async () => {
+        findPerson.mockResolvedValue(person(CHILD, YOUTH_DOB));
+        expect((await patch({ participantId: CHILD, dob: "", over25: false })).status).toBe(200);
+        expect(written()).toMatchObject({ dateOfBirth: null, isDeclaredAdult: false });
+
+        findPerson.mockResolvedValue(person(CHILD, null));
+        expect((await patch({ participantId: CHILD, dob: "", over25: true })).status).toBe(200);
+        expect(tx.person.update.mock.calls[1][0].data).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
+    });
+
+    it("lets a lead declare an adult with no date on file", async () => {
+        findPerson.mockResolvedValue(person(CHILD, null));
+        expect((await patch({ participantId: CHILD, dob: "", over25: true })).status).toBe(200);
+        expect(written().isDeclaredAdult).toBe(true);
+    });
+
+    it("lets an adult declare themself over 25 in place of a date of 18 or over", async () => {
+        findPerson.mockResolvedValue(person(ME, ADULT_DOB));
+        expect((await patch({ participantId: ME, dob: "", over25: true })).status).toBe(200);
+        expect(written()).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
+    });
+});

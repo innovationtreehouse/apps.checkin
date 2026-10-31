@@ -7,7 +7,7 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
@@ -87,6 +87,10 @@ export const PATCH = withAuth(
 
             if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth)) {
                 return apiError("Youth profiles are read-only.", 403);
+            }
+
+            if (replacesUnder18Date(dob, over25, targetHouseholdMember.dateOfBirth)) {
+                return apiError(UNDER_18_DECLARATION_REFUSAL, 400);
             }
 
             // A sysadmin manages their own household without leading it, so making
