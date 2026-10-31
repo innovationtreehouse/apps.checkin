@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/membership/bg-consent — applicant-facing "I submitted my consent on
- * Averity" self-report (#875). Records consent via markBgConsent (applicant as
+ * Averity" self-report. Records consent via markBgConsent (applicant as
  * audit actor) on a lead's household process awaiting external action, which may
  * advance it to PENDING_PAYMENT, or else on the caller's own open PERSON_BG
  * obligation. Honor-system by design; the

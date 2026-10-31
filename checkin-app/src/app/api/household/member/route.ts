@@ -43,7 +43,7 @@ export const PATCH = withAuth(
                 return apiError(PHONE_ERROR, 400);
             }
 
-            // A submitted-but-blank name is rejected, not silently dropped (Decision 5).
+            // A submitted-but-blank name is rejected, not silently dropped.
             if (name !== undefined && !nameWrite(name)) {
                 return apiError("Name cannot be blank", 400);
             }
@@ -152,7 +152,7 @@ export const PATCH = withAuth(
                 }
 
                 // Set when the field edits saved but the requested promotion to lead
-                // was declined by the per-household cap (#269). We report this back
+                // was declined by the per-household cap. We report this back
                 // rather than 400 the whole edit, so the form can say the member's
                 // details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;

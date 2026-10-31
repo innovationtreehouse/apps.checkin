@@ -98,11 +98,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This enrollment is not awaiting payment", 409);
         }
 
-        // Hold-ledger (product decision 2026-07-06): APPLICATION takes a seat out
+        // Hold ledger: APPLICATION takes a seat out
         // of Shopify's pool (-1), stamping inventoryHeldAt so every later release
         // path (withdrawal / payment / grace-expiry) or approval knows there's a
         // hold to account for. Guard is on inventoryHeldAt, NOT isPaymentPlanRequested:
-        // a denied re-applicant still holds the seat (refuse no longer releases
+        // a denied re-applicant still holds the seat (refuse does not release
         // it — see the refuse route), so re-applying must NOT decrement twice.
         // Branch 1 (inventoryHeldAt null -> now): the seat is genuinely free —
         // fires -1. Branch 2 (inventoryHeldAt already set): re-application while
@@ -127,13 +127,13 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                     data: { isPaymentPlanRequested: true },
                 })).count;
                 outcome.held = (await tx.programParticipant.updateMany({
-                    // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
+                    // Apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal.
                     where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
                     data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
                 })).count;
                 if (outcome.held === 0) {
                     outcome.re = (await tx.programParticipant.updateMany({
-                        // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
+                        // Re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
                         where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
                         data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
                     })).count;
@@ -141,12 +141,12 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 return { result: null, delta: outcome.held > 0 ? -1 : 0 };
             }, { inRequest: true });
         } catch (error) {
-            // Only a failed -1 falls back; any other error is a 500, as before.
+            // Only a failed -1 falls back; any other error is a 500.
             if (!(error instanceof StockNotRecordedError)) throw error;
             outcome.held = 0;
             outcome.re = 0;
             // The -1 could not be recorded (the stock writer has alerted the board), so neither
-            // was the hold. A fresh request (T3f) stands without one: PENDING_HOLD_FAILED
+            // was the hold. A fresh request stands without one: PENDING_HOLD_FAILED
             // { status: PENDING, inventoryHeldAt: null, isPaymentPlanRequested: true,
             // paymentPlanDeniedAt: null } — a legitimate state, NOT a bug: the board finishes
             // placing the hold (Shopify Hold Reconciliation queue → Confirm manual hold), and

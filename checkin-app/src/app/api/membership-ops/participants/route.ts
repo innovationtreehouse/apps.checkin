@@ -81,7 +81,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             });
 
             if (!parent) {
-                // #1688: validate before the transaction opens — a 400 must not
+                // Validate before the transaction opens — a 400 must not
                 // hold the counter row lock.
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
