@@ -4,6 +4,7 @@
  * org-level), the reject path, racing decisions, what the submitter's and reimbursee's
  * households may and may not do on their lines, and Approve All.
  */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -393,30 +394,20 @@ describeDb("assignOwner", () => {
   });
 });
 
-/** Resolves once `n` backends in this database are waiting on a row lock. */
-async function blocked(n: number): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const [{ c }] = await db.$queryRaw<{ c: bigint }[]>`SELECT count(*) AS c FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (c >= BigInt(n)) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error(`fewer than ${n} backends blocked on a lock`);
-}
-
 /** Holds `lock` until both racers have read and are waiting to write, then lets them go. */
 async function race<A, B>(lock: string, a: () => Promise<A>, b: () => Promise<B>) {
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
-  let held!: () => void;
-  const locked = new Promise<void>((r) => (held = r));
+  let held!: (pid: number) => void;
+  const locked = new Promise<number>((r) => (held = r));
   const holder = db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(lock);
-    held();
+    held(await backendPid(tx));
     await gate;
   }, { timeout: 20_000 });
-  await locked;
+  const holderPid = await locked;
   const settled = Promise.allSettled([a(), b()]);
-  await blocked(2);
+  await waitersBehind(db, holderPid, 2);
   release();
   await holder;
   return settled;
