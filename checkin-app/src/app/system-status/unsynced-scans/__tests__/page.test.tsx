@@ -85,23 +85,15 @@ describe("SystemStatusUnsyncedScansPage", () => {
         expect(await screen.findByText("● No scans awaiting review.")).toBeInTheDocument();
     });
 
-    it("records a leave-open visit without a departedAt", async () => {
-        const fetchMock = mockFetchJson({
-            "/api/system-status/unsynced-scans/5": {},
-            "/api/system-status/unsynced-scans": { scans: [scan()] },
-        });
+    it("offers no way to leave a visit open: Record needs a departure", async () => {
+        mockFetchJson({ "/api/system-status/unsynced-scans": { scans: [scan()] } });
         renderWithProviders(<SystemStatusUnsyncedScansPage />);
 
         fireEvent.click(await screen.findByRole("button", { name: "Record visit" }));
         const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByLabelText("They are still here — leave the visit open"));
-        fireEvent.click(within(dialog).getByRole("button", { name: "Record visit" }));
 
-        expect(fetchMock).toHaveBeenCalledWith(
-            "/api/system-status/unsynced-scans/5",
-            expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "record" }) }),
-        );
-        expect(await screen.findByText("● No scans awaiting review.")).toBeInTheDocument();
+        expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Record visit" })).toBeDisabled();
     });
 
     it("surfaces the server's refusal and keeps the row", async () => {
@@ -122,7 +114,7 @@ describe("SystemStatusUnsyncedScansPage", () => {
             } as unknown as Response),
         );
         const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByLabelText("They are still here — leave the visit open"));
+        fireEvent.change(within(dialog).getByLabelText("Departure time"), { target: { value: "2026-08-20T17:00" } });
         fireEvent.click(within(dialog).getByRole("button", { name: "Record visit" }));
 
         expect(

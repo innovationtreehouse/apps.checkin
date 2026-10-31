@@ -232,20 +232,11 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         expect(db.visit.create).not.toHaveBeenCalled();
     });
 
-    it("403s leave-open while no keyholder is in the building (#254 live rule)", async () => {
-        db.visit.count.mockResolvedValue(0);
+    it("400s a record with no departure: it never leaves a visit open", async () => {
         const res = await POST(recordReq({ action: "record" }), dismissCtx());
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(400);
         expect(db.visit.create).not.toHaveBeenCalled();
         expect(db.rawBadgeLog.updateMany).not.toHaveBeenCalled();
-    });
-
-    it("leave-open needs no keyholder check when the scanned person IS a keyholder", async () => {
-        db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: true, mergedIntoId: null });
-        const res = await POST(recordReq({ action: "record" }), dismissCtx());
-        expect(res.status).toBe(200);
-        expect(db.visit.count).not.toHaveBeenCalled();
-        expect(db.visit.create).toHaveBeenCalled();
     });
 
     it("409s when a visit already covers the scan time, and stamps nothing", async () => {

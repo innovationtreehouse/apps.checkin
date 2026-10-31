@@ -6,9 +6,8 @@
  * invariants under test: scope is the only gate (404 on out-of-scope/tombstoned
  * — no existence oracle), validity checks reject bad times, the write is
  * audited with type "self_correction" + significance, a significant change
- * emails the board, a delete never removes the row, closing an open visit
- * routes through processVisitCheckout, and every lock/where keys on the visit's
- * PERSON (not the actor) so a lead's write serializes against the member's kiosk.
+ * emails the board, a delete never removes the row, an open visit is refused,
+ * and every lock/where keys on the visit's PERSON (not the actor) so a lead's write serializes against the member's kiosk.
  *
  * Both verbs go through @/security/handler, so the registered policy is what
  * shapes the response: PATCH returns the `visit` envelope stripped to the
@@ -19,7 +18,7 @@
 import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
-import { processVisitCheckout } from "@/lib/attendanceTransitions";
+import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { visitSubject } from "@/lib/visit/scope";
 import { correctCloseTime } from "@/lib/attendance/close";
@@ -31,7 +30,6 @@ jest.mock("@/lib/verify-kiosk", () => ({
     getKioskPublicKeys: jest.fn().mockReturnValue([]),
     verifyKioskSignature: jest.fn().mockReturnValue({ ok: false }),
 }));
-jest.mock("@/lib/attendanceTransitions", () => ({ processVisitCheckout: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn().mockResolvedValue(undefined) }));
 // Scope resolution is exercised in lib/visit/__tests__/scope.test.ts; here the
 // default stands in for "self only", and the household-lead cases override it.
@@ -95,7 +93,6 @@ beforeEach(() => {
     tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...baseVisit, ...args.data }));
     tx.visit.updateMany.mockResolvedValue({ count: 1 });
     tx.facilityClose.findFirst.mockResolvedValue(null);
-    (processVisitCheckout as jest.Mock).mockResolvedValue([{ ...baseVisit }]);
     auditCreate.mockResolvedValue({});
     personFindUnique.mockResolvedValue({ isKeyholder: false });
     personFindMany.mockResolvedValue([]); // not a household lead unless a test says so
@@ -142,13 +139,13 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(tx.visit.update).not.toHaveBeenCalled();
     });
 
-    it("409s when the visit was closed between the pre-check and the lock", async () => {
+    it("refuses an open visit: only the kiosk or the 11 PM close ends one", async () => {
         visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
-        tx.visit.findFirst.mockResolvedValue(baseVisit); // the kiosk checked it out meanwhile
         const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
         expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(OPEN_VISIT_REFUSAL);
         expect(tx.visit.update).not.toHaveBeenCalled();
-        expect(processVisitCheckout).not.toHaveBeenCalled();
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it("rejects a departure before the arrival", async () => {
@@ -255,37 +252,6 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         }));
     });
 
-    it("closing an open visit goes through processVisitCheckout, not a bare update", async () => {
-        visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
-        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
-
-        expect(res.status).toBe(200);
-        // In the edit's transaction, which also records a close the caller chose.
-        expect(processVisitCheckout).toHaveBeenCalledWith(42, new Date("2026-07-20T17:00:00Z"), expect.anything(), "TYPED");
-        // The lock-scoped update must not have closed it first.
-        expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({
-            data: expect.not.objectContaining({ departedAt: expect.anything() }),
-        }));
-        // Routine close of one's own open visit is not board-worthy.
-        expect(emailBoardMembers).not.toHaveBeenCalled();
-    });
-
-    // Chunking hard-deletes the original row and recreates per-event segments,
-    // so an audit row naming the original id would point at nothing.
-    it("audits and returns a surviving chunk when the close splits the visit", async () => {
-        visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
-        (processVisitCheckout as jest.Mock).mockResolvedValue([
-            { ...baseVisit, id: 101 },
-            { ...baseVisit, id: 102 },
-        ]);
-
-        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
-
-        expect((await res.json()).visit.id).toBe(102);
-        const audit = auditCreate.mock.calls[0][0].data;
-        expect(audit.affectedEntityId).toBe(102);
-        expect(audit.oldData.id).toBe(42); // the replaced row stays traceable
-    });
 
     it("a closer correcting their own departure corrects the close they made, under the lock", async () => {
         visitFindUnique.mockResolvedValue(baseVisit);
@@ -309,14 +275,6 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(correctCloseTime).not.toHaveBeenCalled();
     });
 
-    it("404s a close that lost the race (checkout applied nothing)", async () => {
-        visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
-        (processVisitCheckout as jest.Mock).mockResolvedValue([]);
-
-        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
-        expect(res.status).toBe(404);
-        expect(auditCreate).not.toHaveBeenCalled();
-    });
 });
 
 describe("DELETE /api/attendance/manual/[id]", () => {
@@ -337,6 +295,15 @@ describe("DELETE /api/attendance/manual/[id]", () => {
         expect(audit).toMatchObject({ action: "DELETE", tableName: "Visit", affectedEntityId: 42 });
         expect(audit.newData.significance.flagged).toBe(true);
         expect(emailBoardMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses an open visit: only the kiosk or the 11 PM close ends one", async () => {
+        visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
+        const res = await DELETE(req("DELETE"), ctx as never);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(OPEN_VISIT_REFUSAL);
+        expect(tx.visit.updateMany).not.toHaveBeenCalled();
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it("404s a double delete (already tombstoned)", async () => {
@@ -378,7 +345,6 @@ describe("household-lead correction of a member's visit", () => {
         // OWN_ID) let their_own resolve on it, which masks what led_households
         // does or doesn't grant — the whole point of this block.
         tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...memberVisit, ...args.data }));
-        (processVisitCheckout as jest.Mock).mockResolvedValue([{ ...memberVisit }]);
     });
 
     it("edits a member's visit, locking and matching on the MEMBER, auditing the actor", async () => {
