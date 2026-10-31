@@ -11,11 +11,11 @@ import type { TxClient } from "@/lib/db-client";
  * the second. `mintId.integration` case 1 is the test that stops that.
  *
  * The three clauses of the one statement: `ON CONFLICT` self-seeds (a `db push`
- * DB and the dev-reset TRUNCATE have no seed row); `GREATEST` absorbs a
- * sequence-written id (fixtures) without ever winding the counter back, but only
- * while that row exists, so a sequence-written id above the counter is reissued
- * once its row is deleted. `personIdMintGuard` keeps production creates off the
- * sequence, which is what keeps production off that path. `setval` pushes the
+ * DB and the dev-reset TRUNCATE have no seed row); `GREATEST` stores a
+ * sequence-written id (fixtures) in the counter at the next mint and never winds
+ * the counter back, but a row above the counter that is deleted before that mint
+ * goes unseen, and its id is reissued. `personIdMintGuard` keeps production creates
+ * off the sequence, which keeps production off that path. `setval` pushes the
  * sequence up to the minted value so the reverse collision can't happen either.
  * Postgres requires UPDATE on the sequence for `setval` (USAGE/SELECT is not
  * enough). `setval` is non-transactional on purpose — a rollback leaves the gap
