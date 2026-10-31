@@ -399,6 +399,71 @@ describe('saveIntake', () => {
             await saveIntake(1, { secondaryParent: { id: 4, over25: true } });
             expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
         });
+
+        it('reports nothing when a youth\'s form resends their record unchanged', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...asYouth, name: 'Youth Lead', allergies: null });
+            const { rejections } = await saveIntake(1, {
+                primaryParent: { name: 'Youth Lead', dob: youthDob.toISOString().slice(0, 10), over25: false, allergies: null },
+            });
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([]);
+        });
+
+        it.each([
+            ['name', { name: 'New Name' }],
+            ['date', { dob: '2000-01-01' }],
+            ['allergies', { allergies: 'peanuts' }],
+        ])('reports a youth changing their own %s', async (_field, change) => {
+            prisma.person.findUnique.mockResolvedValue({ ...asYouth, name: 'Youth Lead', allergies: null });
+            const { rejections } = await saveIntake(1, { primaryParent: change });
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([expect.objectContaining({ code: 'youth' })]);
+        });
+
+        it('reports a youth once when the form names them in two sections', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            const { rejections } = await saveIntake(1, { primaryParent: declared, secondaryParent: { id: 1, ...declared } });
+            expect(rejections).toHaveLength(1);
+        });
+
+        it('still saves a youth\'s household address', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            mockHousehold.update.mockClear();
+            await saveIntake(1, { household: { line1: '1 Main St' }, primaryParent: declared });
+            expect(mockHousehold.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { line1: '1 Main St' } });
+        });
+
+        describe('second parent with a date on file', () => {
+            const withSecond = (dateOfBirth: Date | null) => ({
+                ...baseUser,
+                household: { ...baseUser.household, householdMembers: [{ id: 1, isHouseholdLead: true }, { id: 4, isHouseholdLead: true, dateOfBirth }] },
+            });
+
+            it.each([[null], ['']])('refuses replacing an under-18 date with a declaration (dob %j), saving nothing', async (dob) => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(youthDob));
+                await expect(saveIntake(1, { secondaryParent: { id: 4, dob, over25: true } })).rejects.toMatchObject({
+                    code: 'under_18_declared',
+                    fields: ['secondaryParent'],
+                });
+                expect(mockPerson.update).not.toHaveBeenCalled();
+            });
+
+            it('accepts a declaration in a later save once the date is cleared', async () => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(youthDob));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: false } });
+                expect(mockPerson.update.mock.calls[0][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: false });
+
+                prisma.person.findUnique.mockResolvedValue(withSecond(null));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: true } });
+                expect(mockPerson.update.mock.calls[1][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+            });
+
+            it('accepts a declaration replacing a date of 18 or over', async () => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(new Date(new Date().getFullYear() - 22, 0, 1)));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: true } });
+                expect(mockPerson.update.mock.calls[0][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+            });
+        });
     });
 
     // Designated addresses are set on a person only by the board.

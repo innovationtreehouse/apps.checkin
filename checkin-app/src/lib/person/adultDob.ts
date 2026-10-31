@@ -1,5 +1,17 @@
-import { calculateAge, parseDateOnly } from "@/lib/time";
+import { calculateAge, isYouth, parseDateOnly } from "@/lib/time";
 import { MAX_PROGRAM_AGE } from "@/lib/programAge";
+
+export const UNDER_18_DECLARATION_REFUSAL =
+  "This person's date of birth on file shows they are under 18, so they can't be declared over 25. If the date is wrong, enter the correct one.";
+
+/** Whether one request would blank a stored under-18 date and declare the person over 25. */
+export function replacesUnder18Date(
+  dob: Date | string | null | undefined,
+  over25: boolean | undefined,
+  dobOnFile: Date | null | undefined,
+): boolean {
+  return !!over25 && (dob === null || dob === "") && isYouth(dobOnFile);
+}
 
 /**
  * The Person fields to write for a submitted date of birth and over-25 declaration,

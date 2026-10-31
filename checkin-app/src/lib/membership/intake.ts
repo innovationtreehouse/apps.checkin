@@ -16,7 +16,7 @@ import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, Ho
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { isYouth } from "@/lib/time";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
@@ -45,7 +45,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -287,13 +287,24 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const refusals: SelfGrantRefusal[] = [];
     const deniedPromotions: HouseholdLeadDeniedError[] = [];
     // A youth's own record is read-only, under whichever section of the form names it.
-    const isYouthSelfEdit = (personId: number | undefined) => {
+    // The form resends it on every save, so only a changed value is reported, and once.
+    let youthSelfEditReported = false;
+    const differs = (submitted: string | null | undefined, stored: string | null | undefined) =>
+        submitted !== undefined && (submitted || null) !== (stored || null);
+    const isYouthSelfEdit = (personId: number | undefined, submitted: Pick<ParentInput, "name" | "dob" | "over25" | "allergies">) => {
         if (personId !== userId || !isYouth(user.dateOfBirth)) return false;
-        rejections.push({
-            section: "primaryParent",
-            code: "youth",
-            message: "We saved the rest of the form, but someone under 18 can't change their own details, so yours were left as they were.",
-        });
+        const changed = !!submitted.over25
+            || differs(submitted.name ?? undefined, user.name)
+            || differs(submitted.dob, user.dateOfBirth?.toISOString().slice(0, 10))
+            || differs(submitted.allergies, user.allergies);
+        if (changed && !youthSelfEditReported) {
+            youthSelfEditReported = true;
+            rejections.push({
+                section: "primaryParent",
+                code: "youth",
+                message: "We saved the rest of the form, but someone under 18 can't change their own details, so yours were left as they were.",
+            });
+        }
         return true;
     };
     const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
@@ -374,7 +385,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             }
 
             // Primary parent is always the caller.
-            if (input.primaryParent && !isYouthSelfEdit(userId)) {
+            if (input.primaryParent && !isYouthSelfEdit(userId, input.primaryParent)) {
                 // A submitted-but-blank name is rejected rather than silently dropped
                 // — this is the caller's own name, always required.
                 if (input.primaryParent.name !== undefined && !nameWrite(input.primaryParent.name)) {
@@ -392,7 +403,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             }
 
             // Secondary parent: update if it belongs to this household, else create.
-            if (input.secondaryParent && !isYouthSelfEdit(input.secondaryParent.id)) {
+            if (input.secondaryParent && !isYouthSelfEdit(input.secondaryParent.id, input.secondaryParent)) {
                 const sp = input.secondaryParent;
                 let spName: string | undefined;
                 if (sp.id && householdMemberIds.has(sp.id)) {
@@ -402,11 +413,15 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
                         throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
                     }
+                    const spDobOnFile = user.household?.householdMembers.find((p) => p.id === sp.id)?.dateOfBirth;
+                    if (replacesUnder18Date(sp.dob, sp.over25, spDobOnFile)) {
+                        throw new IntakeError("under_18_declared", UNDER_18_DECLARATION_REFUSAL, ["secondaryParent"]);
+                    }
                     await tx.person.update({
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...normalizeAdultDob(sp.dob, sp.over25, user.household?.householdMembers.find((p) => p.id === sp.id)?.dateOfBirth),
+                            ...normalizeAdultDob(sp.dob, sp.over25, spDobOnFile),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -439,7 +454,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // Children are non-lead household members. Update existing (own household
             // only), create the rest. Never delete; never add a HouseholdLead row.
             for (const child of input.children ?? []) {
-                if (isYouthSelfEdit(child.id)) continue;
+                if (isYouthSelfEdit(child.id, child)) continue;
                 let childName: string | undefined;
                 if (child.id && householdMemberIds.has(child.id)) {
                     // Same rejection as the primary parent: an existing
