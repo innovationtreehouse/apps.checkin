@@ -6,7 +6,8 @@ Its last step is "extract the rules, delete both files".
 
 ## Where it stands
 
-- Designed; no question in design §9 is settled yet. Q1, Q2 and Q8 shape the
+- Designed; no question in design §9 is settled yet. PRs 2 to 4 need no
+  decision; PR 1 needs Q11 only for its replay column. Q1, Q2 and Q8 shape the
   contract and the expense intake, so PR 6 onward waits on them.
 - Production holds no receipts, so nothing needs converting: no receipt has
   been corrected by hand that a correction would have to account for.
@@ -26,16 +27,16 @@ fixed IDs; a dropped PR leaves a gap.
 
 | PR | Kind | What | Needs |
 | --- | --- | --- | --- |
-| 1 | mig | Workflow-mapping: `receipt_corrections` (receipt, seq, author, reason, state, leg stamps, claim lease, notes) and `receipt_correction_lines` (before and after per line); `received_receipts.replay_differs_at`. Models annotated `@sensitivity` | none |
+| 1 | mig | Workflow-mapping: `receipt_corrections` (receipt, seq, author, reason, state, leg stamps, claim lease, notes, and who withdrew it, when and why) and `receipt_correction_lines` (before and after per line); `received_receipts.replay_differs_at` for the notice (the audit events need no column). Models annotated `@sensitivity` | Q11 for the replay column only |
 | 2 | mig | Local-inventory: `inventory_log.correction_seq` (nullable) | none |
 | 3 | mig | Expense: `received_expense_corrections` (receipt, seq, payload, status), mirroring `received_expense_payloads` | none |
 | 4 | mig | Bulk-donation: `in_kind_donation_corrections` (receipt, seq, payload, status) and `in_kind_donations.correction_pending_at` | none |
-| 5 | security boundary | Registry entries for `POST /api/workflow-mapping/receipts/[id]/corrections` and `.../corrections/[seq]/retry`; the receipt GET's `returns` widened to the correction models; synthetic classifications for them. Ships alone. If closing the new expense review or settling the gift correction needs a new route verb, its entry lands here too | PRs 1 to 4 merged |
+| 5 | security boundary | Registry entries for `POST /api/workflow-mapping/receipts/[id]/corrections`, `.../corrections/[seq]/retry` and `.../corrections/[seq]/withdraw`; the receipt GET's `returns` widened to the correction models; synthetic classifications for them. Ships alone. If closing the new expense review or settling the gift correction needs a new route verb, its entry lands here too | PRs 1 to 4 merged |
 | 6 | contract | `ReceiptCorrection` in `@checkin/receipt-types`, contract 1.4.0; the `applyCorrection` port in each sink's contract. No behaviour | Q1, Q2 |
-| 7 | app | Local-inventory: apply a correction as source `correction:<receiptId>:<seq>`, signed deltas at the applied factor, receive-queue cancel and requeue, provisional-to-real follow, stock floor per Q10 | PR 6; Q10 |
-| 8 | app | Expense: correction intake and catch-up replay; update lines and allocations; `clearFrom` per Q5; Everyday per Q7; the **Receipt corrected after booking** review per Q8 | PR 6; Q5, Q7, Q8 |
-| 9 | app | Bulk-donation: correction intake; update lines, clear the decision per Q9; raise after booking per Q8 | PR 6; Q8, Q9 |
-| 10 | app | Workflow-mapping: correction service and routes, the push-and-settle for corrections with lease and sweep, the line overlay for every reader, the differing-resend record per Q11; bind the three ports in `configure.ts` | PRs 5, 7, 8, 9; Q3, Q4, Q11, Q12 |
+| 7 | app | Local-inventory: apply a correction as source `correction:<receiptId>:<seq>`, signed deltas at the applied factor, receive-queue cancel and requeue, provisional-to-real follow, stock floor per Q10 checked by conditional decrement inside the apply transaction, with a concurrency test (a receipt and a correction on one GTIN at once) | PR 6; Q10 |
+| 8 | app | Expense: correction intake and catch-up replay; the state check that picks §5.1 or §5.2 before `clearFrom` is called; update lines and allocations; `clearFrom` per Q5, with the first integration tests of clearing from the approval step; Everyday per Q7; Board authorization per Q14; the **Receipt corrected after booking** review per Q8, naming booked, backfill or skipped | PR 6; Q5, Q7, Q8, Q14 |
+| 9 | app | Bulk-donation: correction intake; refuse a refused or returned gift; update lines, clear the decision per Q9; raise for finance once booking started or capital review took the lines, per Q8 | PR 6; Q8, Q9 |
+| 10 | app | Workflow-mapping: correction service and routes (create, retry, withdraw), the push-and-settle for corrections with lease and sweep, the line overlay for every reader, the differing-resend audit event and notice per Q11; bind the three ports in `checkin-app/src/lib/workflowMapping/configure.ts` | PRs 5, 7, 8, 9; Q2, Q3, Q4, Q11, Q12, Q13 |
 | 11 | app | Screens: **Correct** and **Corrections** on the receiving receipt page, the correction in expense history and the gift accept screen, the uploader's outcome line. A flow test for the whole journey: apply, correct a part, correct a quantity as finance, the expense goes back to approval, re-sign, stock checked | PR 10 |
 | 12 | docs | Extract design §10 into `inventory.md`, `expenses.md` and `revenue.md`; add the correction step to `RECEIPT_PIPELINE.md`; delete both design files | PR 11 |
 

@@ -45,11 +45,12 @@ correction, with a reason, in receiving. The app then:
 
 ## Executive summary
 
-**Inventory managers** get a **Correct** action on an applied receipt. They pick
+**Inventory managers, and the uploader or their household** (the people who may
+map a receipt today) get a **Correct** action on an applied receipt. They pick
 the lines that were wrong and say what each should have been: a different part,
 or not inventory. They give a reason. Stock moves by the difference at once.
-(Whether they also correct quantities and prices is Q1 and Q2; the
-recommendation is that finance does that part.)
+(Who corrects what is Q2; the recommendation is that finance alone corrects
+quantities and prices.)
 
 **Finance and sign-off seats** see the expense change, with the correction and
 its reason in the expense's history. A corrected line goes back to the step the
@@ -75,9 +76,10 @@ data needs converting: production has no receipts yet.
 
 ## Waiting on @thpr
 
-Q1 to Q12 in §9. Each has options and a recommendation. Nothing in the build
-plan starts before Q1, Q2 and Q8 are settled; the rest can be settled as the PR
-that needs them comes up.
+Q1 to Q14 in §9. Each has options and a recommendation. The migrations can land
+before any is settled (except PR 1's replay column, which follows Q11); the
+contract and everything after it wait on Q1, Q2 and Q8. The rest can be settled
+as the PR that needs them comes up.
 
 ## Rules this relies on, and the ones it changes
 
@@ -109,8 +111,17 @@ Relied on, unchanged:
   conflicted person may not change a receipt's tax or date as finance; §3
   applies the same bar to a quantity or price correction (Q2).
 - `revenue.md`, Donations: finance may change a gift's bucket until it starts
-  booking; a withdrawn or refused gift's goods are adjusted out of stock by hand.
-  §6 uses "starts booking" as the in-kind cut-off.
+  booking. §6 uses "starts booking" as one of the in-kind cut-offs.
+- `revenue.md`, Donations: a refused or returned gift's goods are adjusted out
+  of stock by hand, never by the app. §6 refuses a correction to such a gift,
+  so the app never moves its stock.
+- `inventory.md`, Receiving: the uploader, or anyone in their household, may
+  map the receipt's lines, with no conflict check, because mapping decides what
+  the goods are and not what is paid. §3 and Q2 build on this.
+- `expenses.md`, Spending sign-off: a Board authorization, once recorded, is not
+  changed. §5.1 keeps it through a clear-back, as finance changing the
+  reimbursee already does; Q14 asks whether that reading is right, since the
+  same section also clears every later step when an expense goes back.
 
 Changed:
 
@@ -192,6 +203,15 @@ retried, as an apply is, with the same rows; it isn't edited. This keeps the
 same guarantee the line lock gives the apply: whatever a retry sends is what the
 first attempt sent.
 
+A failed correction must not leave the receipt uncorrectable for good, so it
+has one way out besides a retry. While no leg of it has applied, the person who
+made it, or anyone allowed to make the same correction, may **withdraw** it,
+with a reason. A withdrawn correction is kept, marked with who withdrew it,
+when and why, and the receipt takes a new one. Once any leg has applied it can
+only be retried, because withdrawing it then would leave one side changed and
+the other not; a leg that keeps failing goes to the Apply failed tab like a
+receipt's.
+
 **What a line can become.** Linked to a catalog item, or marked not inventory.
 Proposing a new catalog item from a correction is Q12; the recommendation is to
 leave it out, so a correction never creates a provisional item.
@@ -202,15 +222,21 @@ A correction has two kinds of change, and they differ in who decides them.
 
 **Mapping** (which part a line is, or that it isn't inventory, and the
 conversion factor that comes with the part) decides what the goods are. That is
-receiving's decision today, made by inventory managers with no conflict check,
-under `inventory.md`. A mapping correction is the same decision made again, by
-the same people under the same rule.
+receiving's decision today, made by inventory managers and also by the receipt's
+uploader or anyone in their household, with no conflict check, under
+`inventory.md`. The recommendation (Q2) is that a mapping correction is the same
+decision made again, by the same people under the same rule. Leaving the
+uploader out would mean a person could map a line but not fix their own
+mistake. The control on the money side is unchanged: the correction sends the
+line back through sign-off (§5), where the conflict rules apply.
 
 **Quantity and unit price** decide what was bought and what the submitter
 claimed. If a correction may change them at all (Q1), the recommendation (Q2)
 is that only finance makes that part, under the expense conflict rules: a person
 who uploaded the receipt or is reimbursed for it, or shares a household with
-someone who did, may not. A quantity or price correction must leave the receipt
+someone who did, may not. When every finance holder is conflicted, Q13 asks who
+makes it; the recommendation is a Board member without a conflict, as for the
+Treasurer seat and a gift's decision. A quantity or price correction must leave the receipt
 balanced: the corrected line totals plus shipping and tax, less discount, still
 equal the receipt total, under the same rounding allowance the receipt check
 uses. The receipt total, tax, shipping, discount, date, currency and retailer
@@ -250,6 +276,15 @@ was added.
 A correction that would take any GTIN's on-hand count below zero is Q10. The
 recommendation is to refuse the whole correction and name the GTIN, so the
 manager recounts first; the recount is its own logged change.
+
+The floor is checked in the same transaction as the write, never read first and
+written later, or a receipt applied in between could still take the count
+negative. Each decrease is one conditional decrement (subtract only where the
+count is at least the amount); if any GTIN's decrement matches no row, the
+transaction rolls back and the inventory leg fails naming that GTIN. Increases
+keep the atomic upsert-increment, so a concurrent receipt never loses an add.
+The screen runs the same check before submitting, as a warning; the
+transaction's check is the one that counts.
 
 ### 4.2 Delayed lines and provisional items
 
@@ -296,6 +331,13 @@ Then the change re-enters sign-off through `clearFrom`:
 | Quantity or price, card charge | Approval, the changed lines | The approver approved an amount (Q5) |
 | Part only | Approval, the changed lines | The approver approved a specific item; the signed GTIN, category and subcategory are what changed (Q5) |
 
+No caller clears from the approval step today; finance changing the reimbursee
+clears from the Treasurer, and a voided submitter confirmation from the
+submitter. The approval path in `clearFrom` exists but nothing exercises it, so
+PR 8 adds integration tests for it: the approval reopens, later seats clear,
+and an expense past owner approval returns there with every later step
+cleared.
+
 Every later signature on those lines clears with it, and an expense past owner
 approval goes back there; capital review, depreciation and the QuickBooks step
 are redone in order. This is the existing behaviour of `clearFrom`, already
@@ -304,9 +346,14 @@ people who sign again meet the same independence rules as before. A person who
 signed the first time may sign the same seat again, because their seat was
 cleared; they still may not take a different step than the one they signed.
 
-A recorded Board authorization stays, because it is never changed once recorded
-and a correction does not change the total, which is what the $2,000 approval
-threshold reads. The Everyday check, which reads the largest single item, can
+A recorded Board authorization stays, as it does today when finance changes the
+reimbursee: `clearFrom` clears Board seats but not the authorization. Two rules
+meet here. "Once recorded, it is not changed" keeps it; "every later step's
+result is cleared" could be read to clear it, since recording it is a signature
+at the Board step. The design follows the first, because the authorization is
+the Board's decision about the charge, made outside the app, and a correction
+does not change the total, which is what the $2,000 approval threshold reads.
+Q14 asks @thpr to confirm. The Everyday check, which reads the largest single item, can
 change with a unit price; whether it is recomputed is Q7.
 
 A part correction does not move the line's bucket. Finance chose or confirmed
@@ -314,17 +361,40 @@ the bucket, and finance may move it, as today (Q6).
 
 ### 5.2 In or past QuickBooks
 
-Once the expense is `qb_complete` (its entry queued or posted), has a match
-state of `POSTING`, `CREATED` or `MATCHED`, was skipped by finance, or is a backfill
-that ended at `qb_skipped`, the app can't change the books and must not let the
-expense disagree with them silently. The recommendation (Q8, option A):
+Expense decides which case applies from the expense's own state before it
+touches anything; it doesn't rely on `clearFrom`'s guard, which looks only at
+the match state and entry id. An expense in `qb_complete` with a match state of
+`AMBIGUOUS` or `NEEDS_FINANCE` would pass that guard, but its entry is queued
+or waiting on finance to settle, so it belongs here. The guard stays as a
+backstop.
+
+This case covers three different relations to the books, and the review says
+which one:
+
+- **Booked**: `qb_complete`, or a match state of `POSTING`, `CREATED` or
+  `MATCHED`, or an entry id. The app's entry, or finance's entry it matched,
+  shows the old lines.
+- **Backfill**: an imported receipt, already booked by finance before the app
+  saw it, which ended at `qb_skipped` without posting. Finance's own entry shows
+  the old lines.
+- **Skipped**: finance skipped the expense (`SKIPPED`), giving a reason. The app
+  never books it, but finance may have booked it by hand; finance knows, the app
+  doesn't.
+
+In each, the app can't change the books, and must not let the expense disagree
+with finance's view of the purchase without telling finance. The recommendation
+(Q8, option A):
 
 - the expense's lines are not changed;
 - the correction is stored, and the expense gets a new review, **Receipt
   corrected after booking**, that names the correction and lists each line's
   before and after;
-- finance closes it with a note saying what it did in QuickBooks (a blank note
-  is refused), as with the other three reviews.
+- finance closes it with a note saying what it did in QuickBooks, or that
+  nothing was needed (a blank note is refused), as with the other three reviews.
+
+This review is distinct from the existing "closed expense that never posted"
+review. That one asks why an expense the app meant to book has no entry; this
+one says the purchase changed after the expense left the app's hands.
 
 Stock still moves (§4); the goods were wrong whatever the books say.
 
@@ -333,15 +403,23 @@ A rejected expense takes the correction into its history and nothing else.
 ## 6. The money side: in-kind gift
 
 Bulk-donation takes a correction through a new intake, idempotent on
-`<receiptId>:<seq>`. A gift's lines carry GTIN, quantity and value, and its
-cut-off is the one the revenue rules already use for its bucket: whether the
-gift has started booking.
+`<receiptId>:<seq>`. A gift's lines carry GTIN, quantity and value. Its
+cut-off has two markers, and either one ends in-place correction:
+
+- **Started booking**: a booking side exists, or the posting is `POSTING` or
+  has a create attempt. This is the check the bucket change uses today.
+- **Sent to capital review**: `capitalSubmittedAt` is set, so the accepted
+  lines are already in expense's donated-capital review. The bucket check
+  ignores this marker, because changing a bucket only resends to capital
+  review; a correction changes the lines themselves, which capital review has
+  already taken.
 
 | Where the gift is | What the correction does |
 |---|---|
 | Not yet decided | Updates the gift's lines, with history; the decider sees the corrected goods |
-| Decided (accepted, refused or returned), not started booking | Updates the lines and clears the decision, which is made again (Q9) |
-| Started booking, or its accepted lines already went to expense for capital review | Lines unchanged; raised for finance as a correction after booking, settled with a note, like a withdrawal after money (Q8) |
+| Accepted, neither marker set | Updates the lines and clears the decision, which is made again (Q9) |
+| Accepted, either marker set | Lines unchanged; raised for finance (`correctionPendingAt`, shown in finance's queue with the before and after) and settled with a note, by the same path as a withdrawal after money (Q8) |
+| Refused or returned | The whole correction is refused before anything moves. Those goods were adjusted out of stock by hand, and the app never adjusts them |
 
 The gift's total never changes (Q1), so its booked value stays right; what can
 go wrong after booking is the description and the capital treatment of a line.
@@ -360,10 +438,17 @@ turn one defect into a daily failure with no person to clear it. The
 recommendation (Q11, option A):
 
 - intake keeps answering with the stored row;
-- it records, once per distinct body, an audit event naming the first fields
-  that differ, and stamps the receipt so the receiving page shows "A different
-  copy of this receipt arrived after it was received; nothing was changed. If it
-  is right, correct the receipt."
+- it records two things, which do different jobs. An audit event,
+  `receipt_replay_differs`, is written once per distinct body (its details hold
+  the body's hash and the first fields that differ), so the history shows every
+  different copy. A column on the receipt, `replay_differs_at`, holds when the
+  latest one arrived, so the receiving page can show "A different copy of this
+  receipt arrived after it was received; nothing was changed. If it is right,
+  correct the receipt." without searching the audit log. Making a correction,
+  or dismissing the notice, clears the column; the audit events stay.
+
+Today intake records nothing for a replay, so this is new behaviour, built in
+PR 10.
 
 So a correction is always entered by a person in receiving, against the copy
 receiving holds. Turning a resent copy into a correction automatically was
@@ -394,7 +479,8 @@ On the receipt page in receiving:
   their approver"; "the reimbursee confirms again"; "already in QuickBooks:
   finance will be asked to correct it there").
 - **Corrections** lists each one: sequence, who, when, why, lines before and
-  after, and each leg's state.
+  after, and each leg's state, with **Retry** on a failed one and **Withdraw**
+  while none of it has applied.
 
 Expense's detail shows the correction in its history, and the new review in
 finance's queue. The gift's accept screen shows corrected lines marked as such.
@@ -410,7 +496,7 @@ Numbers are fixed IDs; a settled question keeps its number.
 | # | Question | Options | Recommendation |
 |---|---|---|---|
 | Q1 | What may a correction change? | **A** mapping only (part, not inventory, factor). **B** A, plus a line's quantity and unit price, with the receipt still balancing and its total unchanged. **C** B, plus total, tax, shipping and discount. | **B.** A misread quantity is the other common mistake and it moves stock. C reopens the submitter's claim, finance's tax review, the $2,000 Board threshold and the books; a wrong total is better handled by finance by hand until it happens. |
-| Q2 | Who makes each part? | **A** inventory managers make all of it. **B** inventory managers the mapping, finance the quantity and price, under the expense conflict rules. **C** finance all of it. | **B.** Mapping is receiving's decision today; quantity and price are the money claimed, which only finance changes today. |
+| Q2 | Who makes each part? | **A** inventory managers make all of it. **B** whoever may map the receipt (inventory managers, and the uploader or their household) corrects the mapping; finance corrects quantity and price, under the expense conflict rules. **C** as B, but inventory managers only for the mapping. **D** finance all of it. | **B.** Mapping is a decision the uploader may make today, so they may fix it; sign-off still controls the money. Quantity and price are the money claimed, which only finance changes today. |
 | Q3 | Is a reason required? | **A** required, blank refused, kept on the correction and in each log and audit entry. **B** optional. | **A**, as cancelling a backorder requires one. |
 | Q4 | Which receipts can be corrected? | **A** `resolved` only. **B** also `apply_failed` with some leg applied. | **A.** A failed apply is retried first; correcting a half-applied receipt means two pushes in flight for one receipt. |
 | Q5 | Which sign-off step does a change send a line back to? | **A** quantity or price: submitter seat on a reimbursement, approval on a card charge; part only: approval. **B** part only clears from the Treasurer, not the approval. **C** a part-only change is bookkeeping and clears nothing. | **A.** The approver approved a specific item and amount. |
@@ -421,6 +507,8 @@ Numbers are fixed IDs; a settled question keeps its number.
 | Q10 | A correction would take stock below zero. | **A** refuse it and name the GTIN; recount first. **B** allow a negative count and flag it. **C** stop at zero. | **A.** B and C each leave a count nobody counted. |
 | Q11 | A different copy of a received receipt arrives. | **A** answer with the stored copy, record it, show it on the receipt. **B** as today, silently. **C** refuse with a 409. | **A.** See §7. |
 | Q12 | May a correction propose a new catalog item? | **A** no; link to an item or mark not inventory. **B** yes, creating a provisional item. | **A** for the first build. Propose the item in the catalog, then correct to it. |
+| Q13 | Every finance holder is conflicted on a receipt whose quantity or price needs correcting. | **A** a Board member without a conflict corrects it. **B** nobody can; the receipt is corrected by hand outside the app. | **A**, as a Board member takes the Treasurer seat or decides a gift when every finance holder is conflicted. |
+| Q14 | Does a correction that sends an expense back keep a recorded Board authorization? | **A** yes; it is not changed once recorded, and the total it covers hasn't changed. **B** no; it is a Board-step result and clears with later steps. | **A**, which is also what finance changing the reimbursee does today. |
 
 ## 10. Rules this design establishes
 
@@ -432,15 +520,19 @@ the recommendations; each changes with its question.
 - A receipt's lines can be edited only while it waits for review. Once it is
   sent to apply, its lines can't be edited, even when the apply fails: a failed
   part is retried with the same lines. A mistake found after a receipt is
-  applied is fixed by a correction: a new entry, with a reason, that changes
-  stock and the money side together. The receipt, its lines and its stock
-  entries as applied are never rewritten. `[Decision — owner]`
+  applied is fixed by a correction: a new entry, with a reason, applied to the
+  goods and the money side as one change, whichever of them it moves. The
+  receipt, its lines and its stock entries as applied are never rewritten.
+  `[Decision — owner]`
 - A correction is made only on a receipt that is fully applied, one at a time:
-  a receipt takes a new correction only once its last one has applied. A failed
-  correction is retried as it was made. `[Decision — owner]`
-- An inventory manager may correct which part a line is, or that it is not
-  inventory; a line's quantity and price are corrected only by finance, under
-  the conflict rules in `expenses.md`. `[Decision — owner]`
+  a receipt takes a new correction only once its last one has applied or been
+  withdrawn. A failed correction is retried as it was made, or withdrawn with a
+  reason while none of it has applied. `[Decision — owner]`
+- Whoever may map a receipt's lines may correct which part a line is, or that
+  it is not inventory. A line's quantity and price are corrected only by
+  finance, under the conflict rules in `expenses.md`, or by a Board member
+  without a conflict when every finance holder is conflicted.
+  `[Decision — owner]`
 - A correction never takes a count below zero; one that would is refused.
   `[Decision — owner]`
 
@@ -468,16 +560,18 @@ the recommendations; each changes with its question.
 - Four questions are recorded as reviews, because no fix records their
   answer: a duplicate QuickBooks entry to void, an entry changed in QuickBooks
   after posting, a closed expense that never posted, and a receipt corrected
-  after its expense was booked or skipped. Finance closes each with a note
+  after its expense was booked, imported as already booked, or skipped by
+  finance. Finance closes each with a note
   saying what it did, and a blank note is refused. A closed expense's review
   closes on its own once the expense posts. `[Decision — owner]`
 
 **`revenue.md`, Donations** (added):
 
-- A correction to a gift of goods that has not started booking changes its
-  lines and clears its decision. One that has started booking is raised for
-  finance, which fixes the books by hand and settles it with a note; the app
-  changes nothing in the books. `[Decision — owner]`
+- A correction to a gift of goods that has neither started booking nor gone to
+  capital review changes its lines and clears its decision. One that has
+  started booking or gone to capital review is raised for finance, which fixes
+  the books by hand and settles it with a note; the app changes nothing in the
+  books. A refused or returned gift is never corrected. `[Decision — owner]`
 
 ## Appendix A: what the correction carries between libraries
 
