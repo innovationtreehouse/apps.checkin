@@ -204,7 +204,7 @@ describe('receipt runtime: reimbursee bindings', () => {
         expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }, { id: 11, name: 'Sam Guest' }]);
         const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
         expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' } } });
-        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['mergedIntoId', 'name']);
+        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['name']);
     });
 
     it('caps the search after dropping anyone not known to be an adult', async () => {
