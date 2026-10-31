@@ -44,8 +44,8 @@ export function assertQboClientId(checkinEnv: string | undefined, clientId: stri
 
 /** Stamped into every sandbox write's PrivateNote. */
 export const TEST_NOTE_MARKER = "[checkin-test]";
-/** Prefixes every sandbox Vendor's DisplayName. */
-export const TEST_VENDOR_PREFIX = "TEST-";
+/** Marks test data: every sandbox Vendor's DisplayName, a test expense's vendor, a test disbursement's id. */
+export const TEST_PREFIX = "TEST-";
 // The sandbox is a public Intuit company: nothing written there may name the org.
 const ORG_NAME = /treehouse/i;
 
@@ -56,7 +56,7 @@ const ORG_NAME = /treehouse/i;
 export function assertPayloadMarked(env: QboEnv, entity: string, body: Record<string, unknown>): void {
   const marked =
     entity === "Vendor"
-      ? typeof body.DisplayName === "string" && body.DisplayName.startsWith(TEST_VENDOR_PREFIX)
+      ? typeof body.DisplayName === "string" && body.DisplayName.startsWith(TEST_PREFIX)
       : typeof body.PrivateNote === "string" && body.PrivateNote.includes(TEST_NOTE_MARKER);
   if (env === "production") {
     if (marked) throw new Error("QBO production write carries the test marker");

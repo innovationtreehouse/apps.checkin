@@ -1,4 +1,4 @@
-import { appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -661,9 +661,6 @@ async function financeAnswered(tx: TxClient, orgId: string, id: number, entryId:
 
 /** What one orphan sweep read and reported. */
 export type SweepResult = { status: "unbound" } | { status: "ran"; read: number; flagged: number; full: boolean };
-
-/** How far back the orphan sweep looks for attempted payouts. */
-export const SWEEP_DAYS = 30;
 
 /**
  * The daily orphan sweep: one read of every deposit QuickBooks created since the oldest

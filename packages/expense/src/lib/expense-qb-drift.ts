@@ -1,11 +1,10 @@
 // Drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
 import { dollarsToCents, sumCents } from "@checkin/money";
-import { appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
-import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
 import { raiseFlag } from "../services/flagService";
 import { lineCents } from "../qb-write";
 import { logError } from "./logger";
