@@ -860,7 +860,11 @@ describe("Merge Participants API", () => {
             // Refused before the transaction — nothing moved.
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
-            expect(await prisma.auditLog.count({ where: { actorId, tableName: "SelfGrantRefusal" } })).toBe(1);
+            // Scoped to this merge: an earlier suite's refusal row can carry an actor id that minting has since reissued.
+            const refusals = await prisma.auditLog.findMany({
+                where: { actorId, tableName: "SelfGrantRefusal", newData: { path: ["attempted", "keepId"], equals: pKeepId } },
+            });
+            expect(refusals.map((r) => r.affectedEntityId)).toEqual([pKeepId]);
         });
 
         it("403s when the actor shares a household with the merged-away record only", async () => {
