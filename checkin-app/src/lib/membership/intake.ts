@@ -17,6 +17,7 @@ import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergen
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { isYouth } from "@/lib/time";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import type { TxClient } from "@/lib/db-client";
@@ -59,7 +60,7 @@ export class IntakeError extends Error {
  * still goes through — partial saves are fine as long as they're transparent.
  */
 export type IntakeRejection = {
-    section: "secondaryParent";
+    section: "primaryParent" | "secondaryParent";
     code: "lead_limit" | "name_required" | "household_denied" | "not_lead" | "youth";
     message: string;
 };
@@ -285,6 +286,16 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const rejections: IntakeRejection[] = [];
     const refusals: SelfGrantRefusal[] = [];
     const deniedPromotions: HouseholdLeadDeniedError[] = [];
+    // A youth's own record is read-only, under whichever section of the form names it.
+    const isYouthSelfEdit = (personId: number | undefined) => {
+        if (personId !== userId || !isYouth(user.dateOfBirth)) return false;
+        rejections.push({
+            section: "primaryParent",
+            code: "youth",
+            message: "We saved the rest of the form, but someone under 18 can't change their own details, so yours were left as they were.",
+        });
+        return true;
+    };
     const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
         // A sysadmin manages their household's intake without leading it, so making
         // someone its lead that way is a grant to their own household.
@@ -363,7 +374,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             }
 
             // Primary parent is always the caller.
-            if (input.primaryParent) {
+            if (input.primaryParent && !isYouthSelfEdit(userId)) {
                 // A submitted-but-blank name is rejected rather than silently dropped
                 // — this is the caller's own name, always required.
                 if (input.primaryParent.name !== undefined && !nameWrite(input.primaryParent.name)) {
@@ -374,14 +385,14 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25),
+                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
             }
 
             // Secondary parent: update if it belongs to this household, else create.
-            if (input.secondaryParent) {
+            if (input.secondaryParent && !isYouthSelfEdit(input.secondaryParent.id)) {
                 const sp = input.secondaryParent;
                 let spName: string | undefined;
                 if (sp.id && householdMemberIds.has(sp.id)) {
@@ -395,7 +406,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...normalizeAdultDob(sp.dob, sp.over25),
+                            ...normalizeAdultDob(sp.dob, sp.over25, user.household?.householdMembers.find((p) => p.id === sp.id)?.dateOfBirth),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -428,6 +439,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // Children are non-lead household members. Update existing (own household
             // only), create the rest. Never delete; never add a HouseholdLead row.
             for (const child of input.children ?? []) {
+                if (isYouthSelfEdit(child.id)) continue;
                 let childName: string | undefined;
                 if (child.id && householdMemberIds.has(child.id)) {
                     // Same rejection as the primary parent: an existing

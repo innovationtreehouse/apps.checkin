@@ -360,6 +360,47 @@ describe('saveIntake', () => {
         prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
     });
 
+    describe('age fields', () => {
+        const youthDob = new Date(new Date().getFullYear() - 14, 0, 1);
+        const asYouth = { ...baseUser, dateOfBirth: youthDob };
+        const declared = { dob: '', over25: true };
+
+        beforeEach(() => mockPerson.update.mockClear());
+
+        it.each([
+            ['primary parent', { primaryParent: declared }],
+            ['second parent', { secondaryParent: { id: 1, ...declared } }],
+            ['child', { children: [{ id: 1, dob: '' }] }],
+        ])('leaves a youth\'s own record unwritten when named as the %s, and says so', async (_section, input) => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            const { rejections } = await saveIntake(1, input);
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([expect.objectContaining({ section: 'primaryParent', code: 'youth' })]);
+        });
+
+        it('still saves the rest of a youth\'s form', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            await saveIntake(1, { primaryParent: declared, children: [{ id: 4, name: 'Kid' }] });
+            expect(mockPerson.update).toHaveBeenCalledTimes(1);
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+
+        it('stores no declaration beside the primary parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...baseUser, dateOfBirth: new Date(new Date().getFullYear() - 22, 0, 1) });
+            await saveIntake(1, { primaryParent: { over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
+
+        it('stores no declaration beside the second parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({
+                ...baseUser,
+                household: { ...baseUser.household, householdMembers: [{ id: 1, isHouseholdLead: true }, { id: 4, isHouseholdLead: false, dateOfBirth: youthDob }] },
+            });
+            await saveIntake(1, { secondaryParent: { id: 4, over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
+    });
+
     // Designated addresses are set on a person only by the board.
     it('refuses a new second parent with a designated address, saving nothing', async () => {
         await expect(saveIntake(1, {

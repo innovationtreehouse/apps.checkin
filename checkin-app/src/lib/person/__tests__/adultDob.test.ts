@@ -88,4 +88,18 @@ describe("normalizeAdultDob", () => {
       expect(normalizeAdultDob(DOB)).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
     });
   });
+
+  describe("a declaration with no submitted date", () => {
+    it("is displaced by a date on file", () => {
+      expect(normalizeAdultDob(undefined, true, yearsAgo(14))).toEqual({ isDeclaredAdult: false });
+    });
+
+    it("sets the flag when no date is on file", () => {
+      expect(normalizeAdultDob(undefined, true, null)).toEqual({ isDeclaredAdult: true });
+    });
+
+    it("yields to an explicit blank date", () => {
+      expect(normalizeAdultDob("", true, yearsAgo(14))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+    });
+  });
 });

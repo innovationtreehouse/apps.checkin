@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, 
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
-import { calculateAge, formatDateOnly } from '@/lib/time';
+import { calculateAge, formatDateOnly, isYouth } from '@/lib/time';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import { notifications } from '@mantine/notifications';
@@ -464,7 +464,7 @@ export default function HouseholdPage() {
                             {!householdMemberIsLead && isAdult && viewerIsLead && (
                               <Button size="compact-xs" variant="light" onClick={() => handleMakeLead(p.id)}>Make Lead</Button>
                             )}
-                            {(viewerIsLead || p.id === userId) && (
+                            {(p.id === userId ? !isYouth(p.dateOfBirth) : viewerIsLead) && (
                               <Button size="compact-xs" variant="subtle" color="gray" onClick={() => {
                                 setEditingHouseholdMemberId(p.id);
                                 setEditErrors({});
