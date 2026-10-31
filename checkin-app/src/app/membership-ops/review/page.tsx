@@ -21,7 +21,8 @@ interface Person {
 interface QueueItem {
   id: number;
   subjectPerson: { id: number; name: string | null; householdId: number | null; household: { name: string | null } | null } | null;
-  orgMembership: { household: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null } | null;
+  // intakeNotes is present for Board members only.
+  orgMembership: { household: { name: string | null; intakeNotes?: string | null; householdMembers: Person[] } | null } | null;
   // Subject ids only — enough to count approvals per lead, and it says nothing
   // about WHO approved (see the route comment).
   attestations: { subjectPersonId: number | null }[];
