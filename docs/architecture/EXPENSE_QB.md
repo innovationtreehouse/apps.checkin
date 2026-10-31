@@ -155,7 +155,6 @@ with no entity, so an exclusion drops that id for both Purchases and Bills.
 | `MATCHED` | A hand-booked entry is linked, with a baseline for drift | Terminal |
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
-| `BEFORE_LINE` | An older stored value, held exactly like `UNBOOKED` and never written | Finance |
 | `POST_FAILED` | A post failed | The drain, up to five attempts |
 | `NEEDS_FINANCE` | Posts kept failing, or the app may already have booked it and cannot tell | Finance |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |

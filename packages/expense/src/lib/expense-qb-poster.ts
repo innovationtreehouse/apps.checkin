@@ -26,16 +26,11 @@ import { NEEDS_VOIDING } from "./flags";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
- * AMBIGUOUS and the UNBOOKED_STATES wait for finance.
+ * AMBIGUOUS and UNBOOKED wait for finance. UNBOOKED is an expense not in QuickBooks that the drain
+ * may not create: dated in closed books, or submitted before posting switched on. Finance books it
+ * or matches it.
  */
 export const POSTABLE_QB_STATES = ["UNMATCHED", "POST_FAILED", "NOT_TEST_DATA", "TEST_DATA_REFUSED"];
-
-/**
- * Not in QuickBooks, and the drain may not create it: dated in closed books, or submitted before
- * posting switched on. Finance books it or matches it. BEFORE_LINE is held exactly as UNBOOKED
- * and never written.
- */
-export const UNBOOKED_STATES = ["UNBOOKED", "BEFORE_LINE"];
 
 /** Claimed by a post whose QuickBooks call is in flight; qbClaimedAt says since when. */
 export const POSTING = "POSTING";
@@ -127,7 +122,7 @@ function lockedExpense(tx: Db, orgId: string, expenseId: string) {
 function isPostable(e: Expense, now = Date.now(), book = false): boolean {
   if (e.backfill || e.qbTxnId) return false;
   if (e.qbMatchState === POSTING) return !!e.qbClaimedAt && now - e.qbClaimedAt.getTime() > STALE_CLAIM_MS;
-  return POSTABLE_QB_STATES.includes(e.qbMatchState) || (book && UNBOOKED_STATES.includes(e.qbMatchState));
+  return POSTABLE_QB_STATES.includes(e.qbMatchState) || (book && e.qbMatchState === "UNBOOKED");
 }
 
 /** Locks the expense and runs `fn` on it when it is still waiting to be posted. */
@@ -445,7 +440,6 @@ export async function bookExpenseToQb(orgId: string, expenseId: string, actor: A
     case "MATCHED":
       return;
     case "UNBOOKED":
-    case "BEFORE_LINE":
       throw new ServiceError(
         409,
         outcome === "waiting"
