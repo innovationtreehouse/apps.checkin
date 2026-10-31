@@ -40,7 +40,9 @@ The nav badge doesn't count these rows, so a red QuickBooks row raises no badge.
 
 The closed-books gate depends on how QuickBooks behaves, so confirm that behaviour
 against the current API first. The script refuses to run against anything but the
-sandbox, and creates up to two test deposits there per run.
+sandbox, and creates up to two test deposits there per run. Run it on a checkout
+that contains [#2794](https://github.com/innovationtreehouse/apps.checkin/pull/2794),
+because every lane's lookup and sweep use the query that PR changed.
 
 Export `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` from the development keys,
 `QBO_ENVIRONMENT=sandbox`, and `QBO_TOKEN_FILE` set to an absolute path. Then get
