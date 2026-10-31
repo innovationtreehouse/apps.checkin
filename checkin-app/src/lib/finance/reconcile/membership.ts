@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId, type ActivateOutcome, type MembershipLine } from "@/lib/membership/payment";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
