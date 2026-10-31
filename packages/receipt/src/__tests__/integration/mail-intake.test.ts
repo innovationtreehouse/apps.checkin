@@ -413,9 +413,10 @@ describeDb("mail intake ageing alert", () => {
     const update = vi.spyOn(getPrisma().receiptMailAtRisk, "update").mockRejectedValueOnce(new Error("row lock timeout"));
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await readMailbox()).toMatchObject({ status: "ok" });
+    const failedRowId = update.mock.calls[0][0].where.id;
     update.mockRestore();
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
-    expect(logged).toHaveBeenCalledWith("[receipt] mail ageing re-date failed for one row:", expect.any(Error));
+    expect(logged).toHaveBeenCalledWith(`[receipt] mail ageing re-date failed for row ${failedRowId}:`, expect.any(Error));
   });
 
   it("fetches at-risk messages one at a time", async () => {
