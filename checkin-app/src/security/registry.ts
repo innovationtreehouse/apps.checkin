@@ -872,6 +872,30 @@ defineRoute({
     ],
 });
 
+// The first-sign-in question: does this adult join the household that added
+// them? Only Household.name leaves, and only to the person being asked.
+defineRoute({
+    endpoint: 'GET /api/profile/household-question',
+    authorize: 'authenticated',
+    envelope: 'household',
+    // Bag: { Household }.
+    returns: ['Household'],
+    orderedView: [
+        ['authenticated', ['public']],
+    ],
+});
+
+// Records the answer. The bag is empty; the status tells the client the outcome.
+defineRoute({
+    endpoint: 'POST /api/profile/household-question',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['Household'],
+    orderedView: [
+        ['authenticated', ['public']],
+    ],
+});
+
 // App-localization singleton (timezone/locale) — sysadmin-only surface,
 // wholly public-tier data; the gate is about who may see admin settings
 // screens, not the fields. Declared public-only ON PURPOSE: AppSettings is the
