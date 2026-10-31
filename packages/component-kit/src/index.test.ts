@@ -10,9 +10,11 @@ import {
   isComponentHttpError,
   isServiceError,
   mapServiceErrors,
+  orgEventStep,
   parseBody,
   parseId,
   readJson,
+  sweepOrgEvents,
   toHttpError,
   zodMessage,
 } from "./index";
@@ -181,5 +183,102 @@ describe("defineRuntime", () => {
     configured();
     await expect(runtime.assertOrg("org-1")).resolves.toBeUndefined();
     await expect(runtime.assertOrg("org-2")).rejects.toThrow("orgId org-2 is not this org");
+  });
+});
+
+describe("orgEventStep", () => {
+  const base = { onFailure: () => undefined, recordFailure: async () => true };
+
+  it("returns the check's outcome without applying", async () => {
+    let applied = false;
+    const step = orgEventStep<number, "duplicate">({ ...base, check: async () => "duplicate", apply: async () => { applied = true; } });
+    expect(await step(1)).toBe("duplicate");
+    expect(applied).toBe(false);
+  });
+
+  it("records a failed apply, and defers to an overlapping processed outcome", async () => {
+    const boom = async () => { throw new Error("boom"); };
+    const reasons: string[] = [];
+    const stands = orgEventStep<number>({ ...base, apply: boom, recordFailure: async (_e, reason) => { reasons.push(reason); return true; } });
+    expect(await stands(1)).toBe("failed");
+    expect(reasons).toEqual(["boom"]);
+    expect(await orgEventStep<number>({ ...base, apply: boom, recordFailure: async () => false })(1)).toBe("duplicate");
+  });
+
+  it("throws a recordProcessed failure instead of recording it", async () => {
+    let recorded = false;
+    const step = orgEventStep<number>({
+      ...base,
+      apply: async () => undefined,
+      recordProcessed: async () => { throw new Error("ledger down"); },
+      recordFailure: async () => { recorded = true; return true; },
+    });
+    await expect(step(1)).rejects.toThrow("ledger down");
+    expect(recorded).toBe(false);
+  });
+});
+
+describe("sweepOrgEvents", () => {
+  function run(opts: { all: number[]; failed?: number[]; received?: number[]; limit?: number; bad?: number[]; pageSize?: number }) {
+    const order: number[] = [];
+    const result = sweepOrgEvents<number>({
+      limit: opts.limit ?? 100,
+      failed: opts.failed ?? [],
+      readPage: async (after) => opts.all.filter((id) => id > after).slice(0, opts.pageSize ?? 2),
+      idOf: (id) => id,
+      receivedIds: async (ids) => ids.filter((id) => opts.received?.includes(id)),
+      consume: async (id) => {
+        order.push(id);
+        return opts.bad?.includes(id) ? "failed" : "processed";
+      },
+      onUnrecorded: () => undefined,
+      onUnreadable: () => undefined,
+    });
+    return { result, order };
+  }
+
+  it("reads past received ids across pages, however many followed", async () => {
+    const { result, order } = run({ all: [1, 2, 3, 4, 5], received: [1, 2, 4] });
+    expect((await result).needsAlert).toBe(false);
+    expect(order).toEqual([3, 5]);
+  });
+
+  it("retries a tenth of the cap first, new events next, then more retries with what is left", async () => {
+    const { result, order } = run({ all: [50, 51], failed: [1, 2, 3], received: [1, 2, 3], limit: 10 });
+    const res = await result;
+    expect(order).toEqual([1, 50, 51, 2, 3]);
+    expect(res.unprocessed).toBe(0);
+  });
+
+  it("counts what the cap left, and alerts only if the run processed nothing", async () => {
+    const progressed = await run({ all: [1, 2, 3], limit: 1 }).result;
+    expect(progressed).toMatchObject({ unprocessed: 2, needsAlert: false });
+    const stalled = await run({ all: [1, 2], limit: 1, bad: [1] }).result;
+    expect(stalled).toMatchObject({ newlyFailed: 1, unprocessed: 1, needsAlert: true });
+  });
+
+  it("a retry failing again is counted but is not newly failed", async () => {
+    const res = await run({ all: [1], failed: [1], received: [1], bad: [1] }).result;
+    expect(res).toMatchObject({ newlyFailed: 0, needsAlert: false });
+    expect(res.counts.failed).toBe(1);
+  });
+
+  it("survives an unrecorded event and an unreadable catalog", async () => {
+    const unrecorded: number[] = [];
+    let unreadable = 0;
+    const res = await sweepOrgEvents<number>({
+      limit: 10,
+      failed: [9],
+      readPage: async () => { throw new Error("down"); },
+      idOf: (id) => id,
+      receivedIds: async () => [],
+      consume: async () => { throw new Error("ledger down"); },
+      onUnrecorded: (id) => unrecorded.push(id),
+      onUnreadable: () => { unreadable++; },
+    });
+    expect(unrecorded).toEqual([9]);
+    expect(unreadable).toBe(1);
+    expect(res).toMatchObject({ unreadable: true, needsAlert: true });
+    expect(res.counts.failed).toBe(1);
   });
 });

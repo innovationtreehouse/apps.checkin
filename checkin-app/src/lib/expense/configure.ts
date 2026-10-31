@@ -249,7 +249,7 @@ export function configureRuntime(): void {
     budgetOwners,
     signoff,
     catalog: catalogReader,
-    catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
+    catalogEvents: { eventsSince: catalogEventsSince },
     alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },

@@ -1,6 +1,7 @@
 // S5 consumer: catalog provisional-resolution events. The reaction runs first and the
 // ledger row (InventoryReceivedOrgEvent) records its outcome; every reaction is idempotent
 // (resolution upsert, status short-circuit), so a crash between the two replays safely.
+import { orgEventStep, sweepOrgEvents } from "@checkin/component-kit";
 import { parseOrgEvent } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { InventoryAlerts, OrgEventRecord } from "../../contract";
@@ -25,33 +26,36 @@ async function react(ev: OrgEventRecord): Promise<void> {
   }
 }
 
-/** Apply one event and record the outcome. A failed reaction is recorded, not thrown. */
-export async function consumeOrgEvent(ev: OrgEventRecord): Promise<ConsumeResult> {
-  if (ev.orgId !== (await getOrgId())) {
-    console.error(`[local-inventory/org-events] event ${ev.id} is for another org; skipped`);
-    return "skipped";
-  }
-  const existing = await db.inventoryReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { status: true } });
-  if (existing?.status === "processed") return "duplicate";
-
-  let status: "processed" | "failed" = "processed";
-  let failureReason: string | null = null;
-  try {
-    await react(ev);
-  } catch (err) {
-    status = "failed";
-    failureReason = err instanceof Error ? err.message : String(err);
-    console.error(`[local-inventory/org-events] event ${ev.id} failed`, err);
-  }
+/** Writes the event's ledger row. An overlapping consumer may have processed it; its outcome stands. Returns whether this write landed. */
+async function recordOutcome(ev: OrgEventRecord, status: "processed" | "failed", failureReason: string | null): Promise<boolean> {
   const row = { id: ev.id, orgId: ev.orgId, eventType: ev.eventType, payload: ev.payload, receivedAt: ev.createdAt };
   await db.inventoryReceivedOrgEvent.createMany({ data: [{ ...row, status, failureReason }], skipDuplicates: true });
-  // An overlapping consumer may have processed this event; its outcome stands.
   const { count } = await db.inventoryReceivedOrgEvent.updateMany({
     where: { id: ev.id, status: { not: "processed" } },
     data: { status, failureReason },
   });
-  return status === "failed" && count === 0 ? "duplicate" : status;
+  return count > 0;
 }
+
+/** Apply one event and record the outcome. A failed reaction is recorded, not thrown. */
+export const consumeOrgEvent: (ev: OrgEventRecord) => Promise<ConsumeResult> = orgEventStep<OrgEventRecord, "duplicate" | "skipped">({
+  async check(ev) {
+    if (ev.orgId !== (await getOrgId())) {
+      console.error(`[local-inventory/org-events] event ${ev.id} is for another org; skipped`);
+      return "skipped";
+    }
+    const existing = await db.inventoryReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { status: true } });
+    return existing?.status === "processed" ? "duplicate" : null;
+  },
+  apply: react,
+  recordProcessed: async (ev) => {
+    await recordOutcome(ev, "processed", null);
+  },
+  recordFailure: (ev, failureReason) => recordOutcome(ev, "failed", failureReason),
+  onFailure(ev, err) {
+    console.error(`[local-inventory/org-events] event ${ev.id} failed`, err);
+  },
+});
 
 /** Tell a person about events left undone. An alert that fails never fails the caller. */
 async function alertStuck(event: Parameters<InventoryAlerts["orgEventsStuck"]>[0]): Promise<void> {
@@ -106,80 +110,30 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   return { reconciled, reconcileFailed };
 }
 
-/** A ledger write that throws counts as failed; with no ledger row, the next sweep reads the event again. */
-async function consumeInSweep(ev: OrgEventRecord): Promise<ConsumeResult> {
-  try {
-    return await consumeOrgEvent(ev);
-  } catch (err) {
-    console.error(`[local-inventory/org-events] event ${ev.id} could not be recorded`, err);
-    return "failed";
-  }
-}
-
-/** The part of a run's cap that failed rows may take ahead of new events. */
-const RETRY_FIRST_SHARE = 0.1;
-
 /**
- * Catch-up sweep: retries a small share of the failed events, pages through all the org's catalog
- * events and consumes those not in the ledger, retries more failed events with the budget left,
- * then reconciles pending provisionals that have a stored resolution. Reading from the start means
- * no event is missed however late it committed or however many later ids were received, and the
- * capped share means permanently failed rows can't crowd out new events. What stays undone is retried on the next run. A person
- * is alerted once per run for an event newly failed, an unreadable catalog, or a capped run that
- * processed nothing; a capped run that made progress drains itself on later runs, and a retry that
- * fails again only stays failed in the ledger and the counts. A provisional that fails to reconcile
- * has no ledger row, so it alerts on every run until it applies. The host's daily reconcile cron step calls it. Capped; counts only.
+ * Catch-up sweep over the org's catalog events (see `sweepOrgEvents`), then reconciles pending
+ * provisionals that have a stored resolution. A provisional that fails to reconcile has no ledger
+ * row, so it alerts on every run until it applies. The host's daily reconcile cron step calls it.
+ * Capped; counts only.
  */
 export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
-  const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
-  const allPending = await repo.findPending(orgId);
-  const retry = async (rows: typeof allPending) => {
-    for (const r of rows) {
-      counts[await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
-    }
-  };
-  const firstRetries = allPending.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
-  await retry(firstRetries);
-
-  let unprocessed = 0;
-  let unreadable = false;
-  let budget = limit - firstRetries.length;
-  let newlyFailed = 0;
-  try {
-    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
-    let after = 0;
-    for (;;) {
-      const page = await getCatalogEventSource().eventsSince(orgId, after);
-      if (page.length === 0) break;
-      const received = new Set(await repo.idsIn(page.map((e) => e.id)));
-      for (const ev of page) {
-        if (received.has(ev.id)) continue;
-        if (budget > 0) {
-          budget--;
-          const result = await consumeInSweep(ev);
-          counts[result]++;
-          if (result === "failed") newlyFailed++;
-        } else {
-          unprocessed++;
-        }
-      }
-      after = page[page.length - 1].id;
-    }
-  } catch (err) {
-    unreadable = true;
-    console.error("[local-inventory/org-events] catalog events could not be read", err);
-  }
-
-  const laterRetries = allPending.slice(firstRetries.length, firstRetries.length + budget);
-  await retry(laterRetries);
-  unprocessed += allPending.length - firstRetries.length - laterRetries.length;
+  const failed = await repo.findPending(orgId);
+  const sweep = await sweepOrgEvents<OrgEventRecord>({
+    limit,
+    failed: failed.map((r) => ({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })),
+    readPage: (after) => getCatalogEventSource().eventsSince(orgId, after),
+    idOf: (ev) => ev.id,
+    receivedIds: (ids) => repo.idsIn(ids),
+    consume: consumeOrgEvent,
+    onUnrecorded: (ev, err) => console.error(`[local-inventory/org-events] event ${ev.id} could not be recorded`, err),
+    onUnreadable: (err) => console.error("[local-inventory/org-events] catalog events could not be read", err),
+  });
 
   const reconciled = await reconcilePendingProvisionals(orgId, limit);
-  const stalled = unprocessed > 0 && counts.processed === 0;
-  if (newlyFailed > 0 || stalled || unreadable || reconciled.reconcileFailed > 0) {
-    await alertStuck({ failed: newlyFailed, unprocessed, unreadable, reconcileFailed: reconciled.reconcileFailed });
+  if (sweep.needsAlert || reconciled.reconcileFailed > 0) {
+    await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, reconcileFailed: reconciled.reconcileFailed });
   }
-  return { ...counts, ...reconciled, unprocessed, unreadable };
+  return { ...sweep.counts, ...reconciled, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
 }
