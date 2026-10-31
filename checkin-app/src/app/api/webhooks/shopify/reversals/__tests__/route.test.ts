@@ -11,6 +11,7 @@ import { POST } from '../route';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { nudgeProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
+import { logger } from '@/lib/logger';
 
 jest.mock('@/lib/finance/reconcile/reversals', () => ({
     raiseReversalByOrderId: jest.fn().mockResolvedValue(true),
@@ -90,5 +91,29 @@ describe('POST /api/webhooks/shopify/reversals — restocked lines', () => {
             where: { shopifyVariantId: { in: ['111'] }, shopifyStockCarry: { lt: 0 } },
         }));
         expect(nudgeProgramStock).toHaveBeenCalledWith({ id: 9, shopifyVariantId: '111' });
+    });
+});
+
+describe('POST /api/webhooks/shopify/reversals — rejected deliveries', () => {
+    it('logs a signature mismatch', async () => {
+        const request = req('orders/cancelled', { id: 777 });
+        request.headers.set('x-shopify-hmac-sha256', 'not-the-signature');
+
+        const res = await POST(request);
+
+        expect(res.status).toBe(401);
+        expect(logger.error).toHaveBeenCalledWith('Shopify reversal webhook signature mismatch.');
+        expect(raise).not.toHaveBeenCalled();
+    });
+
+    it('stays silent on a missing signature', async () => {
+        const request = req('orders/cancelled', { id: 777 });
+        request.headers.delete('x-shopify-hmac-sha256');
+
+        const res = await POST(request);
+
+        expect(res.status).toBe(401);
+        expect(logger.error).not.toHaveBeenCalled();
+        expect(raise).not.toHaveBeenCalled();
     });
 });

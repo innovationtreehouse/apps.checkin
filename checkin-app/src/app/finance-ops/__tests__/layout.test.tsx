@@ -71,13 +71,15 @@ describe("Revenue Ops layout role gate", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("admits a FINANCE-only user without the Board-only finance tabs", () => {
+  it("admits a FINANCE-only user with the payment-plan tabs, without the Board-only tools", () => {
     renderLayout("/income", {
       data: { user: { id: 4, isFinance: true } },
       status: "authenticated",
     });
     expect(screen.getByText(CHILD)).toBeInTheDocument();
-    expect(screen.queryByText("Program Payment Plan")).not.toBeInTheDocument();
+    expect(screen.getByText("Program Payment Plan")).toBeInTheDocument();
+    expect(screen.getByText("Membership Payment Plan")).toBeInTheDocument();
+    expect(screen.queryByText("Payment problems")).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 

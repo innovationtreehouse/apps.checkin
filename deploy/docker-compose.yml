@@ -11,11 +11,11 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Server-side safety net (issue #688): a jest process killed abruptly (not a
+    # Server-side safety net: a jest process killed abruptly (not a
     # graceful $disconnect() — e.g. an orphaned background worktree run) leaves
     # its Postgres backend "alive" from the server's own point of view, holding
     # whatever lock/transaction it was mid-way through (e.g. the scan route's
-    # pg_advisory_xact_lock) forever. The client-side keepAlive fix in
+    # pg_advisory_xact_lock) forever. The client-side keepAlive in
     # checkin-app/src/lib/prisma.ts only helps OTHER connections detect a dead
     # peer; it can't force a truly-orphaned session's own stuck transaction to
     # end. This does: Postgres kills the session itself once it's sat idle

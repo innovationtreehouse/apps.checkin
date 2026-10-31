@@ -2,7 +2,7 @@
  * The Inventory section (/catalog, /inventory). The catalog and local-inventory
  * libraries own their screen lists; workflow-mapping owns Receiving. Catalog
  * and org inventory show to a catalog viewer, org inventory's manager-only
- * screens to an INVENTORY_MANAGER, its receiving screens to INVENTORY_MANAGER, FINANCE or BOARD (#2384), and the
+ * screens to an INVENTORY_MANAGER, its receiving screens to INVENTORY_MANAGER, FINANCE or BOARD, and the
  * receipt flow status page to an INVENTORY_MANAGER. A viewer any tab admits is
  * admitted to the section (FINANCE reaches Receiving).
  */

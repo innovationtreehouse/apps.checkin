@@ -4,18 +4,17 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { canonicalizeEmail } from "../src/lib/emailNormalize";
 
 /**
- * MONEY-PATH SAFETY GATE for the volunteer-designation normalization change.
+ * MONEY-PATH SAFETY GATE for the volunteer-designation email match.
  *
  * applyVolunteerFamilyStatus (src/lib/membership/review.ts) sets Membership.isVolunteerFamily
  * when a household lead's email matches a VolunteerDesignation — and isVolunteerFamily
- * DRIVES THE MEMBERSHIP FEE. The email-normalization rule used for that match changed from the
- * OLD review rule (strip dots on EVERY domain, keep +tag) to canonicalizeEmail
- * (Gmail-only dot-drop, strip +tag). Those two produce different match sets.
+ * DRIVES THE MEMBERSHIP FEE. That match uses canonicalizeEmail (Gmail-only dot-drop, strip +tag).
+ * oldNormalize (strip dots on EVERY domain, keep +tag) produces a different match set.
  *
  * This script recomputes the designation-match result for every household under
  * BOTH rules against the live DB and prints every household whose volunteer match
- * RESULT CHANGES (gained or lost). Empty diff = safe to flip. Non-empty = human
- * review required before merge.
+ * RESULT differs (gained or lost). Empty diff = the rules agree on this data.
+ * Non-empty = human review required.
  *
  * NOTE: only the designation-match path is modeled. The markedByReviewer path
  * (isVolunteerFamily already true) is unaffected by normalization and out of scope.
@@ -25,7 +24,7 @@ import { canonicalizeEmail } from "../src/lib/emailNormalize";
  * Bootstraps Prisma exactly like prisma/seed.ts (PrismaPg adapter, DATABASE_URL).
  */
 
-/** The OLD review.ts rule — verbatim copy (now deleted from source). */
+/** Strips dots on every domain and keeps +tag. Only this script carries this rule. */
 function oldNormalize(email: string): string {
     const lower = email.trim().toLowerCase();
     const at = lower.indexOf("@");
@@ -42,7 +41,7 @@ async function main() {
         const designations = (await prisma.volunteerDesignation.findMany({ select: { email: true } })).map((d) => d.email);
 
         // Household leads with an email — mirrors applyVolunteerFamilyStatus's parent query:
-        // a person flagged isHouseholdLead leads their own household (a1).
+        // a person flagged isHouseholdLead leads their own household.
         const leads = await prisma.person.findMany({
             where: { isHouseholdLead: true },
             select: { householdId: true, email: true },

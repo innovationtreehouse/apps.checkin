@@ -52,7 +52,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     }
 
     // The membership fee is settled, not "is a member": a household that has paid and is waiting on
-    // background clearance pays the member rate too (#1397).
+    // background clearance pays the member rate too.
     const isMemberNow = await isMembershipFeeSettled(auth.user.id);
     if (!isMemberNow) return NextResponse.json({ code: null });
 

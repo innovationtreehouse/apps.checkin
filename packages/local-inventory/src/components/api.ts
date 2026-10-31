@@ -18,7 +18,7 @@ export function useCanManage(): boolean {
   return useViewer()?.isInventoryManager === true;
 }
 
-/** INVENTORY_MANAGER, FINANCE or BOARD: the receiving read gate, which also covers the inventory log (#2384). */
+/** INVENTORY_MANAGER, FINANCE or BOARD: the receiving read gate, which also covers the inventory log. */
 export function useCanSeeReceiving(): boolean {
   const viewer = useViewer();
   return viewer?.isInventoryManager === true || viewer?.isFinance === true || viewer?.isBoardMember === true;

@@ -214,7 +214,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(res.status).toBe(403);
              
              const data = await res.json();
-             expect(data.error).toBe('Forbidden: Only administrators can reassign lead mentors');
+             expect(data.error).toBe('Forbidden: Only administrators can reassign Program Leaders');
         });
 
         it('should allow admins to reassign the leadMentorId', async () => {

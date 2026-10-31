@@ -119,19 +119,18 @@ COPY --from=builder /app/checkin-app/.next/static ./checkin-app/.next/static
 COPY --from=builder /app/checkin-app/public ./checkin-app/public
 # The Rust-free `prisma-client` generator emits the client into src/generated/prisma,
 # which Next's standalone output tracing bundles automatically — there is no
-# node_modules/.prisma engine directory to copy as there was with prisma-client-js.
+# node_modules/.prisma engine directory to copy.
 COPY --from=builder /app/checkin-app/prisma ./checkin-app/prisma
-# Prisma 7 only reads the datasource URL from a config file (schema-level `url`
-# was removed), so the migrate ECS task — `cd checkin-app && npx prisma migrate
+# Prisma 7 only reads the datasource URL from a config file, not a schema-level
+# `url`, so the migrate ECS task — `cd checkin-app && npx prisma migrate
 # deploy` in this image — needs one. The repo's prisma.config.ts can't be
 # shipped: its dotenv / prisma/config imports don't resolve here. The deploy
 # variant has no imports.
 COPY --from=builder /app/checkin-app/prisma.config.deploy.ts ./checkin-app/prisma.config.ts
 # The prisma CLI is a devDependency, so Next's standalone file-trace never
-# includes it — `npx prisma migrate deploy` in the migrate ECS task was
-# fetching LATEST prisma from the npm registry at deploy time ("npm warn exec
-# ... will be installed: prisma@X"): version drift vs the lockfile plus a
-# registry dependency in the middle of a deploy. Ship the builder's isolated,
+# includes it — without a local copy, `npx prisma migrate deploy` in the migrate
+# ECS task fetches LATEST prisma from the npm registry at deploy time: version
+# drift vs the lockfile plus a registry dependency mid-deploy. Ship the builder's isolated,
 # lockfile-versioned CLI tree (full transitive closure — same alpine base, so
 # engine binaries match) under checkin-app/node_modules, where the migrate
 # command's cwd resolves it without touching the standalone /app/node_modules.

@@ -12,8 +12,8 @@ import { correctCloseTime } from "@/lib/attendance/close";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
-// covered by the admin everyones band, and now stripped for any role a
-// future view adds. Same query, same take-50 shape, same tombstone filter.
+// covered by the admin everyones band, and stripped for any role a future
+// view adds.
 export const GET = handler('GET /api/facility/visits', async () => {
     const visits = await prisma.visit.findMany({
         take: 50,

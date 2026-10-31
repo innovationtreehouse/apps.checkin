@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the receipt schema under checkin's security regime (design #1265 §6):
+// Brings the receipt schema under checkin's security regime:
 // the same generator emits a classifications map, merged in
 // checkin-app/src/security/core.ts. Paths are relative to this schema file.
 generator security {
@@ -247,7 +247,7 @@ model ReceiptAuditLog {
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")
 
-  // Restrict, as the init migration created it: deleting a receipt never orphans its audit rows.
+  // Restrict: deleting a receipt never orphans its audit rows.
   receipt  Receipt?         @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
 
@@ -256,7 +256,7 @@ model ReceiptAuditLog {
   @@map("receipt_audit_log")
 }
 
-// Finance's latest duplicate decision on one pair of receipts (#2516 design §6.3). The pair is
+// Finance's latest duplicate decision on one pair of receipts. The pair is
 // unordered and stored once: receiptId < otherReceiptId, a CHECK in the migration.
 model ReceiptPairDecision {
   /// @sensitivity:internal
@@ -402,7 +402,7 @@ model ReceiptMailAtRisk {
   @@map("receipt_mail_at_risk")
 }
 
-// Files the organization has said are never receipts (#1265 §2a). Mail intake skips a
+// Files the organization has said are never receipts. Mail intake skips a
 // candidate whose SHA-256 is listed; manual upload never consults it.
 model ReceiptIgnoredFile {
   /// @sensitivity:internal

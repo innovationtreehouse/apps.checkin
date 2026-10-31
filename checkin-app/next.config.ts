@@ -4,7 +4,7 @@ import { MAX_UPLOAD_BODY_BYTES } from "./src/lib/requestBodyLimit";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  // The checkin-hosted libraries (#1286, #1287, #1272, #1289) ship raw TS/TSX — route factories
+  // The checkin-hosted libraries ship raw TS/TSX — route factories
   // off their `.` entry, client pages and nav off subpath exports — so Next must
   // transpile them.
   transpilePackages: ['@checkin/global-catalog', '@checkin/local-inventory', '@checkin/bulk-donation', '@checkin/expense', '@checkin/workflow-mapping', '@checkin/income', '@checkin/receipt', '@checkin/quickbooks', '@checkin/s-ingest-core', '@checkin/pg-kit', '@checkin/component-kit', '@checkin/component-ui'],

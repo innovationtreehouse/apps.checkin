@@ -16,7 +16,11 @@ jest.mock("@checkin/income", () => ({
   toQbDeposit: jest.fn(),
 }));
 jest.mock("@/lib/components/host", () => ({ getOrg: jest.fn(), getPrincipal: jest.fn() }));
-jest.mock("@/lib/shopifyRead/client", () => ({ isConfigured: () => false }));
+const mirrorConfigured = jest.fn(() => false);
+const incomeItemsSeen = jest.fn();
+jest.mock("@/lib/shopifyRead/client", () => ({ isConfigured: () => mirrorConfigured(), incomeItemsSeen: () => incomeItemsSeen() }));
+const withAppItems = jest.fn();
+jest.mock("../appItems", () => ({ withAppItems: (sold: unknown) => withAppItems(sold) }));
 const getQuickBooks = jest.fn();
 const buildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
@@ -32,6 +36,19 @@ const ENV = { ...process.env };
 beforeEach(() => jest.clearAllMocks());
 afterEach(() => {
   process.env = { ...ENV };
+});
+
+describe("income item list binding", () => {
+  it("adds the app's items to the items sold", async () => {
+    mirrorConfigured.mockReturnValue(true);
+    const sold = [{ variantId: "1", title: "Sold", sku: null }];
+    const merged = [...sold, { variantId: "2", title: "Unsold", sku: null }];
+    incomeItemsSeen.mockResolvedValue(sold);
+    withAppItems.mockResolvedValue(merged);
+    await expect((await config()).mirror!.itemsSeen()).resolves.toEqual(merged);
+    expect(withAppItems).toHaveBeenCalledWith(sold);
+    mirrorConfigured.mockReturnValue(false);
+  });
 });
 
 describe("income QuickBooks Class binding", () => {

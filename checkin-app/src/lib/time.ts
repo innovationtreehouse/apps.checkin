@@ -76,8 +76,7 @@ export function formatVisitRange(
 /**
  * Format a date as a value for an <input type="datetime-local"> (yyyy-MM-ddTHH:mm).
  *
- * NOTE: datetime-local is inherently local, so this uses the BROWSER's timezone — matching the
- * inline `getTime() - getTimezoneOffset()*60000` conversions it replaces. It deliberately does
+ * NOTE: datetime-local is inherently local, so this uses the BROWSER's timezone. It deliberately does
  * NOT use APP_TIMEZONE; switching to that would change the displayed value.
  */
 export function toDatetimeLocal(date: Date | string | number | null | undefined): string {
@@ -176,7 +175,7 @@ export function calculateAge(dob: Date | string, asOf: Date | string = orgCalend
  * Unknown (null/undefined) DOB resolves to `unknownIs`, default 'adult': UI and
  * household-lead callers rely on that (a null-DOB member stays promotable to
  * lead, blank forms don't show youth fields). Safety checks must pass
- * `{ unknownIs: 'youth' }` so missing data fails closed (#300).
+ * `{ unknownIs: 'youth' }` so missing data fails closed.
  */
 export function isYouth(
     dob: Date | string | null | undefined,

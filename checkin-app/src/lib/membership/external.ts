@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
+import { ServiceError } from "@checkin/component-kit";
+import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -22,7 +24,7 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
  *
  * The contract is recorded automatically (Zoho webhook) or manually by the
  * board. BG consent is human-marked (no Averity API): the applicant self-reports
- * after submitting on Averity (selfRecordBgConsent, #875), with the board's
+ * after submitting on Averity (selfRecordBgConsent), with the board's
  * mark-bg-consent action as the backstop. The system never sees contract content
  * or check results.
  *
@@ -39,9 +41,9 @@ export type ExternalErrorCode =
     | "agreement_unavailable"
     | "signing_in_progress";
 
-export class ExternalError extends Error {
+export class ExternalError extends ServiceError {
     constructor(public readonly code: ExternalErrorCode, message: string) {
-        super(message);
+        super(EXTERNAL_ERROR_STATUS[code], message, code);
         this.name = "ExternalError";
     }
 }
@@ -90,7 +92,7 @@ export async function getExternalStatus(process: {
  * — advance from EXTERNAL straight to PENDING_PAYMENT. RENEWAL processes take
  * this gate too: a fresh agreement is signed every cycle (beginRenewal), and a
  * still-valid background check arrives here pre-cleared so only the signature
- * is pending. The background check no longer gates payment: when it still needs
+ * is pending. The background check does not gate payment: when it still needs
  * a human review (no still-valid prior background check), it runs in PARALLEL
  * while the applicant pays, and only the final ACTIVE flip waits on it. A
  * household intake note is shown to the reviewers but does not gate payment.
@@ -118,7 +120,7 @@ export async function advanceExternalIfComplete(processId: number) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: {
                 id: processId,
-                // #7 advance CAS from-state from the definition (#1080); the contract/BG narrowing stays literal.
+                // Advance CAS from-state from the definition; the contract/BG narrowing stays literal.
                 ...fromWhere("PENDING_EXTERNAL_ACTION"),
                 contractSignedAt: { not: null },
                 OR: [{ bgClearedAt: { not: null } }, { bgConsentAt: { not: null } }],
@@ -128,7 +130,7 @@ export async function advanceExternalIfComplete(processId: number) {
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
         // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
         // background check clears — so a pre-designated volunteer family must get
-        // isVolunteerFamily here, not only at clearance (#874). Sticky + idempotent;
+        // isVolunteerFamily here, not only at clearance. Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.
         if (membership) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, membership.householdId, false);
         await tx.auditLog.create({
@@ -146,7 +148,7 @@ export async function advanceExternalIfComplete(processId: number) {
     if (!advanced) return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 
     // No valid prior check ⇒ a human review is still needed. Ping the reviewers;
-    // the review now proceeds in parallel with payment (log-only until email is configured).
+    // the review proceeds in parallel with payment (log-only until email is configured).
     if (!advanced.bgClearedAt) await notifyReviewers();
     return advanced;
 }
@@ -223,9 +225,50 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
     return advanceExternalIfComplete(processId);
 }
 
+interface ConsentingPerson {
+    householdId: number | null;
+    isHouseholdLead: boolean;
+    isSysadmin: boolean;
+    household?: { orgMembership?: { processes: Pick<OrgMembershipProcess, "id" | "status">[] } | null } | null;
+}
+
+function canConsentForHousehold(person: ConsentingPerson) {
+    return !!person.householdId && (person.isHouseholdLead || person.isSysadmin);
+}
+
+/** The household application a person's consent goes to, ahead of any check of their own. */
+function householdConsentTarget(person: ConsentingPerson) {
+    return canConsentForHousehold(person) ? latestPendingExternal(person.household?.orgMembership?.processes) : undefined;
+}
+
+function findOwnPendingBg(personId: number) {
+    return prisma.orgMembershipProcess.findFirst({
+        where: { kind: "PERSON_BG", subjectPersonId: personId, status: "PENDING_BG_REVIEW" },
+        orderBy: { id: "desc" },
+        select: { id: true, bgConsentAt: true },
+    });
+}
+
+export interface OwnBackgroundCheck {
+    consented: boolean;
+    deepLinkUrl: string | null;
+}
+
+/**
+ * The person's own background check awaiting review, as /membership offers it for
+ * consent. Null when there is none, or when their consent would go to their
+ * household's application instead.
+ */
+export async function getOwnBackgroundCheck(person: ConsentingPerson & { id: number }): Promise<OwnBackgroundCheck | null> {
+    if (householdConsentTarget(person)) return null;
+    const process = await findOwnPendingBg(person.id);
+    if (!process) return null;
+    return { consented: !!process.bgConsentAt, deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink() };
+}
+
 /**
  * Applicant self-report that they submitted background-check consent on
- * Averity (#875). Honor-system by design: Averity has no API, so the applicant's
+ * Averity. Honor-system by design: Averity has no API, so the applicant's
  * own claim records consent the same way a board mark does — through
  * markBgConsent, with the applicant as the audit actor, so a self-reported
  * consent stays distinguishable from a board-confirmed one. The board
@@ -244,9 +287,9 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
         },
     });
     if (!user) throw new ExternalError("not_found", "Application not found.");
-    const canAttestHousehold = !!user.householdId && (user.isHouseholdLead || user.isSysadmin);
+    const canAttestHousehold = canConsentForHousehold(user);
 
-    const householdProcess = canAttestHousehold ? latestPendingExternal(user.household?.orgMembership?.processes) : undefined;
+    const householdProcess = householdConsentTarget(user);
     if (householdProcess) {
         const updated = await markBgConsent(householdProcess.id, userId);
         if (!updated) throw new ExternalError("not_found", "Application not found.");
@@ -269,11 +312,7 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
  * board's submit path. Returns null when the caller has no such obligation.
  */
 async function selfAttestPersonBg(userId: number) {
-    const process = await prisma.orgMembershipProcess.findFirst({
-        where: { kind: "PERSON_BG", subjectPersonId: userId, status: "PENDING_BG_REVIEW" },
-        orderBy: { id: "desc" },
-        select: { id: true, bgConsentAt: true },
-    });
+    const process = await findOwnPendingBg(userId);
     if (!process) return null;
     const updated = await markBgConsent(process.id, userId, "PERSON_BG");
     if (!process.bgConsentAt) await notifyReviewers();
@@ -308,7 +347,7 @@ export async function findProcessByEnvelope(requestId: string) {
 
 /**
  * Forget a dead Zoho signing request (declined/expired/recalled) so the next
- * "sign" click creates a fresh one — the applicant's self-serve recovery (#876).
+ * "sign" click creates a fresh one — the applicant's self-serve recovery.
  * Conditional on the process still pointing at THAT request and being unsigned,
  * so a concurrent re-create's fresh ids are never clobbered and the audit row is
  * written only by the caller that actually cleared.
@@ -390,7 +429,7 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
                 await markContractSigned(process.id, userId);
             } else if (state === "terminal") {
                 // Declined or expired — forget the dead request so contractStarted
-                // resets and the next click creates a fresh one (#876).
+                // resets and the next click creates a fresh one.
                 await clearDeadSigningRequest(process.id, process.zohoEnvelopeId, userId);
             }
         } catch (e) {
@@ -471,10 +510,10 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
 
     // A stored request may be dead — declined by the signer, or expired after
     // CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Check
-    // before reusing (#876): forget dead ids and fall through to the create path
+    // before reusing: forget dead ids and fall through to the create path
     // below, so the same button self-recovers. Best-effort — if the status read
     // fails, proceed with the stored ids rather than blocking the click (worst
-    // case the embed call fails, as it did before this check existed).
+    // case the embed call fails).
     if (requestId && actionId && !process.contractSignedAt) {
         try {
             if ((await zohoSign.getRequestStatus(token, requestId)) === "terminal") {
@@ -493,7 +532,7 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         // Claim before creating: Zoho charges per request, so only the claim's
         // winner ever calls createRequest, and a concurrent click is told to wait
         // instead of paying for an orphan. The claim matches an INCOMPLETE pair
-        // (either id null), not just a null envelope: setZohoEnvelope (the legacy
+        // (either id null), not just a null envelope: setZohoEnvelope (the
         // admin/email flow) stores an envelope WITHOUT an action id, which can't be
         // embedded, so that state must stay claimable.
         const claim = await prisma.orgMembershipProcess.updateMany({

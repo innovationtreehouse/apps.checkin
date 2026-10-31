@@ -39,13 +39,12 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 
 // ──────────────────────────────────────────────────────────────────────────
 // Baseline — the standard debug personas + tools + a sample program. Idempotent
-// (upserts), so it is safe to run on a fresh DB or after a reset. This is the body that
-// used to live in prisma/seed.ts main().
+// (upserts), so it is safe to run on a fresh DB or after a reset.
 // ──────────────────────────────────────────────────────────────────────────
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
 
-    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // 0. The org registry row. The stable well-known id "treehouse" is
     // stamped as org_id on catalog rows and is the row configure.ts resolves,
     // so dev/test/prod all resolve the same org identity.
     await prisma.org.upsert({
@@ -93,7 +92,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Board Member Household" } },
         },
     });
-    // PersonRole is the source of truth the claims/lock now read — every non-PATCH
+    // PersonRole is the source of truth the claims/lock read — every non-PATCH
     // board/role writer (seeds included) must populate the table, not just the mirror.
     await seedRole(prisma, isBoardMember.id, "isSysadmin");
     await seedRole(prisma, isBoardMember.id, "isBoardMember");
@@ -220,7 +219,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     await seedRole(prisma, bgReviewer.id, "isBackgroundCheckReviewer");
 
-    // Global catalog manager (#1286). INVENTORY_MANAGER is PersonRole-table-only
+    // Global catalog manager. INVENTORY_MANAGER is PersonRole-table-only
     // (no mirror column, like isOperations), so the grant is seedRole, not a
     // create field. Curates the catalog in flow tests; also a catalog viewer.
     const inventoryManager = await prisma.person.upsert({

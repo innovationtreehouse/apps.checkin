@@ -1,5 +1,5 @@
 /**
- * Expense dev/flow seed (#1272 §12). Writes expenses the screens and flow tests exercise
+ * Expense dev/flow seed. Writes expenses the screens and flow tests exercise
  * without the receipt pipeline. Idempotent, so a re-run is safe.
  *
  * Person and bucket ids are checkin's, from a fresh baseline seed: bucket 1 is "Facility"

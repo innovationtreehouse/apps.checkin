@@ -77,7 +77,7 @@ export async function editEventTime(
     const { event } = ctx;
     // Core volunteers can't edit or cancel events. Only lead mentors, isSysadmin, board.
     if (!ctx.isSysAdminOrBoard && !ctx.isLeadMentor) {
-        return refuse("forbidden", "Forbidden: Only Lead Mentors or Admins can edit/cancel events");
+        return refuse("forbidden", "Forbidden: Only Program Leaders or Admins can edit/cancel events");
     }
 
     // Block edits to an event that has already finished — rescheduling a

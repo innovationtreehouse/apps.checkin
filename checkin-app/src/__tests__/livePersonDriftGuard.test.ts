@@ -172,6 +172,7 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── authz target checks (class 3, never rendered or counted) ──────────────
     'lib/programs/events.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
+    'lib/components/ports.ts': 'Expense sign-off conflict rule: householdsOf resolves the households of named parties and signers by `id: { in }`, and householdIds reads every member of one household. A merged-away submitter or reimbursee keeps their household, so a live member of it is still conflicted: the expense approval prefilter tests the caller\'s household, merged-away members included, against those parties. The members householdOf and householdsOf return filter LIVE_PERSON. Never rendered or counted.',
     'lib/bulkDonation/donorSurname.ts': 'In-kind accept step\'s conflict rule: the merge walk and the household read are pinned to `id: { in }` over named parties (the decider, and the uploader or recorder) and their merge chains. A since-merged uploader keeps their own household in the conflict set, and their survivor\'s household joins it. The household members it then reads filter LIVE_PERSON. Never rendered or counted.',
 
     // ── historical / audit trail (showing a since-merged identity is correct) ──

@@ -1,11 +1,11 @@
 /**
- * Wire the bulk-donation library into checkin (#1280), called once at
+ * Wire the bulk-donation library into checkin, called once at
  * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, and binds the owner directory to checkin's
  * BudgetOwner table, read per call. The no-receipt in-kind path's crossings are
- * bound in-process: the catalog lookup (X10) to the catalog's reads and the
- * inventory load (X11) to local-inventory's apply. The in-kind receipt callees
- * X9 and X13 are bound by their callers (workflow-mapping and receipt). Income
+ * bound in-process: the catalog lookup to the catalog's reads and the
+ * inventory load to local-inventory's apply. The in-kind receipt callees
+ * are bound by their callers (workflow-mapping and receipt). Income
  * books and matches every Benevity deposit: where QBO_REALM_ID is set, donation
  * hands each completed disbursement to income's intake ports. The in-kind drain books through checkin's one guarded client and reads
  * its accounts and Classes from the books map, bound wherever QBO_REALM_ID is set. The in-kind

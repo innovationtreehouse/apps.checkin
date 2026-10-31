@@ -21,6 +21,7 @@ const base: SignoffFacts = {
   reimburseeSetter: null,
   seatedHouseholds: [],
   boardSeat: false,
+  conflictedFinal: false,
   approved: false,
   approver: null,
   expenseSigners: [],
@@ -166,7 +167,6 @@ describe("acts per role", () => {
 
   it("FINANCE resolves an unknown bucket and assigns an unassigned one", () => {
     expect(acts({ caller: 3, state: "assign_ownership", approval: { status: "unknown", ownerId: null } })).toEqual(["*resolve-bucket"]);
-    expect(acts({ caller: 3, state: "assign_ownership", facts: { conflicted: [1, 3, 8] }, approval: { status: "unknown", ownerId: null } })).toEqual([]);
     expect(acts({ caller: 3, state: "assign_ownership", approval: { status: "pending", ownerId: null } })).toEqual(["*assign-bucket"]);
     expect(acts({ caller: 5, state: "assign_ownership", approval: { status: "pending", ownerId: null } })).toEqual([]);
   });
@@ -209,6 +209,14 @@ describe("acts per conflict", () => {
     expect(acts({ caller: 1, isFinance: true, facts: { finance: [1, 3], approvers: [1, 2] }, filled: [] })).toEqual([]);
   });
 
+  it("conflicted FINANCE still chooses a line's bucket, and neither raises nor rejects an exception", () => {
+    const facts = { conflicted: [1, 3, 8] };
+    expect(acts({ caller: 3, state: "assign_ownership", facts, approval: { status: "unknown", ownerId: null } })).toEqual(["*resolve-bucket"]);
+    expect(acts({ caller: 3, state: "assign_ownership", facts, approval: { status: "pending", ownerId: null } })).toEqual(["*assign-bucket"]);
+    expect(acts({ caller: 3, facts, approval: { status: "exception_raised", ownerId: 7 } })).toEqual(["*assign-bucket"]);
+    expect(acts({ caller: 3, facts })).toEqual([]);
+  });
+
   it("an approver whose household already holds a seat on the expense is offered no approval", () => {
     expect(acts({ caller: 2, facts: { seatedHouseholds: [2] } })).toEqual(["raise-exception"]);
   });
@@ -245,12 +253,23 @@ describe("holds", () => {
     expect(r.awaiting).not.toContain("Awaiting approval");
   });
 
+  it("no exception is raised while the reimbursee is unknown", () => {
+    expect(acts({ caller: 2, reimburseeUnknown: true })).toEqual([]);
+    expect(acts({ caller: 3, reimburseeUnknown: true })).toEqual([]);
+  });
+
   it("nothing is approved before the line has a bucket", () => {
     expect(run({ caller: 2, state: "assign_ownership", approval: { status: "pending", ownerId: null } }).actions).toEqual([]);
   });
 
   it("the Board's approval of a large purchase is a hold, not an act", () => {
     expect(run({ caller: 5, boardApproval: true }).awaiting).toContain("Held until the Board's approval is recorded");
+  });
+
+  it("a line whose bucket conflicted FINANCE made final waits for a Board signature after its approval", () => {
+    const final = { approval: { status: "finance_assigned", ownerId: 7, bucketFinal: true }, facts: { conflictedFinal: true } };
+    expect(run({ caller: 3, ...final }).awaiting).toContain("Board approval after the line is approved");
+    expect(acts({ caller: 5, ...APPROVED, facts: { conflictedFinal: true }, filled: seats(["SUBMITTER", 1], ["TREASURER", 3]) })).toEqual(["*sign:BOARD"]);
   });
 
   it("a seat nobody can fill shows as held", () => {

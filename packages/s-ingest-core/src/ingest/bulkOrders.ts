@@ -87,8 +87,15 @@ interface OrderAcc {
  * Reassemble flat JSONL records into nested order nodes. Children are seeded from any INLINE
  * values on the order, then any `__parentId` lines are appended — de-duped by child GID so a
  * field returned both inline and flattened is never double-counted.
+ *
+ * An unparseable line cannot be attributed to an order, so `lostRecords` marks every order's lines
+ * as possibly incomplete. The mark is `pageInfo.hasNextPage`, stored in the raw payload so a replay
+ * honours it too.
  */
-export function reassembleOrders(records: Record<string, unknown>[]): OrderNode[] {
+export function reassembleOrders(
+  records: Record<string, unknown>[],
+  { lostRecords = false }: { lostRecords?: boolean } = {},
+): OrderNode[] {
   const orders = new Map<string, OrderAcc>();
 
   // Pass 1: collect top-level orders, seeding children from inline values.
@@ -129,7 +136,8 @@ export function reassembleOrders(records: Record<string, unknown>[]): OrderNode[
   }
 
   return Array.from(orders.values()).map((acc) => {
-    const o: Record<string, unknown> = { ...acc.order, lineItems: { nodes: acc.lines }, refunds: acc.refunds };
+    const lineItems = lostRecords ? { nodes: acc.lines, pageInfo: { hasNextPage: true } } : { nodes: acc.lines };
+    const o: Record<string, unknown> = { ...acc.order, lineItems, refunds: acc.refunds };
     // legacyResourceId may be absent in bulk output — derive from the gid.
     if (o.legacyResourceId == null) o.legacyResourceId = legacyIdFromGid(String(o.id ?? ""));
     return o as OrderNode;
@@ -199,7 +207,7 @@ export async function ingestBulkOrders(
 
   let ingested = 0;
   let maxOccurredAt: Date | null = null;
-  for (const node of reassembleOrders(records)) {
+  for (const node of reassembleOrders(records, { lostRecords: badLines.length > 0 })) {
     const res = await ingestNode(prisma, {
       storeId: args.storeId,
       objectType: ObjectType.ORDER,
@@ -250,7 +258,8 @@ export async function reingestBulkExports(
   for (const { id } of ids) {
     const row = await prisma.shopifyBulkExport.findUnique({ where: { id }, select: { storeId: true, jsonl: true } });
     if (!row) continue;
-    for (const node of reassembleOrders(parseBulkJsonl(row.jsonl).records)) {
+    const { records, badLines } = parseBulkJsonl(row.jsonl);
+    for (const node of reassembleOrders(records, { lostRecords: badLines.length > 0 })) {
       await ingestNode(prisma, {
         storeId: row.storeId,
         objectType: ObjectType.ORDER,

@@ -16,9 +16,11 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`, `journalEntriesBetween`.
   The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase`, `Bill` or `JournalEntry` entries
   QuickBooks created since `since` (`MetaData.CreateTime`), oldest first. It starts an hour before `since`
-  in case the app's clock runs ahead, so a caller must tolerate older entries. It reads every page up to
-  10 (10,000 entries), with `full: true` when it stops there and more may exist. Creation time survives
-  finance re-dating an entry, so it finds an app entry a dated window misses.
+  in case the app's clock runs ahead, so a caller must tolerate older entries. It reads up to 10 pages
+  (10,000 entries), each starting at the last row's `CreateTime`, so a deleted entry or a tie at a page edge
+  skips nothing. `full: true` means more may exist: it reached the cap, or more than a page of entries share
+  one `CreateTime` and it cannot move past them. Creation time survives finance re-dating an entry, so it
+  finds an app entry a dated window misses.
 - `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
   null when finance has set none (absent, null or empty). It throws when the read fails or the date is malformed;
   nothing caches it. It and the reference lists below are the other reads with no date window.
@@ -153,7 +155,8 @@ amount-anchored vendor join.
 `npm run sandbox-checks -w @checkin/quickbooks` confirms, against the sandbox only, what the gate
 relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
 and as the date once closed, a create dated in a closed period fails with fault 6210 in "Required
-password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
+password" closing mode, `createdSince` returns an entry just created, by its key, and its query is
+accepted and answers oldest first on `Deposit`, `Purchase`, `Bill` and `JournalEntry`. Run it twice:
 first with the sandbox books open, then after closing them (Settings → Account and settings →
 Advanced → Close the books) with a date before today and a password. It needs the consent token
 file and `QBO_ENVIRONMENT=sandbox`. The test deposits go into the bank account named

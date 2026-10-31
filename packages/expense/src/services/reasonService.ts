@@ -21,6 +21,9 @@ export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: 
  */
 const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
 
+/** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
+const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);
+
 /** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
 const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
 
@@ -90,7 +93,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
     if (!principal.isFinance) return false;
-    if (BOOKKEEPING.has(r.code)) return true;
+    if (BOOKKEEPING.has(r.code) || BUCKET_CHOICE.has(r.code)) return true;
     if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.
     if (r.code === "BOARD_APPROVAL") return !reimburseeUnknown(expense) && boardAuthorizationRefusal(lineFacts, me) === null;

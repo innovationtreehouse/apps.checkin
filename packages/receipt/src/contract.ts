@@ -334,6 +334,8 @@ export interface ReceiptRouteCtx {
   access: "finance" | "submitter";
   /** The caller's Person.id under FINANCE's own view; null under any other view, BOARD's included. */
   financeActorId: number | null;
+  /** The caller's Person.id under the submitter view; null under the finance view or with no session person. */
+  submitterActorId: number | null;
 }
 
 /** A route factory's body: parse → service → model bag (stripped by the host). */

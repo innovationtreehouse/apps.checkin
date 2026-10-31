@@ -294,6 +294,39 @@ describeDb("typing the details of a receipt OCR could not read", () => {
     expect((await receiptService.resubmit(r.id, "finance")).state).toBe("submitter_review");
   });
 
+  it("tells finance nothing about typed details a reading replaced, and keeps their audit rows", async () => {
+    const r = await unread();
+    await receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01", tax: 3 });
+    configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
+    await receiptService.retryOcr(r.id, "submitter");
+    expect((await receiptService.submitterConfirm(r.id)).state).toBe("receipt_finalized");
+    const kept = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "field_edit" } });
+    expect(kept.map((e) => e.fieldChanged).sort()).toEqual(["receiptDate", "taxCents"]);
+  });
+
+  it("still reports a correction made after the reading, and only that one", async () => {
+    const r = await unread();
+    await receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" });
+    configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
+    await receiptService.retryOcr(r.id, "submitter");
+    await receiptService.edit(r.id, "submitter", { tax: 1, receiptTotal: 6 });
+    expect((await receiptService.submitterConfirm(r.id)).state).toBe("financial_review");
+    const log = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, valueAfter: { startsWith: "financial_review" } } });
+    expect(log?.valueAfter).toContain("the submitter changed the tax from $0.00 to $1.00");
+    expect(log?.valueAfter).not.toContain("the date");
+  });
+
+  it("keeps typed details and their corrections when the reading fails again", async () => {
+    const r = await unread();
+    await receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" });
+    const again = await receiptService.retryOcr(r.id, "submitter");
+    expect(again).toMatchObject({ state: "ocr_failed", receiptDate: "2020-01-01" });
+    await receiptService.edit(r.id, "submitter", { retailer: "Typed Hardware", receiptTotal: 5 });
+    await receiptService.addLine(r.id, "submitter", { description: "Bolt", quantity: 1, unitPrice: 5 });
+    await receiptService.resubmit(r.id, "submitter");
+    expect((await receiptService.submitterConfirm(r.id)).state).toBe("financial_review");
+  });
+
   it("does not let another submitter type the details", async () => {
     const r = await unread();
     actAs(BOB);

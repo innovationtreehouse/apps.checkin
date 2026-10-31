@@ -98,6 +98,16 @@ jest.mock('@checkin/component-ui', () => ({
   useViewer: () => require('@/components/AuthProvider').viewerFromSession(require('next-auth/react').useSession().data),
 }));
 
+// The load cache lives for the test file, so each test gets its own answers. Pages unmount first, or the clear refetches them.
+if (typeof document !== 'undefined') {
+  const { cleanup } = require('@testing-library/react');
+  const { clearLoads } = require('@checkin/component-ui/loadCache');
+  afterEach(() => {
+    cleanup();
+    clearLoads();
+  });
+}
+
 // Mock next-auth to prevent instantiation errors in App Router imports
 jest.mock('next-auth', () => {
   const mockNextAuth = jest.fn(() => ({}));

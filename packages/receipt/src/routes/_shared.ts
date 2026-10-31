@@ -1,6 +1,7 @@
-/** Body readers for the route factories. */
+/** Body readers and line-owner stamps for the route factories. */
 import { httpError } from "@checkin/component-kit";
 import { readCapped } from "@checkin/utils";
+import type { ReceiptRouteCtx } from "../contract";
 
 /** A 10 MB file plus multipart framing: the host's API upload ceiling, which its test pins to this. */
 export const MAX_UPLOAD_BODY_BYTES = 11 * 1024 * 1024;
@@ -33,4 +34,22 @@ export async function readJsonCapped(
   } catch {
     throw httpError(400, "Invalid JSON body");
   }
+}
+
+/**
+ * A line row carries no owner column, and the host's stripper scopes each nested row by itself,
+ * so a submitter's lines are stamped with their receipt's uploader or `their_own` strips them.
+ */
+export function stampLines<T extends object>(lines: T[], uploadedByUserId: number): (T & { uploadedByUserId: number })[] {
+  return lines.map((line) => ({ ...line, uploadedByUserId }));
+}
+
+/**
+ * One line a write returned. A submitter's write reached only their own receipt, so it is
+ * stamped with their id; finance reads every line and needs no stamp.
+ */
+export function ownLine<T extends object>({ access, submitterActorId }: ReceiptRouteCtx, line: T): T {
+  if (access !== "submitter") return line;
+  if (submitterActorId === null) throw httpError(401, "Unauthorized");
+  return { ...line, uploadedByUserId: submitterActorId };
 }

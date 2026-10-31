@@ -85,8 +85,7 @@ permissions:
   # the reusable ci.yml call below: its unit-tests/integration-tests jobs
   # request checks: write (dorny/test-reporter), and a called job may never
   # exceed the caller's grants. Without this line the validate call dies at
-  # startup_failure with zero jobs — exactly how v1.0.0's first prod deploy
-  # failed on 2026-07-14 (see deploy-prod.yml's identical comment/fix).
+  # startup_failure with zero jobs (deploy-prod.yml carries the same grant).
   checks: write
 
 concurrency:
@@ -120,7 +119,7 @@ jobs:
   # validate is running would let deploy check out and ship a commit CI never
   # saw (the constant concurrency group only serializes RUNS — it does not
   # stop run N's deploy from picking up run N+1's commit). Same defect class
-  # deploy-prod.yml's H1 fix addresses for release tags, and the same reason
+  # deploy-prod.yml's `validate` job addresses for release tags, and the same reason
   # deploy-dev.yml resolves workflow_run.head_sha explicitly instead of
   # trusting a branch name.
   #
@@ -331,8 +330,7 @@ jobs:
             #            the entrypoint's own FATAL asserts (STG_DB outside the
             #            checkin_stg* namespace, target database missing,
             #            classification row-count floor). Re-running reproduces
-            #            them exactly — infra #150's first staging deploy burned
-            #            5 attempts on an identical exit 3.
+            #            them exactly, so a retry only burns an attempt.
             case "$EXIT_CODE" in
               0) break ;;
               2 | None | null | "")
@@ -541,10 +539,9 @@ jobs:
           set -euo pipefail
           # Real probe of the deployed service (mirrors deploy-prod.yml). The
           # app answers 200 or an auth redirect; retries cover target
-          # registration + first boot after scale-up. 10 minutes, measured, not
-          # guessed: on run 29925037763 task-start -> waker rule promote took
-          # 4m22s and the old 2-minute window expired 68s before the promote —
-          # a succeeded deploy reported as failed. The 503s during the wait are
+          # registration + first boot after scale-up. 10 minutes, because
+          # task-start -> waker rule promote measures over 4 minutes and a window
+          # that expires first reports a succeeded deploy as failed. The 503s during the wait are
           # the ops-stg-waker's holding page; each probe also drives the
           # waker's health poll, so keep the 10s cadence.
           for i in $(seq 1 60); do

@@ -9,7 +9,7 @@ import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
-// anyRole sysadmin/board/keyholder (Q15; operations stay out — #1633);
+// anyRole sysadmin/board/keyholder (operations stay out);
 // envelope null. `[id]` is a RawBadgeLog id.
 //
 // Two actions, both stamping the review columns exactly once:
@@ -17,11 +17,11 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 // Dismiss (default) — "I looked, nothing to do." Touches nothing else;
 // reviewReason is left intact so the row keeps saying why it parked.
 //
-// Record (§5.26/B4, ruled 2026-08-28) — writes the Visit the parked scan
+// Record — writes the Visit the parked scan
 // described, at the row's OWN timestamp, never at resolution time. The
 // manual tool's 6h/same-day staleness bound deliberately does NOT apply: it
 // guards a human's memory, and this row is machine-stamped at the door. An
-// IN with no matching OUT is the caller's choice (Q13 human-always): leave
+// IN with no matching OUT is the caller's choice (always a human's): leave
 // the visit open — allowed only while the facility is live-open, since an
 // open visit joins today's supervision math — or close it at a departure
 // the reviewer supplies. A scan whose presence event is a departure (OUT)
@@ -78,7 +78,7 @@ export const POST = handler<{ id: string }>(
         if (parsedDeparted && parsedDeparted <= row.timestamp) {
             throw badRequest("departedAt must be after the scan time.");
         }
-        // The ruling waived arrival STALENESS, not visit LENGTH — a wrong-day
+        // Recording waives arrival STALENESS, not visit LENGTH — a wrong-day
         // typo must not mint a multi-day visit.
         if (parsedDeparted && !withinMaxDuration(row.timestamp, parsedDeparted)) {
             throw badRequest("A visit cannot be longer than 24 hours.");
@@ -131,7 +131,7 @@ export const POST = handler<{ id: string }>(
 
             // Leaving the visit open puts this person in TODAY's live roster,
             // so the live rule applies: a non-keyholder cannot be the only one
-            // in the building (#254 keyholder-first).
+            // in the building.
             if (!parsedDeparted && !person.isKeyholder) {
                 const activeKeyholders = await tx.visit.count({
                     where: KEYHOLDER_IN_BUILDING,

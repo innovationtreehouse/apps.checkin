@@ -38,7 +38,7 @@ name: Security boundary isolation
 # entire top-level entries whose subjects cease to exist in the same PR (a
 # scopeBindings model dropped from schema.prisma; a defineRoute whose verb is
 # no longer served) cannot add exposure, and the drift check WELDS such a PR
-# to its migration (#1446). When check-boundary-decommission.js certifies
+# to its migration. When check-boundary-decommission.js certifies
 # that shape — fail-closed: partial edits, additions, re-tiers, reorders, and
 # engine-file changes never qualify — the PR may also carry prisma/migrations/**
 # and the route files of the removed entries, nothing else. The comparison is
@@ -149,7 +149,7 @@ jobs:
             case "$1" in
               checkin-app/src/security/generated/*) return 1 ;;
               # Tests ASSERT the policy, they don't set it. Classifying them as
-              # boundary files made a decommission block itself: a per-model
+              # boundary files would make a decommission block itself: a per-model
               # scope oracle (visit-household-lead-scope.test.ts for Visit) has
               # to change or leave with its model, and the certifier rejects any
               # boundary file that isn't declarative. They stay companions.
@@ -169,7 +169,7 @@ jobs:
               */__tests__/*|*.test.ts|*.test.tsx|*.spec.ts) return 0 ;;
               checkin-app/prisma/schema.prisma) return 0 ;;          # @sensitivity annotations
               # Vendored Inventory libraries adopt this regime over their own
-              # separate schemas (#1286 §5): those schemas carry @sensitivity +
+              # separate schemas: those schemas carry @sensitivity +
               # a `generator security` block feeding the merged classifications.
               packages/*/prisma/schema.prisma) return 0 ;;           # @sensitivity annotations
               docs/*|*/docs/*|*.md) return 0 ;;
@@ -198,7 +198,7 @@ jobs:
           # generated classifications map. Pure additions (new fields/models)
           # pass. Every checked-in generator output under generated/ is a
           # source of truth for some schema (checkin's own, or a vendored
-          # package's per #1286 §5) — loop over whichever of them changed
+          # package's) — loop over whichever of them changed
           # rather than naming one, so a re-tier in any of them is caught.
           RETIER=""
           GENERATED_CHANGED=()
@@ -211,9 +211,9 @@ jobs:
             [ -z "$CLS" ] && continue
             DIFF=$(git diff "$BASE_SHA"..."$HEAD_SHA" -- "$CLS")
             # `|| true`: under set -euo pipefail, grep's exit 1 on zero matches
-            # would kill the script mid-step with no verdict — which failed every
-            # PR whose classifications diff was PURELY ADDITIVE (the exact case
-            # the comment above exempts; first hit by checkin#1021).
+            # would kill the script mid-step with no verdict, failing every PR
+            # whose classifications diff is PURELY ADDITIVE (the case the comment
+            # above exempts).
             REMOVED=$(echo "$DIFF" | grep -E "^-\s+\w+: '" | sed -E "s/^-\s+(\w+): '(\w+)'.*/\1 \2/" | sort -u || true)
             ADDED=$(echo "$DIFF"   | grep -E "^\+\s+\w+: '" | sed -E "s/^\+\s+(\w+): '(\w+)'.*/\1 \2/" | sort -u || true)
             while read -r field oldtier; do

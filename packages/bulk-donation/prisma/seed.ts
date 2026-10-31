@@ -1,5 +1,5 @@
 /**
- * Bulk-donation dev/test seed (#1280). Imports one Benevity file through the
+ * Bulk-donation dev/test seed. Imports one Benevity file through the
  * real upload path: disbursement SEED-D1 matches the seeded account rule and
  * completes; SEED-D2's company has no rule, so it lands on hold. Every gift is
  * comment-less (organizational-level), so no owner is needed. Idempotent: a

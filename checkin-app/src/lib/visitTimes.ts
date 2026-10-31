@@ -23,7 +23,7 @@ export function parseVisitTime(
   return { ok: true, value: d };
 }
 
-/** M6: a departure must be strictly after its arrival (rejects zero-length too). */
+/** A departure must be strictly after its arrival (rejects zero-length too). */
 export function departureAfterArrival(arrived: Date, departed: Date): boolean {
   return departed.getTime() > arrived.getTime();
 }

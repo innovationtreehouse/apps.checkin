@@ -9,7 +9,7 @@ import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 /**
  * Activate paid program enrollments — the single choke point the Shopify
  * orders/paid webhook AND the reconciler both call (mirrors membership's
- * activate()). Extracted from the webhook route so a MISSED webhook can be
+ * activate()). Shared with the webhook route so a MISSED webhook can be
  * recovered by the reconciler through the exact same, idempotent path.
  *
  * Per participant: a transactionally-guarded PENDING → ACTIVE flip (so a webhook
@@ -102,7 +102,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
             // idempotent for a redelivery (the row is already ACTIVE → 0 rows). Whether a hold
             // was released is read off which guarded write matched, never off a pre-read.
             const flip = (held: boolean) => tx.programParticipant.updateMany({
-                // T4 activate CAS from-state (any PENDING; sourced from the definition, #1080).
+                // T4 activate CAS from-state (any PENDING; sourced from the definition).
                 where: { programId, personId, ...fromWhere("PENDING_UNPAID"), inventoryHeldAt: held ? { not: null } : null },
                 data: { status: "ACTIVE", pendingSince: null, shopifyOrderId, inventoryHeldAt: null },
             });

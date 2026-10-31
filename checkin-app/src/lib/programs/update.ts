@@ -117,7 +117,7 @@ export async function authorizeProgramEdit(programId: number, actor: ProgramEdit
     const isLeadMentor = program.leadMentorId === actor.id;
     const isSysAdminOrBoard = actor.isSysadmin || actor.isBoardMember;
     if (!isLeadMentor && !isSysAdminOrBoard) {
-        return refuse("forbidden", "Forbidden: Only Admin, Board Members, or Lead Mentors can edit");
+        return refuse("forbidden", "Forbidden: Only Admin, Board Members, or Program Leaders can edit");
     }
     return { ok: true, program };
 }
@@ -170,24 +170,24 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
 
     if (patch.hasOwnProperty('leadMentorId')) {
         if (!patch.leadMentorId) {
-            return refuse("invalid", "Lead Mentor is required");
+            return refuse("invalid", "Program Leader is required");
         }
         leadMentorId = parseInt(String(patch.leadMentorId));
         if (isNaN(leadMentorId)) {
-            return refuse("invalid", "Invalid lead mentor");
+            return refuse("invalid", "Invalid Program Leader");
         }
         if (!isSysAdminOrBoard && leadMentorId !== currentProgram.leadMentorId) {
-            return refuse("forbidden", "Forbidden: Only administrators can reassign lead mentors");
+            return refuse("forbidden", "Forbidden: Only administrators can reassign Program Leaders");
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
             select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!mentor) {
-            return refuse("invalid", "Lead mentor not found");
+            return refuse("invalid", "Program Leader not found");
         }
         if (!isLeaderAgeEligible(mentor)) {
-            return refuse("invalid", "Lead mentor must be at least 23 years old");
+            return refuse("invalid", "Program Leader must be at least 23 years old");
         }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
@@ -208,7 +208,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }
         const effLeadMentorId = leadMentorId !== undefined ? leadMentorId : currentProgram.leadMentorId;
         if (!effLeadMentorId) {
-            return refuse("invalid", "Cannot publish a program without a Lead Mentor assigned");
+            return refuse("invalid", "Cannot publish a program without a Program Leader assigned");
         }
         const eventCount = await prisma.event.count({ where: { programId } });
         if (eventCount === 0) {

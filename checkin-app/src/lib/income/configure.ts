@@ -7,7 +7,8 @@
  *   library stamps the same person and org ids.
  * - mirror: the s-read Shopify mirror, bound only where it is wired. Unbound,
  *   a run answers "unbound" instead of reading an empty mirror and reopening
- *   every settled payout as drift.
+ *   every settled payout as drift. Its items add the app's unsold program and
+ *   membership items, so finance can decide on them before the first sale.
  * - deposits: QuickBooks deposit reads through checkin's one guarded client,
  *   bound only where QBO_REALM_ID is set. While the guard keeps QuickBooks off,
  *   every read throws, so a run fails and writes nothing.
@@ -48,6 +49,7 @@ import { booksMap, budgetOwners } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
+  incomeOrderSubtotals,
   incomePaidPayoutsSince,
   incomePayout,
   incomePayoutTransactions,
@@ -82,8 +84,10 @@ const payoutMirror: PayoutMirror = {
   async orderLines(orderGids) {
     return (await incomeOrderLines(orderGids)).map((l) => ({ ...l, title: l.title ?? "" }));
   },
+  orderSubtotals: incomeOrderSubtotals,
   async itemsSeen() {
-    return (await incomeItemsSeen()).map((i) => ({ ...i, title: i.title ?? "" }));
+    const { withAppItems } = await import("./appItems");
+    return withAppItems(await incomeItemsSeen());
   },
 };
 

@@ -10,9 +10,8 @@ import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import { CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
+import { APPROVABLE_STATUSES, CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
-  APPROVABLE_STATUSES,
   approveLine,
   approveLines,
   assignOwner,
@@ -25,7 +24,7 @@ import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, 
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { recordBoardAuthorization, reimburseeOptions, setReimbursee, signLine, signLines, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
-import { expensesAwaitingMyApproval } from "../services/badgeCounts";
+import { allExpensesAwaitingMyApproval } from "../services/badgeCounts";
 import { EXPENSE_LIST_VIEWS, expenseViewsFor, type ExpenseListView, type ExpenseViewer } from "../nav";
 import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
 import { approveTax } from "../services/taxApprovalService";
@@ -89,12 +88,12 @@ async function parseView(principal: ExpensePrincipal, raw: string | null, fallba
   return view as QueueView;
 }
 
-/** "Waiting on you" lists exactly the expenses the approver pill counts lines on. */
+/** "Waiting on you" lists every expense with a line waiting on the caller's approval. */
 async function listWhere(principal: ExpensePrincipal, view: QueueView, activeOnly = false): Promise<Prisma.ExpenseWhereInput> {
   const scope = await viewerScope(principal);
   const viewFilter =
     view === "awaiting_me"
-      ? { id: { in: (await expensesAwaitingMyApproval(principal)).map((e) => e.expenseId) } }
+      ? { id: { in: (await allExpensesAwaitingMyApproval(principal)).map((e) => e.expenseId) } }
       : viewWhere(view, scope);
   const where = [scopedExpenses(await getOrgId(), scope), viewFilter];
   if (activeOnly) where.push({ state: { notIn: [...CLOSED_STATES] } });

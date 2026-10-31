@@ -261,6 +261,9 @@ Procedure below is built on them.
   finds the same review recorded under two identities, only a board member may
   remove the duplicate.  [Decision]
 
+- The Participants directory is for sysadmins, the board and operations. A
+  background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
+
 - Every background-check decision that refuses, blocks or denies, and every
   payment certification, records a written reason — wider than the policy, which
   requires documentation only for a disqualifying offence. An approval needs

@@ -21,3 +21,4 @@ export { applyMigrations, type ApplyMigrationsOptions } from "./migrate.js";
 export { pgGlobalSetup, type PgHarnessOptions, type GlobalSetupContext } from "./globalSetup.js";
 export { applyHarnessEnv, type SetupEnvOptions } from "./setupEnv.js";
 export { describeDb, dbGateMode, type DbGateMode } from "./describeDb.js";
+export { backendPid, waitersBehind, type RawQueryClient } from "./lockGate.js";

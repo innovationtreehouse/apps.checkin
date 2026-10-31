@@ -110,7 +110,7 @@ export function personPreImage(p: Person) {
  * The `PersonMerge.snapshot` payload: identity as it stood at merge time, for the
  * readers that outlive the tombstone Person row. Narrower than `personPreImage`,
  * which is forensic and lands in AuditLog; this is a live data source —
- * compliance §6 reads name/lastBackgroundCheck, audit names read email.
+ * compliance reads name/lastBackgroundCheck, audit names read email.
  *
  * NO dateOfBirth: a Json blob is classified as one field, so it would re-tier
  * the column from `pii` to `personal` for no reader. Dates are ISO strings

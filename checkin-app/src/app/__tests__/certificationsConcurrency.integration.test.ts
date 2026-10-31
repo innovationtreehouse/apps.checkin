@@ -10,7 +10,10 @@
  * Made deterministic by holding the Board's update uncommitted on one
  * connection until the certifier's write is blocked on that row lock.
  */
+import { backendPid, waitersBehind } from '@checkin/pg-test-harness/lockGate';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { POST } from '@/app/api/shop/certifications/route';
+import { PrismaClient } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -20,7 +23,8 @@ jest.mock('next-auth/next', () => ({
 
 const TAG = 'cert-concurrency-test';
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// The holder and the write take both of the app pool's connections, so the gate polls on its own.
+const observer = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 function postReq(body: Record<string, unknown>) {
     return {
@@ -59,6 +63,7 @@ describe('certification level change racing a certifier grant (real DB)', () => 
     });
 
     afterAll(async () => {
+        await observer.$disconnect();
         await prisma.auditLog.deleteMany({ where: { actorId: { in: [certifierId, targetId] } } });
         await prisma.toolStatus.deleteMany({ where: { toolId } });
         await prisma.tool.deleteMany({ where: { id: toolId } });
@@ -70,29 +75,29 @@ describe('certification level change racing a certifier grant (real DB)', () => 
     it('refuses the certifier write with 409 and keeps the certifier level', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: certifierId } });
 
-        const race: { pending?: Promise<Response> } = {};
-        await prisma.$transaction(async (tx) => {
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        let locked!: (pid: number) => void;
+        const held = new Promise<number>((r) => (locked = r));
+        const holder = prisma.$transaction(async (tx) => {
             await tx.toolStatus.update({
                 where: { personId_toolId: { personId: targetId, toolId } },
                 data: { level: 'MAY_CERTIFY_OTHERS' },
             });
-            race.pending = POST(postReq({ personId: targetId, toolId, level: 'BASIC' })) as Promise<Response>;
-
-            const deadline = Date.now() + 10_000;
-            for (;;) {
-                // pg_stat_activity is snapshotted per transaction; clear it so each poll is fresh.
-                await tx.$queryRaw`SELECT pg_stat_clear_snapshot() IS NULL AS cleared`;
-                const [{ n }] = await tx.$queryRaw<{ n: number }[]>`
-                    SELECT count(*)::int AS n FROM pg_stat_activity
-                    WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-                if (n > 0) break;
-                if (Date.now() > deadline) throw new Error('certifier write never blocked on the row lock');
-                await sleep(20);
-            }
+            locked(await backendPid(tx));
+            await released;
         }, { timeout: 15_000 });
+        const holderPid = await held;
 
-        if (!race.pending) throw new Error('certifier write never started');
-        const res = await race.pending;
+        const pending = POST(postReq({ personId: targetId, toolId, level: 'BASIC' })) as Promise<Response>;
+        try {
+            await waitersBehind(observer, holderPid);
+        } finally {
+            release();
+            await holder;
+        }
+
+        const res = await pending;
         expect(res.status).toBe(409);
 
         const row = await prisma.toolStatus.findUnique({ where: { personId_toolId: { personId: targetId, toolId } } });
