@@ -60,7 +60,7 @@ export async function projectOrder(
     if (updated === 0) return; // stored row is newer — leave it and its children alone
   }
 
-  // Reconcile line items by GID: upsert present ones, soft-mark absent ones.
+  // Reconcile line items by GID: upsert present ones, soft-mark absent ones when the payload is complete.
   const incoming = new Set(order.lines.map((l) => l.lineGid));
   for (const line of order.lines) {
     const lineFields = {
@@ -82,16 +82,18 @@ export async function projectOrder(
       update: lineFields,
     });
   }
-  const existing = await db.shopOrderLine.findMany({
-    where: { storeId, orderGid: order.shopifyGid },
-    select: { lineGid: true },
-  });
-  const toRemove = existing.map((e) => e.lineGid).filter((gid) => !incoming.has(gid));
-  if (toRemove.length > 0) {
-    await db.shopOrderLine.updateMany({
-      where: { storeId, lineGid: { in: toRemove } },
-      data: { removed: true },
+  if (order.linesComplete) {
+    const existing = await db.shopOrderLine.findMany({
+      where: { storeId, orderGid: order.shopifyGid },
+      select: { lineGid: true },
     });
+    const toRemove = existing.map((e) => e.lineGid).filter((gid) => !incoming.has(gid));
+    if (toRemove.length > 0) {
+      await db.shopOrderLine.updateMany({
+        where: { storeId, lineGid: { in: toRemove } },
+        data: { removed: true },
+      });
+    }
   }
 
   // Refunds are append/update-only (never disappear from an order).

@@ -71,6 +71,7 @@ const ORDER_FIELDS = `
       originalUnitPriceSet ${MONEY_BAG}
       totalDiscountSet ${MONEY_BAG}
     }
+    pageInfo { hasNextPage }
   }
   refunds {
     id
