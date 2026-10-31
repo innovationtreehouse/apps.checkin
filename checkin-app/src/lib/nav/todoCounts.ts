@@ -9,7 +9,6 @@ import { openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
@@ -182,7 +181,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
 
     const householdId = user.householdId;
     const members = await prisma.person.findMany({
-        where: { householdId, ...LIVE_PERSON },
+        where: { householdId },
         select: { id: true },
     });
     const memberIds = members.map((m) => m.id);
@@ -190,7 +189,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
     // From the DB, not the session claim, so a lead change applies at once.
     const [isLead, seesPayments] = await Promise.all([
         prisma.person.findFirst({
-            where: { id: user.id, householdId, isHouseholdLead: true, ...LIVE_PERSON },
+            where: { id: user.id, householdId, isHouseholdLead: true },
             select: { id: true },
         }).then((p) => p !== null),
         seesHouseholdPaymentStatus(user.id),
@@ -222,7 +221,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // page highlights the member box; this drives the nav badge count.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }], ...LIVE_PERSON },
+                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }] },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
@@ -230,7 +229,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // on the household page; the lead must add one or the other.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, dateOfBirth: null, isDeclaredAdult: false, ...LIVE_PERSON },
+                  where: { householdId, dateOfBirth: null, isDeclaredAdult: false },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
@@ -253,7 +252,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // Unpaid enrollments are payment status: the household lead's alone.
         seesPayments
             ? prisma.programParticipant.findMany({
-                  where: { personId: { in: memberIds }, status: "PENDING", person: LIVE_PERSON },
+                  where: { personId: { in: memberIds }, status: "PENDING" },
                   select: { programId: true, isPaymentPlanRequested: true, program: { select: { name: true } } },
               })
             : Promise.resolve([]),
@@ -341,7 +340,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
         // "Total Enrolled" = active (not PENDING) participants per program.
         prisma.programParticipant.groupBy({
             by: ["programId"],
-            where: { programId: { in: ledIds }, status: "ACTIVE", person: LIVE_PERSON },
+            where: { programId: { in: ledIds }, status: "ACTIVE" },
             _count: { personId: true },
         }),
         // All upcoming sessions, ascending; we keep the next 3 per program below.
@@ -352,7 +351,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
         }),
         // Volunteer roster per program — used to split RSVP tallies by role.
         prisma.programVolunteer.findMany({
-            where: { programId: { in: ledIds }, person: LIVE_PERSON },
+            where: { programId: { in: ledIds } },
             select: { programId: true, personId: true },
         }),
         getLeadConflicts(userId),
@@ -390,7 +389,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     for (const [programId, evs] of upcomingByProgram) for (const e of evs) eventProgram.set(e.id, programId);
     const rsvpRows = upcomingEventIds.length
         ? await prisma.rSVP.findMany({
-              where: { eventId: { in: upcomingEventIds }, person: LIVE_PERSON },
+              where: { eventId: { in: upcomingEventIds } },
               select: { eventId: true, personId: true, status: true },
           })
         : [];
@@ -453,7 +452,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // hold fails, so they don't need a green "approval pending" pill.
         seesFinance
             ? prisma.programParticipant.count({
-                  where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null, person: LIVE_PERSON },
+                  where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null },
               })
             : 0,
         // Households awaiting board approval of a membership-fee payment plan.
@@ -469,7 +468,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         prisma.household.count({
             where: UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE,
         }),
-        // "Broken" households: live members, none of them a lead. Mirrors
+        // "Broken" households: members, none of them a lead. Mirrors
         // /api/admin/broken-households.
         prisma.household.count({
             where: BROKEN_HOUSEHOLD_WHERE,
@@ -477,7 +476,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // People Resend has reported as undeliverable (bounce/complaint), not since
         // cleared by a later delivery. See Person.emailUndeliverableAt / webhooks/resend.
         prisma.person.count({
-            where: { emailUndeliverableAt: { not: null }, ...LIVE_PERSON },
+            where: { emailUndeliverableAt: { not: null } },
         }),
         // Programs priced on a tier with no matching Shopify variant — paid enrollment
         // silently can't check out. Same condition as the list/detail UI, shared via
