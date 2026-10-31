@@ -877,6 +877,7 @@ defineRoute({
 defineRoute({
     endpoint: 'GET /api/profile/household-question',
     authorize: 'authenticated',
+    allowJoinPending: true,
     envelope: 'household',
     // Bag: { Household }.
     returns: ['Household'],
@@ -889,6 +890,7 @@ defineRoute({
 defineRoute({
     endpoint: 'POST /api/profile/household-question',
     authorize: 'authenticated',
+    allowJoinPending: true,
     envelope: null,
     returns: ['Household'],
     orderedView: [
