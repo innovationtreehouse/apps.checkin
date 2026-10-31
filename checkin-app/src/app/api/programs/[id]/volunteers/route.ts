@@ -13,7 +13,6 @@ import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/se
  * Returns the error response to send, or null when the grant may proceed.
  */
 async function refuseOwnHousehold(actorId: number, personId: number, programId: number, isCore: boolean) {
-    // A merged-away record is no one to volunteer; its survivor is.
     const subject = await prisma.person.findFirst({ where: { id: personId }, select: { householdId: true } });
     if (!subject) return apiError("Participant not found", 400);
     const refused = await refuseSelfGrant(prisma, actorId, { personId, householdId: subject.householdId }, { table: "ProgramVolunteer", attempted: { programId, isCore } });

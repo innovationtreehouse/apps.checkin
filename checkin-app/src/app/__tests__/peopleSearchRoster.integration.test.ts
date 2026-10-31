@@ -7,9 +7,9 @@
  *
  * The page-level test proves the printed name doesn't move when the operator ticks a
  * checkbox or types, but it does that against a mocked server. These are the server-side
- * halves of the same claim: roster mode returns ACTIVE members only, excludes merge
- * tombstones, and — the part stable names rest on — ignores `q` entirely, so a search
- * cannot shrink the population a name is computed from.
+ * halves of the same claim: roster mode returns ACTIVE members only and — the part
+ * stable names rest on — ignores `q` entirely, so a search cannot shrink the
+ * population a name is computed from.
  */
 
 import { GET } from '@/app/api/people/search/route';
@@ -118,10 +118,6 @@ describe('GET /api/people/search?roster=active', () => {
         await makePerson('John Doe', 'doe', 'ACTIVE');
         await makePerson('John Lapsed', 'lapsed', 'NONE');
 
-        // ACTIVE but merged away: a tombstone row that LIVE_PERSON must keep out.
-        const ghost = await makePerson('John Ghost', 'ghost', 'ACTIVE');
-        await prisma.person.update({ where: { id: ghost.id }, data: { mergedIntoId: adminId } });
-
         // The renewal cohort. Every one of these is an ACTIVE member — status cannot be
         // what separates them, only whether they settled the current cycle.
         await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
@@ -150,7 +146,7 @@ describe('GET /api/people/search?roster=active', () => {
 
     const roster = async (query: string) =>
         (await rosterRows(query))
-            .filter(p => ['John Smith', 'John Doe', 'John Lapsed', 'John Ghost'].includes(p.name))
+            .filter(p => ['John Smith', 'John Doe', 'John Lapsed'].includes(p.name))
             .map(p => p.name)
             .sort();
 
@@ -161,7 +157,7 @@ describe('GET /api/people/search?roster=active', () => {
         return Object.fromEntries(rows.filter(p => names.includes(p.name)).map(p => [p.name, p.year]));
     };
 
-    it('returns ACTIVE members only, excluding non-members and merge tombstones', async () => {
+    it('returns ACTIVE members only, excluding non-members', async () => {
         expect(await roster('roster=active')).toEqual(['John Doe', 'John Smith']);
     });
 

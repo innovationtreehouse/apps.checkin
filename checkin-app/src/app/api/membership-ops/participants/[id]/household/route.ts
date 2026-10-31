@@ -101,8 +101,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 data: { name: `${participant.name || 'User'}'s Household` },
             })).id;
 
-            // Conditional on the person still being live and still in the household locked
-            // above, so a merge or another move that lands after the pre-check is refused.
+            // Conditional on the person still being in the household locked above, so a
+            // merge or another move that lands after the pre-check is refused.
             const { count } = await tx.person.updateMany({
                 where: { id: participantId, householdId: participant.householdId },
                 data: {

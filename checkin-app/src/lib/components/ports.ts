@@ -11,7 +11,7 @@ export const budgetOwners = {
   },
 };
 
-/** Live members of every household holding one of these people; a merged-away person's household still counts. */
+/** Members of every household holding one of these people. */
 export async function householdOf(personIds: number[]): Promise<number[]> {
   if (personIds.length === 0) return [];
   const { default: prisma } = await import("@/lib/prisma");
