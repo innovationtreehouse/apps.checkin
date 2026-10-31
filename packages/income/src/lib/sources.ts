@@ -1,7 +1,7 @@
 // Where income's expected deposits come from, and what differs between those sources: the key
 // income books under, the QuickBooks accounts a deposit resolves to, the match window, and the
 // queue note on a deposit dated in closed books. Everything else runs the same on every source.
-import { qbKey, type BooksMapRole } from "@checkin/quickbooks";
+import { MATCH_WINDOW_DAYS, qbKey, type BooksMapRole } from "@checkin/quickbooks";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import { getIncomeConfig } from "../runtime";
 import type { DepositAccount } from "./deposit-lines";
@@ -26,7 +26,7 @@ export const BANK_ROLE: Record<DepositSourceName, BooksMapRole> = {
 };
 
 /** Days either side of a Benevity disbursement a deposit may be dated; finance books these by hand within a week. */
-export const BENEVITY_MATCH_WINDOW_DAYS = 7;
+export const BENEVITY_MATCH_WINDOW_DAYS = MATCH_WINDOW_DAYS;
 
 export type RoleAccounts = Partial<Record<BooksMapRole, string>>;
 

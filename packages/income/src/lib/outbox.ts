@@ -329,7 +329,7 @@ export async function postPayout(
   id: number,
   gate: PostGate,
   wait: boolean,
-  opts: { actor?: RowActor; problem?: BucketProblem; sales?: PayoutSales; book?: boolean; accounts?: RoleAccounts } = {},
+  opts: { actor?: RowActor; problem?: BucketProblem; sales?: PayoutSales; book?: boolean; accounts?: RoleAccounts; benevityWindowDays?: number } = {},
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
   const actor = opts.actor ?? { userId: null };
   const { mirror, posting } = getIncomeConfig();
@@ -365,7 +365,7 @@ export async function postPayout(
   const accounts = opts.accounts ?? (await roleAccounts());
   if (missingRoles(row, accounts).length) return { outcome: "waiting", row };
 
-  const window = matchWindow(row.payoutDate, row.source);
+  const window = matchWindow(row.payoutDate, row.source, opts.benevityWindowDays ?? (await readIncomeSettings(db, orgId)).benevityMatchWindowDays);
   let write: TxnWrite | null = null;
   let buildError = "";
   try {
@@ -548,7 +548,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * try/catch; it returns counts only.
  */
 export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): Promise<DrainResult> {
-  const reconcile = await runReconcile(orgId, now);
+  const caps = await readIncomeSettings(db, orgId);
+  const reconcile = await runReconcile(orgId, now, caps.benevityMatchWindowDays);
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
   const { mirror, posting, alerts } = getIncomeConfig();
   // A cap hit must reach finance, so the drain never creates without the alert bound.
@@ -581,7 +582,6 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   }
 
   const problem = await checkBuckets(orgId);
-  const caps = await readIncomeSettings(db, orgId);
   const accounts = await roleAccounts();
   const today = isoDay(now);
   const due = (
@@ -589,7 +589,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
       where: dueWhere,
       orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
     })
-  ).filter((r) => isHeld(r) || r.createdAt > onAtOf(r.source) || today <= addDays(r.payoutDate, windowDays(r.source)));
+  ).filter((r) => isHeld(r) || r.createdAt > onAtOf(r.source) || today <= addDays(r.payoutDate, windowDays(r.source, caps.benevityMatchWindowDays)));
 
   const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
   // The count cap is the org's across sources; each source has its own cents cap.
@@ -635,7 +635,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
       }
     }
     const closedThrough = closedThroughOf(closeDate, onAt);
-    const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts });
+    const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
     if (turn.outcome === "posted") createdCents[r.source] = sofar + cents;

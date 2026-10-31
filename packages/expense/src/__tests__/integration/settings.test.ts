@@ -10,6 +10,24 @@ import { receiveCompletedReceipt } from "../../services/intakeService";
 const FINANCE = principal(3, { isFinance: true });
 
 describe("updateExpenseSettings — guards", () => {
+  it("holds the QuickBooks limits to finance lowers, the Board raises", async () => {
+    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 60 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 40 }, FINANCE);
+    await updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 60 }, principal(5, { isBoard: true }));
+    expect(await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } })).toBe(2);
+  });
+
+  it("refuses a per-run limit above the per-day limit", async () => {
+    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 10 }, FINANCE)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("lets finance move the match window either way, within 1 to 30", async () => {
+    await updateExpenseSettings(ORG, { qbMatchWindowDays: 30 }, FINANCE);
+    await updateExpenseSettings(ORG, { qbMatchWindowDays: 1 }, FINANCE);
+    await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 31 }, FINANCE)).rejects.toThrow();
+    await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 0 }, FINANCE)).rejects.toThrow();
+  });
+
   it("asserts the org", async () => {
     await expect(updateExpenseSettings("org-other", { boardReviewTotalCents: 1 }, FINANCE)).rejects.toThrow(/not this org/);
   });

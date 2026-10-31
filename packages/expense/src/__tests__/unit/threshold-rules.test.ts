@@ -59,3 +59,15 @@ describe("financeCeilingCents", () => {
     if (ceiling !== null) expect(boardOnlyChanges(current, { [field]: ceiling })).toEqual([]);
   });
 });
+
+describe("QuickBooks settings", () => {
+  it("leaves the match window to finance in either direction", () => {
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { qbMatchWindowDays: 14 })).toEqual([]);
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { qbMatchWindowDays: 3 })).toEqual([]);
+  });
+
+  it.each(["qbMaxCreatesPerRun", "qbMaxCreatesPerDay"] as const)("%s: lowering is finance's, raising the Board's", (field) => {
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { [field]: 5 })).toEqual([]);
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { [field]: 500 })).toEqual([field]);
+  });
+});
