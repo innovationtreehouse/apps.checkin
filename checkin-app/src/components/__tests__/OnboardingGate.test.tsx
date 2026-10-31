@@ -31,6 +31,16 @@ describe("OnboardingGate", () => {
     await waitFor(() => expect(screen.queryByText("Action Required")).not.toBeInTheDocument());
   });
 
+  it("shows only the household question while it is open, naming only the household", async () => {
+    setSession({ id: 1, householdJoinPending: true });
+    const fetchSpy = mockFetchJson({ "/api/profile/household-question": { householdName: "Rivera Household" } });
+    renderGate();
+
+    expect(await screen.findByText(/Rivera Household/)).toBeInTheDocument();
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalledWith("/api/profile/onboarding-status", expect.anything());
+  });
+
   it("renders children immediately (no fetch) when unauthenticated", () => {
     setSession(null);
     const fetchSpy = mockFetchJson({});

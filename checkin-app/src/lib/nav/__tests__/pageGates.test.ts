@@ -4,7 +4,7 @@ import { ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
 import { linkGate } from "@/lib/nav/gates";
 import { FINANCE, FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
-import { PROGRAM_OPS, PROGRAM_OPS_ROLES } from "@/lib/nav/sections/programOps";
+import { NEW_PROGRAM_ROLES, PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { SAFETY, SAFETY_ROLES, TRUSTED_ADULTS_ROLES } from "@/lib/nav/sections/safety";
 import { LOCALIZATION_ROLES, SETTINGS, SETTINGS_ADMIN_ROLES, SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import type { NavGate, NavUser } from "@/lib/nav/types";
@@ -34,7 +34,7 @@ const CASES: Array<[string, readonly RoleFlag[], NavGate]> = [
   ["/membership-ops/participants/tombstones", MEMBERSHIP_OPS_ADMIN_ROLES, pageGate("/membership-ops/participants/tombstones")],
   ["/membership-ops/roles", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/roles")],
   ["/membership-ops/volunteer-memberships", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/volunteer-memberships")],
-  ["/program-ops/new", PROGRAM_OPS_ROLES, linkGate(PROGRAM_OPS, "/program-ops/new")],
+  ["/program-ops/new", NEW_PROGRAM_ROLES, linkGate(PROGRAM_OPS, "/program-ops/new")],
   ["/safety/board-contacts", SAFETY_ROLES, linkGate(SAFETY, "/safety/board-contacts")],
   ["/safety/emergency-contacts", SAFETY_ROLES, linkGate(SAFETY, "/safety/emergency-contacts")],
   ["/safety/trusted-adults", TRUSTED_ADULTS_ROLES, linkGate(SAFETY, "/safety/trusted-adults")],

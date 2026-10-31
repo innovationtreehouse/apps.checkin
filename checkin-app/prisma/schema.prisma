@@ -207,6 +207,10 @@ model Person {
   /// @sensitivity:internal
   canAccessStaging Boolean @default(false)
 
+  /// Their first sign-in's household question is unanswered; nothing else opens until it is.
+  /// @sensitivity:internal
+  householdJoinPending Boolean @default(false)
+
   toolStatuses        ToolStatus[]
   bgAttestations      BackgroundCheckAttestation[] @relation("BgAttestations")
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")

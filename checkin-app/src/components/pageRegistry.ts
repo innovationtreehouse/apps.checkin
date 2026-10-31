@@ -7,7 +7,7 @@
 // docs/rules/principles.md, "Reachability is not permission".
 
 import type { NavGate } from '@/lib/nav/types';
-import { everyone, linkGate, signedIn } from '@/lib/nav/gates';
+import { anyRole, everyone, linkGate, signedIn } from '@/lib/nav/gates';
 import { isHouseholdLead, seesCertificationGrid } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
@@ -18,7 +18,7 @@ import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { FACILITY_OPS } from '@/lib/nav/sections/facilityOps';
 import { MEMBERSHIP_OPS, isMembershipOpsAdmin } from '@/lib/nav/sections/membershipOps';
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
-import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
+import { NEW_PROGRAM_ROLES, PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
 import { DONATIONS as DONATIONS_SECTION } from '@/lib/nav/sections/donations';
 import { FINANCE, FINANCE_REVIEW_PATH } from '@/lib/nav/sections/finance';
@@ -181,7 +181,7 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops', label: 'Program Ops', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/programs', label: 'All Programs', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/events', label: 'Events', section: 'Program Ops', visible: PROGRAM_OPS.visible },
-  { href: '/program-ops/new', label: 'New Program', section: 'Program Ops', visible: PROGRAM_OPS.visible },
+  { href: '/program-ops/new', label: 'New Program', section: 'Program Ops', visible: anyRole(NEW_PROGRAM_ROLES) },
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: PROGRAM_OPS.visible },
 

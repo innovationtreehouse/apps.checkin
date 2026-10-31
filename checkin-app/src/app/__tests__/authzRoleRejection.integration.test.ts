@@ -233,6 +233,15 @@ describe('Protected-route role rejection', () => {
         });
     });
 
+    // ---- program create names a lead — Board only; a sysadmin off the Board is denied
+    describe('POST /api/programs — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await PROGRAMS_POST(nreq('http://localhost/api/programs', 'POST', {}));
+            expect(res.status).toBe(403);
+        });
+    });
+
     // ---- bg-attestations DELETE — Board only; a sysadmin off the Board is denied
     describe('DELETE /api/membership-ops/bg-attestations/[id] — sysadmin alone is denied', () => {
         it('403s a sysadmin who is not on the Board', async () => {

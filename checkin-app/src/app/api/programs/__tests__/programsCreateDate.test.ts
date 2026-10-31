@@ -52,7 +52,7 @@ jest.mock('@/lib/prisma', () => ({
 
 describe('POST /api/programs — startAt/endAt date preservation', () => {
     const adminSession = {
-        user: { id: 1, isSysadmin: true },
+        user: { id: 1, isBoardMember: true },
     };
 
     beforeEach(() => {
@@ -231,11 +231,5 @@ describe('POST /api/programs — startAt/endAt date preservation', () => {
             expect(mockProgramCreate).not.toHaveBeenCalled();
         });
 
-        it('sends a sysadmin creating a crossing program to the Board', async () => {
-            const res = await create({ startAt: '2026-01-01', endAt: '2026-12-31', appliesToYear: 2025 });
-            expect(res.status).toBe(403);
-            expect((await res.json()).error).toContain('Ask the Board');
-            expect(mockProgramCreate).not.toHaveBeenCalled();
-        });
     });
 });

@@ -15,7 +15,7 @@ import type { AuthenticatedUser, BusinessRole, AuthResult } from '@/types/auth';
 async function resolveAuthResult(
     req: NextRequest,
     body?: string,
-    opts?: { sessionOnly?: boolean }
+    opts?: { sessionOnly?: boolean; allowJoinPending?: boolean }
 ): Promise<AuthResult> {
     // 1. Try kiosk signature. Skipped for session-only resolution: verifying a
     // signature consumes its single-use nonce, so a caller that discards kiosk
@@ -56,7 +56,7 @@ async function resolveAuthResult(
         // way every route fails closed, regardless of its role list. The jwt callback
         // already strips a denied household's role flags; this also denies plain member
         // endpoints.
-        if (!isAcceptedSession(session.user)) {
+        if (!isAcceptedSession(session.user, opts)) {
             return { type: 'unauthenticated' };
         }
         return { type: 'session', user: session.user as AuthenticatedUser };
@@ -80,7 +80,7 @@ async function resolveAuthResult(
 export async function authenticateRequest(
     req: NextRequest,
     body?: string,
-    opts?: { sessionOnly?: boolean }
+    opts?: { sessionOnly?: boolean; allowJoinPending?: boolean }
 ): Promise<AuthResult> {
     const result = await resolveAuthResult(req, body, opts);
 
@@ -136,6 +136,7 @@ export function withAuth<Ctx = unknown>(
     options: {
         roles?: BusinessRole[];
         allowKiosk?: boolean;
+        allowJoinPending?: boolean;
     },
     handler: (req: NextRequest, auth: AuthResult, ctx: Ctx) => Promise<NextResponse>
 ) {
@@ -150,7 +151,7 @@ export function withAuth<Ctx = unknown>(
     // (a subtype) at runtime, and the inner handler keeps its NextRequest typing.
     return async (req: Request, ctx?: Ctx) => {
         const nreq = req as NextRequest;
-        const auth = await authenticateRequest(nreq);
+        const auth = await authenticateRequest(nreq, undefined, { allowJoinPending: options.allowJoinPending });
 
         if (auth.type === 'unauthenticated') {
             return apiError('Unauthorized', 401);

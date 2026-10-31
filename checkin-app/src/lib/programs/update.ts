@@ -176,8 +176,8 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (isNaN(leadMentorId)) {
             return refuse("invalid", "Invalid lead mentor");
         }
-        if (!isSysAdminOrBoard && leadMentorId !== currentProgram.leadMentorId) {
-            return refuse("forbidden", "Forbidden: Only administrators can reassign lead mentors");
+        if (!actor.isBoardMember && leadMentorId !== currentProgram.leadMentorId) {
+            return refuse("forbidden", "Forbidden: Only the Board can change a program's lead");
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
