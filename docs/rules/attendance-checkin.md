@@ -297,6 +297,10 @@ person in front of it.
   a close sets is logged against that record with the visit's departure before
   and after. These logs are an audit trail and are never deleted.  [Decision — *Principle: accountability*]
 
+- The nightly sweep records its close every night, even when it ends no visit,
+  so a scan from before it that arrives late is always fenced by it. A retry of
+  the same night's run records no second close unless it finds someone inside.  [Decision — *Board ruling B7/B14, 2026-10-27*]
+
 - A correction that closes an open visit departs everyone at the typed
   departure, as a late kiosk close does; someone who arrived after it stays
   inside. The keyholder who made a close, or the board, corrects its time by

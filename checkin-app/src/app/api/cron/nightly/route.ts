@@ -12,11 +12,29 @@ import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 
+/** A nightly run this soon after the last one is a retry of the same night. */
+const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
+
 export const GET = withCron(async () => {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
         const now = new Date();
+        // The sweep is a facility close with no person behind it.
+        const recordSweep = () => prisma.facilityClose.create({
+            data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
+            select: { id: true },
+        });
+
+        // Recorded every night, even with nobody open, because this row is what
+        // fences a scan from before it that arrives later. It commits before the
+        // read below: an arrival that commits first is read and swept, and one
+        // that commits after sees this close (fenceReplayedArrival).
+        const sweptTonight = await prisma.facilityClose.findFirst({
+            where: { via: "NIGHTLY_SWEEP", closedAt: { gt: new Date(now.getTime() - SAME_NIGHT_MS) } },
+            select: { id: true },
+        });
+        let close = sweptTonight ? null : await recordSweep();
 
         // 1. Find all users who are currently checked in (abandoned visits)
         // A tombstoned open visit is not abandoned — it's deleted; closing it
@@ -38,11 +56,9 @@ export const GET = withCron(async () => {
         let boardNotified = false;
 
         if (abandonedVisits.length > 0) {
-            // The sweep is a facility close with no person behind it.
-            const close = await prisma.facilityClose.create({
-                data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
-                select: { id: true },
-            });
+            // A retry's departures carry its own time, so they need their own close.
+            close ??= await recordSweep();
+            const closeId = close.id;
             // One bad checkout must not abort the rest, so each visit's checkout and
             // its departure logs commit together, alone. Each takes the person lock
             // then the facility lock (the order every check-in path uses), so a
@@ -57,7 +73,7 @@ export const GET = withCron(async () => {
                         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
                         await lockFacility(tx);
                         // Empty: someone else departed the visit first, so this close set nothing.
-                        const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
+                        const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", closeId);
                         // A visit split across events departs as several rows; each is logged.
                         const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
                             id: seg.id,
@@ -68,7 +84,7 @@ export const GET = withCron(async () => {
                             departedAt: seg.departedAt,
                             departedVia: seg.departedVia,
                         }] : []);
-                        await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
+                        await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
                     });
                     if (segments.length > 0) forceClosed.push(visit);
