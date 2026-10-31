@@ -34,21 +34,18 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 
 /**
  * Everyone seated on the expense, with the step they sign: the approvers of its lines included,
- * and the submitter seat's signer, the person reimbursed or a Board member on their behalf. Whoever moved a line out of an exception signs at the Treasurer
- * step, read from the audit row that a later approval leaves in place; whoever recorded the Board
- * authorization signs at the Board step.
+ * and the submitter seat's signer, the person reimbursed or a Board member on their behalf, and
+ * whoever recorded the Board authorization, at the Board step. Moving a line to a bucket signs no step.
  */
 export async function expenseSigners(db: Db, expenseId: string): Promise<StepSigner[]> {
-  const [rows, approvals, assigners, recorder] = await Promise.all([
+  const [rows, approvals, recorder] = await Promise.all([
     db.expenseLineSignoff.findMany({ where: { expenseId }, select: { seat: true, signerUserId: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
-    db.expenseAuditLog.findMany({ where: { expenseId, action: "finance_assigned_exception" }, select: { userId: true } }),
     db.expense.findUnique({ where: { id: expenseId }, select: { boardAuthorizedByUserId: true } }),
   ]);
   const recordedBy = recorder?.boardAuthorizedByUserId ?? null;
   return [
     ...(recordedBy === null ? [] : [{ step: "BOARD" as const, userId: recordedBy }]),
-    ...assigners.map((a): StepSigner => ({ step: "TREASURER", userId: a.userId })),
     ...rows.map((r): StepSigner => ({ step: r.seat as Seat, userId: r.signerUserId })),
     ...approvals.flatMap((a): StepSigner[] => (a.decidedByUserId === null ? [] : [{ step: "APPROVAL", userId: a.decidedByUserId }])),
   ];

@@ -82,20 +82,18 @@ describeDb("one step per signer across an expense's lines", () => {
     await signLine(principal(9, { isFinance: true }), a, "TREASURER");
   });
 
-  it("whoever moved a line out of an exception signs at the Treasurer step: they do not approve it, and their household takes no Board seat", async () => {
-    // Reimbursee 1 holds no membership, so the line takes the Board seat. FINANCE 3 is also an
-    // approver of bucket 101; Board member 6 shares their household.
-    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [3, 7] }, finance: [3, 9], board: [5, 6], households: [[3, 6]], nonMembers: [1] }) });
+  it("whoever moved a line out of an exception signs no step: their household may still take the Board seat", async () => {
+    // Reimbursee 1 holds no membership, so the line takes the Board seat. Board member 6 shares
+    // FINANCE 3's household.
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [7] }, finance: [3, 9], board: [5, 6], households: [[3, 6]], nonMembers: [1] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "exception_raised" });
     await financeAssign(principal(3, { isFinance: true }), id, approvalId, 101);
     await seedSubmitterSeat(li, 1);
 
-    await expect(approveLine(principal(3, { isFinance: true }), id, approvalId)).rejects.toMatchObject(refused(/later step/));
     await approveLine(principal(7), id, approvalId);
-    await signLine(principal(3, { isFinance: true }), li, "TREASURER");
-    await expect(signLine(principal(6, { isBoard: true }), li, "BOARD")).rejects.toMatchObject(refused(/household/));
-    await signLine(principal(5, { isBoard: true }), li, "BOARD");
+    await signLine(principal(9, { isFinance: true }), li, "TREASURER");
+    await signLine(principal(6, { isBoard: true }), li, "BOARD");
   });
 });
