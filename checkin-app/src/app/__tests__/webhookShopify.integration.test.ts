@@ -64,12 +64,8 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // shopifyVariantId is the variant the enroll flow's checkout link is
         // built from — seed it so the guard under test has something to match
         // line_items against.
-        // endAt "now": membership coverage always reaches it, whatever
-        // orgMembershipYearBoundary a concurrently-running suite has installed
-        // on the shared BoardSettings row (a boundary's next occurrence is
-        // never in the past, so the fee-settled test can't lose that race).
         const program = await prisma.program.create({
-            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
         programId = program.id;
 
@@ -86,7 +82,6 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // Route now checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
         // below can prove a matching order activates.
-        // No year boundary, so an ACTIVE membership covers every program end date.
         restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
@@ -95,9 +90,13 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
     });
 
-    beforeEach(() => {
+    // No year boundary, so a bare-ACTIVE membership covers every program date. Under
+    // any boundary it covers only through the current cycle's start, short of the
+    // program's membership year, and the fee-settled cases stay PENDING.
+    beforeEach(async () => {
         jest.clearAllMocks();
         process.env.SHOPIFY_WEBHOOK_SECRET = SECRET;
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
     });
 
     afterAll(async () => {
