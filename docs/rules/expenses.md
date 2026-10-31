@@ -107,8 +107,9 @@ Things the app takes as true because they are handled outside it.
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
   conflicted when they, or someone in their household, uploaded the receipt or
-  is reimbursed for it. A conflicted person may not approve a line or raise an
-  exception on it, sign any sign-off seat, or record Board authorization.
+  is reimbursed for it. A conflicted person may not approve a line, raise or
+  reject an exception on it, sign any sign-off seat, or record Board
+  authorization.
   Classifying a purchase that is already signed off is bookkeeping, and any
   finance holder may do it: the capital or non-capital designation, the
   depreciation cycle and owner bucket, the account set on a mapping hold,
@@ -117,6 +118,17 @@ Things the app takes as true because they are handled outside it.
   date; a receipt whose tax or date its submitter corrected goes to finance
   review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Choosing a line's bucket before sign-off is not a conflicted step. A
+  conflicted finance holder may assign a line's bucket, resolve an unknown
+  one, and settle a raised exception by moving the line to another bucket.
+  The line still waits for its bucket's approver, or a Board member without a
+  conflict in their place, and for every seat it takes. A conflicted finance
+  holder who makes the assignment final gives the line a Board signature: a
+  Board member without a conflict signs it, after the Treasurer. Settling an
+  exception without making it final adds no Board signature, because the new
+  bucket's approver may still raise an exception.
+  [Decision — owner]
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
@@ -334,13 +346,18 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - An expense's sign-offs run in steps: first the line's approval, then the
-  Treasurer, then the Board. Finance moving a line out of an exception is a
-  signature at the Treasurer step, and recording the Board's authorization is
-  one at the Board step. Each step refuses everyone who signed an
+  Treasurer, then the Board. Recording the Board's authorization is a
+  signature at the Board step. Each step refuses everyone who signed an
   earlier step anywhere on the expense, and a step is also refused to whoever
   already signed a later one. Nobody signs while someone in their household
   holds a seat on the expense. One person may sign the same step on several
   lines. This holds for card charges and reimbursements alike.
+  [Decision — owner]
+
+- Finance moving a line to a bucket, whether settling an exception or not, is
+  not a signature at any step and is not refused for a conflict. It does not
+  stop whoever moved it, or their household, from signing a step on the
+  expense.
   [Decision — owner]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
@@ -351,7 +368,9 @@ Things the app takes as true because they are handled outside it.
   bucket, until finance marks the line's bucket assignment final. After that,
   no exception is raised on the line, and it still waits for its bucket's
   approver or a Board member in their place. A final assignment is not an
-  approval. Making it final takes a note, which is recorded.
+  approval. Making it final takes a note, which is recorded. A final
+  assignment made by a finance holder conflicted on the expense adds a Board
+  signature to the line.
   [Decision — owner]
 
 - A line's signatures are given in order: the submitter's confirmation on a

@@ -34,21 +34,18 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 
 /**
  * Everyone seated on the expense, with the step they sign: the approvers of its lines included,
- * and the submitter seat's signer, the person reimbursed or a Board member on their behalf. Whoever moved a line out of an exception signs at the Treasurer
- * step, read from the audit row that a later approval leaves in place; whoever recorded the Board
- * authorization signs at the Board step.
+ * and the submitter seat's signer, the person reimbursed or a Board member on their behalf, and
+ * whoever recorded the Board authorization, at the Board step. Moving a line to a bucket signs no step.
  */
 export async function expenseSigners(db: Db, expenseId: string): Promise<StepSigner[]> {
-  const [rows, approvals, assigners, recorder] = await Promise.all([
+  const [rows, approvals, recorder] = await Promise.all([
     db.expenseLineSignoff.findMany({ where: { expenseId }, select: { seat: true, signerUserId: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId, status: "approved", decidedByUserId: { not: null } }, select: { decidedByUserId: true } }),
-    db.expenseAuditLog.findMany({ where: { expenseId, action: "finance_assigned_exception" }, select: { userId: true } }),
     db.expense.findUnique({ where: { id: expenseId }, select: { boardAuthorizedByUserId: true } }),
   ]);
   const recordedBy = recorder?.boardAuthorizedByUserId ?? null;
   return [
     ...(recordedBy === null ? [] : [{ step: "BOARD" as const, userId: recordedBy }]),
-    ...assigners.map((a): StepSigner => ({ step: "TREASURER", userId: a.userId })),
     ...rows.map((r): StepSigner => ({ step: r.seat as Seat, userId: r.signerUserId })),
     ...approvals.flatMap((a): StepSigner[] => (a.decidedByUserId === null ? [] : [{ step: "APPROVAL", userId: a.decidedByUserId }])),
   ];
@@ -88,7 +85,7 @@ async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCen
  */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { readOnly = false } = {}): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, signers, isMember, setterRow] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, signers, isMember, setterRow, finalRows] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true, status: true, decidedByUserId: true } }),
     dir.financeHolders(),
@@ -97,6 +94,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
     expenseSigners(db, expense.id),
     reimburseeIsMember(expense),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
+    db.expenseAuditLog.findMany({ where: { expenseId: expense.id, action: "bucket_made_final" }, select: { lineItemId: true, userId: true } }),
   ]);
   const seated = await seatedHouseholds(signers);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
@@ -109,6 +107,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
     bucketsById.set(bucket, b);
     if (b.owner !== null) ownerHouseholds.set(bucket, [...new Set([b.owner, ...(await dir.householdOf([b.owner]))])]);
   }
+  const finalByConflicted = new Set(finalRows.filter((r) => conflicted.includes(r.userId)).map((r) => r.lineItemId));
   const kind = lineKind(expense);
   const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents), readOnly);
   const everyday = isEveryday({ withinLimits });
@@ -132,6 +131,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
         reimburseeSetter: setterRow?.userId ?? (expense.reimburseePersonId === null ? null : expense.submitterId),
         seatedHouseholds: seated,
         boardSeat: needsBoardSeat(kind, everyday, b !== undefined && !b.orgLevel, expense.boardAuthorization),
+        conflictedFinal: finalByConflicted.has(l.id),
         approved,
         approver: approved ? (approvalOf.get(l.id)?.decidedByUserId ?? null) : null,
         expenseSigners: signers,
