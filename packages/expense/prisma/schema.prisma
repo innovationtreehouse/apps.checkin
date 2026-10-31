@@ -199,6 +199,7 @@ model Expense {
   taxApproval        ExpenseTaxApproval?
 
   @@unique([qbTxnEntity, qbTxnId])
+  @@index([orgId, state, submittedAt(sort: Desc)])
   @@map("expenses")
 }
 
@@ -346,6 +347,7 @@ model LineItemOwnerApproval {
   expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
 
+  @@index([expenseId, status])
   @@map("line_item_owner_approvals")
 }
 
@@ -453,6 +455,7 @@ model ExpenseAuditLog {
   expense      Expense          @relation(fields: [expenseId], references: [id])
   lineItem     ExpenseLineItem? @relation(fields: [lineItemId], references: [id])
 
+  @@index([expenseId, action])
   @@map("expense_audit_log")
 }
 
@@ -724,6 +727,7 @@ model ExpenseLineSignoff {
 
   @@unique([lineItemId, seat])
   @@unique([lineItemId, signerUserId])
+  @@index([expenseId])
   @@map("expense_line_signoffs")
 }
 
