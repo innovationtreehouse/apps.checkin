@@ -1,14 +1,14 @@
 /**
  * Per-line approval services against the real database: bucket approvers, the Board stand-in
  * and its reason, the seat refusals the approval takes, FINANCE assignment (incl. permanent and
- * org-level), the reject path, racing decisions, decisions refused to the submitter's and
- * reimbursee's households, and Approve All.
+ * org-level), the reject path, racing decisions, what the submitter's and reimbursee's
+ * households may and may not do on their lines, and Approve All.
  */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG, seedSubmitterSeat } from "../helpers/seed";
-import { setReimbursee } from "../../services/signoffService";
+import { setReimbursee, signLine, signoffStatus } from "../../services/signoffService";
 import { approveLine, approveLines, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
 const LEADER = principal(2);
@@ -463,10 +463,9 @@ describeDb("racing decisions", () => {
   });
 });
 
-describeDb("the submitter's and reimbursee's households decide none of their lines", () => {
+describeDb("the submitter's and reimbursee's households approve, raise and reject on none of their lines", () => {
   const SUBMITTER_FINANCE = principal(1, { isFinance: true });
   const HOUSEMATE_FINANCE = principal(6, { isFinance: true });
-  const REIMBURSEE_FINANCE = principal(8, { isFinance: true });
   const untouched = async (approvalId: number, status: string) =>
     expect(await approval(approvalId)).toMatchObject({ status, decidedByUserId: null });
 
@@ -492,43 +491,84 @@ describeDb("the submitter's and reimbursee's households decide none of their lin
     await expect(approveLine(principal(6), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await untouched(approvalId, "pending");
   });
+});
 
-  it("assigning an exception's bucket", async () => {
-    const { id, approvalId } = await lineInApproval(100, "exception_raised");
-    await expect(financeAssign(SUBMITTER_FINANCE, id, approvalId, 101)).rejects.toMatchObject({ status: 403 });
-    await untouched(approvalId, "exception_raised");
-  });
+describeDb("a conflicted FINANCE holder chooses a line's bucket; an independent person still checks it", () => {
+  const SUBMITTER_FINANCE = principal(1, { isFinance: true });
+  const HOUSEMATE_FINANCE = principal(6, { isFinance: true });
+  const REIMBURSEE_FINANCE = principal(8, { isFinance: true });
+  const missing = async (id: string) => (await signoffStatus(id))[0].missing;
 
-  it("resolving an unknown line's bucket", async () => {
-    const { id, approvalId } = await lineInApproval(null, "unknown");
-    await expect(resolveUnknown(SUBMITTER_FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
-    await untouched(approvalId, "unknown");
-  });
-
-  it("assigning a line's bucket, as a housemate or the reimbursee", async () => {
-    bindPorts({ signoff: directory({ households: [[1, 6]] }) });
+  it("assigning a line's bucket, as a housemate or the reimbursee, leaves it pending for its approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, households: [[1, 6]] }) });
     const { id, approvalId } = await lineInApproval(null);
-    await expect(assignOwner(HOUSEMATE_FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
+    await assignOwner(HOUSEMATE_FINANCE, id, approvalId, 100);
 
     const paid = await seedExpense({ state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 8 });
     const paidApproval = await seedApproval(paid, await seedLineItem(paid), { ownerId: null });
-    await expect(assignOwner(REIMBURSEE_FINANCE, paid, paidApproval, 100)).rejects.toMatchObject({ status: 403 });
+    await assignOwner(REIMBURSEE_FINANCE, paid, paidApproval, 100);
 
-    expect((await approval(approvalId))!.ownerId).toBeNull();
-    expect((await approval(paidApproval))!.ownerId).toBeNull();
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+    expect(await approval(paidApproval)).toMatchObject({ ownerId: 100, status: "pending" });
+    expect(await state(id)).toBe("owner_approval");
+    await expect(approveLine(HOUSEMATE_FINANCE, id, approvalId)).rejects.toMatchObject({ status: 403 });
+    await approveLine(LEADER, id, approvalId);
+    expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 2 });
   });
 
-  it("a permanent mapping leaves a sibling line on a conflicted expense unassigned", async () => {
+  it("resolving an unknown line's bucket leaves it pending for its approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] } }) });
+    const { id, approvalId } = await lineInApproval(null, "unknown");
+    await resolveUnknown(SUBMITTER_FINANCE, id, approvalId, 100);
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending", decidedByUserId: 1 });
+    expect(await state(id)).toBe("owner_approval");
+    await expect(approveLine(SUBMITTER_FINANCE, id, approvalId)).rejects.toMatchObject({ status: 403 });
+    await approveLine(LEADER, id, approvalId);
+    expect((await approval(approvalId))!.status).toBe("approved");
+  });
+
+  it("a permanent mapping assigns a sibling line on an expense the caller is conflicted on", async () => {
     bindPorts({ signoff: directory({ households: [[1, 6]] }) });
     const target = await seedExpense({ state: "assign_ownership", submitterId: 4 });
     const targetApproval = await seedApproval(target, await seedLineItem(target, { gtin13: "0000000000017" }), { ownerId: null });
     const household = await lineInApproval(null);
-    const stranger = await seedExpense({ state: "assign_ownership", submitterId: 4 });
-    const strangerApproval = await seedApproval(stranger, await seedLineItem(stranger, { gtin13: "0000000000017" }), { ownerId: null });
 
     await assignOwner(HOUSEMATE_FINANCE, target, targetApproval, 100, true);
 
-    expect((await approval(household.approvalId))!.ownerId).toBeNull();
-    expect((await approval(strangerApproval))!.ownerId).toBe(100);
+    expect(await approval(household.approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+  });
+
+  it("settling an exception without making it final takes no Board seat", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [1, 3], board: [5] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(SUBMITTER_FINANCE, id, approvalId, 101);
+    expect(await approval(approvalId)).toMatchObject({ status: "finance_assigned", ownerId: 101, bucketFinal: false });
+
+    await approveLine(principal(4), id, approvalId);
+    expect(await missing(id)).toEqual(["TREASURER"]);
+  });
+
+  it("a final assignment by a conflicted holder takes a Board seat, which a conflicted Board member cannot fill", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [1, 3], board: [5, 6], households: [[1, 6]] }) });
+    const { id, li, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(SUBMITTER_FINANCE, id, approvalId, 101, true, "grant 12 pays for it");
+
+    await approveLine(principal(4), id, approvalId);
+    await signLine(FINANCE, li, "TREASURER");
+    expect(await missing(id)).toEqual(["BOARD"]);
+    expect(await state(id)).toBe("qb_pending");
+
+    await expect(signLine(principal(6, { isBoard: true }), li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/submitter, the reimbursee/) });
+    await signLine(BOARD, li, "BOARD");
+    expect(await missing(id)).toEqual([]);
+  });
+
+  it("a final assignment by a holder without a conflict takes no Board seat", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 7], board: [5] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, id, approvalId, 101, true, "grant 12 pays for it");
+
+    await approveLine(principal(4), id, approvalId);
+    expect(await missing(id)).toEqual(["TREASURER"]);
   });
 });

@@ -64,45 +64,25 @@ export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promis
   return (await expensesAwaitingMyApproval(principal)).reduce((n, e) => n + e.lineItemIds.length, 0);
 }
 
-type Parties = { submitterId: number; reimburseePersonId: number | null };
-const PARTIES = { submitterId: true, reimburseePersonId: true } as const;
-
-/** Whether the caller is conflicted on an expense's parties, asking conflictedParties once per distinct pair. */
-export function conflictCheck(me: number): (e: Parties) => Promise<boolean> {
-  const seen = new Map<string, Promise<boolean>>();
-  return (e) => {
-    const key = `${e.submitterId}:${e.reimburseePersonId}`;
-    if (!seen.has(key)) seen.set(key, conflictedParties(e).then((parties) => parties.includes(me)));
-    return seen.get(key)!;
-  };
-}
-
-async function countFree(rows: Parties[], conflicted: (e: Parties) => Promise<boolean>): Promise<number> {
-  return (await Promise.all(rows.map(conflicted))).filter((c) => !c).length;
-}
-
 /**
  * Per expense list view, the expenses the caller can act on. Assigning buckets, settling
  * exceptions, capital review and depreciation are FINANCE steps; owner approval counts the
- * expenses waiting on the caller's approval (expensesAwaitingMyApproval). Steps the server
- * refuses a conflicted caller leave those expenses out; capital review and depreciation are
- * bookkeeping any FINANCE holder may do, so they keep them. A view whose count fails is logged
- * and left out, so the others still show.
+ * expenses waiting on the caller's approval (expensesAwaitingMyApproval). Each FINANCE view counts
+ * every expense in it: a conflicted FINANCE holder may still choose a line's bucket, and capital
+ * review and depreciation are bookkeeping. A view whose count fails is logged and left out, so the
+ * others still show.
  */
 export async function expenseActionCounts(principal: ExpensePrincipal): Promise<Partial<Record<ExpenseActionView, number>>> {
-  const me = callerId(principal);
   const orgId = await getOrgId();
-  const conflicted = conflictCheck(me);
   const finance = principal.isFinance;
-  const free = async (where: Prisma.ExpenseWhereInput) =>
-    countFree(await db.expense.findMany({ where: { orgId, ...where }, select: PARTIES }), conflicted);
+  const count = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { orgId, ...where } });
   const tasks: Record<ExpenseActionView, () => Promise<number>> = {
-    assign_ownership: async () => (finance ? free({ state: "assign_ownership", approvals: { some: { ownerId: null } } }) : 0),
+    assign_ownership: async () => (finance ? count({ state: "assign_ownership", approvals: { some: { ownerId: null } } }) : 0),
     owner_approval: async () => (await expensesAwaitingMyApproval(principal)).length,
     // An exception is not terminal, so it holds its expense in owner_approval, where FINANCE settles it.
-    owner_exception: async () => (finance ? free({ approvals: { some: { status: "exception_raised" } } }) : 0),
-    capital_review: async () => (finance ? db.expense.count({ where: { orgId, state: "capital_review" } }) : 0),
-    set_depreciation_cycle: async () => (finance ? db.expense.count({ where: { orgId, state: "set_depreciation_cycle" } }) : 0),
+    owner_exception: async () => (finance ? count({ approvals: { some: { status: "exception_raised" } } }) : 0),
+    capital_review: async () => (finance ? count({ state: "capital_review" }) : 0),
+    set_depreciation_cycle: async () => (finance ? count({ state: "set_depreciation_cycle" }) : 0),
     qb_pending: async () => (finance || principal.isBoard ? qbPendingActionCount(principal) : 0),
   };
   const settled = await Promise.all(

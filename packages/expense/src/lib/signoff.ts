@@ -33,6 +33,8 @@ export interface SignoffFacts {
   seatedHouseholds: number[];
   /** A non-Everyday card-charge line without written Board authorization. */
   boardSeat: boolean;
+  /** FINANCE made the line's bucket final while conflicted on the expense. */
+  conflictedFinal: boolean;
   /** The line's approval is `approved`: the program approver's sign-off. */
   approved: boolean;
   /** Who approved the line; null while it is not approved, or for a line approved at intake. */
@@ -144,10 +146,11 @@ export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: n
 
 /**
  * The line takes the Board seat: a non-Everyday card charge without written Board authorization,
- * or a reimbursement owed to a non-member, whose Board signature follows the line's approval.
+ * a reimbursement owed to a non-member, or a line whose bucket a conflicted FINANCE holder made
+ * final. The last two take a Board signature after the line's approval, which no authorization replaces.
  */
 export function takesBoardSeat(facts: SignoffFacts): boolean {
-  return facts.boardSeat || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
+  return facts.boardSeat || facts.conflictedFinal || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
 }
 
 /** Who the seat belongs to; a Board member stands in for a Treasurer only when none of them can sign. */
