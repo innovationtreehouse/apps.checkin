@@ -31,7 +31,7 @@ type AuditRow = {
   tableName: string;
   affectedEntityId: number;
   secondaryAffectedEntity: number | null;
-  newData: { type?: string; significance?: { score: number; flagged: boolean } };
+  newData: { type?: string; significance?: { score: number; flagged: boolean }; overlapsVisitIds?: number[] };
 };
 
 type PersonRef = { id: number; name: string | null; mergedIntoId: number | null };
@@ -259,7 +259,14 @@ export default function CorrectionsPage() {
                       <Table.Td>{nameFor(r.secondaryAffectedEntity, people)}</Table.Td>
                       <Table.Td><VisitTimes v={before} /></Table.Td>
                       <Table.Td><VisitTimes v={after} /></Table.Td>
-                      <Table.Td><ScoreBadge sig={r.newData.significance} /></Table.Td>
+                      <Table.Td>
+                        <Stack gap={2}>
+                          <ScoreBadge sig={r.newData.significance} />
+                          {r.newData.overlapsVisitIds?.length ? (
+                            <Text size="xs" c="red">Overlaps visit {r.newData.overlapsVisitIds.map((id) => `#${id}`).join(", ")}</Text>
+                          ) : null}
+                        </Stack>
+                      </Table.Td>
                     </Table.Tr>
                   );
                 })

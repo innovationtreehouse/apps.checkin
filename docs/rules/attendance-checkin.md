@@ -117,9 +117,7 @@ person in front of it.
   closes the building. The website offers no check-in, check-out, force checkout
   or close, to anyone; people badge at the door. The nightly auto-close is the
   backstop, a close no person makes. This replaces the owner's ruling of
-  2026-10-11 that a keyholder can close the building from the web. One path
-  still reaches an open visit until its own change lands: a program leader's
-  roster mark.  [Decision — Board ruling B7/B14, 2026-10-27]
+  2026-10-11 that a keyholder can close the building from the web.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 - A close is one event: a keyholder closed the building at a moment, at the
   kiosk, online or offline. The keyholder decides, from what the kiosk shows. The
@@ -180,9 +178,7 @@ person in front of it.
   there. With no keyholder in the building the visit is marked *no keyholder*,
   and a keyholder checking in within ten minutes of that arrival clears the
   mark. The mark is read from the visit record, so correcting a keyholder's
-  visit re-decides it. A roster mark that leaves a visit open still needs a
-  keyholder already present, for a keyholder too: only a badge at the door opens
-  the building. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14, 2026-10-27]
+  visit re-decides it. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 ### Supervision
 
@@ -402,9 +398,22 @@ hours at a time — is a normal operating mode here, not an incident.
 ### The visit record
 
 - A visit that is still open is changed only by the kiosk or the nightly
-  auto-close, apart from a roster mark (see Opening and closing). A member, a
+  auto-close. A member, a
   household lead or the board corrects or removes a visit once it is closed, and is told to badge out at the kiosk or wait for the
   11 PM close before then.  [Decision — Board ruling B7/B14, 2026-10-27]
+
+- A website insert or edit whose times overlap another visit of the same person
+  is checked against it. Overlapping an open visit, which counts as running until
+  now, is refused. Overlapping a closed visit applies, and is flagged on the
+  corrections review naming the other visit, so the hours are not counted twice
+  unseen. Times that only touch do not overlap. This covers members' and household
+  leads' corrections, the board's, and roster marks.  [Decision — Board ruling B7/B14, 2026-10-27]
+
+- Which close ended a visit is the visit's own link to that close, and the visits
+  screen's "closed out by a close" list reads it. The close log is the history of
+  every change and is never edited, so the 11 PM run's log rows still list visits
+  a later-arriving kiosk close pulled back; the pull-back's own row names the close
+  it replaced.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 - A member inserts their own past visit, with a departure, backdated as far as
   they need — there is no limit on how far, and the audit trail stands in for one.  [Decision]
@@ -506,6 +515,11 @@ program. This is a record of who was at one session of one program.
   Someone else in the list is refused by name rather than dropped from it, and
   having been in the building at the time proves nothing — a walk-in who is not
   enrolled needs enrolling first.  [Decision — *Principle: identity is not authorisation*]
+
+- A Present mark records attendance at the session, and is made only once the
+  session has started, with a departure. If a kiosk visit covers the session the
+  mark links to it; otherwise it creates a closed visit. A mark never opens a visit
+  or ends one.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 - Who attended is for the people running it — the program's leader, its core
   volunteers, the board and sysadmins. Anyone else is refused outright rather than

@@ -41,7 +41,7 @@ jest.mock("@/lib/attendance/close", () => ({
 
 const tx = {
     $executeRaw: jest.fn(),
-    visit: { findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+    visit: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     facilityClose: { findFirst: jest.fn() },
 };
 jest.mock("@/lib/prisma", () => ({
@@ -90,6 +90,7 @@ beforeEach(() => {
     // Under the lock the route re-reads the row; unless a test races it, it is
     // the row the pre-check loaded.
     tx.visit.findFirst.mockImplementation(() => visitFindUnique.mock.results.at(-1)?.value);
+    tx.visit.findMany.mockResolvedValue([]);
     tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...baseVisit, ...args.data }));
     tx.visit.updateMany.mockResolvedValue({ count: 1 });
     tx.facilityClose.findFirst.mockResolvedValue(null);

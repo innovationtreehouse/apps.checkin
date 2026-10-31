@@ -17,6 +17,21 @@ const visits = [
 ];
 
 describe("facility-ops/visits page", () => {
+  it("the closed-out filter asks the server for it and shows which close", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      "/api/facility/visits?closedOut=true": { visits: [{ ...visits[0], departedVia: "AUTO_CLOSE", facilityCloseId: 7 }] },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
+
+    expect(await screen.findByText("#7 · Nightly")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/facility/visits?closedOut=true");
+  });
+
   it("loads and renders visit rows", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/facility/visits": { visits } });

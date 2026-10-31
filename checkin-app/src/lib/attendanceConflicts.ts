@@ -4,14 +4,12 @@ import prisma from "@/lib/prisma";
  * Detection (read-only) of duplicate / overlapping attendance Visit rows.
  *
  * Duplicates arise across write paths rather than within one: a staff insert at
- * a past time, a lead's Present correction, and a live kiosk scan each write a
- * Visit for the same person, and nothing rejects two that merely overlap — the
- * one-open-visit index only stops two OPEN ones.
+ * a past time, a lead's Present correction, and a kiosk scan each write a Visit
+ * for the same person. The website's writes refuse or flag an overlap as they
+ * make it (lib/visit/overlap.ts); a queued kiosk scan always applies, so overlaps
+ * can still exist.
  *
  * This module ONLY surfaces those overlaps so a lead can resolve them by hand.
- * It adds no constraint, lock, or write-path change (a prevention layer was
- * considered and rejected as disproportionate — severity is an inflated event
- * present-count, which is reversible and human-visible).
  *
  * A Visit interval is half-open: [arrivedAt, departedAt). departedAt = null is an
  * OPEN visit, treated as [arrivedAt, +infinity). Intervals that merely touch at a
