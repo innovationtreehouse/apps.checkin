@@ -112,9 +112,10 @@ reading. A reading with lines but no retailer, date or total counts as good; the
 pipeline sends it to `submitter_review` to be filled in. The rule is in
 `docs/rules/expenses.md`.
 
-From `ocr_failed` a person can retry the reading, discard the receipt or reject it.
-The state is not editable, so nobody types details into a receipt there; a person
-who wants to type them discards it and uploads again with details. A receipt whose
+From `ocr_failed` a person can type the details and resubmit, retry the reading,
+discard the receipt or reject it. A good reading replaces whatever was typed, so the
+page asks first, and `editsSinceReading` in `src/lib/submitterCorrections.ts` counts
+only the field edits after the latest `ocr_complete` audit row as corrections. A receipt whose
 request died mid-call stays in `auto_upload` until the daily sweep moves it to
 `ocr_failed`, once it is more than ten minutes old.
 

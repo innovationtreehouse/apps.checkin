@@ -24,6 +24,7 @@ import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import { listWords, missingDetails } from "../lib/missingDetails";
+import { READING_APPLIED } from "../lib/submitterCorrections";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -308,7 +309,7 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
       }
       await tx.receiptLineItem.deleteMany({ where: { receiptId: id } });
       await tx.receipt.update({ where: { id }, data: { lineItems: { create: toLineRows(result.data.lineItems.map(toLine)) } } });
-      await audit(tx, id, actor, { action: "ocr_complete" });
+      await audit(tx, id, actor, { action: READING_APPLIED });
       return true;
     });
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");

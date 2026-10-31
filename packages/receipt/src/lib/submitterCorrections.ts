@@ -17,6 +17,18 @@ export interface SubmitterCorrection {
   after: string;
 }
 
+/** The audit action of a reading that replaced a receipt's details and lines. */
+export const READING_APPLIED = "ocr_complete";
+
+/**
+ * The field edits among a receipt's audit rows that still describe it. A reading replaces every
+ * detail, so edits before the latest one are history, not corrections of what the receipt now says.
+ */
+export function editsSinceReading<T extends { id: number; action: string }>(rows: T[]): T[] {
+  const reading = Math.max(0, ...rows.filter((r) => r.action === READING_APPLIED).map((r) => r.id));
+  return rows.filter((r) => r.action === "field_edit" && r.id > reading);
+}
+
 const isBlank = (value: string | null) => value === null || value.trim() === "" || value === "null";
 
 /**

@@ -124,6 +124,11 @@ Things the app takes as true because they are handled outside it.
   the new one. A tax of $0 is a value, so a tax raised from $0 is changed.
   [Decision]
 
+- A reading that replaces typed details ends those corrections: finance is told
+  only of edits made since the latest reading. Asking for that reading warns the
+  person first, and the audit log keeps the replaced edits.
+  [Decision]
+
 - A conflicted person also may not reject a receipt, change its tax or date as
   finance, name the person reimbursed, or close its reviews.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
