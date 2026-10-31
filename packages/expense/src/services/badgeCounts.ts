@@ -13,8 +13,11 @@ import { boardApprovalNeeded, conflictedParties, signoffFactsByLine } from "../l
 import { APPROVABLE_STATUSES } from "./approvalService";
 import { callerLines } from "./signoffService";
 
-/** The most open expenses one badge poll examines, so a poll costs a fixed amount of work. */
+/** The most expenses a sign-off badge or list reports for one caller. */
 export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
+
+/** The most candidate expenses one approval-badge poll examines, so a poll's work has a fixed bound. */
+export const SIGNOFF_BADGE_CANDIDATE_CAP = 2 * SIGNOFF_BADGE_EXPENSE_CAP;
 
 export interface ExpenseAwaitingApproval {
   expenseId: string;
@@ -24,13 +27,13 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval: the SIGNOFF_BADGE_EXPENSE_CAP newest such expenses; past
- * the cap it is a lower bound. Candidates are expenses in owner approval, not the caller's own
- * receipt and not a reimbursement with no reimbursee (the approve service refuses both), with a
- * line waiting for approval in the caller's buckets, or in any bucket for a Board member. They are
- * read newest first, a batch at a time, until the cap is reached, so candidates with nothing for
- * the caller never crowd out older work. The approver pill, its "Waiting on you" view and the
- * owner-approval view count all read this.
+ * caller (from lineActions) is approval: the SIGNOFF_BADGE_EXPENSE_CAP newest such expenses among
+ * the SIGNOFF_BADGE_CANDIDATE_CAP newest candidates. Candidates are expenses in owner approval, not
+ * the caller's own receipt and not a reimbursement with no reimbursee (the approve service refuses
+ * both), with a line waiting for approval in the caller's buckets, or in any bucket for a Board
+ * member. Past either cap the result is a lower bound: it never lists a line the caller cannot
+ * approve, but leaves out work older than the candidates read. The approver pill, its "Waiting on
+ * you" view and the owner-approval view count all read this.
  */
 export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
@@ -44,17 +47,14 @@ export async function expensesAwaitingMyApproval(principal: ExpensePrincipal): P
     NOT: { needsReimbursement: true, reimburseePersonId: null },
     approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...(principal.isBoard ? {} : { ownerId: { in: buckets } }) } },
   };
+  const candidates = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], take: SIGNOFF_BADGE_CANDIDATE_CAP });
   const out: ExpenseAwaitingApproval[] = [];
-  for (let skip = 0; out.length < SIGNOFF_BADGE_EXPENSE_CAP; skip += SIGNOFF_BADGE_EXPENSE_CAP) {
-    const batch = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], skip, take: SIGNOFF_BADGE_EXPENSE_CAP });
-    for (const expense of batch) {
-      if (out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
-      const lineItemIds = (await callerLines(principal, expense, true))
-        .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
-        .map((line) => line.lineItemId);
-      if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
-    }
-    if (batch.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
+  for (const expense of candidates) {
+    if (out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
+    const lineItemIds = (await callerLines(principal, expense, true))
+      .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
+      .map((line) => line.lineItemId);
+    if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
   }
   return out;
 }

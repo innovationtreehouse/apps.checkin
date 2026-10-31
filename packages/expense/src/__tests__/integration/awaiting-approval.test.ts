@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { expenses } from "../../routes";
-import { SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_CANDIDATE_CAP, SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
 // submitter 1 · approvers 2 and 9 (bucket 100), 6 (bucket 200) · org-level bucket 7 · finance 3 and 8 · board 5 · 8 and 9 in the submitter's household
@@ -142,6 +142,21 @@ describeDb("lines waiting on the caller's approval", () => {
     as(OTHER_APPROVER);
     expect(await viewIds(OTHER_APPROVER)).not.toContain(both);
     expect(await signoffsAwaitingCount(OTHER_APPROVER)).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
+  });
+
+  it("reads at most the candidate cap, so older work past it is left out and nothing is overcounted", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP; i++) await seedLines({}, [{ ownerId: 100 }]);
+    as(BOARD);
+    expect(await viewIds(BOARD)).toEqual([]);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(0);
+    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(0);
+  });
+
+  it("finds a Board member's work as the last candidate inside the cap", async () => {
+    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP - 1; i++) await seedLines({}, [{ ownerId: 100 }]);
+    as(BOARD);
+    expect(await viewIds(BOARD)).toEqual([orgLevel]);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
   });
 
   it("counts nothing for FINANCE outside its own buckets, and hides the view from it", async () => {
