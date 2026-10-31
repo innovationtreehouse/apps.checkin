@@ -68,7 +68,7 @@ class Outbox:
         # is drainable again.
         self._inflight = set()
 
-    # force_close_token: the confirm token (#1347) the keyholder redeemed before
+    # force_close_token: the confirm token the keyholder redeemed before
     # the outage. It rides with the queued event and is sent on drain -- without
     # it the replay lands token-less and parks for review instead of closing.
     _SCHEMA_SQL = """CREATE TABLE IF NOT EXISTS outbox (
@@ -249,7 +249,7 @@ def classify_response(status, body):
     """Maps a scan response to ack (delete) or retry (keep, backoff). A server
     speaking the drain's protocol parks a replay it cannot apply rather than
     refusing it, so anything else is a retry -- never a dropped scan."""
-    # F2: check first, regardless of status -- post_scan normalizes a
+    # Check first, regardless of status -- post_scan normalizes a
     # non-JSON body (waker HTML, captive portal login, ...) to this sentinel,
     # preserving the intermediary's real status (often 200, not 400), so
     # gating on status alone would falsely ack an unrecorded scan.
