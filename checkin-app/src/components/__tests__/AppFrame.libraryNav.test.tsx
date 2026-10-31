@@ -40,10 +40,10 @@ describe("AppFrame library nav slots", () => {
     expect(screen.queryByText("Programs I Lead")).not.toBeInTheDocument();
   });
 
-  it("FINANCE-only: Revenue Ops lands on Shopify's Payouts (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
+  it("FINANCE-only: Revenue Ops lands on the program payment plan; Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
     setSession({ id: 2, isFinance: true });
     renderFrame();
-    expect(hrefOf("Revenue Ops")).toBe("/income/payouts");
+    expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
     expect(hrefOf("Finance")).toBe("/finance/review");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });
@@ -84,7 +84,7 @@ describe("AppFrame library nav slots", () => {
     mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["catalog", "local-inventory"] }));
     setSession({ id: 2, isFinance: true });
     const { unmount } = renderFrame();
-    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
+    expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
     expect(screen.queryByText("Finance")).not.toBeInTheDocument();
     unmount();
     setSession({ id: 1, isBoardMember: true });

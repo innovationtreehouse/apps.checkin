@@ -7,7 +7,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
+import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -33,7 +33,7 @@ type MembershipPaymentPlanRequest = {
 
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
+  const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
 
   const ownHousehold = (req: MembershipPaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.orgMembership.household.id);
@@ -196,10 +196,10 @@ export default function MembershipPaymentPlansPage() {
       sortBy: (req) => req.stageEnteredAt ?? '', // ISO string sorts chronologically
       render: (req) => <Text size="sm" c="dimmed">{req.stageEnteredAt ? formatDateTime(req.stageEnteredAt) : '—'}</Text>,
     },
-    {
+    ...(!me?.isBoardMember ? [] : [{
       header: 'Actions',
-      align: 'right',
-      render: (req) => (
+      align: 'right' as const,
+      render: (req: MembershipPaymentPlanRequest) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
             Deny
@@ -209,7 +209,7 @@ export default function MembershipPaymentPlansPage() {
           </Button>
         </Group>
       ),
-    },
+    }]),
   ];
 
   return (

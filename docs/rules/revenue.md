@@ -71,7 +71,8 @@ Things the app takes as true because they are handled outside it.
 
 ### Ownership
 
-- Finance Ops belongs to the board alone.  [Unsettled — which superuser]
+- Finance Ops belongs to the board alone, except that finance reads payment
+  plans; the board approves them.  [Unsettled — which superuser]
 
 - Only the board and finance read membership and program payment plans.  [Decision — owner]
 

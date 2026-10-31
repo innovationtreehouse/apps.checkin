@@ -11,6 +11,7 @@ import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdMo
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_PARTICIPANTS_ROLES } from "@/lib/nav/sections/membershipOps";
 
 type HouseholdRef = {
   id: number;
@@ -49,7 +50,7 @@ export default function AdminParticipantsIndex() {
   // new person, roles). Operations gets the read-only directory
   // plus add-contact (canAddContact mirrors POST /api/membership-ops/contacts'
   // role gate: board + operations, sysadmin deliberately excluded there).
-  const { user: me } = useRequireRole([]);
+  const { user: me, ready } = useRequireRole(MEMBERSHIP_PARTICIPANTS_ROLES);
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
   // The email decides who signs in as a person, so only the board changes it (with a reason).
@@ -98,9 +99,10 @@ export default function AdminParticipantsIndex() {
   };
 
   useEffect(() => {
+    if (!ready) return;
     const id = setTimeout(() => fetchParticipants(searchQuery), 250);
     return () => clearTimeout(id);
-  }, [searchQuery]);
+  }, [ready, searchQuery]);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<PersonRow | null>(null);
@@ -246,6 +248,8 @@ export default function AdminParticipantsIndex() {
 
   const canSubmitAssign = !selectedParticipant?.household || (selectedParticipant.household.householdMembers.length > 1);
   const canChangeHousehold = selectedParticipant?.household && selectedParticipant.household.householdMembers.length === 1 && householdId;
+
+  if (!ready) return null;
 
   return (
     <Stack maw={1000} mx="auto">
