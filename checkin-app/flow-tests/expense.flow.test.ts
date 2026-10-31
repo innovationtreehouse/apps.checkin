@@ -44,7 +44,6 @@ const ROUTES: Route[] = [
   ["POST", `${E}/line-items/0/signoffs`, "signoff", {}],
   ["GET", "/api/expense/queue?view=all", "approver"],
   ["GET", "/api/expense/counts", "approver"],
-  ["GET", "/api/expense/expense-holds", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping/catalog", "financeOrBoard"],
   ["GET", "/api/expense/qb-accounts", "financeOrBoard"],
@@ -57,7 +56,6 @@ const ROUTES: Route[] = [
   ["GET", "/api/expense/qb-exclusions", "financeOrBoard"],
   ["GET", "/api/expense/org-settings", "financeOrBoard"],
   ["PUT", "/api/expense/org-settings", "financeOrBoard", { unknownField: 1 }],
-  ["GET", "/api/expense/flags", "financeOrBoard"],
   ["GET", "/api/expense/finance-queue?tab=expenses", "financeOrBoard"],
   ["GET", "/api/expense/finance-queue/counts", "financeOrBoard"],
   ["POST", "/api/expense/flags/0/check-off", "financeOrBoard", {}],
@@ -257,8 +255,8 @@ describe("expense — FINANCE journey", () => {
     expect((await api<{ expenses: { total: number } }>(f, "/api/expense/finance-queue/counts")).json.expenses.total).toBeGreaterThan(0);
 
     // Holds: set an account on the held line, then resubmit.
-    const holds = await api<{ expenseId: string; lineItemId: number }[]>(f, "/api/expense/expense-holds");
-    const hold = holds.json.find((h) => h.expenseId === HELD_EXPENSE)!;
+    const held = await api<{ Expense: { holds: { lineItemId: number }[] } }>(f, `/api/expense/expenses/${HELD_EXPENSE}`);
+    const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
     expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
@@ -281,7 +279,7 @@ describe("expense — FINANCE journey", () => {
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
-    const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
+    const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
     expect(candidates.status).toBe(503);
     expect(JSON.stringify(candidates.json)).toContain("QuickBooks is not connected");
   });
