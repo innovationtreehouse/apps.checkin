@@ -1,2 +1,2 @@
-// Re-export stub (#1286 track 5): the catalog Conversion Challenges screen lives in the library.
+// Re-export stub: the catalog Conversion Challenges screen lives in the global-catalog library.
 export { default } from "@checkin/global-catalog/pages/conversionChallenges";

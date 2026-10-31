@@ -64,8 +64,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
       )}
 
       {!loadingHousehold && needsSetup ? (
-        // Replaces the old dead-end "no eligible participants" alert: a
-        // first-time user finishes their household here, then enrolls.
+        // A first-time user finishes their household here, then enrolls.
         <Stack align="center" gap="sm">
           <Text c="dimmed" size="sm" ta="center">
             Finish setting up your household to enroll{ageRange ? ` (${ageRange})` : ''}.
