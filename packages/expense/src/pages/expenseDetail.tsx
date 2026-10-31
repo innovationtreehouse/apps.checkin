@@ -113,7 +113,6 @@ const NOT_SENT: Record<string, string> = {
   NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
   AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
   UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
-  BEFORE_LINE: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
   SKIPPED: "Not sent to QuickBooks: finance skipped it",
 };
 
