@@ -16,12 +16,12 @@ import { receiptFileStore } from "../src/lib/receipt/fileStore";
 const AURORA_RESUME_DEADLINE_MS = 5 * 60_000;
 
 async function main(): Promise<boolean> {
+    const verify = process.argv.includes("--verify");
+    await retryP1001UntilDeadline(() => getPrisma().$queryRaw`SELECT 1`, AURORA_RESUME_DEADLINE_MS);
     if (!config.isLocal() && !config.receiptFilesBucket()) {
         console.error("RECEIPT_FILES_S3_BUCKET is not set; nothing was copied or verified.");
         return false;
     }
-    const verify = process.argv.includes("--verify");
-    await retryP1001UntilDeadline(() => getPrisma().$queryRaw`SELECT 1`, AURORA_RESUME_DEADLINE_MS);
     if (verify) {
         const report = await verifyFiles(receiptFileStore());
         console.log(JSON.stringify({ mode: "verify", ...report }, null, 2));

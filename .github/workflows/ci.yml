@@ -894,7 +894,7 @@ jobs:
             || { echo "::error::prisma CLI is not resolvable inside the image — the migrate task would fall back to a registry download"; exit 1; }
 
           # The receipt file backfill's bundle loads in the image and stops at its unset database.
-          docker run --rm -e RECEIPT_FILES_S3_BUCKET=smoke --entrypoint sh checkin-deploy-build:${{ github.sha }} \
+          docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep -q RECEIPT_DATABASE_URL' \
             || { echo "::error::the receipt file backfill bundle does not load inside the image"; exit 1; }
 
