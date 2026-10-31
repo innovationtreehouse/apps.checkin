@@ -94,7 +94,8 @@ const DISPOSITIONS: Record<string, string> = {
     'OrgMembershipProcess.zohoSignerPersonId': 'repointed (SET NULL) — who the agreement request is addressed to, and who signed; the same human follows the survivor.',
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
-    'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would pin the very Person that #1456 2b-3 exists to delete. Deliberately the opposite call from Person.mergedIntoId below, which keeps its chain for provenance — the archive already has mergedAt and the AuditLog for that.',
+    'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would block the delete.',
+    'Person.mergedIntoId': 'repointed (SET NULL) — a legacy tombstone row naming this record as its survivor. Left in place, the delete would null its pointer and turn it back into a live person. The step-1 CAS also writes this column on the merged-away row itself, as the concurrency guard; the row is then deleted.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
     'BudgetOwner.ownerId': 'repointed (RESTRICT) — step 5 updateMany. The bucket owner approves its lines; the same human keeps approving as the survivor.',
     'Program.leadMentorId': 'repointed (SET NULL) — step 5 updateMany.',
@@ -103,7 +104,7 @@ const DISPOSITIONS: Record<string, string> = {
     'TrustedAdult.disclosedById': 'repointed (RESTRICT) — step 5 updateMany.',
     'TrustedAdult.trustedAdultPersonId': 'repointed (SET NULL) — step 5 updateMany.',
     'TrustedAdultReview.decidedById': 'repointed (SET NULL) — which board member decided the review, same audit-fact rationale.',
-    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is pre-refused; the in-tx guard that leaves a tombstone open visit in place is defense-in-depth for a TOCTOU race, and the nightly/lib/attendance force-checkout sweeps drain it.',
+    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is refused, before the transaction and again under the locks; an open visit that races in after that refuses the merge rather than staying behind.',
 
     // ── deduped: bare joins, where a duplicate carries no extra decision ──────
     'CorporationLead.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
@@ -115,12 +116,11 @@ const DISPOSITIONS: Record<string, string> = {
     'RSVP.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a past-event duplicate is deleted; a FUTURE-event duplicate is pre-refused, because which answer is real is a human call.',
 
     // ── pre-refused: a collision here is a decision the merge must not make ───
-    'ProgramParticipant.personId': 'pre-refused (RESTRICT) — a shared enrollment carries a seat and a payment. Refused before the transaction; the in-tx `left` branch is defense-in-depth for a race.',
+    'ProgramParticipant.personId': 'pre-refused (RESTRICT) — a shared enrollment carries a seat and a payment. Refused before the transaction and again under the locks; a `left` row from a later race refuses the merge.',
     'ToolStatus.personId': 'pre-refused (RESTRICT) — two certification levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
-    'Person.mergedIntoId': 'deliberately-left (SET NULL) — the tombstone pointer itself, written BY the merge (step 1 CAS). Rows already pointing at the merged-away record are NOT re-pointed at the survivor: the chain is walked at read time (MAX_MERGE_HOPS), so A→B→C stays a two-hop chain and each merge keeps its own provenance.',
-    'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved. The one deliberate exception to the no-deletion rule: a session is an auth artifact, and there is no reason for the survivor to inherit the tombstone\'s login.',
+    'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved: a session is an auth artifact, and there is no reason for the survivor to inherit the merged-away login.',
 };
 
 describe('merge repoint drift guard', () => {

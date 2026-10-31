@@ -5,6 +5,7 @@ import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { programVariantIds } from "@/lib/programs/variants";
+import { personNamesById } from "@/lib/person/archivedPeople";
 
 /**
  * Bidirectional Shopify ↔ activation match audit — the completeness check the
@@ -347,10 +348,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
         .map((e) => (createByKey.get(`${e.personId}:${e.programId}`)?.status === "ACTIVE" ? compActorId(e) : null))
         .filter((v): v is number => v != null);
     const nameIds = [...new Set([...manualPaymentActorIds, ...comperActorIds])];
-    const people = nameIds.length
-        ? await prisma.person.findMany({ where: { id: { in: nameIds } }, select: { id: true, name: true } })
-        : [];
-    const personName = new Map(people.map((p) => [p.id, p.name]));
+    const personName = await personNamesById(prisma, nameIds);
 
     // ── items 3 & 4: reversal state + the mirror's low-water mark ─────────────
     // Out of scope: no re-validation that a mirrored order's
