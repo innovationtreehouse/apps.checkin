@@ -1,7 +1,7 @@
 /**
  * The error and route layer every component library shares: the errors a library throws,
  * the mapping from those errors to an HTTP status, and the parse helpers its route
- * factories use. Server-only; it imports no React and no database driver.
+ * factories use; and the mechanics of consuming the catalog's org events. Server-only; it imports no React and no database driver.
  *
  * Errors are recognised by a `Symbol.for` brand, never by `instanceof`: the instrumentation
  * chunk that configures a library and each route chunk can load separate copies of this
@@ -185,4 +185,128 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
       if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
     },
   };
+}
+
+/** What consuming one catalog org event came to. */
+export type OrgEventOutcome = "processed" | "duplicate" | "failed" | "skipped";
+
+export interface OrgEventStep<E, S extends "duplicate" | "skipped"> {
+  /** An outcome that settles the event without applying it, such as a ledger row already processed. */
+  check?(event: E): Promise<S | null>;
+  /**
+   * The consumer's commit rule. It either writes the ledger and the reaction in one transaction,
+   * or reacts and leaves replay to catch-up, which skips and retries so one bad event never
+   * holds back the feed. A throw records a failure.
+   */
+  apply(event: E): Promise<void>;
+  /** A ledger write after `apply` whose throw reaches the caller instead of recording a failure. */
+  recordProcessed?(event: E): Promise<void>;
+  /** Records the failure. False when an overlapping consumer's processed outcome stands. */
+  recordFailure(event: E, failureReason: string): Promise<boolean>;
+  onFailure(event: E, err: unknown): void;
+}
+
+/** One event's consume step. A failed reaction is recorded, not thrown; a failed ledger write is thrown. */
+export function orgEventStep<E, S extends "duplicate" | "skipped" = never>(step: OrgEventStep<E, S>) {
+  return async (event: E): Promise<"processed" | "failed" | "duplicate" | S> => {
+    const settled = await step.check?.(event);
+    if (settled) return settled;
+    try {
+      await step.apply(event);
+    } catch (err) {
+      step.onFailure(event, err);
+      const failureReason = err instanceof Error ? err.message : String(err);
+      return (await step.recordFailure(event, failureReason)) ? "failed" : "duplicate";
+    }
+    await step.recordProcessed?.(event);
+    return "processed";
+  };
+}
+
+export interface OrgEventSweep<E> {
+  limit: number;
+  /** Events recorded as failed, oldest first. */
+  failed: E[];
+  /** The page of the org's events after an id, oldest first. Empty ends the read. */
+  readPage(afterId: number): Promise<E[]>;
+  idOf(event: E): number;
+  /** Those of `ids` already in the consumer's ledger, whatever their status. */
+  receivedIds(ids: number[]): Promise<number[]>;
+  consume(event: E): Promise<OrgEventOutcome>;
+  onUnrecorded(event: E, err: unknown): void;
+  onUnreadable(err: unknown): void;
+}
+
+export interface OrgEventSweepResult {
+  counts: Record<OrgEventOutcome, number>;
+  newlyFailed: number;
+  unprocessed: number;
+  unreadable: boolean;
+  /** An event newly failed, an unreadable catalog, or a capped run that processed nothing. */
+  needsAlert: boolean;
+}
+
+/** The part of a run's cap that failed events may take ahead of new ones, so they can't starve them. */
+const RETRY_FIRST_SHARE = 0.1;
+
+/**
+ * Catch-up sweep: retries a small share of the failed events, pages through all the org's events
+ * and consumes those not in the ledger, then retries more failed events with the cap left. Reading
+ * from the start means no event is missed however late it committed or however many later ids were
+ * received. What stays undone is retried on the next run: an event that can't be recorded counts as
+ * failed and, with no ledger row, is read again. A capped run that made progress drains itself on
+ * later runs, so it needs no alert, and a retry that fails again only stays failed in the ledger.
+ */
+export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEventSweepResult> {
+  const counts: Record<OrgEventOutcome, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
+  const consume = async (event: E): Promise<OrgEventOutcome> => {
+    try {
+      return await sweep.consume(event);
+    } catch (err) {
+      sweep.onUnrecorded(event, err);
+      return "failed";
+    }
+  };
+  const retry = async (events: E[]) => {
+    for (const event of events) counts[await consume(event)]++;
+  };
+  const firstRetries = sweep.failed.slice(0, Math.ceil(sweep.limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
+
+  let unprocessed = 0;
+  let unreadable = false;
+  let budget = sweep.limit - firstRetries.length;
+  let newlyFailed = 0;
+  try {
+    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
+    let after = 0;
+    for (;;) {
+      const page = await sweep.readPage(after);
+      if (page.length === 0) break;
+      const ids = page.map(sweep.idOf);
+      const received = new Set(await sweep.receivedIds(ids));
+      for (const [i, event] of page.entries()) {
+        if (received.has(ids[i])) continue;
+        if (budget > 0) {
+          budget--;
+          const outcome = await consume(event);
+          counts[outcome]++;
+          if (outcome === "failed") newlyFailed++;
+        } else {
+          unprocessed++;
+        }
+      }
+      after = ids[ids.length - 1];
+    }
+  } catch (err) {
+    unreadable = true;
+    sweep.onUnreadable(err);
+  }
+
+  const laterRetries = sweep.failed.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += sweep.failed.length - firstRetries.length - laterRetries.length;
+
+  const needsAlert = newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
+  return { counts, newlyFailed, unprocessed, unreadable, needsAlert };
 }

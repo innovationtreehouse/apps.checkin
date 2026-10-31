@@ -79,7 +79,7 @@ describeDb("S5 consumer — fixtures", () => {
 
 /** A source that honours the id cursor and returns at most `pageSize` events, like the catalog. */
 const paged = (events: Array<{ id: number }>, pageSize = 500) => ({
-  eventsAfter: async (after: number) => events.filter((e) => e.id > after).slice(0, pageSize),
+  eventsSince: async (_orgId: string, after: number) => events.filter((e) => e.id > after).slice(0, pageSize),
 });
 const malformed = (id: number) => ({ ...envelope(approved, id), payload: JSON.stringify({ version: 1, provisionalGtin13: "X", realGtin13: 123, name: "n" }) });
 const CLEAN = { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false };
@@ -92,7 +92,7 @@ describeDb("S5 consumer — catch-up sweep", () => {
     });
     const later = envelope(rejected, 11);
     let askedAfter = -1;
-    bindPorts({ catalogEvents: { eventsAfter: async (after) => { askedAfter = askedAfter < 0 ? after : askedAfter; return [later].filter((e) => e.id > after); } } });
+    bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => { askedAfter = askedAfter < 0 ? after : askedAfter; return [later].filter((e) => e.id > after); } } });
 
     expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 2 });
 
@@ -106,7 +106,7 @@ describeDb("S5 consumer — catch-up sweep", () => {
     const early = envelope(rejected, 21);
     await track(approved.provisionalGtin13);
     expect(await consumeCatalogEvent(early)).toBe("processed");
-    bindPorts({ catalogEvents: { eventsAfter: async (after) => [late, early].filter((e) => e.id > after) } });
+    bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => [late, early].filter((e) => e.id > after) } });
 
     expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
 
@@ -166,7 +166,7 @@ describeDb("S5 consumer — catch-up alerts", () => {
   it("alerts on each run while the catalog can't be read, and still retries failures", async () => {
     const orgEventsStuck = vi.fn(async () => {});
     await consumeCatalogEvent(malformed(1));
-    bindPorts({ catalogEvents: { eventsAfter: async () => { throw new Error("catalog down"); } }, alerts: { orgEventsStuck } });
+    bindPorts({ catalogEvents: { eventsSince: async () => { throw new Error("catalog down"); } }, alerts: { orgEventsStuck } });
 
     expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1, unreadable: true });
     await catchUpCatalogEvents();

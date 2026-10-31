@@ -148,10 +148,10 @@ export type CatalogOrgEvent = z.infer<typeof CatalogOrgEventSchema>;
 
 /** A page of the org's catalog events after an id, oldest first; read by the catch-up sweep. */
 export interface CatalogEventSource {
-  eventsAfter(afterId: number): Promise<unknown[]>;
+  eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsAfter: async () => [] };
+export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
 
 /** Alerts the host binds to reach a person. */
 export interface ExpenseAlerts {

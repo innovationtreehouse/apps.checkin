@@ -1,3 +1,4 @@
+import { orgEventStep, sweepOrgEvents } from "@checkin/component-kit";
 import { parseOrgEvent, type OrgEventPayload } from "@checkin/receipt-types";
 import { db } from "../db";
 import { EDITABLE_RECEIPT_WHERE } from "../db/schema";
@@ -98,33 +99,24 @@ async function applyEvent(event: OrgEventRecord): Promise<void> {
  * every action is set-to-value or a deduped audit row. A failure is recorded for catch-up to
  * retry by id, so one bad event never holds back the ones after it.
  */
-async function consumeEvent(event: OrgEventRecord): Promise<boolean> {
-  try {
+const consumeEvent = orgEventStep<OrgEventRecord>({
+  async apply(event) {
     await applyEvent(event);
     await db.workflowAppliedOrgEvent.createMany({ data: [{ id: event.id }], skipDuplicates: true });
     await db.workflowFailedOrgEvent.deleteMany({ where: { id: event.id } });
-    return true;
-  } catch (err) {
-    const failureReason = err instanceof Error ? err.message : String(err);
-    console.warn(`[workflow-mapping/org-events] event ${event.id} failed:`, err);
+  },
+  async recordFailure(event, failureReason) {
     await db.workflowFailedOrgEvent.upsert({
       where: { id: event.id },
       create: { id: event.id, orgId: event.orgId, eventType: event.eventType, payload: event.payload, failureReason },
       update: { failureReason, failedAt: new Date() },
     });
-    return false;
-  }
-}
-
-/** A failure-record write that throws counts as failed; with no ledger row, the next sweep reads the event again. */
-async function consumeInSweep(event: OrgEventRecord): Promise<boolean> {
-  try {
-    return await consumeEvent(event);
-  } catch (err) {
-    console.error(`[workflow-mapping/org-events] event ${event.id} could not be recorded`, err);
-    return false;
-  }
-}
+    return true;
+  },
+  onFailure(event, err) {
+    console.warn(`[workflow-mapping/org-events] event ${event.id} failed:`, err);
+  },
+});
 
 /** Tell a person about events left undone. An alert that fails never fails the caller. */
 async function alertStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
@@ -143,78 +135,31 @@ export const orgEventConsumer: OrgEventConsumer = {
   async onOrgEvents(events) {
     let failed = 0;
     for (const event of [...events].sort((a, b) => a.id - b.id)) {
-      if (!(await consumeEvent(event))) failed++;
+      if ((await consumeEvent(event)) === "failed") failed++;
     }
     if (failed > 0) await alertStuck({ failed, unprocessed: 0, unreadable: false });
   },
 };
 
-/** The share of the cap retried before new events, so failures that persist can't starve them. */
-const RETRY_FIRST_SHARE = 0.1;
-
-/**
- * Catch-up sweep: retries a small share of the recorded failures, pages through all the org's
- * catalog events and consumes those in neither ledger, then retries more failures with the cap left.
- * Reading from the start means no event is missed however late it committed or however many later
- * ids were applied. What stays undone is retried on the next run. A person is alerted once per run
- * for an event newly failed, an unreadable catalog, or a capped run that applied nothing; a capped
- * run that made progress drains itself on later runs. Returns counts only.
- */
+/** Catch-up sweep over the org's catalog events (see `sweepOrgEvents`). An event in either ledger is not read again as new. Returns counts only. */
 export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number; unprocessed: number; unreadable: boolean }> {
-  const limit = opts.limit ?? 500;
   const recorded = await db.workflowFailedOrgEvent.findMany({ orderBy: { id: "asc" } });
-  let applied = 0;
-  let failed = 0;
-  const retry = async (rows: typeof recorded) => {
-    for (const r of rows) {
-      if (await consumeInSweep({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload })) applied++;
-      else failed++;
-    }
-  };
-  const firstRetries = recorded.slice(0, Math.ceil(limit * RETRY_FIRST_SHARE));
-  await retry(firstRetries);
-
-  let unprocessed = 0;
-  let unreadable = false;
-  let budget = limit - firstRetries.length;
-  let newlyFailed = 0;
-  try {
-    const orgId = await getOrgId();
-    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
-    let after = 0;
-    for (;;) {
-      const page = await ports().catalogEventSource.eventsSince(orgId, after);
-      if (page.length === 0) break;
-      const ids = page.map((e) => e.id);
+  const sweep = await sweepOrgEvents<OrgEventRecord>({
+    limit: opts.limit ?? 500,
+    failed: recorded.map((r) => ({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload })),
+    readPage: async (after) => ports().catalogEventSource.eventsSince(await getOrgId(), after),
+    idOf: (event) => event.id,
+    async receivedIds(ids) {
       const [done, undone] = await Promise.all([
         db.workflowAppliedOrgEvent.findMany({ where: { id: { in: ids } }, select: { id: true } }),
         db.workflowFailedOrgEvent.findMany({ where: { id: { in: ids } }, select: { id: true } }),
       ]);
-      const received = new Set([...done, ...undone].map((r) => r.id));
-      for (const event of page) {
-        if (received.has(event.id)) continue;
-        if (budget > 0) {
-          budget--;
-          if (await consumeInSweep(event)) applied++;
-          else {
-            failed++;
-            newlyFailed++;
-          }
-        } else {
-          unprocessed++;
-        }
-      }
-      after = page[page.length - 1].id;
-    }
-  } catch (err) {
-    unreadable = true;
-    console.error("[workflow-mapping/org-events] catalog events could not be read", err);
-  }
-
-  const laterRetries = recorded.slice(firstRetries.length, firstRetries.length + budget);
-  await retry(laterRetries);
-  unprocessed += recorded.length - firstRetries.length - laterRetries.length;
-
-  if (newlyFailed > 0 || unreadable || (unprocessed > 0 && applied === 0)) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
-  return { applied, failed, unprocessed, unreadable };
+      return [...done, ...undone].map((r) => r.id);
+    },
+    consume: consumeEvent,
+    onUnrecorded: (event, err) => console.error(`[workflow-mapping/org-events] event ${event.id} could not be recorded`, err),
+    onUnreadable: (err) => console.error("[workflow-mapping/org-events] catalog events could not be read", err),
+  });
+  if (sweep.needsAlert) await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable });
+  return { applied: sweep.counts.processed, failed: sweep.counts.failed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
 }
