@@ -66,7 +66,7 @@ Program roles (all Treehouse Volunteers):
 
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
-| **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
+| **Program Leader** | the person responsible for a program | `leadMentorId`, `leadMentor` | policy term; **retire "lead mentor"** in anything people read. The code name `leadMentor` means Program Leader and is kept deliberately, because renaming it would change a security-boundary file together with app code |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](rules/programs.md), Assumptions) |
 | **Program Treasurer** | keeps a program's money; a program may have several. The app records treasurers on a budget bucket, not on the program: with the bucket's owner, they approve its lines | `BudgetOwnerTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*); the Board names them on Budgets |
 
