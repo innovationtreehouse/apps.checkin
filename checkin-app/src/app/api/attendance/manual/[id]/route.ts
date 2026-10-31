@@ -216,7 +216,7 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         return { Visit: surviving };
     } catch (error: unknown) {
         // handler() maps ApiResponseError to its declared status; anything else
-        // is a real fault, and keeps the DB error log withAuth used to give it.
+        // is a real fault, and gets a DB error log.
         if (!(error instanceof ApiResponseError)) await logBackendError(error, "PATCH /api/attendance/manual/[id]");
         throw error;
     }
@@ -250,7 +250,7 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
 
         const significance = deleteSignificance(visit, { byProxy });
 
-        // Tombstone, never a row removal: the deletion is reviewable in AT12
+        // Tombstone, never a row removal: the deletion is reviewable in the corrections review
         // and reversible by clearing deletedAt. Same advisory lock as above, and
         // scope/liveness re-asserted inside it so a racing second delete is
         // a 404 rather than a re-stamped deletedAt.
@@ -276,14 +276,14 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
             }
         });
 
-        // Every delete flags — the floor (§2).
+        // Every delete flags: that is the floor.
         const timeZone = await resolveDisplayTimezone();
         flagBoard("delete", visitId, auth.user.name ?? `person #${userId}`, byProxy, significance.score,
             `Visit ${formatDateTime(visit.arrivedAt, { timeZone })} – ${visit.departedAt ? formatDateTime(visit.departedAt, { timeZone }) : "(open)"} tombstoned.`);
 
         // Empty bag — a tombstone ships no model data, so the registry declares
         // `envelope: null` and the 200 body is `{}` (stripBag drops any
-        // non-model key, so the old { success, flagged } has no legal home).
+        // non-model key, so fields like `flagged` cannot ship).
         return {};
     } catch (error: unknown) {
         if (!(error instanceof ApiResponseError)) await logBackendError(error, "DELETE /api/attendance/manual/[id]");

@@ -71,7 +71,7 @@ async function fireMembership(processId: number): Promise<NextResponse> {
 
     // A real paid order carries the membership variant id in its line_items; the
     // inbound handler matches it against BoardSettings to confirm the order is for
-    // the membership product (#624/H2). The mock must echo a configured variant id
+    // the membership product. The mock must echo a configured variant id
     // or the webhook lands as a no-membership-item anomaly, not an activation.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     // Mock stands in for the manual BoardSettings variant a local seed never sets;

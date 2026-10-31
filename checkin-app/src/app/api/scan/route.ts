@@ -55,9 +55,9 @@ async function openedByLiveBadge(tx: Prisma.TransactionClient, personId: number)
 
 const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect", "shownEmpty", "close", "rosterAsOf"] as const;
 
-// F7: the out-of-order guard needs the true latest activity across ALL of a
+// The out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
-// same-day/next-day resolution (D7) can write a departedAt newer than a
+// same-day/next-day resolution can write a departedAt newer than a
 // later visit's own arrival, and comparing arrivedAt alone would miss it.
 const maxDate = (a: Date | null, b: Date | null): Date | null =>
     !a ? b : !b ? a : (a > b ? a : b);
@@ -86,21 +86,21 @@ export const POST = withKiosk(
             }
         }
 
-        // Optional replay fields from a queued kiosk scan. Absent → exactly
-        // today's behavior (legacy/web callers). An unparseable scannedAt
+        // Optional replay fields from a queued kiosk scan. Absent → a plain
+        // live scan (web callers, older kiosks). An unparseable scannedAt
         // normalizes to null, which parks a replay below.
         const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
         const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
 
         // Replay-ness is explicit: only the outbox drain sets it. It cannot be
-        // inferred from clientEventId, because D4's try-first rule puts that id
+        // inferred from clientEventId, because the try-first rule puts that id
         // on the LIVE attempt too so a later redelivery dedups.
         if (body.replay !== undefined && typeof body.replay !== 'boolean') {
             return apiError("replay must be a boolean.", 400);
         }
 
-        // Q10: a terminally-failed outbox row rides this same endpoint to reach
+        // A terminally-failed outbox row rides this same endpoint to reach
         // the server-side DLQ instead of being lost on the kiosk. It shares
         // replay's identity requirements (clientEventId + scannedAt) but is a
         // distinct signal -- never a redelivery attempt, so the two are exclusive.
@@ -141,8 +141,8 @@ export const POST = withKiosk(
 
         // A replay must carry its own id and event time: falling back to now
         // would make the freshness check pass trivially and toggle a scan that
-        // should park. intent is the displayed direction (invariant 5); absent,
-        // a legacy live-state toggle. protocolVersion is the contract bit (§2).
+        // should park. intent is the displayed direction; absent, a legacy
+        // live-state toggle. protocolVersion is the contract bit.
         const invalid =
             body.replay === true && !clientEventId ? "A replayed scan requires clientEventId." :
             body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
@@ -169,8 +169,8 @@ export const POST = withKiosk(
         const closeKind = invalid ? null : requestedClose;
         const rosterAsOf = rosterAsOfValid ? parsedRosterAsOf : null;
 
-        // A live scan is happening now and never inherits the kiosk's clock (D3's
-        // window and the debounce both measure against server now).
+        // A live scan is happening now and never inherits the kiosk's clock (the
+        // freshness window and the debounce both measure against server now).
         let eventTime = ((isReplay || isDead) && scannedAt) || new Date();
         // A visit can't start or end in the future: a scan time ahead of server
         // now applies at now instead.
@@ -265,9 +265,8 @@ export const POST = withKiosk(
                 survivorId: participant.id,
                 hops: mergeHops,
                 // The scanned id had no Person row at all — the archive resolved it.
-                // Watch this during the 2b-3 rollout: it going true is the delete
-                // path working, and staying false while tombstones are being removed
-                // means badges are resolving some other way than expected.
+                // True means the tombstone was deleted and the archive took over; false
+                // while tombstones are being removed means badges resolve some other way.
                 viaArchive: badgeRecord == null,
             });
         }
@@ -331,7 +330,7 @@ export const POST = withKiosk(
             // Only a keyholder closes. Live, the server knows the badge's role now,
             // so a non-keyholder's close is refused and the scan is an ordinary
             // checkout; a late delivery can't know the role at its scan time, so
-            // it still closes and is flagged (D1).
+            // it still closes and is flagged.
             closeRefused = closeKind !== null && !participant.isKeyholder && !isReplay && !isDead;
             // A close request is never debounced, parked or held: it is the
             // keyholder's decision, applied at its own time however late. A
@@ -366,7 +365,7 @@ export const POST = withKiosk(
 
             // A web caller echoing its close-choice token answers the dialog, and a
             // scan following a fresh supervisionWarnedAt stamp IS the supervision
-            // confirm (#1347 PR-0, decision 7) -- both must skip the debounce below.
+            // confirm -- both must skip the debounce below.
             // Tied to the warning actually being shown, not badge adjacency. The
             // stamp side is floored at SUPERVISION_CONFIRM_DEADFRONT_MS: a USB
             // double-read of the warning scan itself lands well under that age and
@@ -390,7 +389,7 @@ export const POST = withKiosk(
                 },
             })) > 0;
 
-            // 4. Double scan debounce check (3 seconds) — now under the lock, so
+            // 4. Double scan debounce check (3 seconds), under the lock so
             // it sees the committed badge event of any racing scan ahead of it.
             // A dead-lettered event always skips it too: it only ever parks, and
             // the touch must never be silently dropped by a debounce window.
@@ -490,8 +489,8 @@ export const POST = withKiosk(
                 },
             });
 
-            // Dual-write the Stage-2 log. A held scan must not consult Visit
-            // state at all (the pinned park contract): its direction is advisory
+            // Also append to the presence log. A held scan must not consult Visit
+            // state at all: its direction is advisory
             // review context for a human, never projected.
             if (hold && reviewReason) {
                 await appendPresenceEvent(tx, {

@@ -112,7 +112,7 @@ export const POST = withAuth(
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+            // Approve CAS: from-state status from the definition; isPaymentPlanRequested stays literal.
             const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
             // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
             // return it. A request whose hold failed took no seat and records none.
@@ -142,13 +142,12 @@ export const POST = withAuth(
                 });
             }
 
-            // Scholarship lifecycle drives inventory (product decision 2026-07-06):
-            // the seat was already decremented from Shopify at APPLICATION time
+            // Scholarship lifecycle drives inventory: the seat was already
+            // decremented from Shopify at APPLICATION time
             // (POST .../request-payment-plan), so approval performs NO Shopify
             // operation — the applicant already holds the seat; approval just
-            // stops billing them for it. This supersedes the earlier approve-time
-            // decrement (see PR history — that double-counted against the
-            // apply-time decrement added alongside it).
+            // stops billing them for it. An approve-time decrement would
+            // double-count against the apply-time one.
             return NextResponse.json({ success: true });
         } catch (error) {
             logger.error("Failed to approve payment plan:", error);

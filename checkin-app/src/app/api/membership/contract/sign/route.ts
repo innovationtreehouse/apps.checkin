@@ -8,7 +8,7 @@ import { externalErrorResponse } from "@/lib/domainErrorResponse";
 export const dynamic = "force-dynamic";
 
 // HTTP status per ExternalError code. 503 = integration not ready yet (secrets or
-// the agreement PDF — issue #289); the applicant sees a "check back soon" message.
+// the agreement PDF); the applicant sees a "check back soon" message.
 /**
  * POST /api/membership/contract/sign — applicant-facing "Sign your membership
  * agreement" action. Creates the Zoho signing request once (stored on the
