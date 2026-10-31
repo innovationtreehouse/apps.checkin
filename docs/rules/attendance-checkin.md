@@ -485,10 +485,8 @@ hours at a time — is a normal operating mode here, not an incident.
   of attendance, not off who was there when.  [Decision — *Principle: least privilege*]
 
 - A household lead records a visit for a household member the same way they
-  record their own — open (still here) or closed (came and left). Board and
-  sysadmins always record a closed visit for someone outside their household.
-  An open visit, whoever it is for, a keyholder's own included, needs a
-  keyholder already inside (the facility-open guard).  [Decision]
+  record their own. Board and sysadmins record one for anyone. A recorded visit
+  is always closed: someone in the building now badges at the kiosk.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 - Every completed visit counts toward facility hours, whatever recorded it — a
   badge at the kiosk, a visit staff entered for somebody else, a roster mark. Where

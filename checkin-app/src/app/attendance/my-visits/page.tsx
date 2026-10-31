@@ -144,6 +144,8 @@ export default function MyVisits() {
                           <IconX size={16} />
                         </ActionIcon>
                       </Group>
+                    ) : !v.departedAt ? (
+                      <Text size="sm" c="dimmed">Still checked in</Text>
                     ) : (
                       <Group gap="xs" wrap="nowrap">
                         <ActionIcon variant="subtle" aria-label="Edit visit" onClick={() => startEdit(v)}>
