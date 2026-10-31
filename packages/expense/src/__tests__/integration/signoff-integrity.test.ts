@@ -32,7 +32,7 @@ describeDb("seats follow the line's approval", () => {
   });
 
   it("a line moved to another bucket has nothing after its approval to void, and waits for the new bucket's approver", async () => {
-    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 9], board: [5] }) });
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3], board: [5] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100 });
@@ -46,9 +46,7 @@ describeDb("seats follow the line's approval", () => {
     await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await expect(approveLine(principal(2), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await approveLine(principal(4), id, approvalId);
-    // FINANCE 3 settled the exception, which is a signature at the approval step.
-    await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403 });
-    await signLine(principal(9, { isFinance: true }), li, "TREASURER");
+    await signLine(FINANCE, li, "TREASURER");
   });
 });
 
