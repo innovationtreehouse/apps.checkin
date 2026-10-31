@@ -257,8 +257,8 @@ describe('Membership application archive API', () => {
     });
 
     it('reopens a renewal closed from the legacy RENEWAL_PENDING_BG', async () => {
-        // Rows closed under the older, wider rule (and backfilled by migration
-        // 20260806160000) may hold it; nothing closes into it any more.
+        // Archived rows may hold RENEWAL_PENDING_BG in archivedFromStatus; nothing closes
+        // into it.
         const hh = await prisma.household.create({ data: { name: `LegacyRenewal ${TAG}` } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
         const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'RENEWAL_PENDING_BG' } });

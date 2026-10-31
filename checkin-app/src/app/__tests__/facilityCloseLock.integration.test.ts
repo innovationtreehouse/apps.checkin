@@ -3,7 +3,7 @@
  */
 /**
  * Cross-participant race: last-keyholder force-close vs a concurrent
- * non-keyholder check-in (#254).
+ * non-keyholder check-in.
  *
  * The person-level advisory lock does not serialize these two transactions;
  * the facility lock does. The check-in lands wholly before the sweep (and is

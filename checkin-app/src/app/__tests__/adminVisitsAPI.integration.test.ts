@@ -486,7 +486,7 @@ describe('Admin Visits API Integration Tests', () => {
         });
     });
 
-    // AT3 §3: the walk-in path. Neither the kiosk (live only) nor the event
+    // The walk-in path. Neither the kiosk (live only) nor the event
     // roster mark (program-scoped, event window) can record a past visit for
     // someone who was simply never badged in.
     describe('POST /api/facility/visits — staff insert for others', () => {

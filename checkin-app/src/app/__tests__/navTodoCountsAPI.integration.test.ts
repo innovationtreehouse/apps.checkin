@@ -209,7 +209,7 @@ describe('Nav todo-counts API', () => {
         }
     });
 
-    // Regression (#1618): a household that renewed a trusted adult early carries a stale
+    // A household that renewed a trusted adult early carries a stale
     // in-window approval PLUS a live renewal that outlives it. "Expiring" is per adult on
     // the current authorization, so this adds NO "Renew an expiring trusted adult" todo —
     // the household kept its 5, not 6.
@@ -311,7 +311,7 @@ describe('Nav todo-counts API', () => {
         expect(data.admin).toBeDefined();
         // Global queues may hold other rows; assert our injected items are included.
         // membership = BLOCKED only (see delta test below); the seeded PENDING_BG_REVIEW
-        // is reviewer work and no longer counts, so just assert it's a number.
+        // is reviewer work and does not count, so just assert it's a number.
         expect(typeof data.admin.membership).toBe('number');
         expect(data.admin.paymentPlanPending).toBeGreaterThanOrEqual(1); // payment-plan requested
         expect(data.admin.trustedAdults).toBeGreaterThanOrEqual(1); // the PENDING_BOARD_REVIEW review

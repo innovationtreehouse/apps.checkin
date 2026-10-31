@@ -2,13 +2,13 @@
  * @jest-environment node
  */
 /**
- * Integration tests for MULTI-SELECT household enrollment (PR #541).
+ * Integration tests for MULTI-SELECT household enrollment.
  *
  * The feature lives client-side in programs/[id]/useProgramEnrollment.ts: it loops the
  * single-participant POST /api/programs/[id]/participants once per selected
  * household member. The server route only ever sees one id, so the loop's
  * emergent behavior — several sequential POSTs by one household lead into one
- * program — was never exercised end to end. This drives that sequence against a
+ * program — shows only end to end. This drives that sequence against a
  * real Postgres and pins:
  *   (a) every member's enrollment row persists;
  *   (b) a 409-mixed-with-new pass leaves a consistent set (no dup, new enrolled);

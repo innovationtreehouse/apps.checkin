@@ -6,8 +6,8 @@
  *
  * Unlike price-cents.test.ts (which tests dollarsToCentsOrNull in isolation),
  * these push a decimal dollar string through the REAL create/update routes and
- * read back the persisted Program, guarding the $25.99 -> $25 truncation
- * regression at the DB boundary.
+ * read back the persisted Program, guarding against $25.99 -> $25 truncation at the
+ * DB boundary.
  *   CREATE conversion: src/app/api/programs/route.ts:109-110
  *   PATCH  conversion: src/app/api/programs/[id]/route.ts:108-109
  */

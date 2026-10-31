@@ -230,7 +230,7 @@ describe('Household Lead API Integration Tests', () => {
 
         it('should reject promoting a third lead (max 2 per household)', async () => {
             // householdId now has two leads: testLeadId and testAdultId (from the
-            // previous test). Promoting a third must be rejected (#269).
+            // previous test). Promoting a third must be rejected.
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
 
             const req = new Request('http://localhost:4000/api/household/lead', {
