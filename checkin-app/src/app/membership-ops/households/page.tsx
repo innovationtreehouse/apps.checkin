@@ -376,7 +376,7 @@ export default function AdminHouseholdsPage() {
                     </Group>
                     {/* Three states: hidden unless actionable-or-settled (not started, mid-flow,
                         stale BG, staff, COI, out of season all hide); a settled cycle shows a
-                        disabled "Granted for coming year" as positive confirmation (#1047); a
+                        disabled "Granted for coming year" as positive confirmation; a
                         grantable renewal (PENDING_PAYMENT + cleared, fresh BG) shows it live. */}
                     {renewalSeason && isBoard && !isDenied && !isStaffHousehold && !ownHouseholdConflict && (household.renewalGrantable || settledForComingYear) && (
                       <Button

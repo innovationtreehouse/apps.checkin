@@ -66,7 +66,7 @@ function TabButton({ tab, selected, onSelect }: { tab: Tab; selected: boolean; o
 }
 
 /**
- * /finance/review — finance's one queue (#2481 §3): the receipt tabs from the receipt library, the
+ * /finance/review — finance's one queue: the receipt tabs from the receipt library, the
  * expense and Board tabs from the expense library, in three labelled rows. The page owns `?queue=`
  * and `?reason=`; with no `?queue=` it opens the first tab with work for this viewer.
  */

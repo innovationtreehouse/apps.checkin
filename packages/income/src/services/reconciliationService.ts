@@ -127,7 +127,7 @@ async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
   if (!closedThrough) throw new ServiceError(409, "QuickBooks has no books closing date set, and income posting is not switched on");
   const turn = await postPayout(orgId, id, { closedThrough, mayCreate: true }, true, { actor, book });
   if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
-  if (turn.outcome === "held") throw new ServiceError(409, `Decide the payout's items first: ${turn.row.reason ?? ""}`);
+  if (turn.outcome === "held") throw new ServiceError(409, `The payout is held: ${turn.row.reason ?? ""}`);
   if (book && turn.outcome === "waiting") {
     throw new ServiceError(409, "The payout is not ready to book: it is being posted, its Shopify payout changed, or a books-map role it needs has no account");
   }

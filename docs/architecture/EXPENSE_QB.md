@@ -247,12 +247,14 @@ windowed reader around its receipt date. A created entry is compared with what t
 app posted (amount, date, key, accounts, Vendor). A matched entry is compared with
 its baseline, and the accounts on it are compared only when the baseline recorded
 them, because they are finance's. Any difference, or a missing entry, raises
-`QB_DRIFT` with what QuickBooks showed. The check only reads.
+`QB_DRIFT` with what QuickBooks showed. The check only reads QuickBooks; its writes
+are in the expense database, where it raises the flags and stores a baseline for a
+matched entry that has none, raising nothing for that entry on that run.
 
 **Orphan sweep.** `sweepExpenseQbStrays` reads the Purchases and Bills created since
 the oldest create attempt in the last 30 days. An entry carrying an expense's key
-that the expense does not hold raises `QB_DUPLICATE_TO_VOID`. A full page of 1,000
-emails finance, because some entries went unchecked.
+that the expense does not hold raises `QB_DUPLICATE_TO_VOID`. A read that reaches its
+cap of 10,000 entries emails finance, because some entries went unchecked.
 
 ---
 
@@ -263,7 +265,7 @@ take a date range of at most 93 days and refuse anything wider, so no reader can
 the company's history. Past expenses with no receipt stay in QuickBooks and are only
 ever matched against.
 
-Four kinds of read have no date window: `createdSince`, one page by creation time;
+Four kinds of read have no date window: `createdSince`, by creation time up to 10,000 entries;
 by-id reads; `bookCloseDate`; and the reference lists of accounts, Classes and
 Vendors.
 

@@ -49,7 +49,8 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, swee
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out); local-inventory's step also merges stock for
- * pending provisionals the catalog has since resolved. Each step is isolated; counts only.
+ * pending provisionals the catalog has since resolved. Each step is isolated; counts only. A
+ * provisional that could not be merged counts toward the top-level `failed`.
  *
  * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying).
  * Isolated the same way; counts only.
@@ -165,5 +166,6 @@ export const GET = withCron(async () => {
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
     const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
     const sweepRowsFailed = [receipt, receiptStuck].reduce((sum, sweep) => sum + ("failed" in sweep ? sweep.failed : 0), 0);
-    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
+    const reconcileFailed = "reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0;
+    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + reconcileFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
 });

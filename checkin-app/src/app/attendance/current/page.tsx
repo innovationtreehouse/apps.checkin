@@ -111,10 +111,8 @@ function KioskDisplayInner() {
   const householdVolunteers = limitedHousehold.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
   const householdYouth = limitedHousehold.filter(v => visitIsYouth(v));
 
-  // Unattended kiosk displays must not idle-stop. The Pi proxy never puts
-  // sig/ts/nonce on the iframe URL, so keying on those params froze the
-  // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
-  // proxy actually loads) or the signedRequest response flag.
+  // Unattended kiosk displays must not idle-stop. The gate includes mode=kiosk
+  // because the Pi proxy loads that URL without sig/ts/nonce on it.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
   const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
@@ -364,9 +362,9 @@ function KioskDisplayInner() {
 
   // Kiosk mode is a fullscreen board surface with its own chrome (cursor
   // hidden, content pulled up under the header); the member-facing page rides
-  // the canonical PageContainer like every other page — no hand-rolled copy of
-  // its margins (PR #1026 review). A plain conditional (not a per-render
-  // wrapper component) so the subtree never remounts when state changes.
+  // the canonical PageContainer like every other page. A plain conditional
+  // (not a per-render wrapper component) so the subtree never remounts when
+  // state changes.
   return isKioskMode ? (
     <Box style={{ cursor: "none", marginTop: -25, paddingLeft: 8, display: "flow-root" }}>{pageBody}</Box>
   ) : (

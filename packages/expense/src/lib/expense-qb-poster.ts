@@ -515,8 +515,8 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * The daily orphan sweep. Reads every Purchase and Bill created since the oldest create attempt in
- * the last SWEEP_DAYS, one page each, and finds the expense each app key belongs to. An app entry
- * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a full page alerts finance
+ * the last SWEEP_DAYS and finds the expense each app key belongs to. An app entry
+ * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a capped read alerts finance
  * once per run, and a key with no attempted expense is logged. QuickBooks is only read. An
  * expense mid-post is skipped; the next sweep sees it.
  */

@@ -1,6 +1,6 @@
-const AUTH_ENDPOINT = "https://" + "accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_ENDPOINT = "https://" + "oauth2.googleapis.com/token";
-export const GMAIL_READONLY_SCOPE = "https://" + "www.googleapis.com/auth/gmail.readonly";
+const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
 export interface OauthClient {
   clientId: string;

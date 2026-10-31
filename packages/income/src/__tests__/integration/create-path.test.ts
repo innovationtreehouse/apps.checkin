@@ -60,9 +60,9 @@ class FakeQbo {
         if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
+      const since = /MetaData\.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(0, Number(since[2]));
+        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(Number(since[2]) - 1, Number(since[2]) - 1 + Number(since[3]));
         return json({ QueryResponse: list.length ? { Deposit: list } : {} });
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
@@ -102,11 +102,12 @@ let activeClasses: string[];
 
 const gid = (n: number) => `gid://shopify/ShopifyPaymentsPayout/${n}`;
 
-/** A paid payout of one charge on order `O<n>` with no lines, so the whole charge books at org level. */
+/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level. */
 function payout(n: number, day: string, netCents: number): string {
   const g = gid(n);
   payouts.push({ payoutGid: g, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source: "api" });
   txns[g] = [{ txnGid: `${g}/t`, type: "charge", orderGid: `O${n}`, orderName: `#${n}`, amountCents: netCents, feeCents: 0, netCents, source: "api" }];
+  orderLines.push({ orderGid: `O${n}`, variantId: null, title: "Custom", sku: null, quantity: 1, priceCents: netCents, discountCents: 0 });
   return g;
 }
 
@@ -413,7 +414,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     qbo.mode = "ok";
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
 
     expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: expect.stringContaining("may already have booked") });
     expect(qbo.posts).toHaveLength(1);
@@ -695,10 +696,10 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(a)).qbNote).toBeNull();
   });
 
-  it("alerts finance when the read fills a page", async () => {
+  it("alerts finance when the read reaches its cap", async () => {
     payout(2, "2026-06-28", 500);
     await drain();
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
     expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
   });
@@ -912,10 +913,10 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
       { txnGid: `${g}/a`, type: "adjustment", orderGid: null, orderName: null, amountCents: 150, feeCents: 0, netCents: 150, source: "api" },
     ];
     setPayout(g, { netCents: 9830 });
-    orderLines = [
+    orderLines.push(
       { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, priceCents: 3000, discountCents: 0 },
       { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, priceCents: 4000, discountCents: 0 },
-    ];
+    );
     return g;
   }
 
@@ -1035,6 +1036,106 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
     await drain(new Date("2026-06-30T13:00:00Z"));
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: null });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  const LATE = new Date("2026-07-20T12:00:00Z");
+  const withoutLines = (g: string) => {
+    const lines = orderLines;
+    orderLines = [];
+    return { g, restore: () => void (orderLines = lines) };
+  };
+  const withoutOrder = (n: number) => {
+    const g = payout(n, "2026-06-28", 500);
+    txns[g] = [{ ...txns[g][0], orderGid: null, orderName: null }];
+    orderLines = [];
+    return g;
+  };
+
+  it("a charge whose order has no lines holds, stays held past the window, and books once the lines arrive", async () => {
+    const { g, restore } = withoutLines(payout(2, "2026-06-28", 500));
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "orders with no lines: O2" });
+
+    await drain(LATE);
+    await runReconcile(ORG_A, LATE);
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING" });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.needs_mapping" } })).toBe(1);
+
+    restore();
+    expect(await drain(LATE)).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 500 });
+  });
+
+  it("lines that arrive with an undecided item move the hold's reason to that item", async () => {
+    const g = orderPayout(2);
+    const { restore } = withoutLines(g);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ reason: "orders with no lines: O9" });
+
+    restore();
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "undecided items: V1, V2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a charge with no order holds past the window and book refuses it", async () => {
+    const g = withoutOrder(2);
+    const reason = `transactions with no order: ${g}/t`;
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason });
+
+    await drain(LATE);
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason });
+    await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by a hand-booked deposit, which the next run matches", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    qbo.hand("H2", "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ status: "MATCHED", kind: null, depositId: "H2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by matching a deposit of another amount, with a reason", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    qbo.hand("H2", "2026-06-28", 450);
+    await expect(resolve(g, { action: "match", depositId: "H2" })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(g, { action: "match", depositId: "H2", reason: "booked net of a fee" })).toMatchObject({ status: "RESOLVED", kind: null, depositId: "H2" });
+
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ status: "RESOLVED", depositId: "H2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by dismissing it, and later runs leave it dismissed", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    await expect(resolve(g, { action: "dismiss", reason: " " })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(g, { action: "dismiss", reason: "booked in the prior year" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", kind: null });
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("booking a NO_DEPOSIT payout whose lines are gone holds it and names the gap", async () => {
+    await clearAll();
+    const g = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NO_DEPOSIT" });
+
+    orderLines = [];
+    await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409, message: "The payout is held: orders with no lines: O2" });
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "orders with no lines: O2" });
     expect(qbo.posts).toHaveLength(0);
   });
 

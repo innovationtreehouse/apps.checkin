@@ -222,19 +222,38 @@ describe("bookCloseDate", () => {
 });
 
 describe("createdSince", () => {
-  it("reads one page of entries created at or after the time, flooring to the second", async () => {
+  const pageOf = (page: number, length = 1000) => Array.from({ length }, (_, i) => ({ Id: `${page}-${i}` }));
+
+  it("reads oldest first from an hour before the time, flooring to the second", async () => {
     respond("Deposit", [{ Id: "1" }]);
     const got = await new QuickBooksClient(tokens, sandbox).createdSince("Deposit", new Date("2026-10-01T12:34:56.789Z"));
     expect(got).toEqual({ entries: [{ Id: "1" }], full: false });
-    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T12:34:56Z' STARTPOSITION 1 MAXRESULTS 1000");
+    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T11:34:56Z' ORDERBY MetaData.CreateTime STARTPOSITION 1 MAXRESULTS 1000");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("signals a full page, since more entries may exist", async () => {
-    respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: String(i) })));
+  it("reads past a full page to the last one", async () => {
+    respond("Bill", pageOf(1));
+    respond("Bill", pageOf(2, 1));
     const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(1001);
+    expect(got.full).toBe(false);
+    expect(sql(1)).toMatch(/ORDERBY MetaData\.CreateTime STARTPOSITION 1001 MAXRESULTS 1000$/);
+  });
+
+  it("returns an entry once when two pages both carry it", async () => {
+    respond("Bill", pageOf(1));
+    respond("Bill", [{ Id: "1-999" }]);
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(1000);
+  });
+
+  it("stops at the page cap and signals that more entries may exist", async () => {
+    for (let page = 1; page <= 10; page++) respond("Purchase", pageOf(page));
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Purchase", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(10_000);
     expect(got.full).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
   it("rejects an invalid time before any request", async () => {

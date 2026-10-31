@@ -642,7 +642,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       dated.push({ ...row, receivedAt });
       await db.receiptMailAtRisk
         .update({ where: { id: row.id }, data: { receivedAt } })
-        .catch((err) => console.error("[receipt] mail ageing re-date failed for one row:", err));
+        .catch((err) => console.error(`[receipt] mail ageing re-date failed for row ${row.id}:`, err));
     }
     const rows = dated.filter((r) => !r.receivedAt || r.receivedAt.getTime() < lastChance);
     if (rows.length === 0) return;
