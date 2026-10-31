@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import useSWR from "swr";
-import { clearLoads, countFailure, endRetryChain, invalidateLoads } from "./loadCache";
+import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, scheduleRetry } from "./loadCache";
 
 export { invalidateLoads };
 
@@ -124,20 +124,22 @@ export function createClient(base: string) {
    * cache is shared across libraries. A network failure or 5xx retries unless `retry` is false.
    */
   function useLoad<T>(path: string | null, { retry = true }: { retry?: boolean } = {}): Loaded<T> {
+    const url = path === null ? null : resolve(path);
+    useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
     const swr = useSWR<T, LoadFailure>(
-      path === null ? null : resolve(path),
-      (url: string) =>
-        request<T>(url).then(
-          (answer) => { endRetryChain(url); return answer; },
-          (e: unknown) => { throw loadFailure(url, e, retry); },
+      url,
+      (key: string) =>
+        request<T>(key).then(
+          (answer) => { endRetryChain(key); return answer; },
+          (e: unknown) => { throw loadFailure(key, e, retry); },
         ),
       {
         revalidateOnFocus: false,
         revalidateOnReconnect: true,
         dedupingInterval: 5000,
         keepPreviousData: true,
-        onErrorRetry: (failure, _key, _config, revalidate, options) => {
-          if (failure.retrying) setTimeout(() => revalidate(options), 2000 * 2 ** (failure.attempt - 1));
+        onErrorRetry: (failure, key, _config, revalidate, options) => {
+          if (failure.retrying) scheduleRetry(key, 2000 * 2 ** (failure.attempt - 1), () => revalidate(options));
         },
       },
     );

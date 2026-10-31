@@ -82,6 +82,29 @@ describe("what the server says", () => {
     expect(result.current).toMatchObject({ retrying: true, error: null });
   });
 
+  it("a page reopened after failing and closing gets a full set of retries", async () => {
+    const fetchMock = stubFetch(() => json({}, 500));
+    const first = renderHook(() => useLoad("/x"));
+    await advance(0);
+    await advance(2000);
+    await advance(4000);
+    await advance(8000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    first.unmount();
+    const second = renderHook(() => useLoad("/x"));
+    await advance();
+    expect(second.result.current).toMatchObject({ retrying: true, error: null });
+  });
+
+  it("a write during a retry chain does not start a second chain", async () => {
+    const fetchMock = stubFetch((_url, init) => (init?.method ? json({}) : json({}, 500)));
+    renderHook(() => useLoad("/x"));
+    await advance(0);
+    await api("/y", { method: "POST" });
+    await advance(60000);
+    expect(gets(fetchMock)).toBe(5);
+  });
+
   it("401 does not retry and calls onSessionExpired once", async () => {
     const fetchMock = stubFetch(() => json({ error: "Unauthorized" }, 401));
     const expired = vi.fn();
@@ -178,7 +201,7 @@ describe("the five things SWR gets wrong unless told", () => {
   });
 
   it("3: keeps the old rows while the new path loads, and starts at null", async () => {
-    let release = (_r: Response) => {};
+    let release: (r: Response) => void = () => {};
     stubFetch((url) => (url.endsWith("/2") ? new Promise<Response>((r) => { release = r; }) : json(["one"])));
     const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path), { initialProps: { path: "/1" } });
     expect(result.current.data).toBeNull();
@@ -232,7 +255,7 @@ describe("the five things SWR gets wrong unless told", () => {
     });
 
     it("an answer still in flight for the previous person is dropped", async () => {
-      let release = (_r: Response) => {};
+      let release: (r: Response) => void = () => {};
       let calls = 0;
       stubFetch(() => (++calls === 1 ? new Promise<Response>((r) => { release = r; }) : json(["second"])));
       const { rerender } = render(<ViewerProvider viewer={person(1)}><Probe /></ViewerProvider>);
