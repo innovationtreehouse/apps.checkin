@@ -43,6 +43,7 @@ export async function seedExpense(opts?: {
   needsReimbursement?: boolean;
   backfill?: boolean;
   reimburseePersonId?: number;
+  submittedAt?: Date;
 }): Promise<string> {
   const id = opts?.id ?? randomUUID();
   await db.expense.create({
@@ -59,7 +60,7 @@ export async function seedExpense(opts?: {
       shippingCents: opts?.shippingCents ?? 0,
       discountCents: opts?.discountCents ?? 0,
       receiptTotalCents: opts?.receiptTotalCents ?? 100,
-      submittedAt: new Date(),
+      submittedAt: opts?.submittedAt ?? new Date(),
       state: opts?.state ?? "pending",
     },
   });
