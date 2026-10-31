@@ -5,7 +5,7 @@ import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
-import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
@@ -20,11 +20,9 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 // Record — writes the Visit the parked scan
 // described, at the row's OWN timestamp, never at resolution time. The
 // manual tool's 6h/same-day staleness bound deliberately does NOT apply: it
-// guards a human's memory, and this row is machine-stamped at the door. An
-// IN with no matching OUT is the caller's choice (always a human's): leave
-// the visit open — allowed only while the facility is live-open, since an
-// open visit joins today's supervision math — or close it at a departure
-// the reviewer supplies. A scan whose presence event is a departure (OUT)
+// guards a human's memory, and this row is machine-stamped at the door. The
+// visit is always closed, at a departure the reviewer supplies: only the kiosk
+// or the nightly close leaves anyone inside. A scan whose presence event is a departure (OUT)
 // refuses: minting an arrival from it would invert the person's day.
 //
 // Concurrency: the same per-participant advisory lock as /api/scan and the
@@ -64,8 +62,8 @@ export const POST = handler<{ id: string }>(
         }
 
         const parsedDeparted = typeof body.departedAt === 'string' ? new Date(body.departedAt) : null;
-        if (body.departedAt !== undefined && (!parsedDeparted || isNaN(parsedDeparted.getTime()))) {
-            throw badRequest("departedAt must be an ISO date string.");
+        if (!parsedDeparted || isNaN(parsedDeparted.getTime())) {
+            throw badRequest("A departure time is required, as an ISO date string.");
         }
 
         const row = await prisma.rawBadgeLog.findFirst({
@@ -75,12 +73,12 @@ export const POST = handler<{ id: string }>(
         if (row.personId === null) {
             throw new ApiResponseError(409, "This scan matches no one on record — dismiss it once you have looked.");
         }
-        if (parsedDeparted && parsedDeparted <= row.timestamp) {
+        if (parsedDeparted <= row.timestamp) {
             throw badRequest("departedAt must be after the scan time.");
         }
         // Recording waives arrival STALENESS, not visit LENGTH — a wrong-day
         // typo must not mint a multi-day visit.
-        if (parsedDeparted && !withinMaxDuration(row.timestamp, parsedDeparted)) {
+        if (!withinMaxDuration(row.timestamp, parsedDeparted)) {
             throw badRequest("A visit cannot be longer than 24 hours.");
         }
 
@@ -114,31 +112,18 @@ export const POST = handler<{ id: string }>(
 
             // Interval intersection with any live visit means this scan is
             // already accounted for — minting another would double-count the
-            // person (an open visit intersects everything after its arrival,
-            // which also makes leave-open impossible while one exists).
+            // person (an open visit intersects everything after its arrival).
             const overlapping = await tx.visit.findFirst({
                 where: {
                     personId: person.id,
                     ...LIVE_VISIT,
-                    ...(parsedDeparted ? { arrivedAt: { lt: parsedDeparted } } : {}),
+                    arrivedAt: { lt: parsedDeparted },
                     OR: [{ departedAt: null }, { departedAt: { gt: row.timestamp } }],
                 },
                 select: { id: true },
             });
             if (overlapping) {
                 throw new ApiResponseError(409, "A visit already covers that scan time — dismiss the row instead.");
-            }
-
-            // Leaving the visit open puts this person in TODAY's live roster,
-            // so the live rule applies: a non-keyholder cannot be the only one
-            // in the building.
-            if (!parsedDeparted && !person.isKeyholder) {
-                const activeKeyholders = await tx.visit.count({
-                    where: KEYHOLDER_IN_BUILDING,
-                });
-                if (activeKeyholders === 0) {
-                    throw new ApiResponseError(403, "Facility is closed — supply a departure time to record this visit as closed.");
-                }
             }
 
             const visit = await tx.visit.create({
@@ -148,7 +133,7 @@ export const POST = handler<{ id: string }>(
                     departedAt: parsedDeparted,
                     arrivedVia: "SCANNER",
                     arrivedLive: false,
-                    departedVia: parsedDeparted ? "TYPED" : null,
+                    departedVia: "TYPED",
                     associatedEventId,
                 },
             });
@@ -174,16 +159,14 @@ export const POST = handler<{ id: string }>(
                     visitId: visit.id,
                 });
             }
-            if (parsedDeparted) {
-                await appendPresenceEvent(tx, {
-                    personId: person.id,
-                    occurredAt: parsedDeparted,
-                    direction: "OUT",
-                    source: "TYPED",
-                    classification: PresenceClass.PROJECTED,
-                    visitId: visit.id,
-                });
-            }
+            await appendPresenceEvent(tx, {
+                personId: person.id,
+                occurredAt: parsedDeparted,
+                direction: "OUT",
+                source: "TYPED",
+                classification: PresenceClass.PROJECTED,
+                visitId: visit.id,
+            });
 
             return visit.id;
         }, {
@@ -202,7 +185,7 @@ export const POST = handler<{ id: string }>(
                 secondaryAffectedEntity: person.id,
                 newData: {
                     arrivedAt: row.timestamp.toISOString(),
-                    departedAt: parsedDeparted?.toISOString() ?? null,
+                    departedAt: parsedDeparted.toISOString(),
                     type: "parked_scan_resolution",
                     rawBadgeLogId: row.id,
                 },

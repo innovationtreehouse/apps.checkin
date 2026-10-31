@@ -138,8 +138,8 @@ kiosk's minimal names.
   here)" visit line — no website path opens a visit any more, so there is
   nothing to guard.
 - "A kiosk too old to send a close decides it from the keyholder's check-out"
-  — the door runs v1.2.7 (protocol 7); confirm on the kiosk-version status
-  page before deleting.
+  — goes once the door is confirmed on v1.2.7 or later (protocol 7); see
+  rollout step 0.
 - The server-side 3-second check "for callers that do not filter (older kiosk
   builds and the web)".
 - "A correction that closes an open visit departs everyone at the typed
@@ -559,9 +559,12 @@ the register requires. The kiosk does not get a check-in-by-name screen
 Order matters because old code keeps serving traffic during each deploy's
 drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 
-0. **Confirm the door.** The kiosk-version status page shows the door on
-   protocol 7 (v1.2.7 or later). If not, the old-protocol deletions (part of
-   step 3) wait for the next kiosk release.
+0. **Confirm the door.** Someone with shell access to the Pi checks, from its
+   checkout, that `git describe --tags` is v1.2.7 or later and
+   `client/client.py` has `SCAN_PROTOCOL_VERSION = 7`. The kiosk-version status
+   page cannot show this: it reports the server's protocol, and the server does
+   not record the door's. If the door is older, the old-protocol deletions (part
+   of step 3) wait for the next kiosk release.
 1. **Infrastructure:** set the nightly cron to 23:00 in the organisation's
    timezone. Independent of the code; can go first. The nightly route's
    always-record change (a few lines) ships with it or in PR 1, whichever is

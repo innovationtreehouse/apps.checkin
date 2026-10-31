@@ -117,9 +117,9 @@ person in front of it.
   closes the building. The website offers no check-in, check-out, force checkout
   or close, to anyone; people badge at the door. The nightly auto-close is the
   backstop, a close no person makes. This replaces the owner's ruling of
-  2026-10-11 that a keyholder can close the building from the web. Two
-  paths still reach an open visit until their own change lands: a program
-  leader's roster mark, and the review panel leaving a visit open.  [Decision — Board ruling B7/B14, 2026-10-27]
+  2026-10-11 that a keyholder can close the building from the web. One path
+  still reaches an open visit until its own change lands: a program leader's
+  roster mark.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 - A close is one event: a keyholder closed the building at a moment, at the
   kiosk, online or offline. The keyholder decides, from what the kiosk shows. The
@@ -180,10 +180,9 @@ person in front of it.
   there. With no keyholder in the building the visit is marked *no keyholder*,
   and a keyholder checking in within ten minutes of that arrival clears the
   mark. The mark is read from the visit record, so correcting a keyholder's
-  visit re-decides it. A roster mark or the review panel leaving a visit open
-  still needs a keyholder already present, for a keyholder too: only a badge at
-  the door opens the building. The review panel may still leave open a keyholder's
-  own parked door badge, which was a badge at the door.  [Decision — Board ruling B7/B14, 2026-10-27]
+  visit re-decides it. A roster mark that leaves a visit open still needs a
+  keyholder already present, for a keyholder too: only a badge at the door opens
+  the building. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14, 2026-10-27]
 
 ### Supervision
 
