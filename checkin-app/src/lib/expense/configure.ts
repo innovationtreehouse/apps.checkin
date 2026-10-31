@@ -17,7 +17,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
 import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-import { budgetOwners, householdOf } from "@/lib/components/ports";
+import { budgetOwners, householdIds, householdOf, householdsOf } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
@@ -64,6 +64,8 @@ export const signoff: SignoffDirectory = {
   boardMembers: () => roleHolders("BOARD"),
 
   householdOf,
+  householdsOf,
+  householdIds,
 
   async personExists(personId) {
     const { LIVE_PERSON } = await import("@/lib/person/filters");

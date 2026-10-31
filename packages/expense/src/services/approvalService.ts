@@ -8,7 +8,7 @@ import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
-import { approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
+import { APPROVABLE_STATUSES, approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -69,9 +69,6 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
   });
   if (count === 0) throw new ServiceError(409, "This line changed; reload");
 }
-
-/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
-export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
 
 const BUCKET_FINAL = "Finance made this line's bucket final; its approver approves it, or a Board member stands in";
 

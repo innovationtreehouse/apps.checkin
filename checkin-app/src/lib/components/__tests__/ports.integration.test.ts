@@ -6,7 +6,7 @@
  * sets from it, so what matters is who comes back, not how the query is written.
  */
 import prisma from '@/lib/prisma';
-import { householdOf } from '../ports';
+import { householdIds, householdOf, householdsOf } from '../ports';
 
 const TAG = 'ports-household-of';
 
@@ -54,5 +54,17 @@ describe('householdOf', () => {
 
     it('returns nobody for nobody', async () => {
         await expect(householdOf([])).resolves.toEqual([]);
+    });
+
+    it('householdsOf maps each person to what householdOf returns for them alone', async () => {
+        const households = await householdsOf([adaId, mergedId, dotId, -1]);
+        for (const id of [adaId, mergedId, dotId]) expect(sorted(households.get(id) ?? [])).toEqual(sorted(await householdOf([id])));
+        expect(households.has(-1)).toBe(false);
+        await expect(householdsOf([])).resolves.toEqual(new Map());
+    });
+
+    it('householdIds keeps a merged-away member, whose household still conflicts its live members', async () => {
+        expect(sorted(await householdIds(benId))).toEqual(sorted([adaId, benId, mergedId]));
+        await expect(householdIds(-1)).resolves.toEqual([]);
     });
 });

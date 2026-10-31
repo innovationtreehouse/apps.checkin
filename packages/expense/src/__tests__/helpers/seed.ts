@@ -216,6 +216,8 @@ export function directory(d: {
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
     householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
+    householdsOf: async (ids) => new Map(ids.map((id) => [id, (d.households ?? []).filter((h) => h.includes(id)).flat()])),
+    householdIds: async (id) => (d.households ?? []).filter((h) => h.includes(id)).flat(),
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
     livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),

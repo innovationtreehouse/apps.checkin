@@ -10,9 +10,8 @@ import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import { CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
+import { APPROVABLE_STATUSES, CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
-  APPROVABLE_STATUSES,
   approveLine,
   approveLines,
   assignOwner,
