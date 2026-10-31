@@ -15,7 +15,7 @@ type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTI
 type Person = {
   id: number;
   // The kiosk label, resolved server-side: the name the person goes by, a shortened surname
-  // where two share it, else the email prefix; never the raw email (#329).
+  // where two share it, else the email prefix; never the raw email.
   name: string;
   toolStatuses: {
     toolId: number;
@@ -165,7 +165,7 @@ function KioskCertificationsInner() {
         // Kiosk renders bare (no AppShell) and fills the viewport via absolute
         // inset. In-app this lives inside AppShell.Main, where absolute inset
         // escapes over the header/navbar — so use normal flow with a height that
-        // clears the 60px header + 28px footer + md padding (#594).
+        // clears the 60px header + 28px footer + md padding.
         ...(isKioskMode
           ? { position: 'absolute' as const, inset: 0, height: '100%', cursor: 'none' }
           : { height: 'calc(100dvh - 120px)' }),

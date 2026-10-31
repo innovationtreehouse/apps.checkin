@@ -12,6 +12,8 @@
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
 import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
+import { invalidateAttendanceCache } from '@/lib/getFullAttendance';
+import { logger, logBackendError } from '@/lib/logger';
 
 const txMembershipProcess = { findMany: jest.fn(), create: jest.fn() };
 const txAuditLog = { create: jest.fn() };
@@ -25,6 +27,7 @@ const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
 
+jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock('@/lib/person/mailAliases', () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -629,6 +632,62 @@ describe('saveIntake', () => {
         await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ id: 4, name: 'Child' }] })).rejects.toThrow('write failed');
 
         expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
+    });
+
+    describe('a failure after the outcome is settled', () => {
+        const dbDown = new Error('database unavailable');
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        const refusedSysadmin = () => {
+            jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
+            prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+            jest.mocked(recordSelfGrantRefusal).mockRejectedValueOnce(dbDown);
+        };
+
+        it('a failed denied raise still reports the committed save and refreshes the cache', async () => {
+            addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+            raiseDeniedHouseholdActivity.mockRejectedValueOnce(dbDown);
+
+            const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' } });
+
+            expect(result.rejections).toEqual([expect.objectContaining({ code: 'household_denied' })]);
+            expect(invalidateAttendanceCache).toHaveBeenCalled();
+            const ref = expect.objectContaining({ householdId: 7, personId: 4 });
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('denied household raise'), ref, dbDown);
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake denied household raise', ref);
+        });
+
+        it('a failed refusal write still reports the committed save', async () => {
+            refusedSysadmin();
+
+            const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' } });
+
+            expect(result.rejections).toEqual([expect.objectContaining({ code: 'not_lead' })]);
+            expect(invalidateAttendanceCache).toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('self-grant refusal'), refusal, dbDown);
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake self-grant refusal', refusal);
+        });
+
+        it('a failed refusal write leaves the rollback reporting its own error', async () => {
+            refusedSysadmin();
+            prisma.person.create.mockRejectedValueOnce(
+                new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0', meta: { target: ['email'] } }),
+            );
+
+            await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ name: 'Kid', email: 'kid@example.com' }] }))
+                .rejects.toMatchObject({ code: 'email_in_use' });
+
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake self-grant refusal', refusal);
+        });
+
+        it('a failed state read returns a null state, not an error', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce(baseUser).mockRejectedValueOnce(dbDown);
+
+            const result = await saveIntake(1, { primaryParent: { name: 'Pat' } });
+
+            expect(result).toEqual({ state: null, rejections: [] });
+            expect(prisma.person.update).toHaveBeenCalled();
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake state read', { userId: 1 });
+        });
     });
 
     it('child already a household member → update; a new named child → create', async () => {

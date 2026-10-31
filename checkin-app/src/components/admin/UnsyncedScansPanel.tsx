@@ -22,7 +22,7 @@ const who = (s: UnsyncedScan) =>
     ? s.person.name ?? `Person #${s.person.id}`
     : `Unreadable badge "${s.scannedValue ?? "?"}"`;
 
-// D7's "40 min late" off lib/time's coarse relTime — the same thresholds every
+// "40 min late" off lib/time's coarse relTime — the same thresholds every
 // other freshness line uses, in the tense the review copy asks for. "just now"
 // has no " ago" to swap and reads correctly as-is.
 const lateness = (when: string) => relTime(when).replace(/ ago$/, " late");
@@ -170,7 +170,7 @@ export function UnsyncedScansPanel() {
               <Table.Tr key={s.id}>
                 <Table.Td>
                   <Stack gap={2}>
-                    {/* D7 row copy: "Person X, scanned 2:14pm, 40 min late". */}
+                    {/* Row copy: "Person X, scanned 2:14pm, 40 min late". */}
                     <Text>
                       {who(s)}, scanned{" "}
                       {formatTime(s.timestamp, { hour: "numeric", minute: "2-digit" })},{" "}

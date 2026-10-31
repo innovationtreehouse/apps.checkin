@@ -7,14 +7,14 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 ## Public API
 
 - `AccessTokenSource { current(): Promise<string> }` — the only way the client gets a token.
-  The app injects a read-only source (Secrets Manager, built in checkin-app); the client
+  The app injects a read-only source (the refresher Lambda, built in checkin-app); the client
   never refreshes or saves tokens. An expired token is an error for the caller to retry.
 - `new QuickBooksClient(source, { env, realmId })` — `env` is `sandbox` | `production`.
   The production realm is refused unless `CHECKIN_ENV=prod` (unset fails closed).
   `qboRealmFromEnv()` reads `QBO_ENVIRONMENT` + `QBO_REALM_ID` under the same guard.
 - Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
-  `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`.
-  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase` or `Bill` entries
+  `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`, `journalEntriesBetween`.
+  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase`, `Bill` or `JournalEntry` entries
   QuickBooks created at or after `since` (`MetaData.CreateTime`), one page of 1,000, with `full: true`
   when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
   finds an app entry a dated window misses.
@@ -33,7 +33,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   since QuickBooks dates drift a day or two. A key hit that fails a check, or a matching entry carrying
   another record's key, is `ambiguous`, never `found` or `not-found`. Claimed and excluded ids are skipped. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
-- The one write (QB-2) is package-internal: callers write only through `findOrCreate` and `createVendor`,
+- The one write (QB-2) is package-internal: callers write only through `findOrCreate`, `findOrCreateInKindJournal` and `createVendor`,
   which look the key (or name) up before every create, since QBO's `requestid` dedup window is short.
   It is create-only, for `WRITABLE_ENTITIES`
   (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
@@ -52,9 +52,11 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
 - Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
-- An in-kind pair (clearing Deposit + Purchase) is two `findOrCreate` calls with their own keys
-  (e.g. `qbKey("in-kind", id + ".deposit")`); a crash between them leaves the second for the next run,
-  where the first is found by key.
+- `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
+  no other path creates a JournalEntry. Credits go only to in-kind income and debits only to in-kind
+  expense or fixed assets, by books-map role, and an unbalanced entry or a non-positive amount throws
+  before any read. It matches by the app's key alone, so a hand entry of the same amount is never taken
+  for the gift, and a crash after QuickBooks accepts is found by key next run.
 - `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate
   (`docs/in-design/QB_CLOSED_BOOKS.md`). It reads the record's window, runs `findMatch`, and answers
   `found` / `ambiguous` (post nothing, closed period included), `closed` (not found and dated on or
