@@ -9,7 +9,7 @@ import { parseListFilter } from "../lib/listFilter";
 import { importReceipts } from "../services/importService";
 import { orgSettingsService } from "../services/orgSettingsService";
 import { receiptService } from "../services/receiptService";
-import { MAX_UPLOAD_BODY_BYTES, readJsonCapped, readUploadForm } from "./_shared";
+import { MAX_UPLOAD_BODY_BYTES, ownLine, readJsonCapped, readUploadForm, stampLines } from "./_shared";
 
 /** The org-wide list; `?state=` narrows to one machine state, `?pushed=0|1` to whether it reached receiving. */
 export const list: ReceiptRouteHandler = async ({ req }) => ({ ReceiptView: await receiptService.list(parseListFilter(query(req))) });
@@ -80,6 +80,20 @@ export const importBatch: ReceiptRouteHandler = async ({ req }) => {
     "Import batch is over the upload size limit; split it into smaller batches",
   );
   return { ReceiptImportResult: (await importReceipts(batch)).results };
+};
+
+export const get: ReceiptRouteHandler = async ({ params, access }) => {
+  const receipt = await receiptService.get(params.id, access);
+  return { ReceiptView: { ...receipt, lineItems: stampLines(receipt.lineItems, receipt.uploadedByUserId) } };
+};
+
+export const addLine: ReceiptRouteHandler = async (ctx) => ({
+  ReceiptLineView: ownLine(ctx, await receiptService.addLine(ctx.params.id, ctx.access, await readJson(ctx.req))),
+});
+
+export const editLine: ReceiptRouteHandler = async (ctx) => {
+  const line = await receiptService.editLine(ctx.params.id, ctx.access, parseId(ctx.params.lineItemId, "line item id"), await readJson(ctx.req));
+  return { ReceiptLineView: ownLine(ctx, line) };
 };
 
 export const edit: ReceiptRouteHandler = async ({ req, params, access }) => ({
