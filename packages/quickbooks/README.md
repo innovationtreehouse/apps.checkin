@@ -15,9 +15,10 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
   `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`, `journalEntriesBetween`.
   The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase`, `Bill` or `JournalEntry` entries
-  QuickBooks created at or after `since` (`MetaData.CreateTime`), one page of 1,000, with `full: true`
-  when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
-  finds an app entry a dated window misses.
+  QuickBooks created since `since` (`MetaData.CreateTime`), oldest first. It starts an hour before `since`
+  in case the app's clock runs ahead, so a caller must tolerate older entries. It reads every page up to
+  10 (10,000 entries), with `full: true` when it stops there and more may exist. Creation time survives
+  finance re-dating an entry, so it finds an app entry a dated window misses.
 - `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
   null when finance has set none (absent, null or empty). It throws when the read fails or the date is malformed;
   nothing caches it. It and the reference lists below are the other reads with no date window.

@@ -360,8 +360,8 @@ export type InKindSweepCounts = { entries: number; flagged: number; full: boolea
 
 /**
  * The daily orphan sweep: every JournalEntry created since the oldest attempt in the last
- * SWEEP_DAYS days, one page. An entry carrying a gift's key that the gift does not hold gets a
- * note for finance to void or link it, unless finance already answered it; a full page alerts
+ * SWEEP_DAYS days. An entry carrying a gift's key that the gift does not hold gets a
+ * note for finance to void or link it, unless finance already answered it; a capped read alerts
  * finance. QuickBooks is only read.
  */
 export async function sweepInKindQbStrays(

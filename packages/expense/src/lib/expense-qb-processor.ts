@@ -301,6 +301,9 @@ async function commitQbProcessing(
     }
 
     const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
+    // Finance can set a line's account until this lock is taken, and that account wins over the earlier read.
+    const manualAccounts = await tx.expenseLineItem.findMany({ where: { expenseId, manualQbAccount: { not: null } }, select: { id: true, manualQbAccount: true } });
+    for (const { id, manualQbAccount } of manualAccounts) accountByLine.set(id, manualQbAccount!);
     for (const li of lineItems) {
       await tx.expenseLineItem.update({
         where: { id: li.id },

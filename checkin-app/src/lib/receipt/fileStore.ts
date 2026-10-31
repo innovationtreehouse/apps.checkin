@@ -52,6 +52,11 @@ export function createS3FileStore(): ReceiptFileStore {
     };
 }
 
+/** Chosen by CHECKIN_ENV, never by whether a bucket is set: a deployed instance with none refuses files. */
+export function receiptFileStore(): ReceiptFileStore {
+    return config.isLocal() ? createTempDirFileStore() : createS3FileStore();
+}
+
 export function createTempDirFileStore(root = join(tmpdir(), "checkin-receipt-files")): ReceiptFileStore {
     return {
         async put(key, bytes) {

@@ -31,7 +31,7 @@ import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
-import { createS3FileStore, createTempDirFileStore } from "@/lib/receipt/fileStore";
+import { receiptFileStore } from "@/lib/receipt/fileStore";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -264,8 +264,7 @@ export function configureRuntime(): void {
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.
     ocr: config.checkinEnv() === "local" ? fixtureOcr : createAnthropicOcr(process.env.ANTHROPIC_API_KEY),
-    // Chosen by CHECKIN_ENV, never by whether a bucket is set: a deployed instance with none refuses files.
-    fileStore: config.isLocal() ? createTempDirFileStore() : createS3FileStore(),
+    fileStore: receiptFileStore(),
     storeNewFilesInBucket: config.receiptFilesS3(),
   });
 }

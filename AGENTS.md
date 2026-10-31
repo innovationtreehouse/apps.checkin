@@ -334,6 +334,7 @@ Read these before changing the relevant area — start here, then follow links.
 - `docs/ops/production-runbook.md` — how to deploy to production and roll back.
 - `docs/ops/quickbooks-go-live.md` — the ordered steps for turning on QuickBooks posting in production.
 - `docs/ops/shopify-dev-store.md` — the Shopify dev store and its webhooks in dev and local.
+- `docs/ops/receipt-files-backfill.md` — copying existing receipt files to their bucket, and the verify gate, per environment.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).

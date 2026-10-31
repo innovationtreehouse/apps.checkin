@@ -172,7 +172,7 @@ export const REGISTRY = {
         allowedTokens: { problem: text },
         sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
         defaultSubject: "Inventory: catalog events need attention",
-        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once; a provisional item that can't be applied alerts on each run.",
     },
 
     "board.expenseEventsStuck": {

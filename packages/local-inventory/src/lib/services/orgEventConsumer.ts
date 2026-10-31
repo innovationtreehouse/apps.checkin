@@ -3,7 +3,7 @@
 // (resolution upsert, status short-circuit), so a crash between the two replays safely.
 import { parseOrgEvent } from "@checkin/receipt-types";
 import { db } from "../db";
-import type { OrgEventRecord } from "../../contract";
+import type { InventoryAlerts, OrgEventRecord } from "../../contract";
 import { getCatalogEventSource, getInventoryAlerts, getOrgId, getServices } from "../../runtime";
 import { createOrgEventsRepository } from "../repositories/orgEventsRepository";
 
@@ -54,7 +54,7 @@ export async function consumeOrgEvent(ev: OrgEventRecord): Promise<ConsumeResult
 }
 
 /** Tell a person about events left undone. An alert that fails never fails the caller. */
-async function alertStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void> {
+async function alertStuck(event: Parameters<InventoryAlerts["orgEventsStuck"]>[0]): Promise<void> {
   try {
     await getInventoryAlerts()?.orgEventsStuck(event);
   } catch (err) {
@@ -127,7 +127,8 @@ const RETRY_FIRST_SHARE = 0.1;
  * capped share means permanently failed rows can't crowd out new events. What stays undone is retried on the next run. A person
  * is alerted once per run for an event newly failed, an unreadable catalog, or a capped run that
  * processed nothing; a capped run that made progress drains itself on later runs, and a retry that
- * fails again only stays failed in the ledger and the counts. The host's daily reconcile cron step calls it. Capped; counts only.
+ * fails again only stays failed in the ledger and the counts. A provisional that fails to reconcile
+ * has no ledger row, so it alerts on every run until it applies. The host's daily reconcile cron step calls it. Capped; counts only.
  */
 export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
@@ -177,6 +178,8 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
 
   const reconciled = await reconcilePendingProvisionals(orgId, limit);
   const stalled = unprocessed > 0 && counts.processed === 0;
-  if (newlyFailed > 0 || stalled || unreadable) await alertStuck({ failed: newlyFailed, unprocessed, unreadable });
+  if (newlyFailed > 0 || stalled || unreadable || reconciled.reconcileFailed > 0) {
+    await alertStuck({ failed: newlyFailed, unprocessed, unreadable, reconcileFailed: reconciled.reconcileFailed });
+  }
   return { ...counts, ...reconciled, unprocessed, unreadable };
 }
