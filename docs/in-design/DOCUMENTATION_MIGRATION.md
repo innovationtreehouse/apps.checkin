@@ -43,7 +43,7 @@ Every file that was in a `designs/` folder, plus the non-folder work, with the
 PR in §4 that finished it.
 
 Working docs already in `docs/in-design/` that other sessions own are out of
-this plan's scope: `1265_`, `1272_`, `1280_`, `1283_`, `2180_`, `2182_`,
+this plan's scope: `1265_`, `1272_`, `1280_`, `1283_`, `2182_`,
 and `TOMBSTONE_REMOVAL.md`. No PR here edits them;
 where a move breaks one of their pointers, that doc's session gets the new path
 (§5).
