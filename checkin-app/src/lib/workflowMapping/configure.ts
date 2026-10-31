@@ -4,10 +4,10 @@
  * lazy Org-registry accessor, so every library stamps the same org and person
  * ids, and boot stays DB-free.
  *
- * Bound crossings: X3 (CatalogReader → catalog reads), X8 (CatalogSubmissions →
- * catalog proposals, conflicts and provisional GTINs), X4 (InventorySink →
- * local-inventory apply), X5 (ExpenseSink → expense intake), X9 (DonationSink →
- * donations ingestInKind) and the S5 replay read (X2).
+ * Bound crossings: CatalogReader → catalog reads, CatalogSubmissions →
+ * catalog proposals, conflicts and provisional GTINs, InventorySink →
+ * local-inventory apply, ExpenseSink → expense intake, DonationSink →
+ * donations ingestInKind, and the org-event replay read.
  */
 import { configureWorkflowMapping, type ExpenseSink } from "@checkin/workflow-mapping";
 import { expenseIntake } from "@checkin/expense";
@@ -19,7 +19,7 @@ import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
 /**
- * X5: the intake parses the receipt, asserts the org and dedupes on
+ * The intake parses the receipt, asserts the org and dedupes on
  * receiptId itself; its errors propagate so the money leg lands in apply_failed.
  */
 export const expenseSink: ExpenseSink = {

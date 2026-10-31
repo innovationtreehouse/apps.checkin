@@ -1,5 +1,5 @@
 /**
- * Expense's nav pill counts (#1272): `financeQueue` (the finance queue's actionable units, half of
+ * Expense's nav pill counts: `financeQueue` (the finance queue's actionable units, half of
  * the Finance review pill), the Programs I Lead "Expense approvals" tab (lines waiting on the
  * viewer's approval), `approver` (1 when the viewer approves any bucket: its owner or a
  * treasurer), and per expense list view the expenses the viewer can act on. A failing count is

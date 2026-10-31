@@ -22,7 +22,7 @@ export type StateSet<Row, Where> = {
  * Emit the identifying STATUS `where` clause for a from-state: a scalar
  * `{ status: X }` for a single status, `{ status: { in: [...] } }` for many.
  *
- * This is the from-state drift-closer (#1080). A CAS transition guard's from-clause
+ * This is the from-state drift-closer. A CAS transition guard's from-clause
  * is `from-state ∧ nothing-else-moved`; the ONLY part that a status rename/split
  * changes is the `status:` literal. Sourcing THAT from the definition (each machine
  * wraps this as `fromWhere(edge)`) — instead of hand-writing it per guard — is what
@@ -32,8 +32,8 @@ export type StateSet<Row, Where> = {
  *
  * Client-safe: the caller supplies the Prisma `Where` type param; the value is an
  * inert object literal (no `@/generated/prisma` value reaches the client bundle).
- * The scalar/`in` split mirrors what the guards already hand-write, so a migrated
- * guard's runtime query is byte-for-byte identical.
+ * The scalar/`in` split matches the hand-written form, so a guard's runtime
+ * query is the same either way.
  */
 export function fromStatusWhere<Where>(statuses: readonly string[]): Where {
     return (statuses.length === 1

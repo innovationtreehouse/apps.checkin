@@ -89,7 +89,7 @@ export async function sendEmail(to: string, subject: string, html: string, heade
 
 /**
  * Run async tasks in chunks, pausing `gapMs` between chunks — a crude client-side
- * rate limiter for provider fan-out (#1154, chunks of 5 @ 1/s). Best-effort: assumes
+ * rate limiter for provider fan-out (chunks of 5 @ 1/s). Best-effort: assumes
  * each task already swallows its own errors (sendEmail resolves false, never rejects),
  * so nothing is caught here. Order of results matches order of tasks.
  */

@@ -120,7 +120,7 @@ function uncleared(householdId: number, from: object, extra: object = {}): Promi
  * Stamp `bgClearedAt` under a CAS on the from-state, and apply the volunteer status:
  * the fresh-check shortcut means `clearBackgroundCheck` never runs this cycle, and
  * without it a pre-designated or reviewer-marked volunteer household gets the
- * non-volunteer membership fee (#874). Returns false when the row moved on under us.
+ * non-volunteer membership fee. Returns false when the row moved on under us.
  *
  * One transaction, FOR UPDATE first: a rejection only stops the stamp if it is read
  * under the lock, and the stamp, its audit row and the volunteer write must land

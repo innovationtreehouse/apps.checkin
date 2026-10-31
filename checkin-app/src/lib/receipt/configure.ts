@@ -1,11 +1,11 @@
 /**
- * Wire the receipt library into checkin (#1265 §3/§6), called once at server boot from
+ * Wire the receipt library into checkin, called once at server boot from
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
- * are read lazily, inside a request, and so are households. Bound crossings: X6 (the S1 sink,
- * workflow-mapping's intake, which dedupes on `receiptId`), X12 (reimbursement status, read
- * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable"), X13
- * (the donor sink, bound to donations in-process) and the purchase outcome (receiving, expense
- * and donations, joined here). Mail intake (§2a) is bound only on a deployed
+ * are read lazily, inside a request, and so are households. Bound crossings: the receipt sink
+ * (workflow-mapping's intake, which dedupes on `receiptId`), reimbursement status (read
+ * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable"),
+ * the donor sink (bound to donations in-process) and the purchase outcome (receiving, expense
+ * and donations, joined here). Mail intake is bound only on a deployed
  * instance with both the token refresher and the mailbox configured; each mailed receipt is
  * acknowledged by email (mailReply.ts).
  */

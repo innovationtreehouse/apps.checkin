@@ -408,7 +408,7 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     // than chained, unlike Person.mergedIntoId: the archive answers "where is
     // this person now", and its toId is RESTRICT, so leaving it would pin the
     // tombstone row in place. Collapsing the chain here is also why compliance
-    // §6 attributes a date inherited two merges back. No unique constraint on
+    // attributes a date inherited two merges back. No unique constraint on
     // toId, so a plain updateMany.
     moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
     moved.bucketOwners = (await tx.budgetOwner.updateMany({ where: { ownerId: mergeId }, data: { ownerId: keepId } })).count;
@@ -621,7 +621,7 @@ async function auditMerge(tx: TxClient, plan: MergePlan, actor: AuthenticatedUse
  * row keeps the record. The audit row matches archiveApplication's shape, so the
  * board can unarchive one archived by mistake.
  *
- * No new lifecycle edge: this is the declared §13 archive transition
+ * No new lifecycle edge: this is the declared archive transition
  * ({PENDING_BG_REVIEW,BLOCKED}→ARCHIVED) driven from a second site, and the CAS
  * from-state comes from the definition (`personBgOpen.where` covers both).
  */

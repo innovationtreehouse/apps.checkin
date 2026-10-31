@@ -26,7 +26,7 @@ import { Prisma } from '@/generated/prisma/client'
  * extension calls this same function, so it inherits the trim automatically;
  * every email *lookup* must run its key through it too, or a differently-cased
  * or whitespace-padded address (` John.Doe@x ` vs the stored `john.doe@x`)
- * misses the row — the read half of issue #292. Keep read and
+ * misses the row. Keep read and
  * write on this one function so they can never drift.
  */
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase()

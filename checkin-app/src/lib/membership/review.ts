@@ -22,7 +22,7 @@ import { approvalsForSubject, establishedSubject } from "@/lib/membership/approv
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 /**
- * Background-check review — now a PARALLEL track, not a blocking phase.
+ * Background-check review — a PARALLEL track, not a blocking phase.
  *
  * After intake the application advances to PENDING_PAYMENT regardless of the
  * check; the review happens while the applicant pays. Two DISTINCT eligible
@@ -627,14 +627,14 @@ export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: {
         }
     } else if (outcome.householdId) {
         // Household process cleared into PENDING_PAYMENT (a PERSON_BG has no
-        // household/payment) — tell the family payment is open (#907).
+        // household/payment) — tell the family payment is open.
         await (opts?.paymentOpenNotice ?? notifyPaymentOpen)(outcome.householdId);
     }
 }
 
 /**
  * True if any household-lead email matches any volunteer-designation email, under
- * the shared Gmail/+tag-aware canonicalization. Extracted (pure) so the money-path
+ * the shared Gmail/+tag-aware canonicalization. Pure, so the money-path
  * match rule is unit-testable without a DB. DRIVES THE MEMBERSHIP FEE via isVolunteerFamily.
  */
 export function matchesVolunteerDesignation(parentEmails: string[], designationEmails: string[]): boolean {
@@ -648,7 +648,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
  * reviewer marked the family volunteer-only OR a household parent's sign-in-verified
  * email is pre-designated. Never clears it here. Runs at every PENDING_PAYMENT transition
  * (external advance, fresh-check intake shortcut, fresh-check renewal) so the
- * allowlist drives the membership fee BEFORE the check clears (#874), and again at clearance
+ * allowlist drives the membership fee BEFORE the check clears, and again at clearance
  * with the reviewers' volunteer marks.
  * Not a self-grant site: designations are guarded where written, and the
  * reviewer-marked pass runs only behind clearBackgroundCheck's guard.
