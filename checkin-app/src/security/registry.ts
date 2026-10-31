@@ -382,9 +382,8 @@ defineRoute({
     ],
 });
 
-// Tombstone census. Lists merged-away Person rows and, per tombstone,
-// the residue still parked on it — the surface a sysadmin/board uses to triage the
-// existing stock before the LIVE_PERSON removal deletes those rows. The bag is
+// Tombstone census. Lists merged-away Person rows and, per tombstone, the
+// residue still parked on it, for sysadmin/board triage. The bag is
 // { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
 // _count of the residue relations) and { PersonMerge } (fromId only, so the page
 // can flag a tombstone that has no archive row). Exposes tombstone identity,

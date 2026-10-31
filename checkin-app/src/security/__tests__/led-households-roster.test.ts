@@ -18,7 +18,6 @@
 import prisma from '@/lib/prisma';
 import { buildCallerContext } from '../access-resolvers';
 import { stripValue } from '../stripper';
-import { LIVE_PERSON } from '@/lib/person/filters';
 import type { CtxNeeds, Token } from '../core';
 import type { AuthResult } from '@/types/auth';
 
@@ -80,7 +79,7 @@ describe('ledHouseholdMemberIds prefetch reads canManage from the DB', () => {
             select: { householdId: true, isHouseholdLead: true, isSysadmin: true },
         });
         expect(findMany).toHaveBeenCalledWith({
-            where: { householdId: 2, ...LIVE_PERSON },
+            where: { householdId: 2 },
             select: { id: true },
         });
         expect([...ctx.ledHouseholdMemberIds].sort()).toEqual([5, 6, 9]);
