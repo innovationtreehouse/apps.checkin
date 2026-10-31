@@ -15,10 +15,9 @@ const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 /**
  * The people merged INTO this survivor, from whichever record still holds them.
  *
- * The PersonMerge archive wins over the tombstone `Person` row: the archive
- * outlives a deleted tombstone, and while both exist they say the same thing.
- * `mergedFrom` then covers only merges with no archive row, keyed by id so the
- * same merge is never counted twice.
+ * The PersonMerge archive wins over a tombstone `Person` row: where both exist
+ * they say the same thing. `mergedFrom` then covers only a tombstone with no
+ * archive row, keyed by id so the same merge is never counted twice.
  */
 function mergeSourceIdentities(s: {
     mergedFrom: { id: number; name: string | null; lastBackgroundCheck: Date | null }[];
@@ -261,10 +260,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    standing: every merge can add a row, and it is how the board spots a merge of
     //    two different people.
     //
-    //    The PersonMerge archive is the preferred source for both the predicate and
-    //    `fromName`, and the tombstone Person row is the fallback: an older merge may
-    //    have only a tombstone, a deleted tombstone leaves only the archive, and a
-    //    merge writes both. `mergedArchive: { some: {} }` is unfiltered
+    //    A merge deletes the merged-away Person row, so the PersonMerge archive is
+    //    the source for both the predicate and `fromName`, and a tombstone row the
+    //    delete migration kept is the fallback. `mergedArchive: { some: {} }` is unfiltered
     //    because the date lives inside a Json blob — the match happens below, over
     //    a handful of rows.
     const survivors = await prisma.person.findMany({

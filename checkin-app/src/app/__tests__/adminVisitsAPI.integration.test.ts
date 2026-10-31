@@ -11,6 +11,7 @@ import { POST } from '@/app/api/facility/visits/insert/route';
 import prisma from '@/lib/prisma';
 import { getFullAttendance } from '@/lib/getFullAttendance';
 import { getServerSession } from 'next-auth/next';
+import { OPEN_VISIT_REFUSAL } from '@/lib/visitTimes';
 
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
@@ -60,6 +61,7 @@ describe('Admin Visits API Integration Tests', () => {
             data: {
                 personId: testUserId,
                 arrivedAt: new Date(Date.now() - 3600000), // 1 hour ago
+                departedAt: new Date(Date.now() - 1800000),
             }
         });
         testVisitId = visit.id;
@@ -200,21 +202,24 @@ describe('Admin Visits API Integration Tests', () => {
             expect(data.error).toBe('Departure time cannot be in the future.');
         });
 
-        it('should return 400 when editing an open visit without supplying a departure', async () => {
+        it('should return 409 for an open visit and leave it open', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true }
             });
 
-            // testVisitId is still open here (departedAt null); editing only arrival must not leave it open.
+            const open = await prisma.visit.create({
+                data: { personId: testUserId, arrivedAt: new Date(Date.now() - 600000) }
+            });
             const req = new Request('http://localhost:4000/api/facility/visits', {
                 method: 'PATCH',
-                body: JSON.stringify({ visitId: testVisitId, arrivedAt: new Date(Date.now() - 7200000).toISOString() })
+                body: JSON.stringify({ visitId: open.id, departedAt: new Date().toISOString() })
             });
 
             const res = await PATCH(req as unknown as import("next/server").NextRequest);
-            expect(res.status).toBe(400);
-            const data = await res.json();
-            expect(data.error).toBe('Departure time is required to close this visit.');
+            expect(res.status).toBe(409);
+            expect((await res.json()).error).toBe(OPEN_VISIT_REFUSAL);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: open.id } })).departedAt).toBeNull();
+            await prisma.visit.delete({ where: { id: open.id } });
         });
 
         it('should return 400 when departure is not after arrival', async () => {
@@ -259,34 +264,35 @@ describe('Admin Visits API Integration Tests', () => {
                 where: { actorId: testAdminId, action: 'EDIT', tableName: 'Visit' }
             });
 
-            const now = new Date();
+            const { departedAt } = await prisma.visit.findUniqueOrThrow({ where: { id: testVisitId } });
+            const corrected = new Date(departedAt!.getTime() + 10 * 60000);
             const req = new Request('http://localhost:4000/api/facility/visits', {
                 method: 'PATCH',
-                body: JSON.stringify({ visitId: testVisitId, departedAt: now.toISOString() })
+                body: JSON.stringify({ visitId: testVisitId, departedAt: corrected.toISOString() })
             });
 
             const res = await PATCH(req as unknown as import("next/server").NextRequest);
             expect(res.status).toBe(200);
             const data = await res.json();
-            expect(new Date(data.visit.departedAt).toISOString()).toBe(now.toISOString());
+            expect(new Date(data.visit.departedAt).toISOString()).toBe(corrected.toISOString());
             expect(data.visit.departedVia).toBe('TYPED');
 
             const updatedVisit = await prisma.visit.findUnique({ where: { id: testVisitId } });
-            expect(updatedVisit?.departedAt?.toISOString()).toBe(now.toISOString());
+            expect(updatedVisit?.departedAt?.toISOString()).toBe(corrected.toISOString());
 
             const currentAuditLogs = await prisma.auditLog.count({
                 where: { actorId: testAdminId, action: 'EDIT', tableName: 'Visit' }
             });
             expect(currentAuditLogs).toBe(previousAuditLogs + 1);
 
-            // Only departedAt moved (from null, closing the visit) — no weighted
-            // shift on either field, so significance is the zero floor.
+            // 10 minutes on an untagged departure (weight 1), doubled for acting on
+            // someone else's record: below the flag threshold.
             const auditLog = await prisma.auditLog.findFirst({
                 where: { actorId: testAdminId, action: 'EDIT', tableName: 'Visit', affectedEntityId: testVisitId },
                 orderBy: { id: 'desc' },
             });
             expect((auditLog?.newData as { significance?: { score: number; flagged: boolean } })?.significance)
-                .toEqual({ score: 0, flagged: false });
+                .toEqual({ score: 20, flagged: false });
         });
 
         // Correcting a time replaces where it came from: a corrected badge
@@ -424,8 +430,9 @@ describe('Admin Visits API Integration Tests', () => {
             });
 
             // Own throwaway visit so the shared testVisitId stays available for other runs.
+            const departedAt = new Date(Date.now() - 600000);
             const doomed = await prisma.visit.create({
-                data: { personId: testUserId, arrivedAt: new Date(Date.now() - 3600000) }
+                data: { personId: testUserId, arrivedAt: new Date(departedAt.getTime() - 3600000), departedAt }
             });
 
             const req = new Request('http://localhost:4000/api/facility/visits', {
@@ -450,15 +457,32 @@ describe('Admin Visits API Integration Tests', () => {
             expect(auditLog).not.toBeNull();
             expect((auditLog?.oldData as { id?: number })?.id).toBe(doomed.id);
 
-            // The visit is still open, so its score is elapsed time-on-site (~1h, no
-            // arrivedVia so weight 1) rather than 0: deleting a live check-in does not score lowest.
+            // 1h recorded, no source so weight 1.
             // The admin (testAdminId) isn't the visit's own person (testUserId),
             // so this delete is byProxy too — the route doubles the weight
-            // (significance.ts PROXY_MULTIPLIER), giving ~120, not ~60.
+            // (significance.ts PROXY_MULTIPLIER), giving 120, not 60.
             const significance = (auditLog?.newData as { significance?: { score: number; flagged: boolean } })?.significance;
             expect(significance?.flagged).toBe(true);
-            expect(significance?.score).toBeGreaterThanOrEqual(120);
-            expect(significance?.score).toBeLessThan(130);
+            expect(significance?.score).toBe(120);
+        });
+
+        it('should return 409 for an open visit and leave it live', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true }
+            });
+
+            const open = await prisma.visit.create({
+                data: { personId: testUserId, arrivedAt: new Date(Date.now() - 600000) }
+            });
+            const req = new Request('http://localhost:4000/api/facility/visits', {
+                method: 'DELETE',
+                body: JSON.stringify({ visitId: open.id })
+            });
+
+            const res = await DELETE(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(409);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: open.id } })).deletedAt).toBeNull();
+            await prisma.visit.delete({ where: { id: open.id } });
         });
     });
 

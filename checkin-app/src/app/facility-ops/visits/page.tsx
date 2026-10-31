@@ -371,10 +371,12 @@ export default function AdminVisitsPage() {
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
                     <Table.Td>
-                      <Group gap="xs" wrap="nowrap">
-                        <Button size="xs" fz={15} variant="light" onClick={() => handleEditClick(v)}>Edit</Button>
-                        <Button size="xs" fz={15} variant="light" color="red" onClick={() => handleDeleteClick(v)}>Delete</Button>
-                      </Group>
+                      {v.departedAt ? (
+                        <Group gap="xs" wrap="nowrap">
+                          <Button size="xs" fz={15} variant="light" onClick={() => handleEditClick(v)}>Edit</Button>
+                          <Button size="xs" fz={15} variant="light" color="red" onClick={() => handleDeleteClick(v)}>Delete</Button>
+                        </Group>
+                      ) : <Text component="span" size="sm" c="dimmed">Still checked in: fix after they badge out or the 11 PM close</Text>}
                     </Table.Td>
                   </>
                 )}

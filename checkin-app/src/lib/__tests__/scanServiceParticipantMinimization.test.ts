@@ -53,7 +53,7 @@ function fakeDb() {
 }
 
 const checkin = async (over: Partial<Person>) =>
-    (await wire(processCheckin(person(over), "kiosk", fakeDb()))).json();
+    (await wire(processCheckin(person(over), fakeDb()))).json();
 
 describe("the scan response's participant", () => {
     it("carries the nickname the person goes by", async () => {
@@ -79,7 +79,7 @@ describe("the scan response's participant", () => {
     });
 
     it("is the same DTO on the way out", async () => {
-        const res = await wire(processCheckout(person({ nickname: "Bo" }), 42, "kiosk", fakeDb()));
+        const res = await wire(processCheckout(person({ nickname: "Bo" }), 42, fakeDb()));
         const body = await res.json();
         expect(body.participant).toEqual({ id: 1, name: "Bo" });
         expect(JSON.stringify(body)).not.toContain("@example.com");

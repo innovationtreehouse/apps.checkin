@@ -179,15 +179,8 @@ describe('close as one recorded event (real DB)', () => {
         expect(await prisma.auditLog.count({ where: { tableName: 'FacilityClose', affectedEntityId: close.id } })).toBe(1);
     });
 
-    it('MC-C1: a web dialog token minted on the keyholder\'s visit does not touch a kiosk close', async () => {
-        await open(k, at(HOUR), { forceCloseToken: 'web-dialog', forceCloseWarnedAt: new Date(), forceCloseActorId: k2.id });
-        const mv = await open(m, at(HOUR));
 
-        expect(await (await scan({ participantId: k.id, intent: 'OUT', close: 'confirmed' })).json()).toMatchObject({ facilityClosed: true });
-        expect((await reload(mv)).departedVia).toBe('FACILITY_CLOSE');
-    });
-
-    it('MC-C2: the keyholder\'s visit removed on the web before a queued close: it still closes, the removal stands', async () => {
+    it('MC-C2: the keyholder\'s visit tombstoned before a queued close: it still closes, the removal stands', async () => {
         const kv = await open(k, at(5 * HOUR), { deletedAt: new Date() });
         const mv = await open(m, at(5 * HOUR));
         const t = at(3 * HOUR);
@@ -200,7 +193,7 @@ describe('close as one recorded event (real DB)', () => {
         expect(removed.departedAt).toBeNull();
     });
 
-    it('MC-C3: a web checkout of the keyholder after t, and a keyholder backdated before t, do not stop a queued close', async () => {
+    it('MC-C3: a typed departure of the keyholder after t, and a keyholder backdated before t, do not stop a queued close', async () => {
         const t = at(3 * HOUR);
         await open(k, at(5 * HOUR), { departedAt: at(HOUR), departedVia: 'TYPED' });
         const k2v = await open(k2, at(4 * HOUR));
@@ -284,7 +277,7 @@ describe('close as one recorded event (real DB)', () => {
         it('live: one badge does not close; the keyholder leaves, is told who checked in, and a second badge closes', async () => {
             const kv = await open(k, at(2 * HOUR));
             const rosterAsOf = at(5 * 60_000);
-            const mv = await open(m, at(2 * 60_000)); // a web check-in the stale kiosk roster missed
+            const mv = await open(m, at(2 * 60_000)); // a check-in the stale kiosk roster missed
 
             const res = await scan({ participantId: k.id, intent: 'OUT', close: 'alone', rosterAsOf: rosterAsOf.toISOString() });
             const body = await res.json();

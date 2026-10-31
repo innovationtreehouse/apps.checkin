@@ -21,7 +21,7 @@
  *
  * Errors thrown from the user fn are caught:
  *   - `ApiResponseError` → mapped to its declared status, message & optional code.
- *   - any other error    → opaque 500 (closes #127/#122 class).
+ *   - any other error    → opaque 500, so its message never reaches the client.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */

@@ -119,8 +119,8 @@ async function loadExpense(expenseId: string) {
   return expense;
 }
 
-/** Expense states that may still be linked to an existing QuickBooks entry; BEFORE_LINE is held as UNBOOKED. */
-const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "UNBOOKED", "BEFORE_LINE", "POST_FAILED", "NEEDS_FINANCE"];
+/** Expense states that may still be linked to an existing QuickBooks entry. */
+const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "UNBOOKED", "POST_FAILED", "NEEDS_FINANCE"];
 
 /**
  * The total the poster would book: every line plus the expense's tax and shipping, less its discount.
@@ -269,7 +269,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
 }
 
 /** States waiting on finance's decision. POST_FAILED is not one: the drain retries it until NEEDS_FINANCE. */
-const SKIPPABLE_STATES = ["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"];
+const SKIPPABLE_STATES = ["UNBOOKED", "AMBIGUOUS", "NEEDS_FINANCE"];
 
 async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
   if ((await conflictedParties(expense)).includes(callerId(principal))) {
