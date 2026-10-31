@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createClient, lastPage, paged } from "./index";
+import { HttpError, createClient, lastPage, paged } from "./index";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,6 +32,20 @@ describe("createClient api", () => {
     await expect(api("/x")).rejects.toThrow("HTTP 502");
     stub(200, "<html>");
     await expect(api("/x")).rejects.toThrow("Unexpected non-JSON response (HTTP 200)");
+  });
+
+  it("throws an HttpError, still an Error with the route's words", async () => {
+    stub(404, JSON.stringify({ error: "Gone" }));
+    const thrown = await api("/x").catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(HttpError);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).toMatchObject({ message: "Gone", status: 404 });
+  });
+
+  it("does not hand the invalidate option to fetch", async () => {
+    const fetchMock = stub(200, "{}");
+    await api("/x", { method: "POST", invalidate: false });
+    expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("invalidate");
   });
 });
 

@@ -19,10 +19,15 @@ export function viewerFromSession(session: Session | null | undefined): Viewer |
     };
 }
 
+/** A lost session answers a load with 401; a full page load takes the person through the site's sign-in gate. */
+export function expireSession(location: Pick<Location, "pathname" | "assign"> = window.location): void {
+    if (location.pathname !== "/") location.assign("/");
+}
+
 function SessionViewer({ children }: { children: React.ReactNode }) {
     const { data } = useSession();
     const viewer = useMemo(() => viewerFromSession(data), [data]);
-    return <ViewerProvider viewer={viewer}>{children}</ViewerProvider>;
+    return <ViewerProvider viewer={viewer} onSessionExpired={expireSession}>{children}</ViewerProvider>;
 }
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
