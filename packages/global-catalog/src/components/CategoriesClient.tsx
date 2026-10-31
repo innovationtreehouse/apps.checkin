@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActionIcon, Badge, Button, Checkbox, Divider, Grid,
   Group, Modal, NumberInput, Paper, Stack, Text, TextInput, Title, Tooltip,
@@ -7,7 +7,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconPlus } from "@tabler/icons-react";
-import { api, errorMessage, useCanManage } from "./api";
+import { api, useCanManage, useLoad } from "./api";
 import { LoadError } from "@checkin/component-ui";
 import type { CategoryRow, SubcategoryRow } from "./viewTypes";
 
@@ -35,8 +35,6 @@ function ListItem({ label, isArchived, isSelected, canEdit, onSelect, onEdit, on
 
 export default function CategoriesClient() {
   const canEdit = useCanManage();
-  const [categories, setCategories] = useState<CategoryRow[]>([]);
-  const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
   const [selectedCat, setSelectedCat] = useState<CategoryRow | null>(null);
   const [showArchivedCats, setShowArchivedCats] = useState(false);
   const [showArchivedSubs, setShowArchivedSubs] = useState(false);
@@ -48,26 +46,14 @@ export default function CategoriesClient() {
   const [catForm, setCatForm] = useState({ name: "", letter: "" });
   const [subForm, setSubForm] = useState({ name: "", number: 0 });
   const [saving, setSaving] = useState(false);
-  const [catError, setCatError] = useState<string | null>(null);
-  const [subError, setSubError] = useState<string | null>(null);
 
-  function loadCategories(includeArchived: boolean) {
-    return api<CategoryRow[]>(`/categories${includeArchived ? "?includeArchived=true" : ""}`).then(
-      (rows) => { setCategories(rows); setCatError(null); },
-      (e) => setCatError(errorMessage(e)),
-    );
-  }
-
-  useEffect(() => { loadCategories(false); }, []);
-
-  async function loadSubcategories(catId: number, includeArchived: boolean) {
-    const params = new URLSearchParams({ categoryId: String(catId) });
-    if (includeArchived) params.set("includeArchived", "true");
-    try {
-      setSubcategories(await api<SubcategoryRow[]>(`/subcategories?${params}`));
-      setSubError(null);
-    } catch (e) { setSubError(errorMessage(e)); }
-  }
+  const { data: categories, error: catError, reload: reloadCategories } = useLoad<CategoryRow[]>(`/categories${showArchivedCats ? "?includeArchived=true" : ""}`);
+  const subParams = new URLSearchParams({ categoryId: String(selectedCat?.id) });
+  if (showArchivedSubs) subParams.set("includeArchived", "true");
+  const subsLoad = useLoad<SubcategoryRow[]>(selectedCat ? `/subcategories?${subParams}` : null);
+  const subcategories = subsLoad.data ?? [];
+  // A retry keeps the previous category's rows in `data`, and their buttons would act on that category.
+  const subsLoading = subsLoad.loading || subsLoad.retrying || subsLoad.data === null;
 
   async function handleCatSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -82,7 +68,6 @@ export default function CategoriesClient() {
         notifications.show({ message: "Category created", color: "green" });
       }
       closeCatModal();
-      await loadCategories(showArchivedCats);
     } catch (err) {
       notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setSaving(false); }
@@ -101,7 +86,6 @@ export default function CategoriesClient() {
         notifications.show({ message: "Subcategory created", color: "green" });
       }
       closeSubModal();
-      await loadSubcategories(selectedCat.id, showArchivedSubs);
     } catch (err) {
       notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
     } finally { setSaving(false); }
@@ -111,7 +95,6 @@ export default function CategoriesClient() {
     try {
       await api(`/categories/${id}/archive`, { method: "POST" });
       if (selectedCat?.id === id) setSelectedCat(null);
-      await loadCategories(showArchivedCats);
       notifications.show({ message: "Category archived", color: "orange" });
     } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
@@ -120,33 +103,22 @@ export default function CategoriesClient() {
     try {
       const updated = await api<CategoryRow>(`/categories/${id}/unarchive`, { method: "POST" });
       if (selectedCat?.id === id) setSelectedCat(updated);
-      await loadCategories(showArchivedCats);
       notifications.show({ message: "Category unarchived", color: "green" });
     } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleSubArchive(id: number) {
-    if (!selectedCat) return;
     try {
       await api(`/subcategories/${id}/archive`, { method: "POST" });
-      await loadSubcategories(selectedCat.id, showArchivedSubs);
       notifications.show({ message: "Subcategory archived", color: "orange" });
     } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
   }
 
   async function handleSubUnarchive(id: number) {
-    if (!selectedCat) return;
     try {
       await api(`/subcategories/${id}/unarchive`, { method: "POST" });
-      await loadSubcategories(selectedCat.id, showArchivedSubs);
       notifications.show({ message: "Subcategory unarchived", color: "green" });
     } catch (err) { notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false }); }
-  }
-
-  async function handleSelectCat(cat: CategoryRow | null) {
-    setSelectedCat(cat);
-    if (cat) await loadSubcategories(cat.id, showArchivedSubs);
-    else setSubcategories([]);
   }
 
   return (
@@ -158,17 +130,18 @@ export default function CategoriesClient() {
             <Group justify="space-between" mb="sm">
               <Text fw={600}>Categories</Text>
               <Group gap="sm">
-                <Checkbox label="Show archived" size="xs" checked={showArchivedCats} onChange={async (e) => { setShowArchivedCats(e.currentTarget.checked); await loadCategories(e.currentTarget.checked); }} />
+                <Checkbox label="Show archived" size="xs" checked={showArchivedCats} onChange={(e) => setShowArchivedCats(e.currentTarget.checked)} />
                 {canEdit && <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => { setEditCat(null); setCatForm({ name: "", letter: "" }); openCatModal(); }}>Add</Button>}
               </Group>
             </Group>
             <Divider mb="sm" />
-            {catError ? <LoadError what="categories" message={catError} onRetry={() => loadCategories(showArchivedCats)} />
+            {catError ? <LoadError what="categories" message={catError} onRetry={reloadCategories} />
+              : categories === null ? <Text size="sm" c="dimmed">Loading…</Text>
               : categories.length === 0 ? <Text size="sm" c="dimmed">No categories yet</Text> : (
               <Stack gap={2}>
                 {[...categories].sort((a, b) => a.letter.localeCompare(b.letter)).map((cat) => (
                   <ListItem key={cat.id} label={`${cat.letter} — ${cat.name}`} isArchived={!!cat.archivedAt} isSelected={selectedCat?.id === cat.id} canEdit={canEdit}
-                    onSelect={() => handleSelectCat(selectedCat?.id === cat.id ? null : cat)}
+                    onSelect={() => setSelectedCat(selectedCat?.id === cat.id ? null : cat)}
                     onEdit={() => { setEditCat(cat); setCatForm({ name: cat.name, letter: cat.letter }); openCatModal(); }}
                     onArchive={() => handleCatArchive(cat.id)}
                     onUnarchive={() => handleCatUnarchive(cat.id)}
@@ -183,13 +156,14 @@ export default function CategoriesClient() {
             <Group justify="space-between" mb="sm" wrap="nowrap">
               <Text fw={600} truncate style={{ flex: 1, minWidth: 0 }}>{selectedCat ? `Subcategories — ${selectedCat.name}` : "Subcategories"}</Text>
               <Group gap="sm">
-                <Checkbox label="Show archived" size="xs" checked={showArchivedSubs} onChange={async (e) => { setShowArchivedSubs(e.currentTarget.checked); if (selectedCat) await loadSubcategories(selectedCat.id, e.currentTarget.checked); }} />
+                <Checkbox label="Show archived" size="xs" checked={showArchivedSubs} onChange={(e) => setShowArchivedSubs(e.currentTarget.checked)} />
                 {canEdit && <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => { setEditSub(null); setSubForm({ name: "", number: 0 }); openSubModal(); }} disabled={!selectedCat}>Add</Button>}
               </Group>
             </Group>
             <Divider mb="sm" />
             {!selectedCat ? <Text size="sm" c="dimmed">Select a category to manage its subcategories</Text>
-              : subError ? <LoadError what="subcategories" message={subError} onRetry={() => loadSubcategories(selectedCat.id, showArchivedSubs)} />
+              : subsLoad.error ? <LoadError what="subcategories" message={subsLoad.error} onRetry={subsLoad.reload} />
+              : subsLoading ? <Text size="sm" c="dimmed">Loading…</Text>
               : subcategories.length === 0 ? <Text size="sm" c="dimmed">No subcategories yet</Text>
               : (
                 <Stack gap={2}>
