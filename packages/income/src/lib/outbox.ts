@@ -88,11 +88,20 @@ async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirro
 }
 
 /**
- * Why a payout's deposit can't be built yet, naming its undecided items and unusable buckets,
- * or null when every sale has a usable decision. Custom items carry no variant and book as
- * general income.
+ * Why a payout's deposit can't be built yet, naming its undecided items, unusable buckets, and
+ * sales the mirror holds no lines for, or null when every sale has a usable decision. Custom
+ * items carry no variant and book as general income. Orders are named by gid: an order's name
+ * can carry its buyer's, and income keeps no record of who bought.
  */
 export function mappingGap(sales: PayoutSales, problem: BucketProblem): string | null {
+  const lined = new Set(sales.orderLines.map((l) => l.orderGid));
+  const noLines = new Set<string>();
+  const noOrder = new Set<string>();
+  for (const t of sales.txns) {
+    if (!["charge", "refund"].includes(t.type.toLowerCase())) continue;
+    if (!t.orderGid) noOrder.add(t.txnGid);
+    else if (!lined.has(t.orderGid)) noLines.add(t.orderGid);
+  }
   const undecided = new Set<string>();
   const broken = new Map<number, string>();
   for (const l of sales.orderLines) {
@@ -108,6 +117,8 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   const parts = [
     ...(undecided.size ? [`undecided items: ${[...undecided].sort().join(", ")}`] : []),
     ...[...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`),
+    ...(noLines.size ? [`orders with no lines: ${[...noLines].sort().join(", ")}`] : []),
+    ...(noOrder.size ? [`transactions with no order: ${[...noOrder].sort().join(", ")}`] : []),
   ];
   return parts.length ? parts.join("; ") : null;
 }
@@ -286,7 +297,7 @@ function holdingData(d: QbDeposit, origin: string): RowData {
  * claim is still this post's. found → link (POSTED when it carries the payout's key);
  * created → POSTED; ambiguous or a lookup conflict → finance's queue; failed → POST_FAILED;
  * closed or needs-finance → NO_DEPOSIT, finance books it or skips it. A payout with an
- * undecided item or unusable bucket holds as NEEDS_MAPPING first. Returns null when another
+ * undecided item, unusable bucket or sale with no lines holds as NEEDS_MAPPING first. Returns null when another
  * holder has the reconcile lock and `wait` is off. `book` admits a NO_DEPOSIT payout.
  */
 export async function postPayout(
@@ -507,8 +518,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * check every assigned bucket (alerting finance once per bucket that has become unusable), then
  * post the outbox's WAITING rows and every NEEDS_MAPPING row, oldest first. A payout first seen
  * after switch-on books itself, however late it arrived; one seen before goes to finance as
- * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item or unusable bucket holds as
- * NEEDS_MAPPING until finance decides. Creates stop at the org's count and cents caps, which
+ * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item, unusable bucket or sale
+ * with no lines holds as NEEDS_MAPPING until the gap closes. Creates stop at the org's count and cents caps, which
  * fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
  */

@@ -234,6 +234,11 @@ Income checks each online-store payout against the deposits in the books.
   general Treehouse income only where finance chose that for the item. A payout
   with a sale of an item finance has not decided on waits until finance does.  [Decision]
 
+- A payout with a sale whose items the app can't see waits too, and never books
+  itself as general income. It books once the order's items arrive. A sale with no
+  order at all stays with finance, which books it by hand or dismisses it with a
+  reason.  [Decision — owner]
+
 - A payout or deposit that changes after it was matched goes back to finance.
   The app never matches it again on its own.  [Decision]
 
