@@ -12,7 +12,7 @@ has been done; the System Status page and QuickBooks answer that.
 
 | Who | Needs | Steps |
 |---|---|---|
-| Engineer | Intuit development keys; the sandbox company | 1 |
+| Engineer | Intuit development keys; the sandbox company | 1, 7 |
 | Finance | Access to close the books in QuickBooks; the FINANCE role in the app | 2, 5, 6 |
 | QuickBooks authoriser | A login allowed to connect apps to the production company | 3 |
 | Infra operator | AWS access to the production secret; the infra repository | 3, 4, 7 |
@@ -209,29 +209,51 @@ error, and finance has decided the queue or chosen to work it down over time.
 
 ## 7. Turn on Shopify income
 
-**Who:** Infra operator, only after the payouts mirror fix has deployed.
+**Who:** Engineer for the sandbox check, then the infra operator, only after two
+fixes have deployed.
 
 `INCOME_MIRROR_NEWEST_WINS=true` tells the app that the Shopify mirror can't let an
-older payout overwrite a newer one. Deposit lines are built from those rows, so
-setting it early could book a stale amount. The fix is
-[#2733](https://github.com/innovationtreehouse/apps.checkin/pull/2733). Confirm
-all three of these:
+older payout overwrite a newer one, and it lets income start booking payouts. Two
+fixes have to be live first, because each one stops a wrong deposit:
 
-1. The PR is merged. This prints its commit:
+- [#2733](https://github.com/innovationtreehouse/apps.checkin/pull/2733) makes the
+  mirror keep the newest payout. Deposit lines are built from those rows, so without
+  it a deposit could book a stale amount.
+- [#2791](https://github.com/innovationtreehouse/apps.checkin/pull/2791) holds a
+  payout whose charge has no order lines. Without it, that charge books whole to
+  organisation-level income with no Class.
+
+Confirm all four of these:
+
+1. Both PRs are merged. These print their commits:
 
    ```bash
    gh pr view 2733 --json mergedAt,mergeCommit
    ```
 
-2. A release tag contains that commit:
+   ```bash
+   gh pr view 2791 --json mergedAt,mergeCommit
+   ```
+
+2. A release tag contains both commits. Run this for each commit:
 
    ```bash
    git tag --contains <merge commit>
    ```
 
 3. The production deploy run for that tag, or a later one, passed its "Deploy
-   s-read (prod)" step. s-read deploys after the app, so a green rollout alone
-   doesn't prove it.
+   s-read (prod)" step. #2733 ships in s-read and #2791 in the app. s-read deploys
+   after the app, so this step passing covers both, and a green rollout alone
+   doesn't.
+
+4. The sandbox checks pass on a checkout that contains
+   [#2794](https://github.com/innovationtreehouse/apps.checkin/pull/2794). That PR
+   added `ORDERBY` to the query behind income's lookup and orphan sweep, and its
+   tests stub QuickBooks, so this script is what runs the query against real
+   QuickBooks. If step 1 ran on an older checkout, set up as step 1 describes and
+   run `npm run sandbox-checks -w @checkin/quickbooks` again. It must exit 0 with
+   the `created-since` line reading `PASS`. A `FAIL` stops this step: leave the
+   variable unset and bring it to an engineer.
 
 Then set the variable on the app task and roll it out. On the next daily run,
 income reconciles first and stamps afterward, so every payout the mirror already
