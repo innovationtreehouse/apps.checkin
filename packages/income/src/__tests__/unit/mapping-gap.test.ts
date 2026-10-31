@@ -13,13 +13,19 @@ const txn = (type: string, orderGid: string | null, n = 1): MirrorBalanceTxn => 
   source: "api",
 });
 
-const line = (orderGid: string, variantId: string | null): MirrorOrderLine => ({
-  orderGid, variantId, title: "item", sku: null, quantity: 1, priceCents: 1000, discountCents: 0,
+const line = (orderGid: string, variantId: string | null, patch: Partial<MirrorOrderLine> = {}): MirrorOrderLine => ({
+  orderGid, variantId, title: "item", sku: null, quantity: 1, currentQuantity: 1, priceCents: 1000, discountCents: 0, ...patch,
 });
 
 const noProblem = () => undefined;
-const gap = (txns: MirrorBalanceTxn[], orderLines: MirrorOrderLine[] = [], categories = new Map<string, number | null>()) =>
-  mappingGap({ txns, orderLines, categories }, noProblem);
+const gap = (
+  txns: MirrorBalanceTxn[],
+  orderLines: MirrorOrderLine[] = [],
+  categories = new Map<string, number | null>(),
+  subtotals: Record<string, number> = {},
+) => mappingGap({ txns, orderLines, categories, subtotals: new Map(Object.entries(subtotals)) }, noProblem);
+const custom = (patch: Partial<MirrorOrderLine> = {}) => line("O1", null, patch);
+const noDecisions = new Map<string, number | null>();
 
 describe("mappingGap", () => {
   it.each(["charge", "CHARGE", "refund"])("names an order with no lines for a %s", (type) => {
@@ -51,5 +57,37 @@ describe("mappingGap", () => {
     expect(gap([txn("charge", "O1"), txn("charge", "O2", 2), txn("charge", null, 3)], [line("O1", "V1")])).toBe(
       "undecided items: V1; orders with no lines: O2; transactions with no order: T3",
     );
+  });
+
+  it.each(["charge", "refund"])("names an order whose lines fall short of its subtotal for a %s", (type) => {
+    expect(gap([txn(type, "O1")], [custom()], noDecisions, { O1: 2000 })).toBe("orders with missing lines: O1");
+  });
+
+  it("holds a lost line beside a refunded one, which no longer counts toward the subtotal", () => {
+    const refunded = custom({ priceCents: 5000, currentQuantity: 0 });
+    expect(gap([txn("charge", "O1")], [refunded], noDecisions, { O1: 5000 })).toBe("orders with missing lines: O1");
+  });
+
+  it("does not hold lines that reach the subtotal after their discount", () => {
+    expect(gap([txn("charge", "O1")], [custom({ quantity: 2, currentQuantity: 2, discountCents: 100 })], noDecisions, { O1: 1900 })).toBeNull();
+  });
+
+  it("prorates a discount over a partial refund, allowing a cent of rounding per line", () => {
+    const line = custom({ quantity: 2, currentQuantity: 1, discountCents: 101 });
+    expect(gap([txn("charge", "O1")], [line], noDecisions, { O1: 950 })).toBeNull();
+    expect(gap([txn("charge", "O1")], [line], noDecisions, { O1: 952 })).toBe("orders with missing lines: O1");
+  });
+
+  it("does not hold lines above the subtotal, or an order with no subtotal row", () => {
+    expect(gap([txn("charge", "O1")], [custom()], noDecisions, { O1: 500 })).toBeNull();
+    expect(gap([txn("charge", "O1")], [custom()])).toBeNull();
+  });
+
+  it("does not hold an order that only a non-sale transaction names", () => {
+    expect(gap([txn("adjustment", "O1")], [custom()], noDecisions, { O1: 2000 })).toBeNull();
+  });
+
+  it("names an order with no lines once, as having none", () => {
+    expect(gap([txn("charge", "O1")], [], noDecisions, { O1: 2000 })).toBe("orders with no lines: O1");
   });
 });

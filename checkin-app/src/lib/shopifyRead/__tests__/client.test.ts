@@ -361,6 +361,14 @@ describe('income reads', () => {
         expect(args.orderBy).toEqual([{ orderGid: 'asc' }, { lineGid: 'asc' }]);
     });
 
+    it('incomeOrderSubtotals selects only the gid and subtotal, never a customer column', async () => {
+        db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1', subtotalCents: 5000 }]);
+        expect(await freshClient().incomeOrderSubtotals(['g1'])).toEqual([{ orderGid: 'g1', subtotalCents: 5000 }]);
+        const args = db.shopOrder.findMany.mock.calls[0][0];
+        expect(args.where).toEqual({ shopifyGid: { in: ['g1'] } });
+        expect(args.select).toEqual({ shopifyGid: true, subtotalCents: true });
+    });
+
     it('incomeItemsSeen skips test orders and test-loaded rows', async () => {
         db.$queryRaw.mockResolvedValue([]);
         await freshClient().incomeItemsSeen();
@@ -375,6 +383,7 @@ describe('income reads', () => {
         expect(await client.incomePaidPayoutsSince(issuedAt)).toEqual([]);
         expect(await client.incomePayout('p1')).toBeNull();
         expect(await client.incomeOrderLines(['g1'])).toEqual([]);
+        expect(await client.incomeOrderSubtotals(['g1'])).toEqual([]);
         expect(poolCtor).not.toHaveBeenCalled();
     });
 });
