@@ -4,9 +4,9 @@ import { ServiceError } from "@checkin/component-kit";
 import { REVIEW_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
-import { logger } from "@/lib/logger";
+import { logBackendError, logger } from "@/lib/logger";
 import { sendCongrats } from "@/lib/membership/payment";
-import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
+import { notifyBoardPaidReject, notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { config } from "@/lib/config";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
@@ -15,8 +15,8 @@ import { personActor, type AuditActor } from "@/lib/auditActor";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
-import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
-import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -525,7 +525,7 @@ export async function clearBackgroundCheck(
         if (subject.householdId !== null) {
             const [subjectMembership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
             if (subjectMembership?.status === "DENIED") {
-                return { status: process.status, activated: false, householdId: null, isInitial: false, denied: { householdId: subject.householdId, processId } };
+                return deniedClearance(tx, process.status, subject.householdId, processId);
             }
         }
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
@@ -543,7 +543,7 @@ export async function clearBackgroundCheck(
     if (!membership) throw new ReviewError("not_found", "Membership not found.");
     const householdId = membership.householdId;
     if (membership.status === "DENIED") {
-        return { status: process.status, activated: false, householdId: null, isInitial: false, denied: { householdId, processId } };
+        return deniedClearance(tx, process.status, householdId, processId);
     }
     const paid = !!process.paidAt;
     const refunded = paid && !!process.shopifyOrderId && (await isOrderReversed(tx, process.shopifyOrderId));
@@ -576,6 +576,12 @@ export async function clearBackgroundCheck(
     return { status, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
 }
 
+/** A clearance reaching a DENIED household. The board item commits with the clearance's transaction, because no sweep finds it later. */
+async function deniedClearance(tx: TxClient, status: OrgMembershipProcessStatus, householdId: number, processId: number): Promise<ClearanceOutcome> {
+    const notice = await recordPaymentException(tx, "DENIED_HOUSEHOLD_ACTIVITY", { processId, severity: "CRITICAL" });
+    return { status, activated: false, householdId: null, isInitial: false, denied: { householdId, processId, notice } };
+}
+
 /** An unlocked writer (archive) can still move the row between the locked read and the write. */
 function movedOn() {
     return new ReviewError("wrong_phase", "This application changed while it was being reviewed. Reload and try again.");
@@ -593,8 +599,8 @@ export type ClearanceOutcome = {
     activated: boolean;
     householdId: number | null;
     isInitial: boolean;
-    /** Set when the household is DENIED: nothing converged, and the board is owed an item. */
-    denied?: { householdId: number; processId: number };
+    /** Set when the household is DENIED: nothing converged, the board item is written, and `notice` is the email it owes. */
+    denied?: { householdId: number; processId: number; notice: PaymentExceptionNotice | null };
     /** Set when the paid order was refunded: held unactivated, and the board is owed an item. */
     refunded?: { processId: number; shopifyOrderId: string };
 };
@@ -603,32 +609,52 @@ export type ClearanceOutcome = {
 export type ClearanceProvenance = { via: string; sourcePersonId: number; reason: string };
 
 /**
- * The sends every clearance owes, outside the transaction so a slow/failed send
- * can't roll it back: the board item for a DENIED household, congrats + the
- * new-member triggers on activation, else the payment-open notice.
+ * Runs a step whose failure must not change what the clearance reports: it has
+ * committed, and retrying the attestation is refused, so a throw would only tell the
+ * reviewer a saved clearance failed.
+ */
+async function afterClearanceCommitted(step: string, outcome: ClearanceOutcome, run: () => Promise<unknown>): Promise<void> {
+    try {
+        await run();
+    } catch (error) {
+        const context = { householdId: outcome.householdId ?? outcome.denied?.householdId, processId: outcome.denied?.processId ?? outcome.refunded?.processId };
+        logger.error(`clearance ${step} failed:`, context, error);
+        await logBackendError(error, `clearance ${step}`, context);
+    }
+}
+
+/**
+ * The sends every clearance owes after it commits: the email for a DENIED household's
+ * board item, the board item for a refunded order, congrats + the new-member triggers
+ * on activation, else the payment-open notice. Never throws. What a failed step leaves
+ * behind is picked up later: the daily reconcile raises a refunded order, and the
+ * nightly and annual sweeps open what the triggers missed.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
-    if (outcome.denied) {
-        await raiseDeniedHouseholdActivity({ ...outcome.denied, what: "background check cleared" });
+    const { denied, refunded, householdId } = outcome;
+    if (denied) {
+        logger.warn(`[membership] activity on DENIED household ${denied.householdId}: background check cleared`);
+        const { notice } = denied;
+        if (notice) await afterClearanceCommitted("denied household email", outcome, () => notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId));
         return;
     }
-    if (outcome.refunded) {
-        await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { ...outcome.refunded, severity: "CRITICAL" });
+    if (refunded) {
+        await afterClearanceCommitted("refunded order raise", outcome, () => raisePaymentException("REVERSED_BEFORE_ACTIVATION", { ...refunded, severity: "CRITICAL" }));
         return;
     }
-    if (outcome.activated) {
-        await sendCongrats(outcome.householdId!, outcome.isInitial);
+    if (outcome.activated && householdId) {
+        await afterClearanceCommitted("congrats email", outcome, () => sendCongrats(householdId, outcome.isInitial));
         // Trigger C: a brand-new (INITIAL) member just activated — open PERSON_BG
         // for any program-attached ≥18 person in the household, and the agreement
         // side, where an adult child signs their own.
         if (outcome.isInitial) {
-            await openPersonBgForNewMember(outcome.householdId!, new Date());
-            await openPersonAgreementForNewMember(outcome.householdId!, new Date());
+            await afterClearanceCommitted("person background-check trigger", outcome, () => openPersonBgForNewMember(householdId, new Date()));
+            await afterClearanceCommitted("person agreement trigger", outcome, () => openPersonAgreementForNewMember(householdId, new Date()));
         }
-    } else if (outcome.householdId) {
+    } else if (householdId) {
         // Household process cleared into PENDING_PAYMENT (a PERSON_BG has no
         // household/payment) — tell the family payment is open.
-        await (opts?.paymentOpenNotice ?? notifyPaymentOpen)(outcome.householdId);
+        await afterClearanceCommitted("payment-open notice", outcome, () => (opts?.paymentOpenNotice ?? notifyPaymentOpen)(householdId));
     }
 }
 
