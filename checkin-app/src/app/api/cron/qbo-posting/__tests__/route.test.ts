@@ -35,7 +35,7 @@ describe('GET /api/cron/qbo-posting', () => {
         create = jest.fn().mockResolvedValue({});
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
-        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound' });
+        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', failedParts: [] });
         jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
         jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: 'unbound' });
@@ -84,6 +84,16 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: expense' });
         expect(logged).toHaveBeenCalledWith('[qbo-posting] expense QuickBooks posting failed:', expect.any(Error));
         logged.mockRestore();
+    });
+
+    it('records the expense parts that failed and still runs the other steps', async () => {
+        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: { error: true }, qbDrift: { error: true }, failedParts: ['qbPost', 'qbDrift'] });
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(runDonationDepositHandOver).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: expense qbPost, expense qbDrift' });
     });
 
     it('a throwing in-kind drain still runs income and records the failure', async () => {

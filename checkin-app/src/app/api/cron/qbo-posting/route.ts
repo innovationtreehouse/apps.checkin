@@ -18,7 +18,9 @@ export const GET = handler("GET /api/cron/qbo-posting", async ({ req }) => {
     const failed: string[] = [];
 
     try {
-        logger.info(`[qbo-posting] expense ${JSON.stringify(await runExpenseQbPosting())}`);
+        const expense = await runExpenseQbPosting();
+        logger.info(`[qbo-posting] expense ${JSON.stringify(expense)}`);
+        failed.push(...expense.failedParts.map((part) => `expense ${part}`));
     } catch (err) {
         logger.error("[qbo-posting] expense QuickBooks posting failed:", err);
         failed.push("expense");
