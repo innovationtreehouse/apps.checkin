@@ -173,7 +173,7 @@ Two independent disqualifiers:
 
 ### Option D: drift guard only (rejected)
 
-Add the column, add a drift guard like `livePersonDriftGuard.test.ts`, ship the
+Add the column, add a drift guard like the retired `LIVE_PERSON` one, ship the
 per-query filter plus a test that greps for missing ones. This is exactly what
 `LIVE_PERSON` has, and `TOMBSTONE_REMOVAL.md` is a 200-line argument that it does
 not work: the guard missed three shipped bugs before its widening found 13 more.

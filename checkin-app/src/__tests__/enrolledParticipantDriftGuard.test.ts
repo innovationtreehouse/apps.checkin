@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * ENROLLED_PARTICIPANT drift guard (lib/person/filters.ts), the enrollment-status
- * sibling of livePersonDriftGuard.test.ts.
+ * ENROLLED_PARTICIPANT drift guard (lib/person/filters.ts) for the
+ * enrollment-status filter.
  *
  * A WITHDRAWN ProgramParticipant row stays in the table as history. A read that
  * filters by nothing but programId/personId counts that row as an enrollment:
@@ -17,7 +17,7 @@ import { join, relative, sep } from 'node:path';
  *   1. A list/count call on the delegate:
  *        prisma|tx|db.programParticipant.findMany|findFirst|count|aggregate|groupBy(...)
  *      findUnique and the single-row writes take the composite key of one known
- *      row, the same boundary livePersonDriftGuard draws.
+ *      row.
  *   2. A nested read through a ProgramParticipant relation (Person.programParticipants,
  *      Program.participants): `<rel>: true`, or `<rel>: { ... }` whose body selects,
  *      includes, filters (`where:`) or quantifies (`some:`/`every:`/`none:`). An

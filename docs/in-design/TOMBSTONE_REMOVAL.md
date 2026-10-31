@@ -63,7 +63,7 @@ Three bugs shipped and were fixed individually:
 | [#1450](https://github.com/innovationtreehouse/checkin/pull/1450) | Tombstones leaked into the "needs a lead" household surfaces |
 | `review.ts:305` | The background-check blanket stamp (fixed under [#1260](https://github.com/innovationtreehouse/checkin/issues/1260)) |
 
-`livePersonDriftGuard.test.ts` exists to catch precisely this class and **missed all three** — its
+`livePersonDriftGuard.test.ts` (since retired) was written to catch precisely this class and **missed all three** — its
 matcher saw only read verbs on the `person` delegate, so a `person.updateMany` and a Person-typed
 relation named `householdMembers` were both invisible.
 
@@ -193,7 +193,7 @@ archive row and no remaining reference; any it keeps stay listed on the census p
 
 ### 4. Delete the guard
 
-`LIVE_PERSON`, `livePersonDriftGuard.test.ts`, and its 34-entry allowlist all go. Every one of the
+`LIVE_PERSON` goes. `livePersonDriftGuard.test.ts` and its 34-entry allowlist are already retired (pass D1: once merges delete the row, no tombstone can exist for the guard to protect against). Every one of the
 roughly 150 call sites loses its filter — mechanical, and `tsc` catches the import removals.
 
 ## Decisions needed (policy, not plumbing)
