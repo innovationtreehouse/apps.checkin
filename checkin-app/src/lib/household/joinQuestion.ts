@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { nameWrite } from "@/lib/person/name";
@@ -71,8 +72,15 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
             throw new JoinQuestionError("denied");
         }
 
+        // Conditional on the question still being open: a second answer that read it open
+        // before the first committed lands on no row.
+        const close = async (data: Prisma.PersonUpdateManyMutationInput) => {
+            const { count } = await tx.person.updateMany({ where: { id: personId, householdJoinPending: true }, data: { ...data, householdJoinPending: false } });
+            if (count !== 1) throw new JoinQuestionError("not_pending");
+        };
+
         if (join) {
-            await tx.person.update({ where: { id: personId }, data: { householdJoinPending: false } });
+            await close({});
             await tx.auditLog.create({
                 data: {
                     actorId: personId,
@@ -87,10 +95,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
 
         const account = await tx.account.findFirst({ where: { userId: personId }, select: { id_token: true } });
         // Cleared first: Person.email is unique and the new person takes it.
-        await tx.person.update({
-            where: { id: personId },
-            data: { householdJoinPending: false, email: null, emailVerified: null, googleId: null, image: null },
-        });
+        await close({ email: null, emailVerified: null, googleId: null, image: null });
         const fresh = await createInOwnHousehold(tx, {
             email: person.email,
             name: nameFromIdToken(account?.id_token) ?? nameWrite(person.email.split("@")[0]) ?? "Member",

@@ -150,6 +150,8 @@ describe('a yes', () => {
         const after = await prisma.person.findUniqueOrThrow({ where: { id: added.id }, include: { accounts: true } });
         expect(after).toMatchObject({ householdJoinPending: false, householdId, email: added.email });
         expect(after.accounts).toHaveLength(1);
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { actorId: added.id, affectedEntityId: added.id } });
+        expect(audit.newData).toEqual({ householdQuestion: 'yes', householdId });
     });
 });
 
@@ -173,6 +175,9 @@ describe('a no', () => {
         expect(fresh).toMatchObject({ name: 'Google Name', phone: null, dateOfBirth: null, isHouseholdLead: true, householdJoinPending: false });
         expect(fresh.accounts).toHaveLength(1);
         expect(fresh.roles).toHaveLength(0);
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { actorId: fresh.id, affectedEntityId: added.id } });
+        expect(audit.newData).toEqual({ householdQuestion: 'no', accountMovedTo: fresh.id });
+        expect(audit.secondaryAffectedEntity).toBe(householdId);
     });
 });
 
@@ -217,6 +222,15 @@ describe('refusals', () => {
         expect((await answer(false)).status).toBe(409);
         expect((await ask()).status).toBe(409);
         expect((await prisma.person.findUniqueOrThrow({ where: { id: person.id } })).email).toBe(person.email);
+    });
+
+    it('lets only one of two racing answers land', async () => {
+        const { added } = await addedAdult();
+        signedInAs(added.id, { householdJoinPending: true });
+        const statuses = (await Promise.all([answer(true), answer(false)])).map((r) => r.status).sort();
+        expect(statuses).toEqual([200, 409]);
+        const after = await prisma.person.findUniqueOrThrow({ where: { id: added.id }, include: { accounts: true } });
+        expect(after.accounts).toHaveLength(after.email ? 1 : 0);
     });
 
     it('rejects an answer that is not true or false', async () => {
