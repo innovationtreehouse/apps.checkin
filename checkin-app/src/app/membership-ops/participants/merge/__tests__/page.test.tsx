@@ -58,9 +58,8 @@ describe("membership-ops/participants/merge page", () => {
   });
 
   it("renders multiple search results fully, not clipped to a sliver", async () => {
-    // Regression test for the merge page's search dropdown being clipped by an
-    // ancestor Card's default overflow:hidden (only a sliver of the first result
-    // was visible). All results must render, not just the first.
+    // The merge page's search dropdown must not be clipped by an ancestor Card's default
+    // overflow:hidden. All results must render, not just the first.
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
       "/api/people/search?q=Sam": {
@@ -337,7 +336,7 @@ describe("membership-ops/participants/merge page", () => {
     const picker = screen.getByText("Resolve conflicting fields").closest(".mantine-Card-root") as HTMLElement;
     expect(within(picker).getByText("Name")).toBeInTheDocument();
     expect(within(picker).getByText("Login identity")).toBeInTheDocument();
-    // email/googleId are no longer their own radios — folded into "Login identity".
+    // email/googleId are not their own radios — they sit in "Login identity".
     expect(within(picker).queryByText("Email")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Google Account")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Phone")).not.toBeInTheDocument();

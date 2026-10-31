@@ -2,16 +2,16 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression test for POST /api/attendance/manual.
+ * Concurrency test for POST /api/attendance/manual.
  *
  * Creating an open visit (arrivedAt, no departure) is a read-modify-write on a
- * participant's visit state, same as /api/scan. Before the per-participant
+ * participant's visit state, same as /api/scan. Without the per-participant
  * advisory lock (route.ts ~line 40), two near-simultaneous manual check-ins for
- * one participant could both pass the open-visit re-check and both create a
+ * one participant can both pass the open-visit re-check and both create a
  * visit, leaving two open visits — checkout closes only one, the other lingers
  * and corrupts attendance/isKeyholder counts.
  *
- * The fix wraps the open-visit check + create in a $transaction that takes
+ * The route wraps the open-visit check + create in a $transaction that takes
  * `pg_advisory_xact_lock(participantId)` first, then returns the existing open
  * visit if one is found (loser no-ops, status 201, same visit id). This test
  * fires two concurrent create-open-visit POSTs and asserts exactly one open

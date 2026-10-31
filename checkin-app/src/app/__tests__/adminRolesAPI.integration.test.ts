@@ -5,7 +5,7 @@
  * Integration Tests for Admin Roles API
  * Tests GET and PATCH /api/roles for fetching and updating user roles.
  *
- * The PATCH matrix (PR-1, roles foundation): board grants/revokes ALL five
+ * The PATCH matrix: board grants/revokes ALL five
  * flags (including isSysadmin and removing isBoardMember); a sysadmin-only
  * actor (not board) may grant any flag, including adding board, but may
  * never remove board membership (403); the last board member can never be
@@ -132,7 +132,7 @@ describe('Admin Roles API Integration Tests', () => {
             expect(student.isYouth).toBe(true);
             expect(adult).not.toHaveProperty('dateOfBirth');
             expect(student).not.toHaveProperty('dateOfBirth');
-            // isOperations now rides along with the other four flags.
+            // isOperations rides along with the other four flags.
             expect(adult).toHaveProperty('isOperations');
             // canAccessStaging is a plain column, not a ROLE_FLAGS/PersonRole-backed
             // flag, but GET still surfaces it alongside the five.
@@ -207,7 +207,7 @@ describe('Admin Roles API Integration Tests', () => {
         let board2Id: number;
 
         beforeAll(async () => {
-            // PersonRole is what the lock/count and claims now read — every board fixture
+            // PersonRole is what the lock/count and claims read — every board fixture
             // that bypasses PATCH (this one included) must carry the table row, not just
             // the mirror column.
             const boardActor = await prisma.person.create({
@@ -257,7 +257,7 @@ describe('Admin Roles API Integration Tests', () => {
             }));
             expect(grant.status).toBe(200);
             let row = await prisma.person.findUnique({ where: { id: testTargetUserId } });
-            // Dual-write consistency: the four legacy-mirrored flags agree between the
+            // Dual-write consistency: the four column-mirrored flags agree between the
             // table and the column; OPERATIONS has a row but (by design) no column.
             expect(row?.isKeyholder).toBe(true);
             expect(row?.isBackgroundCheckReviewer).toBe(true);
@@ -621,7 +621,7 @@ describe('Admin Roles API Integration Tests', () => {
         let staleBoardId: number;
 
         beforeAll(async () => {
-            // The lock/count the route guards on is PersonRole now — assert the ambient
+            // The lock/count the route guards on is PersonRole — assert the ambient
             // invariant against the table, not the (dual-written but derivative) mirror.
             const ambient = await prisma.personRole.findMany({
                 where: { role: 'BOARD' },
@@ -730,7 +730,7 @@ describe('Admin Roles API Integration Tests', () => {
             expect(loserData.error).toBe("Cannot remove the last board member");
 
             // Assert on the table (the lock's source of truth), not the mirror, to prove
-            // the FOR UPDATE lock is actually serializing against PersonRole now.
+            // the FOR UPDATE lock is actually serializing against PersonRole.
             const finalBoardCount = await prisma.personRole.count({ where: { role: 'BOARD', personId: { in: [raceAId, raceBId] } } });
             expect(finalBoardCount).toBe(1);
             // The mirror stays consistent with the table (dual-write).
@@ -759,8 +759,7 @@ describe('Admin Roles API Integration Tests', () => {
         }
 
         it('backfills exactly one row per true legacy boolean, and no row for isOperations (never had a column)', async () => {
-            // Simulates pre-migration data: legacy booleans set directly, no PersonRole
-            // rows (as if these people existed before the table was created).
+            // Backfill fixture: column booleans set directly, no PersonRole rows.
             const both = await prisma.person.create({
                 data: { email: `backfill-both-${TAG}@example.com`, name: 'Backfill Both', isSysadmin: true, isBoardMember: true, household: { create: { name: "Test HH" } } },
             });

@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Integration tests for notifyNewProgramAnnounced's recipient set — the #1153
- * covered-member audience (isActiveOrgMemberThrough / #1061 "full duration" rule),
+ * Integration tests for notifyNewProgramAnnounced's recipient set — the
+ * covered-member audience (isActiveOrgMemberThrough / "full duration" rule),
  * independent of the PATCH route's announceOnOpen toggle gate (covered by
  * programAnnounceNotification.integration.test.ts). Calls notifyNewProgramAnnounced
  * directly, skipping the route.
@@ -118,8 +118,8 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
         expect(recipients).not.toContain(`tombstone-${TAG}@example.com`);
     });
 
-    // #1061 "full duration" gate: a household settled for the live membership year
-    // (#1811) is valid only through the boundary that closes it. One boundary config
+    // "Full duration" gate: a household settled for the live membership year
+    // is valid only through the boundary that closes it. One boundary config
     // (Aug 1, via BoardSettings row 1, which the outer beforeAll leaves unset)
     // exercises both sides: a program ending after that boundary excludes the
     // household, a program ending before it includes the SAME household.

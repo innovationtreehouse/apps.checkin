@@ -194,7 +194,7 @@ describe("membership-ops/review page", () => {
 
   it("lists reviews I approved that have not cleared, and lets a board member start one over", async () => {
     setSession({ id: 1, isBoardMember: true });
-    // A legacy approval that named nobody: it counts toward nobody, so the review is stuck.
+    // An approval that names nobody: it counts toward nobody, so the review is stuck.
     const stuck = { ...queue.queue[0], id: 300, attestations: [{ subjectPersonId: null }, { subjectPersonId: null }], _count: { attestations: 2 } };
     const fetchMock = mockFetchJson({
       "/api/membership/reviews?mine=1": { queue: [stuck] },

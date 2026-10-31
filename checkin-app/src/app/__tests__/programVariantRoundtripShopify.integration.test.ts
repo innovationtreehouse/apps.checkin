@@ -16,10 +16,8 @@
  * carrying THOSE EXACT ids -> assert the real inbound handler flips the
  * PENDING participant ACTIVE.
  *
- * Single-pool model (product decision 2026-07-06): program creation now mints
- * ONE variant (shopifyVariantId), not the legacy org/non-org pair — this test
- * was rewritten from the two-variant version it originally covered (see PR
- * body for the design change) to prove the new-model round-trip instead.
+ * Single-pool model (product decision 2026-07-06): program creation mints ONE
+ * variant (shopifyVariantId).
  *
  * Also covers the sibling branch: mock inactive + creds absent ->
  * createShopifySingleVariantProgram returns null -> the route falls back to

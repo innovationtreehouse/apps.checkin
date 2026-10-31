@@ -191,7 +191,7 @@ describe('Event RSVP API Integration Tests', () => {
         // IDOR boundary: the gate is the inline "are you enrolled/volunteering in
         // this event's program?" check (route.ts). A non-participant must be 403'd
         // AND no RSVP row must be written for them — a 403 that still upserted would
-        // be the real bug. Re-query to pin it. Mirrors fd192fc.
+        // be the real bug. Re-query to pin it.
         function rsvpFor(participantId: number) {
             return prisma.rSVP.findUnique({
                 where: { eventId_personId: { eventId: testEventId, personId: participantId } }

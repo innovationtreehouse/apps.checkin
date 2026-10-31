@@ -450,9 +450,8 @@ describe('Admin Visits API Integration Tests', () => {
             expect(auditLog).not.toBeNull();
             expect((auditLog?.oldData as { id?: number })?.id).toBe(doomed.id);
 
-            // Resolved (#1630): the visit is still open, so its score is elapsed
-            // time-on-site (~1h, no arrivedVia so weight 1) rather than the old
-            // hardcoded 0 — deleting a live check-in no longer scores lowest.
+            // The visit is still open, so its score is elapsed time-on-site (~1h, no
+            // arrivedVia so weight 1) rather than 0: deleting a live check-in does not score lowest.
             // The admin (testAdminId) isn't the visit's own person (testUserId),
             // so this delete is byProxy too — the route doubles the weight
             // (significance.ts PROXY_MULTIPLIER), giving ~120, not ~60.
@@ -463,7 +462,7 @@ describe('Admin Visits API Integration Tests', () => {
         });
     });
 
-    // AT3 §3: the walk-in path. Neither the kiosk (live only) nor the event
+    // The walk-in path. Neither the kiosk (live only) nor the event
     // roster mark (program-scoped, event window) can record a past visit for
     // someone who was simply never badged in.
     describe('POST /api/facility/visits — staff insert for others', () => {

@@ -2,16 +2,15 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression test for POST /api/attendance (type: MANUAL_CHECKIN).
+ * Concurrency test for POST /api/attendance (type: MANUAL_CHECKIN).
  *
- * The dashboard/household MANUAL_CHECKIN path used to read "already checked in?"
- * then create a visit with no $transaction and no advisory lock (route.ts ~173).
- * Two concurrent MANUAL_CHECKINs for one participant — or one racing /api/scan or
- * /api/attendance/manual — both passed the guard and both created an open visit,
- * leaving two open rows. A later checkout closes only one; the other lingers open
+ * The dashboard/household MANUAL_CHECKIN path reads "already checked in?" then
+ * creates a visit. Unserialized, two concurrent MANUAL_CHECKINs for one participant
+ * — or one racing /api/scan or /api/attendance/manual — both pass the guard and both
+ * create an open visit. A later checkout closes only one; the other lingers open
  * forever, inflating the open-visit count and corrupting two-deep math.
  *
- * The fix wraps the re-check + create in a $transaction that takes
+ * The route wraps the re-check + create in a $transaction that takes
  * `pg_advisory_xact_lock(participantId)` first. One request wins (200, creates the
  * visit); the loser re-checks under the lock, sees the open visit, and returns the
  * existing "already checked in" 400. Either way exactly one open visit survives.
@@ -117,9 +116,9 @@ describe('POST /api/attendance MANUAL_CHECKIN concurrency (advisory lock)', () =
 
 const GUARD_TAG = 'manual-checkin-keyholder-guard-test';
 
-// Regression: /attendance/current (MANUAL_CHECKIN) let a non-keyholder be the
-// first into an empty building, while / (/api/scan → processCheckin) blocked it.
-// The MANUAL_CHECKIN path now enforces the same facility-open guard.
+// /attendance/current (MANUAL_CHECKIN) must not let a non-keyholder be the first into
+// an empty building: it enforces the same facility-open guard as / (/api/scan →
+// processCheckin).
 describe('POST /api/attendance MANUAL_CHECKIN keyholder-first guard', () => {
     let nonKeyholderId: number;
     let keyholderId: number;

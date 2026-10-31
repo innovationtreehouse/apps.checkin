@@ -223,7 +223,7 @@ describe('Auto-Association and Checkout Chunking Logic', () => {
             const checkoutTime = new Date(`${baseDateString}13:00:00Z`); // Leaves during Event B/C time
             const finalVisits = await processVisitCheckout(visit.id, checkoutTime, prisma, "TYPED");
 
-            // Since user is not enrolled in B or C anymore, it should simply extend their stay in A
+            // Since user is not enrolled in B or C, it should simply extend their stay in A
             // until checkout time.
             
             expect(finalVisits.length).toBe(1);

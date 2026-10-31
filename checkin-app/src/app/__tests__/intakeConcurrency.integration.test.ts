@@ -2,10 +2,10 @@
  * @jest-environment node
  */
 /**
- * Concurrency test for INITIAL intake opening (M3). startIntake read-then-created
- * with no lock, so a double-click / two tabs could both pass the "already in
- * flight?" guard and both INSERT — duplicate INTAKE rows for one Membership.
- * startIntake now re-runs the check+create inside a transaction holding a
+ * Concurrency test for INITIAL intake opening. A double-click or two tabs can both
+ * pass the "already in flight?" guard; unguarded, both INSERT and leave duplicate
+ * INTAKE rows for one Membership.
+ * startIntake runs the check+create inside a transaction holding a
  * `SELECT ... FOR UPDATE` lock on the parent Membership row, so the loser blocks
  * until the winner commits, then re-reads under the lock and returns the winner's
  * process instead of inserting a second one. We drive that directly: two

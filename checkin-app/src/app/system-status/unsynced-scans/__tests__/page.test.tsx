@@ -6,7 +6,7 @@ beforeEach(() => resetRtl());
 
 const scan = (over: Record<string, unknown> = {}) => ({
     id: 5,
-    // 40 minutes ago, so the D7 "40 min late" is a real computation, not a fixture string.
+    // 40 minutes ago, so the "40 min late" is a real computation, not a fixture string.
     timestamp: new Date(Date.now() - 40 * 60_000).toISOString(),
     location: "Main Entrance",
     reviewReason: "stale_replay",

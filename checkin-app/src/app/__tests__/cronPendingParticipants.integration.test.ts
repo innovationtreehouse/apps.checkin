@@ -249,7 +249,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             eids.leadB = leadB.id;
             eids.noEmailChild = noEmailChild.id;
 
-            // Day-8 candidate: overdue, but NEVER removed by the cron anymore — it
+            // Day-8 candidate: overdue, but NEVER removed by the cron — it
             // only shows up in the leadership digest, flagged for a human to act on.
             const householdC = await prisma.household.create({ data: { name: 'Email Test HH C' } });
             householdOverdueId = householdC.id;
@@ -304,7 +304,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             const day3Warning = sent.filter((e) => e.subject === 'Please pay for Pending Cron Email Test Program within 4 days');
             expect(day3Warning.map((e) => e.to)).toEqual(['leadb-pending-cron-email-test@example.com']);
 
-            // No removal email exists anymore, for anyone, at any age.
+            // No removal email exists, for anyone, at any age.
             const removalEmails = sent.filter((e) => e.subject.includes('Removed from'));
             expect(removalEmails).toHaveLength(0);
 
