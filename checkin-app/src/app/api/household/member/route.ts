@@ -9,6 +9,7 @@ import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
+import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
@@ -84,6 +85,10 @@ export const PATCH = withAuth(
                 return apiError("That household member was not found", 404);
             }
 
+            if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth)) {
+                return apiError("Youth profiles are read-only.", 403);
+            }
+
             // A sysadmin manages their own household without leading it, so making
             // someone its lead that way is a grant to their own household.
             if (isLead === true && participantId !== userId && !targetHouseholdMember.isHouseholdLead) {
@@ -134,7 +139,7 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        ...normalizeAdultDob(dob, over25),
+                        ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,

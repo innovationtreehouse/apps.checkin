@@ -393,6 +393,21 @@ describe("HouseholdPage", () => {
     });
   });
 
+  it("offers a youth no Edit on their own card, and a lead Edit on a youth's", async () => {
+    setSession({ id: 11, email: "jamie@example.com" });
+    mockRoutes();
+    const { unmount } = renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    unmount();
+
+    setSession({ id: 10, email: "sam@example.com" });
+    mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+  });
+
   it("promotes a household member to lead, and shows a server error on failure", async () => {
     const leadHousehold = {
       ...householdData,

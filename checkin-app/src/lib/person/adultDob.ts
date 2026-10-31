@@ -15,7 +15,8 @@ import { MAX_PROGRAM_AGE } from "@/lib/programAge";
  *   - DoB implies age <= 25  -> keep the date, set isDeclaredAdult = false
  *                               (a real sub-26 DoB is authoritative, supersedes over25)
  *   - empty / null DoB       -> clear the date; over25, if submitted, sets the flag
- *   - undefined DoB          -> keep the date; over25, if submitted, sets the flag
+ *   - undefined DoB          -> keep the date; over25, if submitted, sets the flag,
+ *                               unless `dobOnFile` holds a date, which displaces it
  *
  * A form with no over-25 box omits over25, so saving someone's blank date there
  * keeps their declaration.
@@ -32,9 +33,10 @@ import { MAX_PROGRAM_AGE } from "@/lib/programAge";
 export function normalizeAdultDob(
   dob: Date | string | null | undefined,
   over25?: boolean,
+  dobOnFile?: Date | null,
 ): { dateOfBirth?: Date | null; isDeclaredAdult?: boolean } {
   const declaration = over25 === undefined ? {} : { isDeclaredAdult: !!over25 };
-  if (dob === undefined) return declaration;
+  if (dob === undefined) return over25 && dobOnFile ? { isDeclaredAdult: false } : declaration;
   if (dob === null || dob === "") return { dateOfBirth: null, ...declaration };
   const d = typeof dob === "string" ? parseDateOnly(dob)! : dob;
   if (calculateAge(d) > MAX_PROGRAM_AGE) return { dateOfBirth: null, isDeclaredAdult: true };
