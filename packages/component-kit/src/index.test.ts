@@ -64,6 +64,13 @@ describe("mapServiceErrors", () => {
     await expect(mapServiceErrors(async () => 7)).resolves.toBe(7);
   });
 
+  it("keeps a ServiceError's code, and sets none when it has none", async () => {
+    const coded = await mapServiceErrors(async () => { throw new ServiceError(409, "taken", "already_open"); }).catch((e: unknown) => e);
+    expect(coded).toMatchObject({ status: 409, message: "taken", code: "already_open" });
+    expect(toHttpError(new ServiceError(409, "taken"))?.code).toBeUndefined();
+    expect(toHttpError(httpError(403, "no", "forbidden"))?.code).toBe("forbidden");
+  });
+
   it("maps a service-side ZodError to a 400 with the first issue's message", async () => {
     const schema = z.object({ amount: z.number({ error: "amount must be a number" }) });
     const err = await mapServiceErrors(async () => schema.parse({ amount: "x" })).catch((e: unknown) => e);

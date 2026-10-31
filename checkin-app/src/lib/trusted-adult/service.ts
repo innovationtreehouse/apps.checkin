@@ -1,4 +1,6 @@
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
@@ -44,7 +46,7 @@ function lockTrustedAdult(tx: TxClient, taId: number) {
 const APPROVAL_VALID_DAYS = 365;
 const WARN_LEAD_DAYS = 30;
 
-export class TrustedAdultError extends Error {
+export class TrustedAdultError extends ServiceError {
     constructor(
         public readonly code:
             | "not_found"
@@ -54,7 +56,7 @@ export class TrustedAdultError extends Error {
             | "already_open",
         message: string,
     ) {
-        super(message);
+        super(TRUSTED_ADULT_ERROR_STATUS[code], message, code);
         this.name = "TrustedAdultError";
     }
 }

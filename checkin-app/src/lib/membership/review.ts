@@ -1,5 +1,7 @@
 import { Prisma, type OrgMembershipProcessStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { REVIEW_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { logger } from "@/lib/logger";
@@ -55,7 +57,7 @@ export function canReviewBackgroundChecks(u: {
     return Boolean(u.isBackgroundCheckReviewer || u.isBoardMember);
 }
 
-export class ReviewError extends Error {
+export class ReviewError extends ServiceError {
     constructor(
         public readonly code:
             | "not_reviewer"
@@ -68,7 +70,7 @@ export class ReviewError extends Error {
             | "not_undoable",
         message: string,
     ) {
-        super(message);
+        super(REVIEW_ERROR_STATUS[code], message, code);
         this.name = "ReviewError";
     }
 }

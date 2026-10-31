@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
+import { ServiceError } from "@checkin/component-kit";
+import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -39,9 +41,9 @@ export type ExternalErrorCode =
     | "agreement_unavailable"
     | "signing_in_progress";
 
-export class ExternalError extends Error {
+export class ExternalError extends ServiceError {
     constructor(public readonly code: ExternalErrorCode, message: string) {
-        super(message);
+        super(EXTERNAL_ERROR_STATUS[code], message, code);
         this.name = "ExternalError";
     }
 }
