@@ -21,11 +21,10 @@ receipt. The email tells them nothing the app would not show them.
 
 - **For the person who uploaded the receipt, and the person reimbursed when
   that is someone else:** one email each when finance rejects the receipt, when
-  the expense ends with a rejected line, and (subject to question Q3) when a
-  reimbursement is signed off. Each email names the purchase by retailer, date
-  and total, and links to the receipt.
-- **For finance:** nothing changes in what they do. If @thpr picks the
-  recommended answer to Q5, the reject forms say that the reason is emailed.
+  the expense ends with a rejected line, and when a reimbursement is signed off
+  and sent to the books. Each email names the purchase by retailer and date,
+  and links to the receipt.
+- **For finance:** nothing changes in what they do.
 - **Deliberately unchanged:** the in-app pill, "Got it", and the outcome steps
   stay as they are; the email adds no state the app tracks. An approver's
   exception, a gift's decision and receiving's progress send no email.
@@ -34,8 +33,7 @@ receipt. The email tells them nothing the app would not show them.
   new preference, and a retry sweep on an existing cron. Three PRs, no boundary
   PR.
 
-The open questions below decide the details; the design works for every option
-listed.
+@thpr's decisions on the design's questions are [below](#decisions).
 
 ## Rules this relies on
 
@@ -56,9 +54,6 @@ From `docs/rules/expenses.md`:
   acknowledgement … to the sender, and separately to the person the receipt is
   credited to … no acknowledgement is sent twice.* This is the nearest
   precedent: separate copies per person, each sent once.
-- *Finance approves a receipt held for review without writing a note. A reason
-  for rejecting one is required.* So every rejected receipt has a reason to
-  report.
 - *Only the person who paid is reimbursed.* "The person reimbursed" below is
   always the receipt's named reimbursee.
 
@@ -76,17 +71,19 @@ From `docs/rules/principles.md`:
 The design changes no existing rule. The rules it adds are under
 [Rules to extract](#rules-to-extract).
 
-## Questions for @thpr
+## Decisions
 
-Each has options and a recommendation. Numbers are fixed IDs.
+@thpr answered the five questions on 2026-10-31: "q1 yes separately, q2 no,
+q3 yea reimbursement only when sent to the books, q4 yes new preference on by
+default, q5 no reason or total in email". Numbers are fixed IDs.
 
-| # | Question | Options | Recommendation |
+| # | Question | Decision | @thpr, 2026-10-31 |
 |---|---|---|---|
-| Q1 | Who gets each email? | **A.** The uploader and, when different, the person reimbursed, as separate emails. **B.** The uploader only. **C.** The person reimbursed only, on a reimbursement; the uploader otherwise. | **A.** It matches who sees the outcome in the app, and the mail-acknowledgement precedent of a separate copy per person. Under B, a reimbursee whose receipt someone else uploaded never hears that their money was refused. |
-| Q2 | Does an approver's exception email anyone? | **A.** No; only finance's settlement of it can produce an outcome email. **B.** Yes, to the same recipients, without the approver's note. | **A.** An exception is a question to finance, not an outcome, and the person can't act on it. Most exceptions end with finance moving the line to another bucket, so an email would announce a problem that resolves itself. The app already shows "An approver raised a question". |
-| Q3 | Does "complete" email at all? | **A.** Reimbursements only, when the expense is signed off and sent to the books. **B.** Every expense, card charges included. **C.** Reimbursements only, but when the accounting system shows the reimbursement paid, not at sign-off. **D.** No completion email. | **A.** The reimbursee is the one waiting on something. A card-charge purchaser is owed nothing, and a completion email for every card charge is noise. C tells the person what they care about most, but the app learns of a payment only when someone reads it; it would need a new sweep that polls the accounting system, so it is better as a later addition if A proves not enough. |
-| Q4 | Opt-out | **A.** A new preference on the Communication page, "Email me about my receipts and reimbursements", on by default; the existing all-email opt-out also stops it. **B.** No opt-out, as for the mailed-receipt acknowledgement. **C.** Off by default. | **A.** These emails tell the person something they can also learn in the app, so turning them off loses nothing. The mailed-receipt acknowledgement skips preferences because it is a reply to mail the person just sent and the way they learn someone used their name; neither applies here. |
-| Q5 | What may the email say? | **A.** Retailer, receipt date, total, the outcome, and finance's reason or line notes in full; the reject forms tell finance that the text is emailed to the uploader and the person reimbursed. **B.** The same without the reason or notes; the email says a reason was given and links to it. **C.** As A, with no notice to finance. | **A.** The issue asks for the reason in the email, and every recipient can already read it in the app. The reason is `personal`-tier free text, and finance writes it today expecting only the app to show it; the notice on the form puts the decision about what to write with the person who writes it. B is the safer fallback if @thpr would rather no free text leave the app. |
+| Q1 | Who gets each email? | The uploader and, when different, the person reimbursed, as separate emails. | "q1 yes separately" |
+| Q2 | Does an approver's exception email anyone? | No; only finance's settlement of it can produce an outcome email. | "q2 no" |
+| Q3 | Does "complete" email at all? | Reimbursements only, when the expense is signed off and sent to the books. Card charges get no completion email. | "q3 yea reimbursement only when sent to the books" |
+| Q4 | Opt-out | A new preference on the Communication page, "Email me about my receipts and reimbursements", on by default; the existing all-email opt-out also stops it. | "q4 yes new preference on by default" |
+| Q5 | What may the email say? | The recipient's name, the retailer, the receipt date, the outcome and the link to `/receipts/<id>`. Neither finance's reason, nor a line's note, nor the total goes in the email; the recipient reads them in the app. Finance's reject forms are unchanged. | "q5 no reason or total in email" |
 
 Two things follow from existing rules and need no answer:
 
@@ -109,7 +106,7 @@ Two things follow from existing rules and need no answer:
 
 The line-rejected email fires on the expense's final state, not on each line.
 That matches what the app shows: a rejected line appears as "Line rejected" only
-once the expense is closed, and one email can list every rejected line's note.
+once the expense is closed, and one email covers every rejected line.
 Sending on each line would email a person about an expense that is still moving.
 
 `qb_complete` means the entry is queued for QuickBooks, not that the person is
@@ -178,9 +175,7 @@ The host binds both ports in `lib/receipt/configure.ts` and
    address: the copy is done, not retried.
 3. Reads `notificationSettings`. `email === false` or the new key `=== false`:
    the copy is done, not retried, as `sendNotification` treats an opt-out.
-4. Reads the receipt's retailer, date and total, and for the expense events the
-   outcome notes from the expense library's existing `expenseOutcomes` read, so
-   the email and the app report the same thing.
+4. Takes the receipt's retailer and date (Q5).
 5. Sends through `sendTemplated` with the receipt's link
    (`/receipts/<id>`), the same page the recipient reaches in the app.
 
@@ -197,15 +192,12 @@ Template tokens (all `text` except the link):
 | `name` | recipient's own name | `public` | yes |
 | `retailer` | receipt retailer | `internal` | yes, as their own receipt |
 | `date` | receipt date | `internal` | yes |
-| `total` | receipt total | `internal` | yes |
-| `reason` (Q5-A) | finance's rejection reason, or the rejected lines' notes | `personal` | yes (`rejectionReason`, `purchaseOutcome.money.notes`) |
 | `actionLink` | `/receipts/<id>` | n/a | yes |
 
 No token names the other recipient, the uploader to the reimbursee, the donor,
-the approver or the finance holder who acted. Under Q5-A the reason goes in the
-appendix argument of `sendTemplated` (plain text after the body, outside the
-Board's edits), as the mailed-receipt refusal list does, so a template edit
-cannot drop it or move it into the subject line.
+the approver or the finance holder who acted. No token carries the total,
+finance's reason or a line's note (Q5); the email links to the receipt, where
+the recipient reads them.
 
 The uploader and reimbursee get the same template with different wording where
 it matters: "your receipt" for the uploader, "a receipt for your
@@ -217,12 +209,6 @@ reimbursement" for the reimbursee.
 Communication page lists it with the others. That page saves only the keys it
 loads, so the key has to be added there or a toggle of another preference
 erases it.
-
-### Finance's notice (Q5-A)
-
-The receipt reject form and the expense reject-exception form each gain one
-line under the reason field: "The person who uploaded this receipt, and the
-person reimbursed, are emailed this reason." No behaviour changes.
 
 ## Build steps
 
@@ -239,14 +225,12 @@ registered outbound surface, as the mailed-receipt acknowledgement does.
    different person, no reimbursee, no address, opted out).
 2. **Receipt rejected.** `ReceiptOutcomeNotice` model and migration, the
    `OutcomeMail` port in the receipt contract, the write inside the finance
-   reject transaction, the send after commit, the sweep, the host binding, and
-   the finance form notice (Q5-A). Adds the receipt-rejected rule to
-   `docs/rules/expenses.md`.
+   reject transaction, the send after commit, the sweep, and the host binding.
+   Adds the receipt-rejected rule to `docs/rules/expenses.md`.
 3. **Expense outcomes.** `ExpenseOutcomeNotice` model and migration, the port in
    the expense contract, the write in each transition into a final state, the
-   sweep on `qbo-posting`, the host binding, and the reject-exception form
-   notice. Adds the expense rules to `docs/rules/expenses.md` and deletes this
-   doc.
+   sweep on `qbo-posting`, and the host binding. Adds the expense rules to
+   `docs/rules/expenses.md` and deletes this doc.
 
 PRs 2 and 3 depend on 1 and not on each other.
 
@@ -266,13 +250,12 @@ PRs 2 and 3 depend on 1 and not on each other.
 
 ## Rules to extract
 
-At merge, once Q1 to Q5 are answered, these go into `docs/rules/expenses.md`
-under Receipts (wording follows the answers; shown here for the recommended
-options):
+At merge, these go into `docs/rules/expenses.md` under Receipts:
 
-- When finance rejects a receipt, its uploader gets one email with finance's
-  reason and a link to the receipt, and so does the person reimbursed when that
-  is someone else. Neither email names the other person.
+- When finance rejects a receipt, its uploader gets one email naming the
+  retailer and date and linking to the receipt, and so does the person
+  reimbursed when that is someone else. Neither email names the other person,
+  and neither carries finance's reason or the total.
   [Decision — owner]
 - When an expense closes with a rejected line, or a reimbursement is signed off
   and sent to the books, the receipt's uploader and the person reimbursed each

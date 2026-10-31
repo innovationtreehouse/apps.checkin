@@ -12,6 +12,7 @@ const OPTIONS = [
   { key: 'emailCheckinReceipts', label: 'Email me when I check in or out' },
   { key: 'emailDependentCheckins', label: 'Email me realtime receipts when my dependents check in/out' },
   { key: 'notifyNewPrograms', label: 'Notify me when a new program is announced' },
+  { key: 'emailPurchaseOutcomes', label: 'Email me about my receipts and reimbursements' },
 ] as const;
 
 export default function CommunicationPage() {
@@ -25,7 +26,8 @@ export default function CommunicationPage() {
   const [settings, setSettings] = useState({
     emailCheckinReceipts: false,
     emailDependentCheckins: false,
-    notifyNewPrograms: true
+    notifyNewPrograms: true,
+    emailPurchaseOutcomes: true,
   });
   const [emailSuppressed, setEmailSuppressed] = useState(false);
 
@@ -37,7 +39,8 @@ export default function CommunicationPage() {
         setSettings({
           emailCheckinReceipts: s.emailCheckinReceipts || false,
           emailDependentCheckins: s.emailDependentCheckins || false,
-          notifyNewPrograms: s.notifyNewPrograms !== undefined ? s.notifyNewPrograms : true
+          notifyNewPrograms: s.notifyNewPrograms !== undefined ? s.notifyNewPrograms : true,
+          emailPurchaseOutcomes: s.emailPurchaseOutcomes !== false,
         });
         setEmailSuppressed(!!data.profile.emailSuppressed);
       } else {
