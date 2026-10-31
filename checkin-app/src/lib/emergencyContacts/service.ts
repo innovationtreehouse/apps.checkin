@@ -3,6 +3,7 @@ import type { EmergencyContact } from "@/generated/prisma/client";
 import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizePhone } from "./identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import type { DbClient } from "@/lib/db-client";
+import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
@@ -68,7 +69,7 @@ type MemberLike = { id: number; name: string | null; email: string | null; phone
 
 function loadMembers(db: Db, householdId: number): Promise<MemberLike[]> {
     return db.person.findMany({
-        where: { householdId },
+        where: { householdId, ...LIVE_PERSON },
         select: { id: true, name: true, email: true, phone: true },
     });
 }
