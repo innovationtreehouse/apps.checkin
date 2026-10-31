@@ -243,6 +243,20 @@ Income checks each online-store payout against the deposits in the books.
 - A payout or deposit that changes after it was matched goes back to finance.
   The app never matches it again on its own.  [Decision]
 
+- A deposit finance excludes is never offered as a candidate or matched to a payout
+  again. The one exception is a deposit the app itself created for a payout, which
+  stays linked to that payout because it is that payout's own booking. An exclusion
+  carries a reason and is not undone.  [Decision — *Principle: apply once*]
+
+- Income's matching runs only in the daily jobs or on finance's request, never at
+  app start.  [Decision]
+
+- Store history reaches the app only through the mirror of the store's data. The
+  app has no upload of store exports.  [Decision — deliberate limit]
+
+- A change to an item's mapping applies to deposits created afterwards. It never
+  rebooks a deposit already created.  [Decision]
+
 - Income keeps no record of who bought.  [Decision — *Principle: least privilege*]
 
 ### Donations
