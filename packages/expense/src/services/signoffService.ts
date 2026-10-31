@@ -1,4 +1,4 @@
-// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI), signed in order around the
+// Sign-off seats on reimbursement and card-charge lines (Financial Policy Arts. IX and XII), signed in order around the
 // line's approval. The signer is always the principal; a line with an unfilled seat holds its
 // expense out of the QB outbox.
 import type { Expense, Prisma } from "../generated/prisma/client";

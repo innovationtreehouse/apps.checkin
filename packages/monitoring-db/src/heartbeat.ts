@@ -1,19 +1,15 @@
 /**
- * Push-based service freshness — the inversion of the watchdog's old pull probe (F7).
+ * Push-based service freshness.
  *
- * The old model had the watchdog hold a Postgres connection string to EVERY watched
- * service's financial database and read `sync_run` directly. That made the monitor the
- * highest-value target in the fleet (one compromise → all DB credentials) while being the
- * most widely-copied, dependency-light component.
- *
- * In the push model each service writes its own freshness into THIS dedicated monitoring DB
- * (which holds no financial/PII data) via `recordHeartbeat`, and the watchdog reads it back
- * via `readServiceHeartbeats`. The watchdog therefore needs no credential to any service's
- * own database — its blast radius is the monitoring DB alone.
+ * Each service writes its own freshness into THIS dedicated monitoring DB (which holds no
+ * financial/PII data) via `recordHeartbeat`, and the watchdog reads it back via
+ * `readServiceHeartbeats`. The watchdog therefore needs no credential to any service's own
+ * database, so it is not a target for every DB credential in the fleet: its blast radius is
+ * the monitoring DB alone.
  *
  * Why two timestamps instead of one: the watchdog distinguishes STALE (no recent success)
  * from ERRORING (a failure newer than the last success). Those need the last success and
- * the last failure independently — exactly the two queries the old probe ran — so we keep
+ * the last failure independently, so we keep
  * them in separate columns and advance each on its own terminal transition.
  */
 import type { PrismaClient } from "./generated/prisma/client.js";
@@ -34,7 +30,7 @@ export interface HeartbeatBeat {
   kind?: string | null;
 }
 
-/** Freshness as the watchdog consumes it — the same shape the old `probeService` returned. */
+/** Freshness as the watchdog consumes it. */
 export interface ServiceFreshness {
   /** Newest COMPLETED data run's finish time, or null if none on record. */
   lastFinishedAt: Date | null;

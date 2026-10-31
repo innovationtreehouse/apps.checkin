@@ -1,4 +1,4 @@
-// Sign-off seats on money leaving the org (Financial Policy F2 / F2-COI). Pure rules over facts
+// Sign-off seats on money leaving the org (Financial Policy Arts. IX and XII). Pure rules over facts
 // the service gathers through the SignoffDirectory port. The program approver signs a line by
 // approving it, so the approval is not a seat.
 

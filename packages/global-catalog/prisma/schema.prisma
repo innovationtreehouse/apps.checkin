@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the catalog schema under checkin's security regime (design #1286 §5):
+// Brings the catalog schema under checkin's security regime:
 // the same generator emits a second classifications map, merged in
 // checkin-app/src/security/core.ts. Output lands beside checkin's own
 // generated map; paths are relative to this schema file.
@@ -286,7 +286,7 @@ model ProvisionalItem {
   /// @sensitivity:public
   resultGtin13          String?   @map("result_gtin13")
   // Human-entered at intake (units per receipt-line unit). Becomes the new
-  // item's canonical factor on approve; emitted on the S5 provisional event.
+  // item's canonical factor on approve; emitted on the provisional org event.
   /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
 
@@ -344,7 +344,7 @@ model OrgEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:public
   eventType String   @map("event_type")
-  // Cross-app outbox payload (S5) — opaque serialized event body, not
+  // Cross-app outbox payload — opaque serialized event body, not
   // reference data; may carry receipt-side detail.
   /// @sensitivity:internal
   payload   String

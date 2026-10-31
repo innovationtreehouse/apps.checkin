@@ -1,5 +1,5 @@
 /**
- * Catalog audit route factory (#1286). Returns Item + ItemReference model bags;
+ * Catalog audit route factory. Returns Item + ItemReference model bags;
  * the host stripper ships the internal actor-attribution fields (createdBy*,
  * updatedBy*) to a manager view and public fields to other viewers.
  */

@@ -1,9 +1,8 @@
 /**
- * Item route factories (#1286). Returns Item rows WITH their category /
- * subcategory relations (the host stripper recurses them); the source's
- * flattened shape is dropped — clients read `item.category.name`. Server-side
- * pagination meta (total/pages) is not carried in the model bag; the list UI +
- * a count endpoint land in track 5.
+ * Item route factories. Returns Item rows WITH their category / subcategory
+ * relations (the host stripper recurses them); clients read `item.category.name`.
+ * Pagination meta (total/pages) is not carried in the model bag; the list UI
+ * reads the total from `count` below.
  */
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
@@ -68,7 +67,7 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 
 // Count of items matching the same q/includeArchived filter as `list`, for the
 // paginated UI's page count. Returns the synthetic CatalogItemCount model bag
-// ({ total } — public); a scalar can't ride a Prisma model bag (#1286 §7).
+// ({ total } — public); a scalar can't ride a Prisma model bag.
 export const count: CatalogRouteHandler = async ({ req }) => {
   const total = await repo().countItems(itemWhere(query(req)));
   return { CatalogItemCount: { total } };

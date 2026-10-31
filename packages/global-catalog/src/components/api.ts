@@ -4,7 +4,7 @@ import { createClient, useViewer } from "@checkin/component-ui";
 export { errorMessage, lastPage } from "@checkin/component-ui";
 
 /**
- * Shared client fetch helper (#1286 track 5). All catalog reads/writes go
+ * Shared client fetch helper. All catalog reads/writes go
  * through checkin's human surface under /api/catalog/*; the route handlers gate
  * server-side, so the client only decorates the UI with the caller's role.
  */

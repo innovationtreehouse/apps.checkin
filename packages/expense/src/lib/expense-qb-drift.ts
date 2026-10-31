@@ -1,4 +1,4 @@
-// QB-3 drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
+// Drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
 import { dollarsToCents, sumCents } from "@checkin/money";
 import { appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";

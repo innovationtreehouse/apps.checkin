@@ -20,9 +20,8 @@ export const db = prisma;
 /**
  * Self-seed the singleton provisional_part_sequence row (id=1), idempotently. The schema
  * itself is applied out-of-band — by the test harness (`prisma migrate deploy` into a
- * throwaway Postgres) and by migrations in production — so this no longer shells out to
- * `prisma migrate deploy`. It is a no-op when no database URL is configured, so a Docker-less
- * test run (where the DB-gated suites skip) doesn't connect.
+ * throwaway Postgres) and by migrations in production. It is a no-op when no database URL
+ * is configured, so a Docker-less test run (where the DB-gated suites skip) doesn't connect.
  */
 export async function initDb(): Promise<void> {
   if (!process.env.CATALOG_DATABASE_URL) return;
@@ -35,11 +34,10 @@ export async function initDb(): Promise<void> {
       update: {},
     }),
   );
-  // Postgres SERIAL sequences are NOT advanced by an explicit-id insert (unlike SQLite
-  // AUTOINCREMENT, which bumps its counter on `INSERT ... (id) VALUES (1)`). Allocation works
+  // Postgres SERIAL sequences are NOT advanced by an explicit-id insert. Allocation works
   // by inserting a bare row to claim the next id (see db/sequence.ts), so without this the
   // first allocation's nextval would return 1 and collide with the seeded row. Align the
-  // sequence to MAX(id) so the next allocation lands at 2, matching the old SQLite behavior.
+  // sequence to MAX(id) so the next allocation lands at 2.
   await prisma.$executeRawUnsafe(
     `SELECT setval(pg_get_serial_sequence('provisional_part_sequence', 'id'), (SELECT COALESCE(MAX(id), 1) FROM provisional_part_sequence))`,
   );

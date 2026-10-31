@@ -46,8 +46,8 @@ export interface RunHeartbeat {
 }
 
 /**
- * A best-effort push of a run's terminal outcome to the dedicated monitoring DB (the F7
- * push model — the watchdog reads these instead of holding this DB's credentials). Injected
+ * A best-effort push of a run's terminal outcome to the dedicated monitoring DB (the
+ * watchdog reads these instead of holding this DB's credentials). Injected
  * so s-ingest-core stays decoupled from @checkin/monitoring-db; the service wiring binds
  * it to a concrete sink. It MUST NOT throw in a way that fails the run — withSyncRun calls
  * it inside a swallow-and-log guard.
@@ -62,8 +62,7 @@ export interface RunMeta {
   reason?: string;
   /**
    * Optional freshness push. Fired best-effort on the terminal transition of a DATA run
-   * (INCREMENTAL/BACKFILL) only — never for ADMIN runs, mirroring the watchdog's historical
-   * `kind <> 'ADMIN'` exclusion so a replay/reset can't reset the freshness clock. A failure
+   * (INCREMENTAL/BACKFILL) only — never for ADMIN runs, so a replay/reset can't reset the freshness clock. A failure
    * to push never fails the run (the monitoring DB is non-critical to ingestion).
    */
   heartbeat?: HeartbeatSink;
@@ -73,7 +72,7 @@ export interface RunMeta {
  * A run's `fn` may attach partial progress to the error it throws so that a FAILED run still
  * records how far it got (e.g. a replay that commits row-by-row and dies mid-stream). Throw
  * `Object.assign(err, { partialCounts: {...} })`; withSyncRun writes `partialCounts` into the
- * FAILED row's `counts`. Optional — an error without it just records no counts, as before.
+ * FAILED row's `counts`. Optional — an error without it just records no counts.
  */
 export interface PartialProgressError extends Error {
   partialCounts: Record<string, unknown>;
@@ -110,9 +109,9 @@ export async function withSyncRun<T extends Record<string, unknown>>(
   fn: (runId: bigint) => Promise<T>,
   meta: RunMeta = {},
 ): Promise<T> {
-  // F19: serialize every run for a store behind a Postgres advisory lock so raw-log dedup,
+  // Serialize every run for a store behind a Postgres advisory lock so raw-log dedup,
   // watermark advance, and the bulk state machine can never interleave across two
-  // invocations — correctness no longer rests solely on reserved-concurrency = 1. A run that
+  // invocations — correctness does not rest solely on reserved-concurrency = 1. A run that
   // can't take the lock throws ConcurrentRunError *before* any sync_run row is created, so a
   // skipped invocation leaves no FAILED row; the caller treats it as a benign skip.
   return withAdvisoryLock(`sync_run:${storeId}`, async () => {

@@ -1,4 +1,4 @@
-// The FINANCE mail queue (#1265 §2a): mailed receipts held for an unknown or unauthenticated
+// The FINANCE mail queue: mailed receipts held for an unknown or unauthenticated
 // sender, and those deferred for a known sender over their daily upload limit. Finance assigns
 // each to a submitter, which runs it through the mailed intake as that person, releases a
 // deferred one as its sender now, or discards it with a reason. Finance also keeps the ignore
