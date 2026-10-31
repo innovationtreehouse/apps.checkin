@@ -17,13 +17,14 @@ function branded(err: unknown, brand: symbol): err is Error & { status: number }
   return err instanceof Error && brand in err && "status" in err && typeof err.status === "number";
 }
 
-/** An expected failure a service names by its HTTP status: 400, 403, 404, 409, 429. */
+/** An expected failure a service names by its HTTP status: 400, 403, 404, 409, 429. An optional `code` is what a UI branches on. */
 export class ServiceError extends Error {
   readonly [SERVICE_ERROR] = true;
 
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ServiceError";
@@ -37,14 +38,15 @@ export class ComponentHttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ComponentHttpError";
   }
 }
 
-export function httpError(status: number, message: string): ComponentHttpError {
-  return new ComponentHttpError(status, message);
+export function httpError(status: number, message: string, code?: string): ComponentHttpError {
+  return new ComponentHttpError(status, message, code);
 }
 
 export function isServiceError(err: unknown): err is ServiceError {
@@ -70,11 +72,11 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 
 /**
  * The HTTP error an expected failure renders as: a ServiceError or ComponentHttpError keeps
- * its status, a ZodError is a 400. Anything else is null and stays an opaque 500.
+ * its status and code, a ZodError is a 400. Anything else is null and stays an opaque 500.
  */
 export function toHttpError(err: unknown): ComponentHttpError | null {
   if (isComponentHttpError(err)) return err;
-  if (isServiceError(err)) return httpError(err.status, err.message);
+  if (isServiceError(err)) return httpError(err.status, err.message, err.code);
   if (isZodError(err)) return httpError(400, zodMessage(err, "Invalid request"));
   return null;
 }

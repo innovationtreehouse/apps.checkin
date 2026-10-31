@@ -219,6 +219,9 @@ missed a row stored at a different time of day.
   issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
+  A `ServiceError` may also carry a `code`, for a UI that branches on it; the host
+  sends it as `{ error, code }`. Checkin's membership and trusted-adult errors
+  extend `ServiceError` and read their status from `lib/domainErrorResponse.ts`.
 
 - **A library's runtime fails closed.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures

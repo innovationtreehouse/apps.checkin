@@ -1,5 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { logger } from "@/lib/logger";
 import { certifyPaymentPlan, PaymentError } from "./payment";
@@ -41,9 +43,9 @@ export const householdApplicationOpenOrBlockedWhere: Prisma.OrgMembershipProcess
     ],
 };
 
-export class RenewalError extends Error {
+export class RenewalError extends ServiceError {
     constructor(public readonly code: "not_found" | "wrong_phase" | "not_lead" | "denied" | "blocked", message: string) {
-        super(message);
+        super(RENEWAL_ERROR_STATUS[code], message, code);
         this.name = "RenewalError";
     }
 }
