@@ -16,12 +16,14 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         financeViewLog: { findMany: jest.fn(), groupBy: jest.fn() },
         person: { findMany: jest.fn() },
+        personMerge: { findMany: jest.fn() },
     },
 }));
 
 const db = prisma as unknown as {
     financeViewLog: { findMany: jest.Mock; groupBy: jest.Mock };
     person: { findMany: jest.Mock };
+    personMerge: { findMany: jest.Mock };
 };
 const mockSession = getServerSession as jest.Mock;
 const BOARD = { user: { id: 42, isSysadmin: false, isBoardMember: true } };
@@ -53,6 +55,7 @@ beforeEach(() => {
     db.financeViewLog.findMany.mockResolvedValue([logRow(1)]);
     db.financeViewLog.groupBy.mockResolvedValue([{ actorId: 12 }]);
     db.person.findMany.mockResolvedValue([{ id: 12, name: "Pat Lee" }]);
+    db.personMerge.findMany.mockResolvedValue([]);
 });
 
 describe("GET /api/system-status/finance-views", () => {
@@ -81,6 +84,14 @@ describe("GET /api/system-status/finance-views", () => {
             where: { id: { in: [12] } },
             select: { id: true, name: true },
         });
+    });
+
+    it("names a viewer whose row a merge deleted from the merge archive", async () => {
+        db.financeViewLog.groupBy.mockResolvedValue([{ actorId: 12 }, { actorId: 30 }]);
+        db.personMerge.findMany.mockResolvedValue([{ fromId: 30, toId: 12, snapshot: { name: "Sam Old", email: "sam@example.com" } }]);
+        const body = await (await get()).json();
+        expect(body.Person).toEqual([{ id: 12, name: "Pat Lee" }, { id: 30, name: "Sam Old" }]);
+        expect(db.personMerge.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { fromId: { in: [30] } } }));
     });
 
     it("keeps both keys when the log is empty", async () => {

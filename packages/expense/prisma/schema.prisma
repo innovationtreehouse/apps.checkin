@@ -405,9 +405,6 @@ model ExpenseEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
-  /// Out of the client; nothing reads or writes it. A later migration drops the column.
-  /// @sensitivity:personal
-  payload   String?  @ignore
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 

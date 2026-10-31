@@ -1142,7 +1142,6 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
-  budgetOwners BudgetOwner[] @ignore
 }
 
 // Program → Instance → Event: an additive tier with a 1:1 id-aliased backfill that
@@ -1197,9 +1196,6 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
-  /// Out of the client; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops the column.
-  /// @sensitivity:internal
-  isTreasurer   Boolean @default(false) @ignore
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1974,9 +1970,6 @@ model BudgetOwner {
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Out of the client; a later migration drops the column.
-  /// @sensitivity:internal
-  programId            Int?      @ignore
   /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
   /// @sensitivity:internal
   isOrgLevel           Boolean   @default(false)
@@ -1990,13 +1983,9 @@ model BudgetOwner {
   /// @sensitivity:internal
   quickBooksClassId    String?   @unique
 
-  // Restrict: a program with a bucket is not deleted out from under it, and
-  // SetNull would silently turn a program bucket into an org-level one.
-  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict) @ignore
   owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   treasurers BudgetOwnerTreasurer[]
 
-  @@index([programId])
   @@index([ownerId])
 }
 
