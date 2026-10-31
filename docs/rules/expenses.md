@@ -344,13 +344,19 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - An expense's sign-offs run in steps: first the line's approval, then the
-  Treasurer, then the Board. Finance moving a line out of an exception is a
-  signature at the Treasurer step, and recording the Board's authorization is
-  one at the Board step. Each step refuses everyone who signed an
+  Treasurer, then the Board. Recording the Board's authorization is a
+  signature at the Board step. Each step refuses everyone who signed an
   earlier step anywhere on the expense, and a step is also refused to whoever
   already signed a later one. Nobody signs while someone in their household
   holds a seat on the expense. One person may sign the same step on several
   lines. This holds for card charges and reimbursements alike.
+  [Decision — owner]
+
+- Finance settling an exception, by moving the line to another bucket, is a
+  signature at the line's approval step, conflicted or not: whoever settles it
+  signs no Treasurer or Board step on the expense. It is not the line's
+  approval, which its bucket's approver still gives, or a Board member without
+  a conflict in their place.
   [Decision — owner]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
