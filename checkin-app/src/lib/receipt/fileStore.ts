@@ -1,5 +1,5 @@
 /**
- * The receipt library's file store (#1265 S3 design §2). Deployed instances use a private bucket
+ * The receipt library's file store. Deployed instances use a private bucket
  * with the ECS task role, as the membership agreement does; a laptop uses a temp directory.
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";

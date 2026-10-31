@@ -292,6 +292,8 @@ export interface RouteSpec {
     returns?: readonly Models[];
     /** A view of others' rows on this route writes a finance-view row (B11). GET only. */
     auditedRead?: true;
+    /** Admits a session with an open household question, which every other route refuses. */
+    allowJoinPending?: true;
 }
 
 /**

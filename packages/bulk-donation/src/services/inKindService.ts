@@ -1,5 +1,5 @@
-// In-kind donations that arrived with a receipt (FR5, #1280). The money side (X9)
-// and the donor (X13) land on one row per (orgId, receiptId), in either order. The money side is
+// In-kind donations that arrived with a receipt. The money side
+// and the donor land on one row per (orgId, receiptId), in either order. The money side is
 // written once: a replay with the same values does nothing, and one that differs is kept out and
 // raised for finance.
 import { db, type PrismaTransactionClient } from "../db";

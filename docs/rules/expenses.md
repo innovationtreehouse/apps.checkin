@@ -99,6 +99,12 @@ Things the app takes as true because they are handled outside it.
   finance's reason, until the uploader acknowledges it on the receipt.
   [Decision — owner]
 
+- When finance rejects a receipt, its uploader gets one email naming the
+  retailer and date and linking to the receipt, and so does the person
+  reimbursed when that is someone else. Neither email names the other person,
+  and neither carries finance's reason or the total.
+  [Decision — owner ruling 2026-10-31]
+
 - Once a receipt is finalized, its uploader sees in the receipt pages what
   became of the purchase: receiving, the expense's approval and booking, with
   the reason on a rejected line, and an in-kind gift's decision. The person

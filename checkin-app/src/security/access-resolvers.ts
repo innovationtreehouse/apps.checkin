@@ -190,14 +190,15 @@ function isCertifier(auth: AuthResult): boolean {
 }
 
 /**
- * A session isAcceptedSession refuses (no positive integer id, or a denied
- * household) is unauthenticated: it admits only on `public` and selects only
- * the `anyone`/`unauthenticated` view, whatever role flags it carries.
+ * A session isAcceptedSession refuses (no positive integer id, a denied
+ * household, or an open household question on a route without
+ * `allowJoinPending`) is unauthenticated: it admits only on `public` and selects
+ * only the `anyone`/`unauthenticated` view, whatever role flags it carries.
  * authenticateRequest already downgrades such a session; these resolvers deny
  * it on their own so no caller depends on that.
  */
-function isRefusedSession(auth: AuthResult): boolean {
-    return auth.type === 'session' && !isAcceptedSession(auth.user);
+function isRefusedSession(auth: AuthResult, opts?: { allowJoinPending?: boolean }): boolean {
+    return auth.type === 'session' && !isAcceptedSession(auth.user, opts);
 }
 
 export function callerHoldsRole(
@@ -205,8 +206,9 @@ export function callerHoldsRole(
     auth: AuthResult,
     params: Record<string, string>,
     ctx: CallerContext,
+    opts?: { allowJoinPending?: boolean },
 ): boolean {
-    if (isRefusedSession(auth)) return role === 'anyone' || role === 'unauthenticated';
+    if (isRefusedSession(auth, opts)) return role === 'anyone' || role === 'unauthenticated';
     switch (role) {
         case 'anyone':
             return true;
@@ -251,6 +253,8 @@ export interface ResolverContext {
     callerContext: CallerContext;
     /** The request's Authorization header; only `cronSecret` routes read it. */
     authorization?: string | null;
+    /** The route's own `allowJoinPending`. */
+    allowJoinPending?: boolean;
 }
 
 /**
@@ -300,7 +304,7 @@ export async function resolveAccess(
         }
     }
 
-    if (isRefusedSession(auth)) return { allowed: authorize === 'public' };
+    if (isRefusedSession(auth, { allowJoinPending: ctx.allowJoinPending })) return { allowed: authorize === 'public' };
 
     const isAdmin = auth.type === 'session' && (auth.user.isSysadmin || auth.user.isBoardMember);
 

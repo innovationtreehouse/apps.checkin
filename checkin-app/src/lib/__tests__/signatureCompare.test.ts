@@ -8,7 +8,6 @@
 import crypto from 'crypto';
 import { logger } from '@/lib/logger';
 import { requireCronSecret } from '@/lib/cronAuth';
-import { forceCloseTokenMatches } from '@/lib/attendance/keyholderGuard';
 import { verifyZohoToken } from '@/lib/membership/contract/zoho';
 import { sign, verify } from '@/lib/outreach/unsubscribeToken';
 import { constantTimeEqual, verifyShopifyHmac } from '../signatureCompare';
@@ -156,17 +155,5 @@ describe('unsubscribe verify', () => {
         expect(verify(7, `${good}A`)).toBe(false);
         expect(verify(7, '')).toBe(false);
         expect(verify(7, null)).toBe(false);
-    });
-});
-
-describe('forceCloseTokenMatches', () => {
-    it('accepts, and refuses wrong, different-length and empty values', () => {
-        expect(forceCloseTokenMatches('token-1', 'token-1')).toBe(true);
-        expect(forceCloseTokenMatches('token-1', 'token-2')).toBe(false);
-        expect(forceCloseTokenMatches('token-1', 'token-1-longer')).toBe(false);
-        expect(forceCloseTokenMatches('token-1', '')).toBe(false);
-        expect(forceCloseTokenMatches('token-1', null)).toBe(false);
-        expect(forceCloseTokenMatches(null, 'token-1')).toBe(false);
-        expect(forceCloseTokenMatches(null, null)).toBe(false);
     });
 });

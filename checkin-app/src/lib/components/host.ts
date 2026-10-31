@@ -13,7 +13,7 @@ import type { Session } from "next-auth";
 import { isAcceptedSession } from "@/lib/session/acceptedSession";
 
 /**
- * checkin is inherently single-org (#1286 §6). The org identity is a row in
+ * checkin is inherently single-org. The org identity is a row in
  * checkin's own `Org` registry table, seeded with this stable well-known id.
  * The library never reaches cross-DB into this table — checkin reads it and
  * injects the identity.
