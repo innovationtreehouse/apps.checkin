@@ -263,7 +263,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
  * Badge for a section *sub-tab*, off the same shared counts. Lives here beside
  * navBadgeFor so the tab number and the section-nav number are derived from one
  * file — a new admin badge is one edit, and nav vs tab can't silently slice
- * different fields for the same thing (they used to). Returns null when the tab
+ * different fields for the same thing. Returns null when the tab
  * has nothing to show. Layouts own the <Badge> JSX (variant, active-tab color
  * pins); this owns only count + intent-color + label.
  *

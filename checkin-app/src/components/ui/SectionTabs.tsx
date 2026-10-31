@@ -9,9 +9,8 @@ import type { SectionLink } from "@/lib/nav/types";
 
 /**
  * The one shared section-tab bar. Owns the active-tab computation, the single
- * guarded onChange, and per-tab rendering — so the "forgot confirmNav" and
- * "forgot the self-check" near-neighbor bugs that used to live in each layout's
- * copy-pasted Tabs block are now unrepresentable.
+ * guarded onChange, and per-tab rendering, so no layout can forget confirmNav
+ * or the self-check.
  *
  * Auth/loading gates stay in each layout (different hooks, different copy).
  */

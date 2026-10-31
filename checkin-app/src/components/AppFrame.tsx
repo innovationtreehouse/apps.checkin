@@ -154,7 +154,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
 
   const signedIn = !!session;
   const user = session?.user;
-  // Faithful to the old NavBar: no navigation on the homepage when signed out.
+  // No navigation on the homepage when signed out.
   const showNav = !(!signedIn && pathname === '/');
 
   const visibleItems = NAV_ITEMS.filter(
@@ -291,8 +291,8 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
                         // (treehouseGreen/black and gray.2/gray-8 respectively). The gray solid
                         // fill is deliberate: on the dark purple sidebar a 'light' translucent
                         // tint reads dark. The 'blue' household-in-building badge is a one-off
-                        // info color CountBadge doesn't model, so it stays inline (filled + black
-                        // text, same as before). NavLink forces section text white on the colored
+                        // info color CountBadge doesn't model, so it renders inline (filled + black
+                        // text). NavLink forces section text white on the colored
                         // sidebar, so the dark label is pinned explicitly.
                         const intent = badgeIntentFor(badge.color);
                         return intent ? (

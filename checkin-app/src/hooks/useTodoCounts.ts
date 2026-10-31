@@ -4,11 +4,8 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
-// One shared snapshot for every consumer (nav badge, sub-nav tabs, todo card).
-// Each hook instance used to own its own state + fetch, so two badges reading the
-// same numbers could land on different snapshots (e.g. nav showed 96 while the
-// tabs summed to 97) whenever they fetched at slightly different times. A single
-// module-level store keeps them in lockstep.
+// One shared snapshot for every consumer (nav badge, sub-nav tabs, todo card), so
+// they cannot show different numbers from fetches at slightly different times.
 let counts: TodoCounts | null = null;
 let inFlight: Promise<void> | null = null;
 let refetchQueued = false;
