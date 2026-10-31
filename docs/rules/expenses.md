@@ -125,7 +125,9 @@ Things the app takes as true because they are handled outside it.
   The line still waits for its bucket's approver, or a Board member without a
   conflict in their place, and for every seat it takes. A conflicted finance
   holder who makes the assignment final gives the line a Board signature: a
-  Board member without a conflict signs it, after the Treasurer.
+  Board member without a conflict signs it, after the Treasurer. Settling an
+  exception without making it final adds no Board signature, because the new
+  bucket's approver may still raise an exception.
   [Decision — owner]
 
 - A tax or date the submitter fills in where the field was blank goes to
