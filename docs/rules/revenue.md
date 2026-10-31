@@ -146,6 +146,11 @@ Things the app takes as true because they are handled outside it.
   app removes nobody, because the order cannot say whose seat it dropped.
   [Decision — *Principle: people decide about people*]
 
+- A membership order edited at the store, after it activated a membership, to
+  drop the membership item is raised for the board. Its total is never compared
+  with the fee, and the membership stays as it is.
+  [Decision — *Principle: people decide about people*]
+
 - A paid program order with seats no waiting enrollment uses is raised for the
   board, which settles the money and the seat; the app changes neither. That
   covers a child who was comped, approved, withdrew, expired or already paid,

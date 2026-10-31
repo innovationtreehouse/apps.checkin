@@ -9,7 +9,7 @@ import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import type { Prisma } from "@/generated/prisma/client";
 import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isReversed } from "./orderStatus";
-import { AMOUNT_TOLERANCE_CENTS, usesVolunteerCodeUnentitled } from "./membership";
+import { membershipVariantYears, usesVolunteerCodeUnentitled } from "./membership";
 
 function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKind | null {
     if (o.cancelledAt) return "CANCELLED";
@@ -367,29 +367,31 @@ export async function reconcileReversals(): Promise<number> {
     const byLegacy = new Map(orders.map((o) => [o.legacyId ?? "", o]));
     const disputed = await mirror.disputedOrderGids(orders.map((o) => o.orderGid));
 
-    // Expected membership fee per membership (for the "order edited down below the membership fee" case).
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { standardMembershipFeeCents: true, volunteerMembershipFeeCents: true, volunteerFamilyDiscountCode: true },
+        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
     const memberIds = procs.map((p) => p.orgMembershipId).filter((v): v is number => v != null);
     const members = memberIds.length
         ? await prisma.orgMembership.findMany({ where: { id: { in: memberIds } }, select: { id: true, isVolunteerFamily: true } })
         : [];
     const isVolunteerFamilyById = new Map(members.map((m) => [m.id, m.isVolunteerFamily]));
+    const unreversedMembershipGids = procs
+        .map((p) => byLegacy.get(p.shopifyOrderId!))
+        .filter((o): o is MirrorOrder => !!o && !classifyReversal(o, disputed.has(o.orderGid)))
+        .map((o) => o.orderGid);
+    const membershipVariants = new Set((await membershipVariantYears(settings ?? null, new Date())).keys());
+    const droppedMembership = await ordersDroppingMembershipLine([...new Set(unreversedMembershipGids)], membershipVariants);
 
     let raised = 0;
     for (const proc of procs) {
         const o = byLegacy.get(proc.shopifyOrderId!);
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
         let kind = classifyReversal(o, disputed.has(o.orderGid));
-        if (!kind) {
-            // Not reversed — but was the order edited down below the membership fee after activation?
-            // Discount-aware: add the coupon back so an ordinary couponed order (volunteer
-            // rate, promo) isn't mistaken for a post-activation edit-down — only a real
-            // shortfall below the GROSS membership fee counts. Keeps the "edited down" purpose intact.
-            const expected = isVolunteerFamilyById.get(proc.orgMembershipId ?? -1) ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
-            if (expected > 0 && o.totalCents + o.discountCents + AMOUNT_TOLERANCE_CENTS < expected) kind = "AMOUNT_MISMATCH";
+        // Judged by item, never by total (docs/rules/revenue.md).
+        if (!kind && droppedMembership.has(o.orderGid)) {
+            logger.warn(`[reconcile] activated order ${proc.shopifyOrderId} no longer carries the membership item (process ${proc.id})`);
+            kind = "AMOUNT_MISMATCH";
         }
         if (!kind && usesVolunteerCodeUnentitled(o, settings?.volunteerFamilyDiscountCode, isVolunteerFamilyById.get(proc.orgMembershipId ?? -1) ?? false)) {
             // Coupon entitlement, shared with the forward pass — and load-bearing here:
@@ -426,6 +428,26 @@ export async function reconcileReversals(): Promise<number> {
     }
     raised += await raiseUnderSeatedOrders(enrolls.filter((e) => e.status === "ACTIVE" && unreversed.has(e.shopifyOrderId!)), unreversed);
     return raised;
+}
+
+/**
+ * Orders whose membership line an edit removed or took to zero: the mirror shows a
+ * membership variant on the order, but no line still carrying one. An order the
+ * mirror never showed a membership line on carries no evidence and is not judged.
+ */
+async function ordersDroppingMembershipLine(orderGids: string[], membershipVariants: Set<string>): Promise<Set<string>> {
+    if (orderGids.length === 0 || membershipVariants.size === 0) return new Set();
+    const carrying = new Set(
+        (await mirror.incomeOrderLines(orderGids))
+            .filter((l) => l.variantId !== null && membershipVariants.has(l.variantId) && l.currentQuantity > 0)
+            .map((l) => l.orderGid),
+    );
+    const dropped = new Set<string>();
+    for (const gid of orderGids) {
+        if (carrying.has(gid)) continue;
+        if ((await mirror.orderLineVariantIds(gid)).some((v) => membershipVariants.has(v))) dropped.add(gid);
+    }
+    return dropped;
 }
 
 /**
