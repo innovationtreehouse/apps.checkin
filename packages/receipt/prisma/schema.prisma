@@ -402,6 +402,38 @@ model ReceiptMailAtRisk {
   @@map("receipt_mail_at_risk")
 }
 
+// One email owed per receipt outcome: to its uploader, and to the person reimbursed when that
+// is someone else. Written in the transaction that makes the outcome, so it is owed exactly once.
+model ReceiptOutcomeNotice {
+  /// @sensitivity:internal
+  id               Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId            String    @map("org_id")
+  /// @sensitivity:internal
+  receiptId        String    @map("receipt_id")
+  // receipt_rejected
+  /// @sensitivity:internal
+  event            String
+  // Set before sending, so a send is never repeated; cleared only after a send that reported failure.
+  /// @sensitivity:internal
+  claimedAt        DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  uploaderSentAt   DateTime? @map("uploader_sent_at")
+  /// @sensitivity:internal
+  reimburseeSentAt DateTime? @map("reimbursee_sent_at")
+  // Set once every owed copy is sent, or given up after OUTCOME_ATTEMPTS.
+  /// @sensitivity:internal
+  doneAt           DateTime? @map("done_at")
+  /// @sensitivity:internal
+  attempts         Int       @default(0)
+  /// @sensitivity:internal
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([receiptId, event])
+  @@index([orgId, doneAt])
+  @@map("receipt_outcome_notices")
+}
+
 // Files the organization has said are never receipts. Mail intake skips a
 // candidate whose SHA-256 is listed; manual upload never consults it.
 model ReceiptIgnoredFile {
