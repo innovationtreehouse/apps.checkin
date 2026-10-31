@@ -31,10 +31,8 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     ordersChangedSince: jest.fn(async () => [] as MirrorOrder[]),
     ordersByLegacyIds: jest.fn(async () => [] as MirrorOrder[]),
     disputedOrderGids: jest.fn(async () => new Set<string>()),
-    // Default [] = a pre-#1048 order with no mirrored line variant ids, which drives
-    // the reconciler's transitional amount-gate fallback. Tests of the variant path
-    // set this explicitly.
-    orderLineVariantIds: jest.fn(async () => [] as string[]),
+    // Each test starts with the membership variant on the order (see beforeEach).
+    orderLineVariantIds: jest.fn(),
     orderLines: jest.fn(async () => [] as { variantId: string; quantity: number; currentQuantity: number }[]),
     // Default [] = no mirrored line evidence, so the under-seated check judges nothing.
     incomeOrderLines: jest.fn(async () => [] as IncomeMirrorLineRow[]),
@@ -158,11 +156,14 @@ beforeAll(async () => {
     });
 });
 
+beforeEach(() => {
+    orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+});
+
 afterEach(async () => {
     ordersChangedSince.mockResolvedValue([]);
     ordersByLegacyIds.mockResolvedValue([]);
     disputedOrderGids.mockResolvedValue(new Set());
-    orderLineVariantIds.mockResolvedValue([]);
     orderLines.mockResolvedValue([]);
     incomeOrderLines.mockResolvedValue([]);
     adjustInventory.mockClear();
@@ -334,15 +335,14 @@ describe("forward recovery", () => {
         expect(proc?.paidAt).toBeTruthy();
     });
 
-    it("raises AMOUNT_MISMATCH and does not activate when the order underpays the membership fee", async () => {
+    it("recovers an order carrying the membership item whatever it totals", async () => {
         const email = `short-${TAG}@ex.com`;
         const oid = `${TAG}-102`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 1000 })]);
         await runReconcile();
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-        expect(proc?.status).toBe("PENDING_PAYMENT");
-        expect(await prisma.paymentException.findFirst({ where: { kind: "AMOUNT_MISMATCH", shopifyOrderId: oid } })).toBeTruthy();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
     });
 
     it("recovers a couponed order below the gross membership fee (variant match), no AMOUNT_MISMATCH", async () => {
@@ -437,15 +437,18 @@ describe("forward recovery", () => {
         expect(await prisma.paymentException.findFirst({ where: { kind: "NO_ITEM", shopifyOrderId: oid } })).toBeTruthy();
     });
 
-    it("pre-backfill order (no variant ids) genuinely short of the membership fee still raises AMOUNT_MISMATCH", async () => {
-        // orderLineVariantIds default [] = pre-#1048, no discount codes → amount fallback.
-        const email = `prebackfill-${TAG}@ex.com`;
+    it("raises NO_ITEM and does not activate an order of only custom or deleted products that covers the fee", async () => {
+        const email = `customonly-${TAG}@ex.com`;
         const oid = `${TAG}-122`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 1000, discountCents: 0, discountCodes: [] })]);
+        // Custom and deleted-product lines carry no variant id, so none is mirrored.
+        orderLineVariantIds.mockResolvedValue([]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
         await runReconcile();
-        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("PENDING_PAYMENT");
-        expect(await prisma.paymentException.findFirst({ where: { kind: "AMOUNT_MISMATCH", shopifyOrderId: oid } })).toBeTruthy();
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(proc?.status).toBe("PENDING_PAYMENT");
+        expect(proc?.paidAt).toBeNull();
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, shopifyOrderId: true } })).toEqual([{ kind: "NO_ITEM", shopifyOrderId: oid }]);
     });
 
     it("prefers the Membership_Process_ID cart attribute over the email heuristic", async () => {
