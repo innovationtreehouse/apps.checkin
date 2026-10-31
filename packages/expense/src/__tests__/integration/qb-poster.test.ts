@@ -1198,8 +1198,10 @@ describeDb("QB closed books — a create that may have landed", () => {
       qbo.purchases = [];
       let release = () => {};
       qbo.gate = new Promise((resolve) => { release = resolve; });
+      // The attempt above already called fetch; only a call after this clear is the skip's lookup.
+      vi.mocked(fetch).mockClear();
       const skipping = skipExpenseQb(finance, id, "why");
-      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
 
       await db.expense.update({ where: { id }, data: { qbPostAttempts: { increment: 1 } } });
       release();
