@@ -175,7 +175,7 @@ _Exists as membership/program **payment** reconciliation, not generic income/GL.
 
 ### A16. Program-hours finance + orchestration glue  [`GC-PROGRAM-FINANCE` + workflow-mapping-app]
 1. ❌ Volunteer/program hours → QB expense allocation (allocation only, not payroll). Concretized (`FE7`): base per-hour shop fee (+surplus for shop-users) → each program's P&L as **monthly QB inter-class journals**; checkin has the hours, needs rates + rules
-2. ✅ Orchestrator (receipt mapping, `/inventory/receiving`): received-receipt queue + line-status tracking; line→GTIN associate (optimistic), propose-reference, mark-non-inventory; apply/retry-apply/proceed — ported as the workflow-mapping library, which checkin calls in-process; only the transport changed. Correcting an already-applied receipt ❌ (#2267)
+2. ✅ Orchestrator (receipt mapping, `/inventory/receiving`): received-receipt queue + line-status tracking; line→GTIN associate (optimistic), propose-reference, mark-non-inventory; apply/retry-apply/proceed — ported as the workflow-mapping library, which checkin calls in-process; only the transport changed. Correcting an already-applied receipt is a hand fix outside receiving (stock on the org inventory page, money by finance), not a receiving step.
 
 ---
 
