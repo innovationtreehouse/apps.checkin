@@ -57,9 +57,9 @@ class FakeQbo {
       if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /FROM (Purchase|Bill) WHERE MetaData.CreateTime >= '([^']+)'/.exec(url.searchParams.get("query") ?? "");
+      const since = /FROM (Purchase|Bill) WHERE MetaData.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = (since[1] === "Purchase" ? this.purchases : this.bills).filter((t) => (this.createdAt.get(t.Id)?.getTime() ?? 0) >= new Date(since[2]).getTime());
+        const list = (since[1] === "Purchase" ? this.purchases : this.bills).filter((t) => (this.createdAt.get(t.Id)?.getTime() ?? 0) >= new Date(since[2]).getTime()).slice(Number(since[3]) - 1, Number(since[3]) - 1 + Number(since[4]));
         return json({ QueryResponse: list.length ? { [since[1]]: list } : {} });
       }
       const m = /FROM (Purchase|Bill) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(url.searchParams.get("query") ?? "");
@@ -1303,11 +1303,11 @@ describeDb("QB closed books — daily orphan sweep", () => {
     expect(flag.detail).toContain("Purchase 7001 ");
   });
 
-  it("alerts finance once when a read fills a page, and a failed alert does not stop the sweep", async () => {
+  it("alerts finance once when a read reaches its cap, and a failed alert does not stop the sweep", async () => {
     const { id } = await outboxed("2026-09-10");
     await postExpenseToQb(ORG, id);
     const attempted = (await expenseRow(id)).qbCreateAttemptedAt;
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 10_000; i++) {
       qbo.purchases.push({ Id: `h${i}`, TxnDate: "2026-10-01", TotalAmt: 1, AccountRef: { value: PAYMENT_ACCOUNT } });
       qbo.createdAt.set(`h${i}`, new Date());
     }

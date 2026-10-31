@@ -60,9 +60,9 @@ class FakeQbo {
         if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
+      const since = /MetaData\.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(0, Number(since[2]));
+        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(Number(since[2]) - 1, Number(since[2]) - 1 + Number(since[3]));
         return json({ QueryResponse: list.length ? { Deposit: list } : {} });
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
@@ -413,7 +413,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     qbo.mode = "ok";
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
 
     expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: expect.stringContaining("may already have booked") });
     expect(qbo.posts).toHaveLength(1);
@@ -695,10 +695,10 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(a)).qbNote).toBeNull();
   });
 
-  it("alerts finance when the read fills a page", async () => {
+  it("alerts finance when the read reaches its cap", async () => {
     payout(2, "2026-06-28", 500);
     await drain();
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
     expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
   });

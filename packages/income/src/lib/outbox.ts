@@ -633,7 +633,7 @@ export const SWEEP_DAYS = 30;
 /**
  * The daily orphan sweep: one read of every deposit QuickBooks created since the oldest
  * attempt in the last SWEEP_DAYS, and a queue note on each payout whose key an entry carries
- * but which does not hold that entry. A full page alerts finance that some entries went
+ * but which does not hold that entry. A capped read alerts finance that some entries went
  * unseen. Reads QuickBooks only; finance voids or links what it reports. Unconfigured or
  * unbound, it reads nothing.
  */
