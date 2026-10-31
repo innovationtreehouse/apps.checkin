@@ -1,6 +1,10 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
+import useSWR from "swr";
+import { clearLoads, countFailure, endRetryChain, invalidateLoads } from "./loadCache";
+
+export { invalidateLoads };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
@@ -14,8 +18,25 @@ export interface Viewer {
 
 const ViewerContext = createContext<Viewer | null | undefined>(undefined);
 
-export function ViewerProvider({ viewer, children }: { viewer: Viewer | null; children: ReactNode }) {
-  return <ViewerContext.Provider value={viewer}>{children}</ViewerContext.Provider>;
+const SessionExpiredContext = createContext<(() => void) | undefined>(undefined);
+
+/**
+ * `onSessionExpired` runs when a load answers 401. A person's cached loads end with them:
+ * null is also "session loading", so only a move away from a known person clears, and it
+ * clears before paint so their rows never show to the next viewer.
+ */
+export function ViewerProvider({ viewer, onSessionExpired, children }: { viewer: Viewer | null; onSessionExpired?: () => void; children: ReactNode }) {
+  const id = viewer?.id ?? null;
+  const lastId = useRef(id);
+  useLayoutEffect(() => {
+    if (lastId.current !== null && lastId.current !== id) clearLoads();
+    lastId.current = id;
+  }, [id]);
+  return (
+    <SessionExpiredContext.Provider value={onSessionExpired}>
+      <ViewerContext.Provider value={viewer}>{children}</ViewerContext.Provider>
+    </SessionExpiredContext.Provider>
+  );
 }
 
 /** The current viewer, or null when signed out. Routes gate server-side; this only decides which controls show. */
@@ -25,21 +46,33 @@ export function useViewer(): Viewer | null {
   return viewer;
 }
 
-/** Fetches `url` and returns its JSON body; a failure throws the route's `error` text, or the HTTP status. */
-export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+/** A response that was not a usable answer. Its message is the route's `error` text, or names the HTTP status. */
+export class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+/** `invalidate: false` is for a loop of writes, which calls `invalidateLoads` once when it ends. */
+export type RequestOptions = RequestInit & { invalidate?: boolean };
+
+/** Fetches `url` and returns its JSON body; a failure throws `HttpError`. A successful write re-reads every cached load. */
+export async function request<T>(url: string, { invalidate = true, ...options }: RequestOptions = {}): Promise<T> {
   const isForm = options.body instanceof FormData;
   const res = await fetch(url, { ...(isForm ? {} : { headers: { "Content-Type": "application/json" } }), ...options });
+  if (res.ok && invalidate && (options.method ?? "GET").toUpperCase() !== "GET") invalidateLoads();
   const text = await res.text();
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     // A proxy error page or a sign-in redirect is HTML, not the route's JSON.
-    throw new Error(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`);
+    throw new HttpError(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`, res.status);
   }
   if (!res.ok) {
     const message = (data as { error?: unknown } | null)?.error;
-    throw new Error(typeof message === "string" ? message : `HTTP ${res.status}`);
+    throw new HttpError(typeof message === "string" ? message : `HTTP ${res.status}`, res.status);
   }
   return data as T;
 }
@@ -50,34 +83,80 @@ export function errorMessage(e: unknown): string {
 
 export interface Loaded<T> {
   data: T | null;
+  /** Null while the first answer for this path is awaited or a retry is pending. */
   error: string | null;
+  /** The first answer for this path is awaited; `data` may still hold the previous path's rows. */
+  loading: boolean;
+  /** The last read failed and another attempt is coming. */
+  retrying: boolean;
+  /** The HTTP status of a failed read; null for a network failure or no failure. */
+  status: number | null;
   reload: () => void;
+}
+
+const MAX_ATTEMPTS = 5;
+
+interface LoadFailure {
+  message: string;
+  status: number | null;
+  attempt: number;
+  retrying: boolean;
+}
+
+function loadFailure(url: string, e: unknown, retry: boolean): LoadFailure {
+  const status = e instanceof HttpError ? e.status : null;
+  const attempt = retry && (status === null || status >= 500) ? countFailure(url) : MAX_ATTEMPTS;
+  const retrying = attempt < MAX_ATTEMPTS;
+  if (!retrying) endRetryChain(url);
+  return { message: errorMessage(e), status, attempt, retrying };
 }
 
 /** A package's fetch helpers over its routes under `base`. A path already under /api/ is used as given. */
 export function createClient(base: string) {
-  function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-    return request<T>(path.startsWith("/api/") ? path : `${base}${path}`, options);
+  const resolve = (path: string) => (path.startsWith("/api/") ? path : `${base}${path}`);
+
+  function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    return request<T>(resolve(path), options);
   }
 
-  /** Load `path` on mount and on reload(); null loads nothing. A stale response never overwrites a newer one. */
-  function useLoad<T>(path: string | null, load: (path: string) => Promise<T> = api): Loaded<T> {
-    const [data, setData] = useState<T | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [tick, setTick] = useState(0);
-    const seq = useRef(0);
-    // Held in a ref so a caller passing a new function each render doesn't refetch every render.
-    const loadRef = useRef(load);
-    useEffect(() => { loadRef.current = load; });
+  /**
+   * Load `path` on mount and on reload(); null loads nothing. The key is the resolved URL because the
+   * cache is shared across libraries. A network failure or 5xx retries unless `retry` is false.
+   */
+  function useLoad<T>(path: string | null, { retry = true }: { retry?: boolean } = {}): Loaded<T> {
+    const swr = useSWR<T, LoadFailure>(
+      path === null ? null : resolve(path),
+      (url: string) =>
+        request<T>(url).then(
+          (answer) => { endRetryChain(url); return answer; },
+          (e: unknown) => { throw loadFailure(url, e, retry); },
+        ),
+      {
+        revalidateOnFocus: false,
+        revalidateOnReconnect: true,
+        dedupingInterval: 5000,
+        keepPreviousData: true,
+        onErrorRetry: (failure, _key, _config, revalidate, options) => {
+          if (failure.retrying) setTimeout(() => revalidate(options), 2000 * 2 ** (failure.attempt - 1));
+        },
+      },
+    );
+    const retrying = swr.error?.retrying ?? false;
+    const status = swr.error?.status ?? null;
+    const onSessionExpired = useContext(SessionExpiredContext);
     useEffect(() => {
-      if (path === null) return;
-      const mine = ++seq.current;
-      loadRef.current(path)
-        .then((d) => { if (mine === seq.current) { setData(d); setError(null); } })
-        .catch((e: unknown) => { if (mine === seq.current) setError(errorMessage(e)); });
-    }, [path, tick]);
-    const reload = useCallback(() => setTick((t) => t + 1), []);
-    return { data, error, reload };
+      if (status === 401) onSessionExpired?.();
+    }, [status, onSessionExpired]);
+    const { mutate } = swr;
+    const reload = useCallback(() => { void mutate(); }, [mutate]);
+    return {
+      data: swr.data ?? null,
+      error: swr.error && !retrying ? swr.error.message : null,
+      loading: swr.isLoading && !retrying,
+      retrying,
+      status,
+      reload,
+    };
   }
 
   return { api, useLoad };

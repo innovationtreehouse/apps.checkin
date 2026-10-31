@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
-import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, catalogApi, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
 import { type LineFormKind, lineFormBody } from "../lib/line-form";
@@ -86,7 +86,7 @@ function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | nu
     if (term === null) return;
     let live = true;
     const t = setTimeout(() => {
-      catalogApi<CatalogItem[]>(`/items?q=${encodeURIComponent(term)}&limit=20`)
+      api<CatalogItem[]>(`/api/catalog/items?q=${encodeURIComponent(term)}&limit=20`)
         .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
         .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
     }, 250);
@@ -319,8 +319,8 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
   const [usage, setUsage] = useState<string | null>(null);
   const [factor, setFactor] = useState<number | string>(1);
   const conversionFactor = Number(factor) || 1;
-  const categories = useLoad<CategoryOption[]>("/categories", catalogApi);
-  const subcategories = useLoad<SubcategoryOption[]>("/subcategories", catalogApi);
+  const categories = useLoad<CategoryOption[]>("/api/catalog/categories");
+  const subcategories = useLoad<SubcategoryOption[]>("/api/catalog/subcategories");
   const categoryOptions = (categories.data ?? []).map((c) => ({ value: String(c.id), label: `${c.letter} — ${c.name}` }));
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
