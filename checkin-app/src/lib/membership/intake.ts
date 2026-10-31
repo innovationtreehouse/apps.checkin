@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { logger, logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolation";
@@ -255,6 +256,7 @@ async function startRefusal(code: StartRefusal, householdId: number, userId: num
 /**
  * Persist intake form data onto the caller's household + participants, all or
  * nothing: a thrown error means nothing was saved. Resumable; never deletes.
+ * `state` is null when the save committed but re-reading the form's state failed.
  */
 export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const user = await loadUserWithHousehold(userId);
@@ -470,17 +472,33 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
         throw e;
     } finally {
         // A refused attempt stays on record even when the save rolls back.
-        for (const refusal of refusals) await recordSelfGrantRefusal(prisma, refusal);
+        for (const refusal of refusals) await afterSaveSettled("self-grant refusal", refusal, () => recordSelfGrantRefusal(prisma, refusal));
     }
 
+    invalidateAttendanceCache();
     // These write through the root client, so they wait for the commit: a person
     // created above isn't visible to another connection until then.
     for (const e of deniedPromotions) {
-        await raiseDeniedHouseholdActivity({ householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" });
+        const ref = { householdId: e.householdId, personId: e.personId, what: "intake lead promotion refused" };
+        await afterSaveSettled("denied household raise", ref, () => raiseDeniedHouseholdActivity(ref));
     }
-    invalidateAttendanceCache();
 
-    return { state: await getIntakeState(userId), rejections };
+    return { state: await afterSaveSettled("state read", { userId }, () => getIntakeState(userId)), rejections };
+}
+
+/**
+ * Runs a step whose failure must not change what saveIntake reports: the save's
+ * outcome is already settled. Logs to the console too, because the error log's
+ * own write loses `context` when the database is down.
+ */
+async function afterSaveSettled<T>(step: string, context: object, run: () => Promise<T>): Promise<T | null> {
+    try {
+        return await run();
+    } catch (error) {
+        logger.error(`saveIntake ${step} failed:`, context, error);
+        await logBackendError(error, `saveIntake ${step}`, context);
+        return null;
+    }
 }
 
 /**
