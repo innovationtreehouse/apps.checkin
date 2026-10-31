@@ -8,7 +8,7 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
+import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
 import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
@@ -271,30 +271,34 @@ export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: s
   return (await callerLines(principal, expense)).map(({ facts: _facts, ...status }) => status);
 }
 
-/** Each line's status with its facts, for the caller; `readOnly` reads without taking a seat lock. */
 /** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, and its facts. */
 export async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
-  const [facts, filled, approvalNeeded, approvals] = await Promise.all([
-    signoffFactsByLine(db, expense, { readOnly }),
-    filledSeatsByLine(db, expense.id),
-    boardApprovalNeeded(db, expense),
-    db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, status: true, ownerId: true, bucketFinal: true } }),
-  ]);
+  return (await callerLinesFor(principal, [expense], readOnly)).get(expense.id)!;
+}
+
+/** callerLines for each of the expenses, their facts read together (signoffFactsForExpenses). */
+export async function callerLinesFor(principal: ExpensePrincipal, expenses: Expense[], readOnly = false) {
+  const state = await signoffFactsForExpenses(db, expenses, { readOnly });
   const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
-  const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
-  const approvalOf = new Map(approvals.map((a) => [a.lineItemId, a]));
-  const mayRecord = mayRecordBoardAuthorization({
-    callerId: caller.id,
-    expense: { ...held, boardAuthorization: expense.boardAuthorization },
-    factsByLine: [...facts.values()],
-    boardApprovalNeeded: approvalNeeded,
-  });
-  return [...facts].map(([lineItemId, f]) => {
-    const seats = filled.get(lineItemId) ?? [];
-    const holds = lineHolds(approvalNeeded, f, seats);
-    const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvalOf.get(lineItemId) ?? null, facts: f, filled: seats, holds });
-    return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f };
-  });
+  return new Map(
+    expenses.map((expense) => {
+      const { byLine, filled, approvals, boardApprovalNeeded: approvalNeeded } = state.get(expense.id)!;
+      const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
+      const mayRecord = mayRecordBoardAuthorization({
+        callerId: caller.id,
+        expense: { ...held, boardAuthorization: expense.boardAuthorization },
+        factsByLine: [...byLine.values()],
+        boardApprovalNeeded: approvalNeeded,
+      });
+      const lines = [...byLine].map(([lineItemId, f]) => {
+        const seats = filled.get(lineItemId) ?? [];
+        const holds = lineHolds(approvalNeeded, f, seats);
+        const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds });
+        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f };
+      });
+      return [expense.id, lines] as const;
+    }),
+  );
 }
 
 /** One expense's lines waiting for a signature the caller may give, by Finance review tab. */
@@ -325,10 +329,11 @@ export async function signaturesWaiting(principal: ExpensePrincipal): Promise<Si
     orderBy: { submittedAt: "desc" },
     take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
+  const linesOf = await callerLinesFor(principal, expenses, true);
   const out: SignaturesWaiting[] = [];
   for (const expense of expenses) {
     const row: SignaturesWaiting = { expense, toSign: [], board: [] };
-    for (const line of await callerLines(principal, expense, true)) {
+    for (const line of linesOf.get(expense.id)!) {
       const main = line.actions.find((a) => a.primary);
       const tab = main ? signatureTab(line.facts, main, me) : null;
       if (tab) row[tab].push(line.lineItemId);

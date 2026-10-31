@@ -64,6 +64,10 @@ export interface SignoffDirectory {
   boardMembers(): Promise<number[]>;
   /** Everyone in the given people's households. */
   householdOf(personIds: number[]): Promise<number[]>;
+  /** Each given person's household, as householdOf([id]) reads it; an unknown id is left out. */
+  householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
+  /** Everyone in the person's household, merged-away people included: the people whose household the person shares. */
+  householdIds(personId: number): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
   /** The live Person an id resolves to: itself when live, its merge survivor when merged away, else null. */
@@ -85,6 +89,8 @@ export const inertSignoffDirectory: SignoffDirectory = {
   financeHolders: async () => [],
   boardMembers: async () => [],
   householdOf: async () => [],
+  householdsOf: async () => new Map(),
+  householdIds: async () => [],
   personExists: async () => false,
   livePersonFor: async () => null,
   isOrgMember: async () => false,
