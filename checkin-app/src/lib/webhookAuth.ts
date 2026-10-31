@@ -30,7 +30,7 @@ export type WebhookVerify = (req: Request, rawBody: string) => WebhookVerifyResu
  * The handler receives the parsed body and owns its own 2xx envelope.
  *
  *   export const POST = withWebhook(
- *       { provider: "shopify", verify: verifyShopifyHmac },
+ *       { provider: "shopify", verify: (req, rawBody) => verifyShopifyHmac(req, rawBody, "Shopify webhook", onRejected) },
  *       async (req, order: ShopifyOrder) => { ... },
  *   );
  */
