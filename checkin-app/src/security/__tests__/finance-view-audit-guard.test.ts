@@ -46,6 +46,7 @@ const EXEMPT: Record<string, string> = {
     'GET /api/workflow-mapping/receipts/counts': 'count: numbers, no record',
     'GET /api/receipt-flow/status': 'count: records per flow state, no record',
     'GET /api/donations/account-map': 'set-up: how donations map to the books',
+    'GET /api/donations/settings': 'set-up: donation settings',
     'GET /api/expense/account-mapping': 'set-up: how expense categories map to accounts',
     'GET /api/expense/qb-accounts': 'set-up: the QuickBooks account list',
     'GET /api/expense/local-owners': 'set-up: the budget buckets',
