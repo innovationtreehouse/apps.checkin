@@ -525,6 +525,61 @@ describe("forward recovery", () => {
 });
 
 describe("reversal detection", () => {
+    const membershipLine = (orderGid: string, currentQuantity = 1): IncomeMirrorLineRow =>
+        ({ orderGid, variantId: MEMBERSHIP_VARIANT, title: null, sku: null, quantity: 1, currentQuantity, priceCents: 5000, discountCents: 0 });
+
+    // Each activated order still carries its membership line unless a test edits it away.
+    beforeEach(() => {
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        incomeOrderLines.mockImplementation(async (gids: string[]) => gids.map((g) => membershipLine(g)));
+    });
+
+    it("does not flag an activated order carrying the membership item that totals under the fee", async () => {
+        const oid = `${TAG}-205`;
+        const { processId } = await makeApplicant({ email: `revunder-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, totalCents: 1000, subtotalCents: 1000 })]);
+        await runReconcile();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
+    });
+
+    it.each<[string, string, (gid: string) => IncomeMirrorLineRow[]]>([
+        ["removed from the order", "206-removed", () => []],
+        ["edited down to zero", "206-zero", (gid) => [membershipLine(gid, 0)]],
+    ])("raises AMOUNT_MISMATCH, leaving the membership ACTIVE, when the membership line was %s after activation", async (_label, suffix, lines) => {
+        const oid = `${TAG}-${suffix}`;
+        const { processId } = await makeApplicant({ email: `revdrop-${oid}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue(lines(o.orderGid));
+
+        await runReconcile();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true } })).toEqual([{ kind: "AMOUNT_MISMATCH" }]);
+
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(1);
+    });
+
+    it("does not judge an activated order the mirror never showed a membership line on", async () => {
+        const oid = `${TAG}-207`;
+        const { processId } = await makeApplicant({ email: `revnolines-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, totalCents: 1000, subtotalCents: 1000 })]);
+        orderLineVariantIds.mockResolvedValue([]);
+        incomeOrderLines.mockResolvedValue([]);
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
+    });
+
+    it("raises only REFUND for a refunded order whose membership line is gone", async () => {
+        const oid = `${TAG}-208`;
+        const { processId } = await makeApplicant({ email: `revrefdrop-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "REFUNDED", totalRefundedCents: 5000 })]);
+        incomeOrderLines.mockResolvedValue([membershipLine(`gid://shopify/Order/${oid}`, 0)]);
+        await runReconcile();
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true } })).toEqual([{ kind: "REFUND" }]);
+    });
+
     it("raises REFUND for a refunded order on an ACTIVE membership, leaving it ACTIVE", async () => {
         const oid = `${TAG}-200`;
         const { processId } = await makeApplicant({ email: `ref-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
@@ -552,9 +607,7 @@ describe("reversal detection", () => {
         expect(ex?.severity).toBe("CRITICAL");
     });
 
-    it("does not raise AMOUNT_MISMATCH on a couponed order below the gross membership fee (post-activation)", async () => {
-        // ACTIVE membership paid with a coupon: total is below the gross membership fee but the
-        // discount explains the gap — not a post-activation edit-down. No exception.
+    it("does not raise AMOUNT_MISMATCH on a couponed order carrying the membership item (post-activation)", async () => {
         const oid = `${TAG}-203`;
         const { processId } = await makeApplicant({ email: `revcoupon-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
         ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "PAID", totalCents: 2000, discountCents: 3000, discountCodes: ["VOLUNTEER50"] })]);
