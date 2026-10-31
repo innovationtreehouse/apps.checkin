@@ -73,8 +73,9 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - Only the person who paid is reimbursed: the adult who uploaded the receipt
-  and said they paid for it themselves.
-  [Decision]
+  and said they paid for it themselves, or another adult named as the person
+  reimbursed under the naming rule in Spending sign-off.
+  [Decision — owner]
 
 - Only finance approves and rejects receipts, imports old ones, and changes
   receipt settings.
@@ -337,12 +338,14 @@ Things the app takes as true because they are handled outside it.
 - Once the submitter has confirmed a reimbursement, a change finance makes to
   what the submitter claimed or what they are paid voids the submitter's
   signature: its line items, a line's quantity or unit price, tax, shipping,
-  discount, the total, the currency, the receipt date, or the person
-  reimbursed. The reimbursement does not reach the books until the person
-  reimbursed confirms it again. Finance's bookkeeping does not void it: a
-  line's bucket, the accounting-system account set on a hold, or the capital
-  or depreciation designation; nor does correcting the retailer. The void and
-  the new confirmation are both recorded.
+  discount, the total, the currency, or the receipt date. The reimbursement
+  does not reach the books until the person reimbursed confirms it again.
+  Finance's bookkeeping does not void it: a line's bucket, the
+  accounting-system account set on a hold, or the capital or depreciation
+  designation; nor does correcting the retailer. Naming the person reimbursed
+  does not void it either: finance names them only while they are unknown,
+  when no confirmation exists, and a known person reimbursed is not changed.
+  The void and the new confirmation are both recorded.
   [Decision — owner]
 
 - A line's program approver signs it by approving it: the approval records who
@@ -384,8 +387,8 @@ Things the app takes as true because they are handled outside it.
   exist; a Board signature waits for the Treasurer's.
   [Decision — owner]
 
-- Nobody signs off a reimbursement line, its approval included, until the
-  person reimbursed is known.
+- Nobody signs off a reimbursement line, its approval included, or raises an
+  exception on it, until the person reimbursed is known.
   [Decision — owner]
 
 - When an earlier step on a line is cleared or has to be given again, every
@@ -404,11 +407,11 @@ Things the app takes as true because they are handled outside it.
   household or role does not undo it.
   [Decision]
 
-- If someone who has already signed an expense joins the submitter's household
-  before the expense reaches the books, the expense can stay waiting to be
-  booked, with nothing telling finance and no way to give that seat to someone
-  else. This is an accepted risk: it is unlikely ever to happen, and no fix is
-  planned.
+- Someone who has already signed an expense and then joins the household of the
+  submitter or the person reimbursed keeps their signature, and the expense
+  still reaches the books; the app does not check the signers again at booking.
+  A signature that has to be given again is judged anew, so they are refused
+  and another signer takes the seat.
   [Decision — deliberate limit]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
