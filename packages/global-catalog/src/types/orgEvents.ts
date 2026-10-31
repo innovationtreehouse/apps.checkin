@@ -1,8 +1,7 @@
 /**
- * The org-event (S5) contract now lives in the shared `@checkin/receipt-types`
- * package so the producer (this app) and the consumers (workflow-mapping,
- * expense, local-inventory) cannot drift. This module re-exports it to keep
- * existing `@/types/orgEvents` import paths working.
+ * The org-event contract lives in the shared `@checkin/receipt-types` package so
+ * the producer (this app) and the consumers (workflow-mapping, expense,
+ * local-inventory) cannot drift. This module re-exports it for this library's imports.
  */
 export {
   orgEventPayloadSchema,

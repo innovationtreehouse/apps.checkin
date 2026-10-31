@@ -1,5 +1,5 @@
 /**
- * Nav descriptors for the expense screens (#1272 §7). The library declares them; the host
+ * Nav descriptors for the expense screens. The library declares them; the host
  * places them: `EXPENSE_FINANCE_TABS` in the Finance section, `EXPENSE_TABS.settings` under
  * Settings, and `EXPENSE_TABS.approvals` under Programs I Lead.
  */

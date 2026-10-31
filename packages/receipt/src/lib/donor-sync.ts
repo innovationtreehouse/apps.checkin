@@ -7,7 +7,7 @@ const MAX_SENDS = 3;
 
 /**
  * X13: tell donations the receipt's current in-kind state. Which call is made comes from the
- * receipt now, not a stored operation: in-kind sends the donor, otherwise a withdrawal. A
+ * receipt's state, not a stored operation: in-kind sends the donor, otherwise a withdrawal. A
  * `none` receipt (never in-kind) sends nothing. The receipt flips to `synced` only if what was
  * sent is still current; a change made during the call is sent again. Each call carries the
  * receipt's donorSyncSeq, and the callee drops one older than it has seen, so a slow send can

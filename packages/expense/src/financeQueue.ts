@@ -1,7 +1,7 @@
 import type { QueueTab, ReasonCode } from "./lib/reasons";
 
 /**
- * The finance queue's expense tabs (#2481 §3): their keys, the `?queue=` value each rides under on
+ * The finance queue's expense tabs: their keys, the `?queue=` value each rides under on
  * the host's Finance review screen, and the reasons each holds. Shared by the service and the
  * screen, so it imports nothing server-side.
  */

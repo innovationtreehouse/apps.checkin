@@ -139,7 +139,7 @@ export function createCatalogRepository(db: PrismaClient) {
     // One page of items. The matching total is served separately (countItems) via
     // the count route, so the list itself never over-counts — a table-wide total
     // can't ride checkin's model-bag response (the stripper drops non-model
-    // scalars, #1286 §7), so the paginated UI reads the count endpoint for it.
+    // scalars), so the paginated UI reads the count endpoint for it.
     async listItemsPaginated(params: {
       where: Prisma.ItemWhereInput;
       orderBy: Prisma.ItemOrderByWithRelationInput[];
