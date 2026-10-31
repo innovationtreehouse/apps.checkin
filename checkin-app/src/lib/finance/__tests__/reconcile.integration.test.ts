@@ -335,7 +335,7 @@ describe("forward recovery", () => {
         expect(proc?.paidAt).toBeTruthy();
     });
 
-    it("recovers an order carrying the membership item whatever it totals", async () => {
+    it("the forward pass recovers an order carrying the membership item whatever it totals", async () => {
         const email = `short-${TAG}@ex.com`;
         const oid = `${TAG}-102`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
