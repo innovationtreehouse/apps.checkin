@@ -2,11 +2,9 @@
  * @jest-environment node
  */
 /**
- * ToolStatus.userId was renamed userId->participantId->personId (Person =
- * Person). The `their_own` stripper branch was SPLIT so ToolStatus reads
- * `personId` while Account/Session (NextAuth-mandated) keep reading `userId`.
- * Guards that split: a member must still self-scope their own ToolStatus rows,
- * and the Account/Session read must NOT regress.
+ * The `their_own` stripper branch reads `personId` for ToolStatus and `userId`
+ * for Account/Session (NextAuth-mandated). Guards that split: a member self-scopes
+ * their own ToolStatus rows, and Account/Session self-scope on `userId`.
  */
 import { scopesHeld, type CallerContext } from '../access-resolvers';
 
@@ -33,7 +31,7 @@ describe('ToolStatus self-scoping after participantId -> personId rename', () =>
     });
 
     it('reads personId, not the stale participantId, for ToolStatus', () => {
-        // A row carrying only the OLD key must no longer self-scope.
+        // A row carrying only participantId does not self-scope.
         expect(scopesHeld('ToolStatus', { participantId: 7, toolId: 1 }, ctx).has('their_own')).toBe(false);
     });
 

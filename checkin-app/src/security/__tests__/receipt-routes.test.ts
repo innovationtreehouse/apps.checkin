@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Admission and per-row policy for the receipt routes (#1265 §6, plan rules 6
- * and 7), asserted on the registry entries in registry/receipt.ts:
+ * Admission and per-row policy for the receipt routes, asserted on the registry
+ * entries in registry/receipt.ts:
  *
  *   1. An id-less session is denied on every receipt route: lib/auth resolves
  *      it as unauthenticated, so handler() and fileHandler() both 401 and the

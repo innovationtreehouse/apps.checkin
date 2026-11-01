@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * all_current_visitors must not count a tombstoned visit (#1503).
+ * all_current_visitors must not count a tombstoned visit.
  *
  * A Visit is tombstoned, never removed (deletedAt + deletedById). Deleting an
  * OPEN visit therefore leaves departedAt null forever, so `departedAt: null`
@@ -14,8 +14,8 @@
  *     (buildCallerContext, access-resolvers.ts), and
  *   - the per-row Visit predicate (SCOPE_BINDINGS, scopeBindings.ts).
  *
- * Person.all_current_visitors keys on ctx.activeVisitorIds, so it is fixed by
- * the prefetch rather than by its own binding — the last describe pins that so
+ * Person.all_current_visitors keys on ctx.activeVisitorIds, so the prefetch
+ * excludes the visit rather than its own binding — the last describe pins that so
  * the transitive path cannot silently regress.
  */
 import prisma from '@/lib/prisma';

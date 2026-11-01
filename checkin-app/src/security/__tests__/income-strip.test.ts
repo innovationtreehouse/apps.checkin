@@ -2,14 +2,14 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the income library (#1283 §6/§7). Asserts the boundary
+ * Boundary coverage for the income library. Asserts the boundary
  * layer directly, independent of the route files:
  *
  *   1. Income's tiering: every field of the four Prisma row models, the settings
  *      model and the five synthetic views is `internal`, except a Prisma row's
  *      `id` (`public`); the settings model, keyed by org, has no public field.
  *      No pii, personal or secret anywhere.
- *   2. The §7 pins: the synthetic views list no mirror customer column and no
+ *   2. The view limits: the synthetic views list no mirror customer column and no
  *      QuickBooks deposit `Line[]`, `PrivateNote` or entity ref, so the stripper
  *      drops them even if an adapter passes one through.
  *   3. The stripper honours the map: the finance view (everyones:internal) keeps

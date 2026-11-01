@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the expense classifications (#1272 §5). Money, vendor,
+ * Boundary coverage for the expense classifications. Money, vendor,
  * QuickBooks refs and settings are `internal`; person ids, usernames and the
  * reimbursee are `pii`; free text and stored payloads are `personal`. So a view
  * that grants `internal` only (a bucket approver's filtered rows) sees amounts

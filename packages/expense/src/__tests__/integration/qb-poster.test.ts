@@ -1,5 +1,5 @@
 /**
- * QB-2 write path: the outbox drains into QuickBooks through the real QuickBooksClient over an
+ * QuickBooks write path: the outbox drains into QuickBooks through the real QuickBooksClient over an
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";

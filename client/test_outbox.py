@@ -164,12 +164,12 @@ class TestClassifyResponse(unittest.TestCase):
             (500, {}),
             (502, {}),
             (400, {"type": "warming"}),
-            (200, {"type": "warming"}),  # F2: a captive portal's 200 HTML, normalized by post_scan
+            (200, {"type": "warming"}),  # a captive portal's 200 HTML, normalized by post_scan
         ]:
             self.assertEqual(classify_response(status, body), "retry", (status, body))
 
     def test_warming_sentinel_wins_regardless_of_status(self):
-        # F2: post_scan normalizes any non-JSON body (waker HTML, a captive
+        # post_scan normalizes any non-JSON body (waker HTML, a captive
         # portal's login page, ...) to {"type": "warming"} while preserving
         # whatever status the intermediary sent -- often 200, not 400. A
         # status-gated warming check would let a 200 non-JSON body ack a scan
@@ -327,7 +327,7 @@ class TestReplayDrain(unittest.TestCase):
             self.assertEqual(seen, [True])
 
     def test_drain_replays_the_stored_force_close_token(self):
-        # #1347/§5.23a: a confirm the keyholder gave before the outage still
+        # A confirm the keyholder gave before the outage still
         # closes when it lands, and that only works if the token queued with it
         # is sent on the replay. Without it the server parks the close.
         with tempfile.TemporaryDirectory() as d:

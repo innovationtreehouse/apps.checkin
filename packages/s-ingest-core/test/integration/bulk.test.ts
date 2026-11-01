@@ -1,5 +1,5 @@
 /**
- * Integration test for the bulk-export capture + recovery path (F16). Skipped unless
+ * Integration test for the bulk-export capture + recovery path. Skipped unless
  * SHOPIFY_READ_DATABASE_URL is set (and `prisma migrate deploy` has been run against it).
  */
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
@@ -62,7 +62,7 @@ describeDb("bulk-export capture + recovery", () => {
     const exp = await prisma.shopifyBulkExport.findFirst({ where: { storeId: STORE } });
     expect(exp?.jsonl).toBe(JSONL); // stored verbatim
     expect(await prisma.shopOrder.count({ where: { storeId: STORE } })).toBe(1);
-    expect(await prisma.shopRefund.count({ where: { storeId: STORE } })).toBe(1); // F3: inline refund kept
+    expect(await prisma.shopRefund.count({ where: { storeId: STORE } })).toBe(1); // inline refund kept
     expect(await prisma.shopOrderLine.count({ where: { storeId: STORE } })).toBe(1);
   });
 

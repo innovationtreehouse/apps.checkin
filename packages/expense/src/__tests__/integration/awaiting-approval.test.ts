@@ -1,6 +1,6 @@
 /**
  * The approver pill, its "Waiting on you" view and the owner-approval view count all come from
- * one rule (#2501 §8): per caller, below the badge caps, the pill's lines are exactly the lines of
+ * one rule: per caller, below the badge caps, the pill's lines are exactly the lines of
  * the view's expenses, and the owner-approval count is the number of those expenses. Past the
  * caps the badges are a lower bound and the view still lists everything.
  */
