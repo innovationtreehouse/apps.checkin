@@ -173,6 +173,49 @@ describeDb("stock write concurrency", () => {
     });
   });
 
+  describe("a merge removing the provisional row", () => {
+    const removalLog = () => db.inventoryLog.findFirst({ where: { gtin13: PROVISIONAL, fieldChanged: "deleted" } });
+
+    async function seedProvisional() {
+      const { receipts } = services();
+      await receipts.applyReceipt(TEST_ORG_ID, "d-0", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 5, isProvisional: true }]);
+      const shelf = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "shelf" } });
+      await db.orgItem.update({
+        where: { orgGtin: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } },
+        data: { desiredQuantity: 8, locationId: shelf.id },
+      });
+      return shelf;
+    }
+
+    it.each([
+      ["with stock", 7, 12],
+      ["with none", 0, 5],
+    ])("logs a copy when the real row exists %s, because the row's settings are dropped", async (_label, realQty, merged) => {
+      const shelf = await seedProvisional();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: realQty } });
+
+      await services().provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
+
+      expect(await qty(REAL)).toBe(merged);
+      const log = await removalLog();
+      expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: null, username: null, changeType: "automatic", valueAfter: null });
+      expect(JSON.parse(log?.valueBefore ?? "{}")).toEqual({
+        existingQuantity: 5, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: null,
+      });
+    });
+
+    it("logs no copy when the row is renamed onto a new real row, which keeps its settings", async () => {
+      const shelf = await seedProvisional();
+
+      await services().provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
+
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toMatchObject({
+        existingQuantity: 5, desiredQuantity: 8, locationId: shelf.id,
+      });
+      expect(await removalLog()).toBeNull();
+    });
+  });
+
   describe("when the provisional holds no stock", () => {
     const openConflict = () =>
       db.inventoryMergeConflict.create({
