@@ -1,11 +1,12 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
+import { openProcess } from "@/lib/membership/lifecycle";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/membership-ops/applications — in-flight membership applications for the board.
- * Every process not yet ACTIVE, with its household (or, for a per-person process,
+ * Every open process, with its household (or, for a per-person process,
  * its subject person) + external-phase flags.
  *
  * Field visibility is governed by the security registry (isSysadmin/board get the
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const GET = handler("GET /api/membership-ops/applications", async ({ req }) => {
     const archived = new URL(req.url).searchParams.get("archived") === "1";
     const processes = await prisma.orgMembershipProcess.findMany({
-        where: archived ? { status: "ARCHIVED" } : { status: { notIn: ["ACTIVE", "ARCHIVED"] } },
+        where: archived ? { status: "ARCHIVED" } : openProcess.where,
         orderBy: { createdAt: "desc" },
         select: {
             id: true,

@@ -4,6 +4,7 @@ import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizeP
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import type { DbClient } from "@/lib/db-client";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { openProcess } from "@/lib/membership/lifecycle";
 
 /**
  * Emergency-contact write/read model. Enforces the not-a-household-member rule
@@ -327,7 +328,7 @@ export async function reconcileAndWarn(db: Db, householdId: number): Promise<Eme
 export async function findHouseholdsMissingValidContact(db: Db = prisma): Promise<number[]> {
     const scoped = await db.household.findMany({
         where: {
-            orgMembership: { is: { OR: [{ status: "ACTIVE" }, { processes: { some: { status: { not: "ACTIVE" } } } }] } },
+            orgMembership: { is: { OR: [{ status: "ACTIVE" }, { processes: { some: openProcess.where } }] } },
         },
         select: { id: true },
     });

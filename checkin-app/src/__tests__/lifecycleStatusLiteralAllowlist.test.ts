@@ -132,8 +132,6 @@ const ALLOWLIST: Record<string, string> = {
         'I1 heal query: where status=ACTIVE,inventoryHeldAt not null — the off-diagram violation set itself (has no StateSet; it is precisely what validate() rejects).',
 
     // ── multi-status read / query filters (not on a StateSet.where) ──
-    'app/api/membership-ops/applications/route.ts':
-        'Board application list: live view is a set — status notIn {ACTIVE,ARCHIVED}.',
     'lib/nav/todoCounts.ts':
         'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}.',
     'lib/finance/reconcile/reversals.ts':
