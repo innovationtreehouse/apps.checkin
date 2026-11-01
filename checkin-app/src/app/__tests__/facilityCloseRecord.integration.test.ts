@@ -207,6 +207,29 @@ describe('facility close record and departure log (real DB)', () => {
             ], keyholder);
             expect(close.closedAt.getTime()).toBe(scannedAt.getTime());
         });
+
+        it('a pull-back moves the visit to the kiosk close, and its log row names the nightly close it replaced', async () => {
+            asKiosk();
+            const cronAt = new Date(Date.now() - 10 * 60_000);
+            const scannedAt = new Date(Date.now() - HOUR);
+            const nightly = await prisma.facilityClose.create({ data: { closedAt: cronAt, via: 'NIGHTLY_SWEEP', executedAt: cronAt } });
+            await open(keyholder);
+            await open(member, { departedAt: cronAt, departedVia: 'AUTO_CLOSE', facilityCloseId: nightly.id });
+
+            await scanPOST(req('/api/scan', 'POST', {
+                participantId: keyholder.id, clientEventId: `evt-${TAG}`, scannedAt: scannedAt.toISOString(), replay: true, forceCloseConfirmed: true,
+            }));
+
+            const pulledBack = await visitOf(member);
+            expect(pulledBack.facilityCloseId).not.toBe(nightly.id);
+            const row = await prisma.auditLog.findFirstOrThrow({
+                where: { tableName: 'FacilityClose', affectedEntityId: pulledBack.facilityCloseId!, secondaryAffectedEntity: pulledBack.id },
+            });
+            expect(row.newData).toMatchObject({ supersededCloseId: nightly.id });
+
+            await prisma.visit.updateMany({ where: { facilityCloseId: nightly.id }, data: { facilityCloseId: null } });
+            await prisma.facilityClose.delete({ where: { id: nightly.id } });
+        });
     });
 
     describe('kiosk on scan protocol 6 (the kiosk sends the close)', () => {

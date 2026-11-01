@@ -104,7 +104,15 @@ flowchart TD
 ## The web
 
 - **Reads.** No check-in, check-out, force checkout or close. Corrections apply
-  to closed visits; times are corrected on the visit edit screen.
+  to closed visits; times are corrected on the visit edit screen. Board ruling
+  B7/B14, 2026-10-27.
+- **Overlaps.** A website insert or edit that overlaps the person's open visit is
+  refused; one that overlaps a closed visit applies and is flagged for review.
+- **Roster marks.** A Present mark, made after the session starts and with a
+  departure, links a kiosk visit covering the session or else creates a closed
+  visit. It never opens or ends a visit.
+- **Which close ended a visit.** The visit's own link to the close decides. The
+  close log is never edited; a pull-back's log row names the close it replaced.
 - **With a recent kiosk heartbeat:** shows who is in, whether the building is
   open, and supervision state. No-keyholder visits are shown as such and never
   make the building look open.

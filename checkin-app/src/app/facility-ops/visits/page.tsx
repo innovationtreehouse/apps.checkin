@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Alert, Button, Group, Modal, Select, Stack, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { Alert, Button, Group, Modal, Select, Stack, Switch, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconDeviceLaptop, IconLock, IconRobot, IconScan, IconSelector, IconUserCheck } from '@tabler/icons-react';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -21,6 +21,7 @@ type Visit = {
   departedAt?: string | null;
   arrivedVia?: VisitSource | null;
   departedVia?: VisitSource | null;
+  facilityCloseId?: number | null;
   person?: { name?: string | null; email?: string | null } | null;
   event?: { name?: string | null } | null;
 };
@@ -107,6 +108,7 @@ export default function AdminVisitsPage() {
   const [addError, setAddError] = useState('');
   const [adding, setAdding] = useState(false);
 
+  const [closedOut, setClosedOut] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: 'arrivedAt', dir: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [confirmEditOpened, { open: openConfirmEdit, close: closeConfirmEdit }] = useDisclosure(false);
@@ -123,18 +125,20 @@ export default function AdminVisitsPage() {
           ),
         )
       : visits;
+    // The server sends the closed-out list grouped by close.
+    if (closedOut) return matching;
     return [...matching].sort((a, b) => {
       const av = sortValue(a, sort.key);
       const bv = sortValue(b, sort.key);
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sort.dir === 'asc' ? cmp : -cmp;
     });
-  }, [visits, sort, searchTerm]);
+  }, [visits, sort, searchTerm, closedOut]);
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
-  const fetchVisits = useCallback(() => fetch('/api/facility/visits')
+  const fetchVisits = useCallback(() => fetch(closedOut ? '/api/facility/visits?closedOut=true' : '/api/facility/visits')
     .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
@@ -149,7 +153,7 @@ export default function AdminVisitsPage() {
     .finally(() => {
       setLoading(false);
     }),
-  []);
+  [closedOut]);
 
   useEffect(() => {
     if (ready) fetchVisits();
@@ -304,6 +308,11 @@ export default function AdminVisitsPage() {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.currentTarget.value)}
         />
+        <Switch
+          label="Closed out by a close"
+          checked={closedOut}
+          onChange={(e) => setClosedOut(e.currentTarget.checked)}
+        />
         <Button size="xs" fz={15} onClick={openAddModal}>Add Visit</Button>
       </Group>
 
@@ -316,6 +325,7 @@ export default function AdminVisitsPage() {
               <SortableTh sort={sort} onSort={toggleSort} k="event" label="Event" />
               <SortableTh sort={sort} onSort={toggleSort} k="arrivedAt" label="Arrived" />
               <SortableTh sort={sort} onSort={toggleSort} k="departedAt" label="Departed" />
+              {closedOut && <Table.Th>Close</Table.Th>}
               <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -344,6 +354,7 @@ export default function AdminVisitsPage() {
                         onChange={(e) => setEditForm({ ...editForm, departedAt: e.currentTarget.value })}
                       />
                     </Table.Td>
+                    {closedOut && <Table.Td>#{v.facilityCloseId}</Table.Td>}
                     <Table.Td>
                       <Stack gap={6}>
                         <Group gap="xs" wrap="nowrap">
@@ -370,6 +381,9 @@ export default function AdminVisitsPage() {
                         </Group>
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
+                    {closedOut && (
+                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : 'Keyholder'}</Table.Td>
+                    )}
                     <Table.Td>
                       {v.departedAt ? (
                         <Group gap="xs" wrap="nowrap">
