@@ -1,0 +1,52 @@
+name: Kiosk flow tests
+
+# Runs the kiosk image built from client/Dockerfile against the dockerized dev
+# server, with a throwaway signing key (deploy/kiosk-flow.sh). Native arm64, so it
+# tests the architecture that ships. See AGENTS.md → Flow tests.
+
+on:
+  pull_request:
+    branches: [main, 'rel/**']
+    paths:
+      - 'client/**'
+      - 'checkin-app/kiosk-flow/**'
+      - 'checkin-app/jest.kiosk-flow.config.mjs'
+      - 'checkin-app/src/app/api/scan/**'
+      - 'checkin-app/src/app/api/attendance/**'
+      - 'checkin-app/src/app/api/system-status/kiosk-version/**'
+      - 'checkin-app/src/lib/attendance/**'
+      - 'checkin-app/src/lib/verify-kiosk.ts'
+      - 'checkin-app/src/lib/kioskSeen.ts'
+      - 'deploy/docker-compose.flow.yml'
+      - 'deploy/docker-compose.flow-kiosk.yml'
+      - 'deploy/kiosk-flow.sh'
+      - '.github/workflows/kiosk-flow-tests.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kiosk-flow:
+    name: Kiosk image flow tests (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The old image is built from a pinned commit.
+          fetch-depth: 0
+
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
+        with:
+          role-to-assume: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+          aws-region: us-east-2
+
+      - name: Run the kiosk flow tier
+        run: deploy/kiosk-flow.sh

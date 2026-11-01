@@ -162,6 +162,12 @@ routes, auth, and DB together.
   behind an `as` cast — CI stayed fully green while every Google sign-in on
   the dev instance 500'd in the OAuth callback.
 
+**Kiosk flow tier:** `checkin-app/kiosk-flow/*.kiosk-flow.ts` runs the real image
+from `client/Dockerfile` on the flow stack, with a throwaway signing key and a
+fake `evdev` fed from a pipe. Run it with `npm run test:flow:kiosk`, a Docker-backed
+tier: ask first. CI runs it on arm64 for PRs touching `client/**` or kiosk routes.
+It does not cover the real scanner, Chromium or the host's systemd units.
+
 To add a journey: drop a `flow-tests/<name>.flow.test.ts` using `loginAs`/`api`,
 keep it to real HTTP calls + response assertions. Prefer routes that don't need
 external integrations (Zoho/Shopify/Averity); use the board/admin manual-action
