@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -112,7 +113,7 @@ describe("Manual receipt upload", () => {
   });
 
   it("shows a refused upload as a red notice that stays until dismissed", async () => {
-    uploadMock.mockRejectedValue(new Error("At least one line item is required"));
+    uploadMock.mockRejectedValue(new HttpError("At least one line item is required", 409));
     renderManual();
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     await waitFor(() =>

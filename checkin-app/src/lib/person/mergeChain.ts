@@ -47,6 +47,12 @@ export async function walkMergeChain(id: number): Promise<{ resolution: MergeRes
     return { resolution: { kind: "live", person, first, hops }, chain };
 }
 
+/** The ids merged into this person; a merge repoints older archive rows, so each names its final survivor. */
+export async function mergedAwayIdsOf(id: number): Promise<number[]> {
+    const rows = await prisma.personMerge.findMany({ where: { toId: id }, select: { fromId: true } });
+    return rows.map((r) => r.fromId);
+}
+
 /** The live Person an id resolves to; see walkMergeChain. */
 export async function resolveMergedPerson(id: number): Promise<MergeResolution> {
     return (await walkMergeChain(id)).resolution;

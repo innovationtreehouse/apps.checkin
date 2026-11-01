@@ -23,25 +23,20 @@ import {
 } from '../../membership/householdStatus';
 
 /**
- * CAS guard ↔ TRANSITIONS from-state parity (#1080) — the real drift-closer.
+ * CAS guard ↔ TRANSITIONS from-state parity.
  *
- * `TRANSITIONS` used to carry `guardSite` as a doc string only; each of the ~10 CAS
- * guards re-hand-wrote `where: { status: <FROM> }`, and nothing checked that literal
- * against the table. A status rename/split could desync a guard from its declared
- * transition silently.
- *
- * Now every migratable guard spreads `...fromWhere(<fromState>)`, sourcing its
+ * Every spreading guard uses `...fromWhere(<fromState>)`, sourcing its
  * from-state `status` clause from the ONE definition. This test pins that link:
  *
  *   1. `fromWhere(from)` emits exactly the from-state's identifying `status` clause.
  *   2. Each guard's declared from-state is a real node in that machine's TRANSITIONS,
  *      and (for forward guards) the declared `from → to` edge exists in the table.
- *   3. Migrated guards actually consume `fromWhere(<from>)` in source; guards left
+ *   3. Spreading guards actually consume `fromWhere(<from>)` in source; guards left
  *      literal (documented) still carry their literal, and its status agrees with
  *      the definition.
  *
  * Because a status rename flows through the enum-parity line → the local union →
- * `fromWhere` → every spreading guard at once, a guard can no longer drift from the
+ * `fromWhere` → every spreading guard at once, a guard cannot drift from the
  * table by construction; this test guards the pieces that aren't purely structural.
  */
 
@@ -56,7 +51,7 @@ type GuardSite = {
     /** Transition the guard drives, as [from, to]; omit for a guard that changes no
      *  status at all (e.g. a flag-only deny). */
     edge?: [string, string];
-    /** 'spread' = migrated onto fromWhere; 'read' = fromWhere(<row>.status), CAS on the
+    /** 'spread' = spreads fromWhere; 'read' = fromWhere(<row>.status), CAS on the
      *  status just read (a guard serving several from-states); 'literal' = intentionally kept literal;
      *  'helper' = a setHouseholdStatus call naming `from` in its from-list and edge[1] as `to`. */
     mode: 'spread' | 'read' | 'literal' | 'helper';
@@ -76,7 +71,7 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'ACTIVE'], mode: 'spread' },
     { file: 'lib/membership/renewal.ts', machine: 'membership', from: 'PENDING_RENEWAL', edge: ['PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
     { file: 'lib/membership/intake.ts', machine: 'membership', from: 'INTAKE', edge: ['INTAKE', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
-    { file: 'lib/membership/archive.ts', machine: 'membership', from: 'ARCHIVED', edge: ['ARCHIVED', 'PENDING_PAYMENT'], mode: 'spread' }, // unarchive: reverse of #13 (one representative target)
+    { file: 'lib/membership/archive.ts', machine: 'membership', from: 'ARCHIVED', edge: ['ARCHIVED', 'PENDING_PAYMENT'], mode: 'spread' }, // unarchive: one representative target
     // close: CAS on the status it read (one representative closable step)
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ARCHIVED'], mode: 'read' },
     { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'spread' },

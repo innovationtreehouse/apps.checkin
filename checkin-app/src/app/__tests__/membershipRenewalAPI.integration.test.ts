@@ -101,7 +101,7 @@ describe('Membership renewal', () => {
         expect(proc?.status).toBe('PENDING_RENEWAL');
         expect(proc?.kind).toBe('RENEWAL');
 
-        // The sweep no longer reminds — the settings/outreach page is the only send surface.
+        // The sweep never reminds — the settings/outreach page is the only send surface.
         expect(sendEmail).not.toHaveBeenCalled();
 
         const second = await runRenewalSweep(now);

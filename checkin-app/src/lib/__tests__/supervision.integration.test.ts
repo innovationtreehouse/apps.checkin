@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration coverage for the supervising-adult test (#1436 / #1550) against a
+ * Integration coverage for the supervising-adult test against a
  * real Postgres — the half the unit tests mock away is the query itself: the
  * nested membership filter, and the participant-seat probe's "programme in
  * session now" OR (an event bracketing now, or the programme's own dates).

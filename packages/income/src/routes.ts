@@ -9,8 +9,10 @@ import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
 import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
 import { runReconcile } from "./lib/reconcile";
+import { DEPOSIT_SOURCE } from "./lib/sources";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
+import { getIncomeSettings, updateIncomeSettings } from "./services/settingsService";
 
 const NOT_AN_OBJECT = "Expected a JSON object";
 
@@ -65,7 +67,7 @@ export const getPayout: IncomeRouteHandler = async ({ params }) => {
   const orgId = await getOrgId();
   const [transactions, reconciliation] = await Promise.all([
     mirror.transactions(gid),
-    db.payoutReconciliation.findUnique({ where: { orgId_payoutGid: { orgId, payoutGid: gid } } }),
+    db.payoutReconciliation.findUnique({ where: { orgId_source_payoutGid: { orgId, source: DEPOSIT_SOURCE.SHOPIFY, payoutGid: gid } } }),
   ]);
   return { IncomePayoutView: payout, IncomeBalanceTxnView: transactions, PayoutReconciliation: reconciliation };
 };
@@ -123,6 +125,19 @@ export const clearItemCategory: IncomeRouteHandler = async ({ params }) => {
   const variant = variantId(params.variantId);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return { IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.clearCategory(orgId, variant, who)) };
+};
+
+export const getSettings: IncomeRouteHandler = async () => {
+  const orgId = await getOrgId();
+  return { IncomeOrgSettings: { orgId, ...(await getIncomeSettings(orgId)) } };
+};
+
+/** The roles come from the host's auth context, because the library's principal carries none. */
+export const updateSettings = (roles: { isFinance: boolean; isBoard: boolean }): IncomeRouteHandler => async ({ req }) => {
+  const patch = await parseBody(req, z.unknown());
+  const [orgId, who] = await Promise.all([getOrgId(), actor()]);
+  const next = await mapServiceErrors(() => updateIncomeSettings(orgId, patch, { ...who, ...roles }));
+  return { IncomeOrgSettings: { orgId, ...next } };
 };
 
 export const listExclusions: IncomeRouteHandler = async () => ({

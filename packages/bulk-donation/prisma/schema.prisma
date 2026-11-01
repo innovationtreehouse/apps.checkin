@@ -197,8 +197,8 @@ model DisbursementHold {
   @@map("disbursement_holds")
 }
 
-// The qb* columns are neither read nor written: income owns every deposit. They stay mapped
-// until no deployed release reads them (QB_ENTRY_OWNERSHIP, the exclusion-table PR drops them).
+// Income owns every deposit. The qb* columns are unmapped from the client until a release without
+// them is live, then dropped (QB_ENTRY_OWNERSHIP).
 model DisbursementEvent {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -211,21 +211,21 @@ model DisbursementEvent {
   /// @sensitivity:internal
   createdAt      DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
-  qbMatchState   String   @default("UNMATCHED") @map("qb_match_state")
+  qbMatchState   String   @default("UNMATCHED") @map("qb_match_state") @ignore
   /// @sensitivity:internal
-  qbTxnId        String?  @map("qb_txn_id")
+  qbTxnId        String?  @map("qb_txn_id") @ignore
   /// @sensitivity:internal
-  qbDepositTotalCents Int?    @map("qb_deposit_total_cents")
+  qbDepositTotalCents Int?    @map("qb_deposit_total_cents") @ignore
   /// @sensitivity:internal
-  qbDepositTxnDate    String? @map("qb_deposit_txn_date")
+  qbDepositTxnDate    String? @map("qb_deposit_txn_date") @ignore
   /// @sensitivity:internal
-  qbDriftedTxnId      String? @map("qb_drifted_txn_id")
+  qbDriftedTxnId      String? @map("qb_drifted_txn_id") @ignore
   /// @sensitivity:internal
-  qbDriftCause        String? @map("qb_drift_cause")
+  qbDriftCause        String? @map("qb_drift_cause") @ignore
   /// @sensitivity:internal
-  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at") @ignore
   /// @sensitivity:internal
-  qbNote              String? @map("qb_note")
+  qbNote              String? @map("qb_note") @ignore
 
   @@unique([orgId, disbursementId])
   @@unique([orgId, qbTxnId])
@@ -280,37 +280,23 @@ model WorkflowEvent {
   @@map("workflow_events")
 }
 
-// A QuickBooks entry finance has permanently removed from matching.
-model DonationQbMatchExclusion {
-  /// @sensitivity:internal
-  id               Int      @id @default(autoincrement())
-  /// @sensitivity:internal
-  orgId            String   @map("org_id")
-  /// @sensitivity:internal
-  qbTxnId          String   @map("qb_txn_id")
-  /// @sensitivity:internal
-  reason           String
-  /// @sensitivity:internal
-  excludedByUserId Int      @map("excluded_by_user_id")
-  /// @sensitivity:internal
-  excludedAt       DateTime @default(now()) @map("excluded_at")
-
-  @@unique([orgId, qbTxnId])
-  @@map("qb_match_exclusion")
-}
-
 // The in-kind lane's QuickBooks settings, one row per org. qbPostingOnAt and
-// depositsHandedOverAt are neither read nor written, and are dropped with the qb* event columns.
+// depositsHandedOverAt are unmapped from the client and dropped with the qb* event columns.
 model DonationOrgSettings {
   /// @sensitivity:internal
   orgId         String    @id @map("org_id")
   /// @sensitivity:internal
-  qbPostingOnAt DateTime? @map("qb_posting_on_at")
+  qbPostingOnAt DateTime? @map("qb_posting_on_at") @ignore
   // When the in-kind lane's posting switched on; set once, by its first run with QuickBooks and every in-kind books-map role.
   /// @sensitivity:internal
   inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
   /// @sensitivity:internal
-  depositsHandedOverAt DateTime? @map("deposits_handed_over_at")
+  depositsHandedOverAt DateTime? @map("deposits_handed_over_at") @ignore
+  // Days either side of a gift's date a QuickBooks entry may match.
+  /// @sensitivity:internal
+  qbMatchWindowDays Int @default(7) @map("qb_match_window_days")
+  /// @sensitivity:internal
+  qbMaxCreatesPerRun Int @default(25) @map("qb_max_creates_per_run")
 
   @@map("donation_org_settings")
 }

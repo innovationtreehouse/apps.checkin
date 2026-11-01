@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the previously-untested payment-plan routes:
+ * Integration tests for the payment-plan routes:
  *   GET  /api/finance-ops/payment-plans               (board-only queue)
  *   POST /api/finance-ops/payment-plans               (board approves → ACTIVE)
  *   POST /api/programs/[id]/request-payment-plan   (request, with IDOR guard)
@@ -47,7 +47,7 @@ const { __getSentEmails, __clearSentEmails } =
 
 const TAG = 'payment-plans-test';
 
-// GET is now a security handler() and POST a withAuth() wrapper — both take a
+// GET is a security handler() and POST a withAuth() wrapper — both take a
 // NextRequest. Plain Request carries the fields authenticateRequest reads.
 function nextReq(url = 'http://localhost/api/finance-ops/payment-plans', init?: RequestInit) {
     return new Request(url, init) as unknown as import('next/server').NextRequest;
@@ -84,7 +84,7 @@ describe('Program payment-plan routes', () => {
         householdIds.push(board.householdId);
 
         // A second board member in a DIFFERENT household — the non-conflicted
-        // approver, and (since #1083 gated sysadmins out of finance-ops) the
+        // approver, and (since finance-ops excludes sysadmins) the
         // remedy when the first board member has a household conflict.
         const board2 = await prisma.person.create({
             data: { name: 'PP Board Two', email: `board2-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH2" } } },
@@ -387,8 +387,8 @@ describe('Program payment-plan routes', () => {
             });
             expect(row?.status).toBe('PENDING'); // unchanged — nothing approved
 
-            // Sysadmins are gated out of finance-ops entirely (#1083), so they are
-            // no longer the COI remedy here — a non-conflicted board member is.
+            // Sysadmins are gated out of finance-ops entirely, so they are
+            // not the COI remedy here — a non-conflicted board member is.
             mockSession.mockResolvedValue({ user: { id: boardId, isSysadmin: true } });
             const denied = await PlansPost(nextReq('http://localhost', {
                 method: 'POST',
@@ -683,7 +683,7 @@ describe('Program payment-plan routes', () => {
                 });
                 expect(audit).not.toBeNull();
 
-                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all — this supersedes the earlier deny-time +1
+                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all
 
                 // Double-refuse: the second call finds isPaymentPlanRequested
                 // already false -> 409, no-op.

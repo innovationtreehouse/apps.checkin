@@ -1,10 +1,15 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import type { OutcomeNotice } from "../../contract";
 import { OUTCOME_ATTEMPTS, oweOutcomeNotice, sweepOutcomeNotices } from "../../services/outcomeNotices";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+
+vi.mock("../../services/outcomeNotices", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../services/outcomeNotices")>();
+  return { ...real, oweOutcomeNotice: vi.fn(real.oweOutcomeNotice) };
+});
 
 type Sent = { notice: OutcomeNotice; to: "uploader" | "reimbursee" };
 
@@ -113,17 +118,18 @@ describeDb("receipt outcome notices", () => {
 
   it("commits the notice with the state change and rolls it back with it", async () => {
     const id = await aliceReceiptIn("financial_review");
-    await expect(
-      db.$transaction(async (tx) => {
-        await tx.receiptDetail.update({ where: { id }, data: { state: "rejected" } });
-        await oweOutcomeNotice(tx, TEST_ORG_ID, id, "receipt_rejected");
-        throw new Error("crash before commit");
-      }),
-    ).rejects.toThrow("crash before commit");
+    const real = await vi.importActual<typeof import("../../services/outcomeNotices")>("../../services/outcomeNotices");
+    vi.mocked(oweOutcomeNotice).mockImplementationOnce(async (...args) => {
+      await real.oweOutcomeNotice(...args);
+      expect(await args[0].receiptOutcomeNotice.count({ where: { receiptId: id } })).toBe(1);
+      throw new Error("crash before commit");
+    });
+    actAs(FINANCE);
+    await expect(receiptService.rejectFinancial(id, "late")).rejects.toThrow("crash before commit");
     expect(await stateOf(id)).toBe("financial_review");
     expect(await notices(id)).toHaveLength(0);
+    expect(sent).toEqual([]);
 
-    actAs(FINANCE);
     await receiptService.rejectFinancial(id, "late");
     expect(await stateOf(id)).toBe("rejected");
     expect(await notices(id)).toHaveLength(1);

@@ -25,6 +25,8 @@ export type WireContext = {
     signedRequest: boolean;
     /** A live close from a badge that is not a keyholder: the scan went through as itself. */
     closeRefused?: boolean;
+    /** The latest finished nightly close, read by the route after the scan commits. */
+    lastNightlyCloseAt?: string | null;
 };
 
 /**
@@ -139,7 +141,8 @@ async function wireBody(result: ScanResult, ctx: WireContext): Promise<{ body: R
 /** The kiosk wire for a scan's result: the only place its statuses, messages and flags are decided. */
 export async function toResponse(result: ScanResult, ctx: WireContext): Promise<Response> {
     const { body, status } = await wireBody(result, ctx);
+    const closeTime = { lastNightlyCloseAt: ctx.lastNightlyCloseAt };
     return apiJson(ctx.closeRefused
-        ? { ...body, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }
-        : body, status);
+        ? { ...body, ...closeTime, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }
+        : { ...body, ...closeTime }, status);
 }

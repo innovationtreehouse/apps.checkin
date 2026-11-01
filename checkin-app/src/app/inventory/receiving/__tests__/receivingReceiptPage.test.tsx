@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
@@ -143,7 +144,7 @@ describe("the receiving page for one receipt", () => {
   });
 
   it("doesn't push when the proceed is refused", async () => {
-    mockApi.mockRejectedValueOnce(new Error("1 line item(s) still unrecognized"));
+    mockApi.mockRejectedValueOnce(new HttpError("1 line item(s) still unrecognized", 409));
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Proceed" }));
     await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "1 line item(s) still unrecognized" })));
@@ -151,7 +152,7 @@ describe("the receiving page for one receipt", () => {
   });
 
   it("keeps a failed save open as a red notification", async () => {
-    mockApi.mockRejectedValue(new Error("Receipt is already being applied"));
+    mockApi.mockRejectedValue(new HttpError("Receipt is already being applied", 409));
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Proceed" }));
     await waitFor(() =>

@@ -1,4 +1,5 @@
 import { db, isUniqueConstraintError } from "../db";
+import { readIncomeSettings } from "./settingsService";
 import type { QbDeposit } from "../contract";
 import { getIncomeConfig } from "../runtime";
 import {
@@ -49,11 +50,11 @@ async function bankOf(row: { source: string }): Promise<string | undefined> {
 }
 
 /** Deposits into the row's bank account dated within ±window of its date, read live from QuickBooks. */
-async function windowDeposits(row: { source: string; payoutDate: string }): Promise<QbDeposit[]> {
+async function windowDeposits(row: { orgId: string; source: string; payoutDate: string }): Promise<QbDeposit[]> {
   const { deposits: source } = getIncomeConfig();
   const bank = await bankOf(row);
   if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
-  const w = windowDays(row.source);
+  const w = windowDays(row.source, (await readIncomeSettings(db, row.orgId)).benevityMatchWindowDays);
   const from = addDays(row.payoutDate, -w);
   const to = addDays(row.payoutDate, w);
   return (await depositsIn(source, [[from, to]])).filter((d) => d.depositToAccount === bank);
@@ -159,7 +160,8 @@ async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: stri
   const accounts = await roleAccounts();
   const banks = { [DEPOSIT_SOURCE.SHOPIFY]: accounts[BANK_ROLE.shopify], [DEPOSIT_SOURCE.BENEVITY]: accounts[BANK_ROLE.benevity] };
   if (!source || (!banks.shopify && !banks.benevity)) throw new ServiceError(503, "QuickBooks is not connected");
-  const windows = rows.map((r) => matchWindow(r.payoutDate, r.source));
+  const { benevityMatchWindowDays } = await readIncomeSettings(client, orgId);
+  const windows = rows.map((r) => matchWindow(r.payoutDate, r.source, benevityMatchWindowDays));
   const d = (await depositsIn(source, windows.map((w): [string, string] => [w.from, w.to]))).find((x) => x.id === qbTxnId);
   if (!d) return false;
   return rows.some((row, i) =>

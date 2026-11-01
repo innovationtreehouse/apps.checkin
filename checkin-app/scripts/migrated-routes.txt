@@ -94,6 +94,8 @@ GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual/[id]/load-inventory
+GET /api/donations/settings
+PATCH /api/donations/settings
 # Expense (#1272 L3 W) — library route factories via handler().
 GET /api/expense/local-owners
 POST /api/expense/flags/[id]/check-off
@@ -167,6 +169,8 @@ PUT /api/income/items/[variantId]/category
 DELETE /api/income/items/[variantId]/category
 GET /api/income/qb-exclusions
 POST /api/income/qb-exclusions
+GET /api/income/settings
+PATCH /api/income/settings
 
 # Receipt (#1265 W): library service calls via handler().
 POST /api/receipts/upload

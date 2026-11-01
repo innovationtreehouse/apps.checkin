@@ -195,20 +195,15 @@ export const membershipFeeSettledAwaitingBg = defineStateSet<Where>()({
     flags: { paidAt: true },
 });
 
-// ── renewal grantability & settled-this-cycle ────────────────
+// ── grantability & settled-this-cycle ────────────────
 
 /**
- * The "this renewal is payable now" set the coming-year grant derives from:
- * a RENEWAL at PENDING_PAYMENT — full stop. NOT gated on bgClearedAt: the
- * grant comps PAYMENT ONLY and the background-check gate stays independent, so a
- * parallel-track renewal (paid ahead of BG, bgClearedAt null) is grantable and
- * settles to PENDING_BG_CLEARANCE, while a cleared one settles to ACTIVE — activate()
- * makes that split, BG is never bypassed. Both the list route's `renewalGrantable`
- * probe and `grantRenewalPayment`'s row lookup use this ONE fragment; the COI check
- * inside certifyPaymentPlan stays on top for every actor.
+ * An application a board grant can pay now: joining or renewing, at PENDING_PAYMENT.
+ * NOT gated on bgClearedAt: a grant pays and the background check stays an independent
+ * gate, so activate() settles an uncleared application to PENDING_BG_CLEARANCE.
  */
-export const grantableRenewalWhere: Where = {
-    kind: "RENEWAL",
+export const grantableApplicationWhere: Where = {
+    kind: { in: ["INITIAL", "RENEWAL"] },
     status: "PENDING_PAYMENT",
 };
 
@@ -377,7 +372,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board", guardSite: "renewal.ts grantRenewalPayment → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantMembership", actor: "board", guardSite: "grant.ts grantMembership → certifyPaymentPlan (COI) → activate" },
     // Clearance convergence
     { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },

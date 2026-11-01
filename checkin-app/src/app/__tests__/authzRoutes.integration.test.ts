@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * Authorization-boundary tests for sensitive (PII / impersonation) routes that
- * previously had no integration coverage. Focus: who is rejected.
+ * Authorization-boundary tests for sensitive (PII / impersonation) routes. Focus: who is rejected.
  *   - GET /api/safety/emergency-contacts   (isSysadmin | isBoardMember | isKeyholder)
  *   - GET /api/people/search  (isSysadmin | isBoardMember | isOperations — isKeyholder
  *     MUST be denied; an operations-only caller gets a stripped, ops-only shape)
@@ -289,7 +288,7 @@ describe('Sensitive route authorization', () => {
             process.env.CHECKIN_ENV = 'dev';
             mockSession.mockResolvedValue({ user: { id: personaId } });
             // Search by the unique seed tag so the assertion is independent of the 50-row cap /
-            // name ordering (the list now spans every participant, not just a handful).
+            // name ordering (the list spans every participant).
             const res = await DevPersonasGet(
                 req(`http://localhost/api/auth/dev-personas?q=persona-${TAG}`),
             );

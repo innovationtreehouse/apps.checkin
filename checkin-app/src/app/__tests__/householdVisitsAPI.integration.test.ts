@@ -77,7 +77,7 @@ describe('Household Visits API Integration Tests', () => {
         });
         testOtherHouseUserId = otherUser.id;
 
-        // Every participant now belongs to a household; this user's own household simply has no visits.
+        // Every participant belongs to a household; this user's own household simply has no visits.
         const noHouseUser = await prisma.person.create({
             data: { email: 'nohouse-visits-api-test@example.com', name: 'No House User', household: { create: { name: "Test HH" } } }
         });

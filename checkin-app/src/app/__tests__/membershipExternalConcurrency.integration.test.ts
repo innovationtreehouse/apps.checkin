@@ -7,8 +7,7 @@
  * Zoho webhook signing the contract + a board "mark bg consent" action) must
  * advance the process to PENDING_BG_REVIEW exactly once — one audit row, one
  * reviewer notification — and must never regress a process already past
- * PENDING_EXTERNAL_ACTION. Regression guard for the TOCTOU race fixed in
- * lib/membership/external.ts.
+ * PENDING_EXTERNAL_ACTION. Guards the check-then-act window in lib/membership/external.ts.
  */
 
 import { markContractSigned, markBgConsent, advanceExternalIfComplete } from '@/lib/membership/external';

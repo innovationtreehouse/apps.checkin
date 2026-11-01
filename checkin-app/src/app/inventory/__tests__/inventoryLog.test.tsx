@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -102,7 +103,7 @@ describe("inventory log, by receipt or donation", () => {
   it("keeps the receipt id as text and raises a chip that stays up when the lookup fails", async () => {
     setSearchParams("view=applies");
     const show = jest.spyOn(notifications, "show");
-    renderWithProviders(<InventoryLogPage receivedReceiptIds={async () => { throw new Error("HTTP 500"); }} />);
+    renderWithProviders(<InventoryLogPage receivedReceiptIds={async () => { throw new HttpError("HTTP 500", 500); }} />);
     await waitFor(() => expect(show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red", autoClose: false, title: "Couldn't link receipts to Part mapping", message: "HTTP 500",
     })));

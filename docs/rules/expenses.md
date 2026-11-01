@@ -101,15 +101,40 @@ Things the app takes as true because they are handled outside it.
 
 - When finance rejects a receipt, its uploader gets one email naming the
   retailer and date and linking to the receipt, and so does the person
-  reimbursed when that is someone else. Neither email names the other person,
-  and neither carries finance's reason or the total.
+  reimbursed when that is someone else, unless the next rule skips that person.
+  Neither email names the other person, and neither carries finance's reason or
+  the total.
   [Decision — owner ruling 2026-10-31]
+
+- A rejection email goes only to a person with a linked sign-in and an email
+  address who has not turned off "Email me about my receipts and
+  reimbursements" or all email. Anyone else's copy is dropped, not held: it is
+  not sent if they later sign in or turn email back on. Unsubscribing from
+  invitations does not stop it. A skipped uploader still sees the rejection and
+  the reason in My receipts. A send that fails gets three tries in all, the
+  later ones in the daily sweep, and is then given up.
+  [Decision]
 
 - Once a receipt is finalized, its uploader sees in the receipt pages what
   became of the purchase: receiving, the expense's approval and booking, with
   the reason on a rejected line, and an in-kind gift's decision. The person
   reimbursed sees the same for a receipt someone else uploaded for them.
   [Decision — owner]
+
+- When an expense closes with a rejected line, or a reimbursement is signed off
+  and sent to the books, the receipt's uploader and the person reimbursed each
+  get one email naming the retailer and date and linking to the receipt. A card
+  charge's sign-off, a backfill, and an approver's exception send none. Neither
+  email names the other person, and neither carries a line's note or the total.
+  [Decision — owner ruling 2026-10-31]
+
+- A person may turn the receipt and reimbursement emails off; turning off all
+  email also stops them. They are on until turned off. Only a live person with
+  a verified sign-in email is emailed.
+  [Decision — owner ruling 2026-10-31; *Principle: fail closed*]
+
+- An outcome email carries only what its recipient's own receipt pages show.
+  [Decision — *Principle: least privilege*]
 
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
@@ -413,6 +438,12 @@ Things the app takes as true because they are handled outside it.
   household or role does not undo it.
   [Decision]
 
+- Whether an expense needs a Board seat or the Board's approval is settled when
+  it closes, using the facts of that moment. If the person reimbursed later
+  loses their membership, or the Board-review total is later lowered, the expense
+  still reaches the books and needs no new signature or approval.
+  [Decision — owner ruling 2026-10-31]
+
 - Someone who has already signed an expense and then joins the household of the
   submitter or the person reimbursed keeps their signature, and the expense
   still reaches the books; the app does not check the signers again at booking.
@@ -523,6 +554,17 @@ the parts specific to expenses.
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
+
+- The window for matching an expense to a QuickBooks entry, one to 30 days either
+  side of its date, is a setting. Finance or the Board may change it in either
+  direction. Each change is recorded.
+  [Decision — owner]
+
+- How many QuickBooks entries the app may create per run and per day are settings,
+  25 and 50 by default. Finance may lower them; raising one takes the Board. The
+  per-run limit may not exceed the per-day limit. Each change is recorded. No
+  dollar limit per run applies to expenses.
+  [Decision — owner]
 
 - Finance may skip an expense that waits on it to reach the books, giving a
   reason. The record keeps who skipped it and why. The app never books or

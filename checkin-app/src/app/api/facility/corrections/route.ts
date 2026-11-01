@@ -95,9 +95,9 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
             tableName: r.tableName,
             affectedEntityId: r.affectedEntityId,
             secondaryAffectedEntity: r.secondaryAffectedEntity,
-            // Rebuilt, not copied: `type` + `significance` only. oldData never
+            // Rebuilt, not copied: these three named fields only. oldData never
             // rides at all — the before-state ships solely via the Visit pair below.
-            newData: { type: newData.type, significance: newData.significance },
+            newData: { type: newData.type, significance: newData.significance, overlapsVisitIds: newData.overlapsVisitIds },
         };
     });
 

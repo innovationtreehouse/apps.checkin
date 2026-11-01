@@ -38,8 +38,8 @@
  * its receipt or donation date, value and lines, the donor (`pii`), who
  * recorded it, its join, anomaly and decision timestamps, the bucket, its queue
  * state and what it waits on, each booking side's state, and, for a gift
- * without a receipt, its inventory source key and when its goods loaded. All
- * but the three donor fields are `internal`.
+ * without a receipt, its inventory source key, when its goods loaded, and why
+ * the last load failed. All but the three donor fields are `internal`.
  *
  * InKindGiftDetailLineView — one line of that gift: item and its description,
  * quantity, the value finance set and the value ops suggested, all `internal`.
@@ -162,6 +162,7 @@ export const classifications = {
     expenseBooking: "internal",
     inventorySourceKey: "internal",
     inventoryLoadedAt: "internal",
+    inventoryLoadFailureReason: "internal",
   },
   InKindGiftDetailLineView: {
     id: "internal",

@@ -5,7 +5,7 @@
  * The tombstone migration's core claim, against a real Postgres.
  *
  * `Visit_one_open_per_participant` is a partial unique index. It is predicated
- * on `deletedAt IS NULL` so a tombstoned open visit no longer counts as "open":
+ * on `deletedAt IS NULL` so a tombstoned open visit does not count as "open":
  * without that predicate its person could never check in again — every later
  * arrival hits P2002 on an index row nothing will clear.
  * Mocking cannot show this; the index is a database object.

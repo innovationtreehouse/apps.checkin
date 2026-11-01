@@ -103,7 +103,7 @@ describe('AuditLog Integration Tests', () => {
         }
         if (createdParticipantIds.length > 0) {
             // A merge case here archives to PersonMerge, whose toId is RESTRICT — the
-            // archive row has to go before the survivor it names (#1456 2b).
+            // archive row has to go before the survivor it names.
             await prisma.personMerge.deleteMany({ where: { OR: [{ toId: { in: createdParticipantIds } }, { fromId: { in: createdParticipantIds } }] } });
             await prisma.person.deleteMany({ where: { id: { in: createdParticipantIds } } });
         }
@@ -280,7 +280,7 @@ describe('AuditLog Integration Tests', () => {
         });
 
         expect(log).toBeDefined();
-        // newData is now a raw JSON object (legacy rows may still be strings).
+        // newData is a raw JSON object (older rows may hold strings).
         const newData = normalizeAuditData(log?.newData) as Record<string, unknown>;
         expect(newData.type).toBe('lead_attendance_correction');
         // The update branch leaves arrivedVia alone, so the audit must not claim

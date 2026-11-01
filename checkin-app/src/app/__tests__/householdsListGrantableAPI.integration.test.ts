@@ -3,14 +3,14 @@
  */
 /**
  * Integration tests for GET /api/membership-ops/households (list branch):
- * per-household `renewalGrantable` (the coming-year-button gate) and the
+ * per-household `awaitingPayment` (the coming-year-button gate) and the
  * per-household derived `validUntil` (the boundary closing the live membership year when
  * settled for it, else the one that opened it) / `orgMembership.memberSince` date fields.
  */
 import { GET } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { nextBoundary, membershipYearCycle, coveredThrough } from '@/lib/membership/renewal';
+import { nextBoundary, membershipYearCycle, coveredThrough, grantableYears } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -27,7 +27,7 @@ async function get(url = 'http://localhost:4000/api/membership-ops/households') 
     return GET(new Request(url, { method: 'GET' }) as unknown as import('next/server').NextRequest);
 }
 
-describe('GET /api/membership-ops/households — renewalGrantable + dates', () => {
+describe('GET /api/membership-ops/households — awaitingPayment + dates', () => {
     let adminId: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
@@ -81,7 +81,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 
         // Stale-lead-BG case: PENDING_PAYMENT + bgClearedAt set, but the lead's own
         // check is stale. Grant comps payment and BG (already cleared on the process)
-        // gates ACTIVE — lead freshness no longer gates the button (behavior (a)), so
+        // gates ACTIVE — lead freshness does not gate the button, so
         // this IS grantable.
         const staleBg = await prisma.person.create({
             data: { email: `stalebg-${TAG}@example.com`, name: 'Stale Lead', isHouseholdLead: true, lastBackgroundCheck: new Date(Date.UTC(2015, 0, 1)), household: { create: { name: `Stale HH ${TAG}` } } },
@@ -107,41 +107,53 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
         await prisma.$disconnect();
     });
 
-    it("renewalGrantable is false for a household whose only renewal is PENDING_RENEWAL (not started)", async () => {
+    it("awaitingPayment is false for a household whose only renewal is PENDING_RENEWAL (not started)", async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const res = await get();
         expect(res.status).toBe(200);
         const data = await res.json();
         const h = data.households.find((x: { id: number }) => x.id === notStartedHouseholdId);
         expect(h).toBeDefined();
-        expect(h.renewalGrantable).toBe(false);
+        expect(h.awaitingPayment).toBe(false);
     });
 
-    it('renewalGrantable is true for PENDING_PAYMENT + bgClearedAt + a lead with a fresh background check', async () => {
+    it('awaitingPayment is true for PENDING_PAYMENT + bgClearedAt + a lead with a fresh background check', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const res = await get();
         const data = await res.json();
         const h = data.households.find((x: { id: number }) => x.id === grantableHouseholdId);
         expect(h).toBeDefined();
-        expect(h.renewalGrantable).toBe(true);
+        expect(h.awaitingPayment).toBe(true);
     });
 
-    it('renewalGrantable is true for PENDING_PAYMENT even when the lead background check is stale (grant comps payment; BG still gates ACTIVE)', async () => {
+    it('awaitingPayment is true for PENDING_PAYMENT even when the lead background check is stale (grant comps payment; BG still gates ACTIVE)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const res = await get();
         const data = await res.json();
         const h = data.households.find((x: { id: number }) => x.id === staleBgHouseholdId);
         expect(h).toBeDefined();
-        expect(h.renewalGrantable).toBe(true);
+        expect(h.awaitingPayment).toBe(true);
     });
 
-    it('renewalGrantable is true for a parallel-track renewal (PENDING_PAYMENT, bgClearedAt null, BG in review)', async () => {
+    it('awaitingPayment is true for a parallel-track renewal (PENDING_PAYMENT, bgClearedAt null, BG in review)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const res = await get();
         const data = await res.json();
         const h = data.households.find((x: { id: number }) => x.id === parallelTrackHouseholdId);
         expect(h).toBeDefined();
-        expect(h.renewalGrantable).toBe(true);
+        expect(h.awaitingPayment).toBe(true);
+    });
+
+    it('a joining application at PENDING_PAYMENT awaits a grant too', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        const lead = await prisma.person.create({
+            data: { email: `joining-${TAG}@example.com`, name: 'Joining Lead', isHouseholdLead: true, household: { create: { name: `Joining HH ${TAG}` } } },
+        });
+        const m = await prisma.orgMembership.create({ data: { householdId: lead.householdId } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+
+        const data = await (await get()).json();
+        expect(data.households.find((x: { id: number }) => x.id === lead.householdId).awaitingPayment).toBe(true);
     });
 
     it('derives per-household validUntil from the live membership year and includes orgMembership.memberSince', async () => {
@@ -211,9 +223,8 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
 
         const now = new Date();
 
-        // Stray INITIAL activation stamped in-window: the pre-fix bug counted this as
-        // "settled" (any-kind ACTIVE) and flipped validUntil a year forward. Fix #4's
-        // kind=RENEWAL filter must now EXCLUDE it.
+        // INITIAL activation stamped in-window: a family joining in-window buys the coming
+        // year, so this is settled and validUntil moves a year forward.
         const a = await prisma.person.create({
             data: { email: `initial-${TAG4}@example.com`, name: 'Initial Active', isHouseholdLead: true, household: { create: { name: `Initial HH ${TAG4}` } } },
         });
@@ -221,8 +232,8 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const am = await prisma.orgMembership.create({ data: { householdId: initialActiveHouseholdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: am.id, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: now } });
 
-        // Board-archived RENEWAL in-window: the pre-fix route missed ARCHIVED; fix #4
-        // now counts it as settled.
+        // Board-archived RENEWAL in-window: archive never completed payment, so this is
+        // not settled and the money horizon stays put.
         const b = await prisma.person.create({
             data: { email: `archived-${TAG4}@example.com`, name: 'Archived Renewal', isHouseholdLead: true, household: { create: { name: `Archived HH ${TAG4}` } } },
         });
@@ -230,7 +241,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const bm = await prisma.orgMembership.create({ data: { householdId: archivedRenewalHouseholdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: bm.id, kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: now } });
 
-        // Control: a finished RENEWAL (ACTIVE) in-window is settled, as before.
+        // Control: a finished RENEWAL (ACTIVE) in-window is settled.
         const c = await prisma.person.create({
             data: { email: `renewalactive-${TAG4}@example.com`, name: 'Active Renewal', isHouseholdLead: true, household: { create: { name: `ActiveRenewal HH ${TAG4}` } } },
         });
@@ -258,8 +269,9 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const res = await get();
         expect(res.status).toBe(200);
         const data = await res.json();
-        // sanity: we are actually in renewal season (else the probe is trivially empty)
-        expect(data.renewalSeason).toBe(true);
+        // sanity: we are actually in renewal season, so both grant years are offered
+        expect(data.grantYears).toEqual(grantableYears(boundaryConfig, new Date()));
+        expect(data.grantYears).toHaveLength(2);
         return data.households as { id: number; settledForComingYear: boolean; validUntil: string | null }[];
     }
 

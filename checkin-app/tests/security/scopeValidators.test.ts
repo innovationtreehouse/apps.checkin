@@ -1,8 +1,6 @@
 /**
- * Unit tests for the CI security validators (scopes.ts). These are authored
- * but NOT wired as build gates in this chip (see §7.6); these tests prove the
- * validators detect what they are meant to, so wiring them later (Step 3) is a
- * one-liner with known-good behavior.
+ * Unit tests for the CI security validators (scopes.ts): they prove the validators
+ * detect what they are meant to. The CI gate below runs them over the real registry.
  */
 import {
     validateBindings,
@@ -41,10 +39,7 @@ describe('validateBindings — field-existence (typo catcher)', () => {
 describe('validateBindings — coverage (forgotten-model catcher)', () => {
     it('flags a sensitive, scopable, unbound, un-queued model', () => {
         // VolunteerDesignation is sensitive (email pii) + scopable via its
-        // createdById FK; with an empty queue it must error. (MembershipProcess
-        // was the old exemplar but is now un-scopable by the direct-FK heuristic
-        // once bare `id` left SCOPABLE_FIELDS — it has only membershipId/
-        // manualPaymentById, neither a recognised actor FK.)
+        // createdById FK; with an empty queue it must error.
         const errs = validateBindings(SCOPE_BINDINGS, CLS, new Set());
         expect(errs.some(e => e.startsWith('VolunteerDesignation is sensitive and scopable'))).toBe(true);
     });
@@ -116,8 +111,8 @@ describe('validateRouteGrants — seam check', () => {
 });
 
 // ─── THE CI GATE ─────────────────────────────────────────────────────────────
-// Asserts zero validator errors over the REAL registry. Every future route PR is
-// now mechanically checked: a binding field typo, a forgotten sensitive model, or
+// Asserts zero validator errors over the REAL registry. Every route PR is
+// mechanically checked: a binding field typo, a forgotten sensitive model, or
 // a route granting a row-scoped scope no returned model binds fails the build.
 describe('CI gate — zero errors over the real registry', () => {
     it('validateBindings is clean (Blockers 1+2 landed)', () => {

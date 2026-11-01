@@ -12,6 +12,7 @@
  */
 
 let lastSeenAtMs: number | null = null;
+let queuedScans = 0;
 
 /**
  * How recent a signed kiosk request must be for the web to state building
@@ -23,8 +24,16 @@ let lastSeenAtMs: number | null = null;
  */
 export const KIOSK_FRESH_MS = 5 * 60_000;
 
-export function stampKioskSeen(nowMs: number = Date.now()): void {
+/** Reads X-Kiosk-Queue-Depth. A kiosk that sends none (or a malformed value) reports no backlog. */
+export function parseQueueDepth(header: string | null | undefined): number {
+    if (!header || !/^\d+$/.test(header)) return 0;
+    const depth = Number(header);
+    return Number.isSafeInteger(depth) ? depth : 0;
+}
+
+export function stampKioskSeen(nowMs: number = Date.now(), queued: number = 0): void {
     lastSeenAtMs = nowMs;
+    queuedScans = queued;
 }
 
 export function getKioskSeen(nowMs: number = Date.now()): {
@@ -38,21 +47,27 @@ export function getKioskSeen(nowMs: number = Date.now()): {
     };
 }
 
-export type BuildingLink = { reachable: boolean; lastSeenAt: string | null };
+export type BuildingLink = { reachable: boolean; lastSeenAt: string | null; queued: number };
 
 /**
  * Whether the server can currently talk to the building's kiosk. Web surfaces
  * that state occupancy, open/closed or supervision as fact render them only
  * when `reachable`; otherwise they say the building state can't be confirmed.
+ * A kiosk with scans still queued is not `reachable`: the server's record is
+ * behind the door by those scans, and `queued` counts them. A stale heartbeat
+ * reports no count, because the last one heard says nothing about now.
  */
 export function buildingLink(nowMs: number = Date.now()): BuildingLink {
+    const fresh = lastSeenAtMs != null && nowMs - lastSeenAtMs <= KIOSK_FRESH_MS;
     return {
-        reachable: lastSeenAtMs != null && nowMs - lastSeenAtMs <= KIOSK_FRESH_MS,
+        reachable: fresh && queuedScans === 0,
         lastSeenAt: lastSeenAtMs == null ? null : new Date(lastSeenAtMs).toISOString(),
+        queued: fresh ? queuedScans : 0,
     };
 }
 
 /** Test-only. */
 export function resetKioskSeen(): void {
     lastSeenAtMs = null;
+    queuedScans = 0;
 }

@@ -340,6 +340,17 @@ describe("attendance/current page", () => {
       expect(screen.queryByText("Supervision status unknown")).not.toBeInTheDocument();
     });
 
+    it("says it is syncing while the kiosk has scans queued, instead of stating building state", async () => {
+      setAdminSession();
+      mockRoutes({ "/api/attendance": { ...unreachable, building: { reachable: false, lastSeenAt: null, queued: 2 } } });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Syncing 2 scans from the kiosk")).toBeInTheDocument();
+      expect(screen.queryByText("Can't confirm building state")).not.toBeInTheDocument();
+      expect(screen.queryByText("People Present: 3")).not.toBeInTheDocument();
+      expect(screen.queryByText("Critical Warning")).not.toBeInTheDocument();
+    });
+
     it("reads a payload without the link as unreachable", async () => {
       setAdminSession();
       const { building: _omit, ...withoutLink } = attendanceData;

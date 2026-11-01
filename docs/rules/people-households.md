@@ -238,15 +238,17 @@ Things the app takes as true because they are handled outside it.
   the second at the kiosk. Numbers are issued in order from a count the database
   keeps, which a pause cannot skip ahead and a deletion cannot wind back.  [Decision]
 
-- A person is never lost. A merged record is kept and marked as merged rather
-  than removed, and drops out of every live list, count and roster. A record of
-  what happened still names them, because hiding a since-merged identity there
-  would falsify the history rather than protect anyone.  [Decision — *Principle: decisions are reversible*]
+- A person is never lost. A merge deletes the merged-away record and keeps an
+  archive of it, which names the surviving record. The merged-away person drops
+  out of every live list, count and roster. A record of what happened still names
+  them, from the archive, because hiding a since-merged identity there would
+  falsify the history rather than protect anyone. An older merged record that
+  something still refers to stays as a hidden row until that is cleared.  [Decision — owner ruling 2026-10-31; *Principle: decisions are reversible*]
 
 - A merge moves email, sign-in identity and verification together as one unit,
   never split across the two records.  [Decision]
 
-- A merged person's pre-merge state is recorded, so a merge of the wrong two
+- A merged person's pre-merge state is held in the archive, so a merge of the wrong two
   people can be investigated and the person reconstructed. There is no un-merge:
   what the record does not carry is which rows moved, so putting a bad merge right
   is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
@@ -340,6 +342,15 @@ Things the app takes as true because they are handled outside it.
 
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
+
+- Denying a household's membership revokes, at once and in the same act, every
+  review not already revoked or denied — approved, open or expired — on the
+  household's own trusted adults, and on any other household's trusted adult who
+  is a member of the denied household. A review the board already denied stays
+  denied. Each revocation is audited
+  with the person who denied and the reason "household denied". Restoring the
+  household brings none back. Revoking a household's membership revokes no
+  trusted adult.  [Decision]
 
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]

@@ -5,6 +5,7 @@ import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../con
 import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
+import { readIncomeSettings } from "../services/settingsService";
 import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "./sources";
 
 export const RECON_STATUS = {
@@ -107,9 +108,9 @@ export function addDays(day: string, n: number): string {
   return isoDay(new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000));
 }
 
-/** Days after a deposit's date within which it must be booked; a Benevity deposit keeps donation's window. */
-export function windowDays(source: string = DEPOSIT_SOURCE.SHOPIFY): number {
-  return source === DEPOSIT_SOURCE.BENEVITY ? BENEVITY_MATCH_WINDOW_DAYS : (getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS);
+/** Days after a deposit's date within which it must be booked; a Benevity deposit takes the org's setting, `benevityDays`. */
+export function windowDays(source: string = DEPOSIT_SOURCE.SHOPIFY, benevityDays: number = BENEVITY_MATCH_WINDOW_DAYS): number {
+  return source === DEPOSIT_SOURCE.BENEVITY ? benevityDays : (getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS);
 }
 
 /** The idempotency key of the deposit income creates for a payout. */
@@ -118,9 +119,9 @@ export function incomeKey(payoutGid: string): string {
 }
 
 /** The days a deposit may be dated: [date − grace, date + window] for a payout, ± the window for Benevity. */
-export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.SHOPIFY): { from: string; to: string } {
-  const grace = source === DEPOSIT_SOURCE.BENEVITY ? BENEVITY_MATCH_WINDOW_DAYS : (getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS);
-  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source)) };
+export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.SHOPIFY, benevityDays: number = BENEVITY_MATCH_WINDOW_DAYS): { from: string; to: string } {
+  const grace = source === DEPOSIT_SOURCE.BENEVITY ? benevityDays : (getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS);
+  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source, benevityDays)) };
 }
 
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
@@ -194,6 +195,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   const bankOf = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? banks.benevity : banks.shopify);
   const sources = (Object.keys(banks) as (keyof typeof banks)[]).filter((s) => banks[s]);
 
+  const benevityDays = (await readIncomeSettings(db, orgId)).benevityMatchWindowDays;
   const today = isoDay(now);
   // Another lane's expected deposits are facts as income holds them; settled ones are past matching.
   const expected = await db.payoutReconciliation.findMany({
@@ -214,13 +216,13 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
   for (const { source, payoutGid } of settled) {
-    settledPayouts.set(payoutGid, source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
+    settledPayouts.set(rowKey({ source, payoutGid }), source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
   }
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
   const ranges: DayRange[] = [
     ...facts.map((f): DayRange => {
-      const w = matchWindow(f.payoutDate, f.depositSource);
+      const w = matchWindow(f.payoutDate, f.depositSource, benevityDays);
       return [w.from, w.to];
     }),
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
@@ -235,15 +237,15 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
-      const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
+      const byKey = new Map(rows.map((r) => [rowKey(r), r]));
       const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
       const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
       const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
-        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(row.payoutGid)) continue;
-        const payout = settledPayouts.get(row.payoutGid) ?? null;
+        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(rowKey(row))) continue;
+        const payout = settledPayouts.get(rowKey(row)) ?? null;
         const cause = driftCause(row, payout, depositsById);
         if (!cause) continue;
 
@@ -261,7 +263,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             payoutNetCents: payout?.netCents ?? row.payoutNetCents,
           },
         });
-        byGid.set(row.payoutGid, updated);
+        byKey.set(rowKey(row), updated);
         await audit(tx, orgId, "reconciliation.drift", row, updated, { userId: null, reason: cause });
         result.drifted++;
       }
@@ -270,7 +272,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
       // never disagree. A hit on the payout's own key is a deposit income created.
       const candidates = deposits.map(depositMatchCandidate);
       for (const fact of facts) {
-        const row = byGid.get(fact.payoutGid);
+        const key = rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid });
+        const row = byKey.get(key);
         const open = row?.status === RECON_STATUS.OPEN && row.kind !== RECON_KIND.DRIFT;
         if (row && row.status !== RECON_STATUS.WAITING && !open) continue;
         // A post holds this payout; its settle decides it.
@@ -282,8 +285,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               date: fact.payoutDate,
               amountCents: fact.netCents,
               ref: bankOf(fact.depositSource),
-              key: rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid }),
-              window: matchWindow(fact.payoutDate, fact.depositSource),
+              key,
+              window: matchWindow(fact.payoutDate, fact.depositSource, benevityDays),
               claimedIds: claimed,
               excludedIds: excluded,
             });
@@ -291,7 +294,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
         // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
         const onAt = stampOf(switchedOn, fact.depositSource);
         const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
-        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, windowDays(fact.depositSource));
+        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, windowDays(fact.depositSource, benevityDays));
 
         // An attempted payout's own deposit may sit outside the window, so it never matches by amount
         // here: the drain's post or finance's match looks up its own deposit first.
@@ -388,6 +391,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 function base(orgId: string, fact: PayoutFact, now: Date) {
   return {
     orgId,
+    source: fact.depositSource,
     payoutGid: fact.payoutGid,
     payoutDate: fact.payoutDate,
     payoutNetCents: fact.netCents,

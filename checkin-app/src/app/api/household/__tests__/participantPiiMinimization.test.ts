@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Regression test for M1/M2 (Participant rows over-returned): household peers
+ * Participant rows are not over-returned: household peers
  * and the full-access attendance feed must not carry INTERNAL-tier Participant
  * fields (role-flag booleans, googleId, lastBackgroundCheck, ...) or, for
  * attendance specifically, the raw email/googleId. Mocks prisma the way
@@ -29,13 +29,14 @@ jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         person: { findUnique: jest.fn() },
+        facilityClose: { findFirst: jest.fn().mockResolvedValue(null) },
         // GET /api/household derives valid-until for an ACTIVE household; no membership row here.
         household: { findUnique: jest.fn().mockResolvedValue(null) },
         visit: { findMany: jest.fn() },
         // The supervising-adult test reads the board's background-check recheck
-        // policy (#1436); unset here, which is the default.
+        // policy; unset here, which is the default.
         boardSettings: { findUnique: jest.fn() },
-        // Full-access attendance carries the needReview aggregate (D7).
+        // Full-access attendance carries the needReview aggregate.
         rawBadgeLog: { count: jest.fn().mockResolvedValue(0) },
     },
 }));
@@ -56,9 +57,9 @@ describe("Participant PII minimization (M1, M2)", () => {
         mockSession.mockResolvedValue({ user: { id: 1 } });
 
         // Full raw row as it exists in the DB, including everything a household
-        // peer must never see (M2). The mock applies whatever `select` the route
+        // peer must never see. The mock applies whatever `select` the route
         // actually requests — same as Prisma would — so this fails if the route
-        // ever regresses back to `householdMembers: true`.
+        // ever selects `householdMembers: true`.
         const rawPeer = {
             id: 2,
             name: "Kid Two",
@@ -228,7 +229,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         const participant = data.attendance[0].participant;
         expect(participant.email).toBeUndefined();
         expect(participant.googleId).toBeUndefined();
-        // Server-resolved name-or-email-prefix fallback still renders (M1).
+        // Server-resolved name-or-email-prefix fallback still renders.
         expect(participant.name).toBe("kid5");
     });
 });

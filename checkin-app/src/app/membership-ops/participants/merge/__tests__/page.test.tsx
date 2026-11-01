@@ -58,9 +58,8 @@ describe("membership-ops/participants/merge page", () => {
   });
 
   it("renders multiple search results fully, not clipped to a sliver", async () => {
-    // Regression test for the merge page's search dropdown being clipped by an
-    // ancestor Card's default overflow:hidden (only a sliver of the first result
-    // was visible). All results must render, not just the first.
+    // The merge page's search dropdown must not be clipped by an ancestor Card's default
+    // overflow:hidden. All results must render, not just the first.
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
       "/api/people/search?q=Sam": {
@@ -324,7 +323,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(await screen.findByText("Keep and augment")).toBeInTheDocument();
   });
 
-  // Matrix 19
   it("renders a radio group only for true conflicts (shared null phone gets no radio)", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockRoutes();
@@ -337,14 +335,13 @@ describe("membership-ops/participants/merge page", () => {
     const picker = screen.getByText("Resolve conflicting fields").closest(".mantine-Card-root") as HTMLElement;
     expect(within(picker).getByText("Name")).toBeInTheDocument();
     expect(within(picker).getByText("Login identity")).toBeInTheDocument();
-    // email/googleId are no longer their own radios — folded into "Login identity".
+    // email/googleId are not their own radios — they sit in "Login identity".
     expect(within(picker).queryByText("Email")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Google Account")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Phone")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Date of Birth")).not.toBeInTheDocument();
   });
 
-  // Matrix 20
   it("defaults each conflict radio to the keeper's value; swapping resets defaults to the new keeper", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockRoutes();
@@ -363,7 +360,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(screen.getByRole("radio", { name: /bob@example\.com · unverified/ })).toBeChecked();
   });
 
-  // Matrix 21
   it("includes the chosen fieldChoices in the merge POST body", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockRoutes();
@@ -389,7 +385,6 @@ describe("membership-ops/participants/merge page", () => {
     );
   });
 
-  // Matrix 22
   it("shows each side's own login identity (email + Google + verified marker), not 'Connected'", async () => {
     const gia = {
       id: 60, name: "Gia Google", email: "gia@example.com", phone: null, googleId: "g-gia-000000",
@@ -426,7 +421,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(within(picker).queryByText("Connected")).not.toBeInTheDocument();
   });
 
-  // Matrix 23
   it("wraps a dateOfBirth conflict in a warning alert instead of a plain radio", async () => {
     const dan = {
       id: 70, name: "Dan Date", email: "dan@example.com", phone: null, googleId: "g70",

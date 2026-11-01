@@ -82,6 +82,7 @@ describe('income tiering (§7)', () => {
             maxCreatesPerRun: 'internal',
             maxCreateCentsPerRun: 'internal',
             benevityMaxCreateCentsPerRun: 'internal',
+            benevityMatchWindowDays: 'internal',
             qbPostingOnAt: 'internal',
             benevityQbPostingOnAt: 'internal',
         });

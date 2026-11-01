@@ -15,8 +15,8 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
     facilityClose: { findFirst: (args: unknown) => lastCloseFind(args) },
 } }));
 
-// Who counts as a supervising adult is lib/supervision's rule and is tested there
-// (#1436/#1550). Pinned at 1 — short of two-deep — so what this file asserts is its
+// Who counts as a supervising adult is lib/supervision's rule and is tested there.
+// Pinned at 1 — short of two-deep — so what this file asserts is its
 // OWN half: whether a youth is accompanied by an adult of their household.
 const supervisingAdultVisits = jest.fn().mockResolvedValue(new Map());
 jest.mock("@/lib/supervision", () => ({
@@ -80,8 +80,8 @@ describe("facilityOpen", () => {
     });
 
     const arrived = rows[0].arrivedAt.getTime();
-    const close = (closedAt: number, executedAt: number, via = "KIOSK") =>
-        lastCloseFind.mockResolvedValue({ closedAt: new Date(closedAt), executedAt: new Date(executedAt), via });
+    const close = (closedAt: number, executedAt: number) =>
+        lastCloseFind.mockResolvedValue({ closedAt: new Date(closedAt), executedAt: new Date(executedAt) });
 
     it("is not reopened by a check-in scanned before the latest close and delivered after it ran", async () => {
         close(arrived + 60 * 60_000, arrived + 2 * 60 * 60_000);
@@ -97,11 +97,6 @@ describe("facilityOpen", () => {
     it("is reopened by a keyholder arriving live just after a close ran", async () => {
         close(arrived - 60_000, arrived - 59_000);
         expect((await getFullAttendance()).safety.facilityOpen).toBe(true);
-    });
-
-    it("is not reopened by an arrival within the skew of the nightly sweep", async () => {
-        close(arrived - 60_000, arrived - 59_000, "NIGHTLY_SWEEP");
-        expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
     });
 
     it("is reopened by a keyholder who arrived well after the latest close", async () => {
@@ -255,9 +250,9 @@ describe("no-keyholder visits", () => {
 
 describe("two-deep calc fails closed on unknown DOB (#300)", () => {
     // Youth (hh 8) + real adult (hh 6) + null-DOB visitor in the youth's
-    // household. Under the old null→adult default the null-DOB visitor
-    // "accompanied" the youth, masking the violation. The supervising-adult
-    // count is the other prong and lives in lib/supervision now.
+    // household. A null→adult default would let the null-DOB visitor
+    // "accompany" the youth, masking the violation. The supervising-adult
+    // count is the other prong and lives in lib/supervision.
     const nullDobRow = {
         id: 204, arrivedAt: new Date("2026-07-01T14:20:00Z"), departedAt: null, personId: 80,
         person: {
@@ -282,7 +277,7 @@ describe("two-deep calc fails closed on unknown DOB (#300)", () => {
     it("a DoB-stripped declared adult (#1165) still accompanies their own youth", async () => {
         // Same shape, but the null-DoB visitor is a 26+ member whose DoB was
         // deliberately deleted: isDeclaredAdult wins over the fail-closed default,
-        // so the youth of household 8 is no longer unaccompanied.
+        // so the youth of household 8 counts as accompanied.
         findMany.mockResolvedValue([...rows, {
             ...nullDobRow,
             person: { ...nullDobRow.person, isDeclaredAdult: true },

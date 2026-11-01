@@ -12,8 +12,8 @@ describe("EmergencyContactNotice", () => {
   });
 
   // The rule is enforced server-side (EmergencyContactError, code "is_member").
-  // Applicants used to only meet it as a rejection, so every surface that collects
-  // a contact has to state it up front — the shared form is two of those surfaces
+  // So applicants don't first meet it as a rejection, every surface that collects
+  // a contact states it up front — the shared form is two of those surfaces
   // (membership intake + first-time program intake) and must not lose it.
   it("ships with the shared emergency-contact form", () => {
     renderWithProviders(

@@ -339,6 +339,22 @@ export interface ExpenseOutcomes {
   forReceipts(receiptIds: unknown): Promise<Map<string, { status: ExpenseOutcomeStatus; notes: string[] }>>;
 }
 
+/** An expense outcome the receipt's uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "expense_line_rejected" | "reimbursement_complete";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
@@ -346,6 +362,9 @@ export interface ExpenseSettings {
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
+  qbMatchWindowDays: number;
+  qbMaxCreatesPerRun: number;
+  qbMaxCreatesPerDay: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────

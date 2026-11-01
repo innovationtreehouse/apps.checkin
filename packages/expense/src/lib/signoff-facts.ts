@@ -216,13 +216,15 @@ export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: 
 
 /**
  * Lines still missing a seat or the Board's approval. A held line keeps the whole expense out of
- * the QB outbox.
+ * the QB outbox. The outbox commit settled a closed expense's Board seat and Board approval against
+ * the facts of that moment, and no seat is signed or voided on it after, so neither holds it again.
  */
-export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, LineHold[]>> {
+export async function unsignedLines(db: Db, expense: SignoffExpense & Pick<Expense, "state">): Promise<Map<number, LineHold[]>> {
   const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id), boardApprovalNeeded(db, expense)]);
+  const closed = expense.state === "qb_complete";
   const out = new Map<number, LineHold[]>();
   for (const [lineId, f] of facts) {
-    const missing = lineHolds(approval, f, filled.get(lineId) ?? []);
+    const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;

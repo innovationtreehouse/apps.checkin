@@ -37,9 +37,9 @@ export default function Home() {
 
   const [isLastKeyholder, setIsLastKeyholder] = useState(false);
   const [isTwoDeepViolation, setIsTwoDeepViolation] = useState(false);
-  // Set (to the kiosk's last-seen time) when a warning would show but the kiosk
-  // is unreachable, so the building state behind it can't be confirmed.
-  const [unconfirmedSince, setUnconfirmedSince] = useState<{ lastSeenAt: string | null } | null>(null);
+  // Set (to the kiosk's last-seen time and backlog) when a warning would show but
+  // the kiosk is unreachable or still syncing, so the building state behind it can't be confirmed.
+  const [unconfirmedSince, setUnconfirmedSince] = useState<{ lastSeenAt: string | null; queued: number } | null>(null);
   // null = not loaded yet; once loaded, status/processStatus drive the join banner.
   const [membership, setMembership] = useState<{ status: string | null; processStatus: string | null } | null>(null);
 
@@ -56,7 +56,7 @@ export default function Home() {
       setIsLastKeyholder(reachable && lastKeyholder);
       setIsTwoDeepViolation(reachable && twoDeep);
       setUnconfirmedSince(!reachable && (lastKeyholder || twoDeep)
-        ? { lastSeenAt: data.building?.lastSeenAt ?? null }
+        ? { lastSeenAt: data.building?.lastSeenAt ?? null, queued: data.building?.queued ?? 0 }
         : null);
     } catch (err) {
       console.error("Failed to fetch attendance status", err);
@@ -132,7 +132,7 @@ export default function Home() {
               <Notifications />
 
               {/* Operational Warnings */}
-              {unconfirmedSince && <BuildingUnconfirmedAlert lastSeenAt={unconfirmedSince.lastSeenAt} />}
+              {unconfirmedSince && <BuildingUnconfirmedAlert lastSeenAt={unconfirmedSince.lastSeenAt} queued={unconfirmedSince.queued} />}
               {isTwoDeepViolation && (
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Critical Warning">
                   Two-Deep Compliance is failing. An unaccompanied youth is present without

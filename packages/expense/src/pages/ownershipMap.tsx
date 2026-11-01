@@ -19,7 +19,7 @@ interface CatalogItem {
 export default function OwnershipMapPage() {
   const { isFinance } = useRoles();
   const [page, setPage] = useState(1);
-  const map = useLoad<{ PartOwnerMap: PartOwner[]; Item?: CatalogItem[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page));
+  const map = useLoad<{ PartOwnerMap: PartOwner[]; Item?: CatalogItem[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page), { keepPrevious: true });
   const [gtin13, setGtin13] = useState("");
   const [owner, setOwner] = useState<string | null>(null);
 

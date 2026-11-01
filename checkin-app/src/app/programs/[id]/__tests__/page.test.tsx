@@ -551,6 +551,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com"); // redirect requires a store domain
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
             "/api/programs/10/participants": { ok: true },
@@ -572,7 +573,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
-            "/api/programs/10/discount-code": { code: "PRG10-MOCKED" },
+            "/api/programs/10/discount-code": { code: "PRG10-MOCKED", signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -630,6 +631,27 @@ describe("ProgramEnrollmentPage", () => {
         expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
     });
 
+    // Without the server's checkout signature the order would activate nobody, so
+    // the page does not send the family to the store.
+    it("stays on the page when the checkout signature can't be fetched", async () => {
+        setSession({ id: 101 });
+        setShopifyStoreDomain("shop.example.com");
+        mockFetchJson({
+            "/api/programs/10/discount-code": { code: null },
+            "/api/household": household,
+            "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
+            "/api/programs/10/participants": { ok: true },
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await toggleMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText("We couldn't start the checkout. Please try again.")).toBeInTheDocument();
+        expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+    });
+
     // The payment-pending resume path: an already-enrolled-but-unpaid household
     // must be able to re-run checkout (participants POST 409s -> folded back in;
     // a FRESH single-use discount code is minted — the old one is 48h/one-use).
@@ -644,7 +666,7 @@ describe("ProgramEnrollmentPage", () => {
             orgMembership: { status: "ACTIVE" },
         } };
         const fetchMock = mockFetchJson({
-            "/api/programs/10/discount-code": { code: "PRG10-FRESH" },
+            "/api/programs/10/discount-code": { code: "PRG10-FRESH", signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 100, status: "PENDING" }],
@@ -688,6 +710,7 @@ describe("ProgramEnrollmentPage", () => {
         setSession({ id: 100, ageBand: 'adult' });
         setShopifyStoreDomain("shop.example.com");
         mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 102, status: "ACTIVE", person: { name: "Too Young", householdId: 7 } }],
@@ -717,6 +740,7 @@ describe("ProgramEnrollmentPage", () => {
             const url = String(input);
             const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
             if (url.includes("/api/programs/10/participants") && init?.method === "POST") return json({ error: "Participant is already enrolled in this program." }, 409);
+            if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -754,6 +778,7 @@ describe("ProgramEnrollmentPage", () => {
             const url = String(input);
             const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
             if (url.includes("/api/programs/10/participants")) return json({ ok: true });
+            if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -785,6 +810,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,

@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# Runs the kiosk container's image lifecycle: timer checks, deploy, go back.
+set -u
+
+KIOSK_CONF=${KIOSK_CONF:-/etc/kiosk/host.conf}
+# Root-owned and outside the container's /data mount: a compromised client must
+# not be able to choose the digest the host runs.
+STATE=${KIOSK_STATE_DIR:-/var/lib/kiosk-host}
+SERVICE=kiosk-client.service
+CONTAINER=kiosk-client
+
+# shellcheck source=client/host/host.conf.example
+. "$KIOSK_CONF"
+
+log() { echo "kioskctl: $*"; }
+die() { log "$*" >&2; exit 1; }
+
+valid_digest() { [[ $1 =~ ^sha256:[0-9a-f]{64}$ ]]; }
+
+get() { cat "$STATE/$1" 2>/dev/null || true; }
+
+# Written by rename so a power cut cannot leave a torn file for systemd to read.
+put() { printf '%s\n' "$2" >"$STATE/$1.tmp" && mv -f "$STATE/$1.tmp" "$STATE/$1"; }
+
+current() { sed -n 's/^KIOSK_DIGEST=//p' "$STATE/current.env" 2>/dev/null; }
+set_current() { put current.env "KIOSK_DIGEST=$1"; }
+
+# Asks the registry only, so a check cannot wake the server or defer its curfew.
+resolve_tag() {
+  local digest
+  digest=$(docker buildx imagetools inspect "$KIOSK_IMAGE:$1" --format '{{.Manifest.Digest}}' 2>/dev/null) || return 1
+  valid_digest "$digest" || return 1
+  printf '%s' "$digest"
+}
+
+in_window() {
+  local hour
+  hour=$(date +%H)
+  [ "$hour" -ge 23 ] || [ "$hour" -lt 6 ]
+}
+
+healthy() {
+  local cmd tries
+  read -r -a cmd <<<"$KIOSK_HEALTH_CMD"
+  tries=$((KIOSK_HEALTH_TIMEOUT / 3))
+  while [ "$tries" -gt 0 ]; do
+    docker exec "$CONTAINER" "${cmd[@]}" >/dev/null 2>&1 && return 0
+    tries=$((tries - 1))
+    sleep 3
+  done
+  return 1
+}
+
+start_healthy() { systemctl restart "$SERVICE" && healthy; }
+
+# Runs inside the container: root writing to the client's directory could be
+# steered through a symlink the client planted.
+reload_browser() { docker exec "$CONTAINER" touch /data/.chromium-bounce >/dev/null 2>&1 || true; }
+
+# Keeps the current and previous images, so going back works offline.
+prune_images() {
+  local cur=$1 prev=$2 ref
+  while read -r ref; do
+    case "$ref" in
+      *"@$cur" | *"@$prev" | *"@<none>") ;;
+      *) docker rmi "$ref" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(docker images --digests --format '{{.Repository}}@{{.Digest}}' "$KIOSK_IMAGE")
+}
+
+swap_to() {
+  local target=$1 old
+  old=$(current)
+  set_current "$target"
+  if start_healthy; then
+    [ "$(get failed)" = "$target" ] && put failed ""
+    put previous "$old"
+    reload_browser
+    prune_images "$target" "$old"
+    log "now running $target"
+    return 0
+  fi
+  log "$target failed its health check; going back to $old" >&2
+  put failed "$target"
+  set_current "$old"
+  start_healthy || log "$old is unhealthy too; the container keeps restarting" >&2
+  reload_browser
+  return 1
+}
+
+check_release() {
+  local target
+  in_window || return 0
+  target=$(resolve_tag "$KIOSK_RELEASE_TAG") || { log "registry unreachable; staying put"; return 0; }
+  [ "$target" = "$(current)" ] && return 0
+  if [ "$target" = "$(get failed)" ]; then
+    log "$target already failed here; not retrying"
+    return 0
+  fi
+  docker pull "$KIOSK_IMAGE@$target" >/dev/null || { log "pull failed; staying put"; return 0; }
+  swap_to "$target"
+}
+
+check_urgent() {
+  local target
+  target=$(resolve_tag "$KIOSK_URGENT_TAG") || return 0
+  [ "$target" = "$(get urgent)" ] && return 0
+  # A failed pull stays unrecorded, so an offline kiosk applies the force on reconnect.
+  docker pull "$KIOSK_IMAGE@$target" >/dev/null || { log "pull failed; will retry"; return 0; }
+  # Recorded before the swap, so a failing forced image rolls back once.
+  put urgent "$target"
+  [ "$target" = "$(current)" ] && return 0
+  swap_to "$target"
+}
+
+# The digest left behind counts as failed, so the nightly check does not return to it.
+move_by_hand() {
+  local target=$1 left
+  left=$(current)
+  [ "$target" = "$left" ] && { log "already running $target"; return 0; }
+  docker pull "$KIOSK_IMAGE@$target" >/dev/null || die "could not pull $target"
+  put failed "$left"
+  swap_to "$target"
+}
+
+status() {
+  echo "image:    $KIOSK_IMAGE (follows $KIOSK_RELEASE_TAG, forced by $KIOSK_URGENT_TAG)"
+  echo "current:  $(current)"
+  echo "previous: $(get previous)"
+  echo "urgent:   $(get urgent)"
+  echo "failed:   $(get failed)"
+  echo "service:  $(systemctl is-active "$SERVICE")"
+  # One try: status reports the state now and does not wait for a start.
+  if [ -n "$KIOSK_HEALTH_CMD" ] && KIOSK_HEALTH_TIMEOUT=3 healthy; then
+    echo "health:   ok"
+  else
+    echo "health:   FAILING"
+  fi
+}
+
+usage() { die "usage: kioskctl status | deploy sha256:<digest> | back | check-release | check-urgent | reboot"; }
+
+command=${1:-}
+case "$command" in
+  status) status; exit 0 ;;
+  check-release | check-urgent | deploy | back | reboot) ;;
+  *) usage ;;
+esac
+
+[ "$command" = reboot ] || [ -n "$KIOSK_HEALTH_CMD" ] || die "KIOSK_HEALTH_CMD is not set in $KIOSK_CONF; nothing moves without a health check"
+
+exec 9>"$STATE/lock" || die "cannot open $STATE/lock; run as root"
+case "$command" in
+  check-release)
+    flock -n 9 || exit 0
+    check_release
+    ;;
+  check-urgent)
+    flock -n 9 || exit 0
+    check_urgent
+    ;;
+  deploy)
+    valid_digest "${2:-}" || usage
+    flock -w 120 9 || die "another update is running"
+    move_by_hand "$2"
+    ;;
+  back)
+    flock -w 120 9 || die "another update is running"
+    previous=$(get previous)
+    [ -n "$previous" ] || die "no previous digest recorded"
+    move_by_hand "$previous"
+    ;;
+  reboot)
+    # A reboot mid-swap leaves the new digest with no rollback. A swap takes
+    # minutes, so a lock held for 30 is a hung pull, which the reboot clears.
+    flock -w 1800 9 || log "lock still held after 30 minutes; rebooting anyway" >&2
+    systemctl reboot
+    ;;
+esac

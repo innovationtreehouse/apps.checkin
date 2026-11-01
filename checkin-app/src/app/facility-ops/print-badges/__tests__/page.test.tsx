@@ -175,10 +175,9 @@ describe("facility-ops/print-badges page", () => {
     expect(screen.getByRole("button", { name: "Generate Sticker (1)" })).toBeInTheDocument();
   });
 
-  // #1625. The Printed Name column exists so this pair of assertions is writable at all:
+  // The Printed Name column exists so this pair of assertions is writable at all:
   // it is the only place the value the badge will print is observable without generating
-  // a PDF. Both were red against the old behaviour, where the name was computed over the
-  // current print batch inside BadgeDocument.
+  // a PDF.
   it("keeps the printed name fixed to the ACTIVE roster, not the current selection", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson(johnRoutes);
@@ -197,7 +196,7 @@ describe("facility-ops/print-badges page", () => {
     // assertion diff instead of being cut off by jest's equal-length test timeout.
   }, 15000);
 
-  // #1628. Both Johns are ACTIVE members, so "is a member" cannot be what decides this —
+  // Both Johns are ACTIVE members, so "is a member" cannot be what decides this —
   // only settling the current renewal cycle can. The column is the operator's warning
   // that a blank badge is coming, before the sheet is in the printer.
   it("shows the membership year only for a household that settled this cycle", async () => {
@@ -259,9 +258,8 @@ describe("facility-ops/print-badges page", () => {
     expect(printedNameCell("John Smith")).toBe("John S.");
   }, 15000);
 
-  // #1651. Off-roster people get a bare first name — no disambiguation among themselves.
-  // This is stable across search-box changes (the old behaviour ran computeDisplayNames
-  // over the search results, so names shifted when the query changed).
+  // Off-roster people get a bare first name — no disambiguation among themselves, so
+  // the name is stable across search-box changes.
   it("gives off-roster people a bare first name, without moving a member's name", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
@@ -286,8 +284,8 @@ describe("facility-ops/print-badges page", () => {
     expect(printedNameCell("John Smith")).toBe("John");
   }, 15000);
 
-  // #1651. The old code ran computeDisplayNames over the search results for off-roster
-  // people, so narrowing the search could change an off-roster person's badge name.
+  // Off-roster names are computed without the search results, so narrowing the search
+  // cannot change an off-roster person's badge name.
   it("keeps off-roster badge names stable when the search box narrows", async () => {
     setSession({ id: 1, isSysadmin: true });
     const offRosterPeople = [

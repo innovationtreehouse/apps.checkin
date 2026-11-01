@@ -174,7 +174,7 @@ describe("resolveAccess 'kiosk'", () => {
     });
 });
 
-// H4 finance vocabulary (#1272 §6, #1280, #1265 §6). One persona per audience:
+// Finance vocabulary. One persona per audience:
 // finance, board, inventory manager, sysadmin-only, a Treehouse Volunteer (keyholder), and a plain
 // household member with no role.
 describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole', () => {
@@ -279,8 +279,7 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
 });
 
 /**
- * ops-stg ACCESS GATE — the regression coverage for the defect that killed the prior
- * staging design. `authorize: 'public'` (case above, line ~220 in access-resolvers.ts)
+ * ops-stg ACCESS GATE. `authorize: 'public'` (case above, line ~220 in access-resolvers.ts)
  * unconditionally returns `{ allowed: true }`, which is exactly right in every normal
  * environment but is precisely the surface that would ship real minors' data to an
  * anonymous `curl` of `GET /api/programs/[id]` on ops-stg. The gate must be checked

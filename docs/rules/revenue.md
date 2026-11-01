@@ -71,8 +71,8 @@ Things the app takes as true because they are handled outside it.
 
 ### Ownership
 
-- Finance Ops belongs to the board alone, except that finance reads payment
-  plans; the board approves them.  [Unsettled — which superuser]
+- Apart from the payment-plan read below, Finance Ops belongs to the board alone,
+  and the board approves payment plans.  [Unsettled — which superuser]
 
 - Only the board and finance read membership and program payment plans.  [Decision — owner]
 
@@ -165,6 +165,11 @@ Things the app takes as true because they are handled outside it.
   the enrollment itself and the store order behind it, never from a separate
   record of charges and payments.  [Decision — deliberate limit]
 
+- A store order enrolls only children in the buying household, shown by the
+  checkout link the app made for that household when it sent them to the store.
+  Any other order, including one without such a link, enrolls nobody and is
+  raised for the board.  [Decision — *Principle: fail closed*]
+
 - Reconciliation problems are raised in Finance Ops, not under membership or
   programs, because one payment can cover both.  [Decision]
 
@@ -225,6 +230,14 @@ Income checks each online-store payout against the deposits in the books.
 - The app books nothing dated on or before the closing date finance sets in the
   books. With no closing date set, it books nothing dated before income's posting
   was switched on, and when it cannot read the date it books nothing.  [Decision — owner; *Principle: fail closed*]
+
+- The window for matching a giving-platform deposit, one to 30 days either side
+  of its date, is a setting, seven by default. Finance or the board may change it
+  in either direction. Each change is recorded.  [Decision — owner]
+
+- How many deposits the app may create in one run, and how many dollars' worth for
+  each deposit source, are settings. Finance may lower them; raising one takes the
+  board. Each change is recorded.  [Decision — owner]
 
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
@@ -352,6 +365,13 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Gifts of goods follow the closed-books rules in Income, with their own switch-on.
   A gift counts from when its money arrived or it was recorded.  [Decision — owner]
+
+- The window for matching a gift of goods to finance's bookings, one to 30 days
+  either side of its date, is a setting, seven by default. Finance or the board may
+  change it in either direction. How many entries the app may create for gifts of
+  goods in one run is a setting too: finance may lower it, and raising it takes the
+  board. Each change is recorded. Gifts of goods have no daily or dollar limit.
+  [Decision — owner]
 
 - A gift of goods withdrawn after its money arrived is raised for finance, booked
   or not. Finance reverses it by hand only if it booked; the app changes nothing

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for Phase 2 PERSON_BG obligations: the two triggers that OPEN
+ * Integration tests for PERSON_BG obligations: the two triggers that OPEN
  * the obligation (annual cohort + new-member activation), the subject-scoped
  * clear (stamps ONLY the subject person), and the two-reviewer gate keyed off the
  * SUBJECT's household. Warn-only — nothing blocks participation here.
@@ -204,7 +204,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
     it('clearBackgroundCheck stamps ONLY the subject person — a household-mate is untouched', async () => {
         const hh = await makeHousehold('subjectHh');
         const subject = await makePerson('subject', hh.id, { dateOfBirth: ADULT_DOB });
-        // A household-mate (also a lead) with no check — the old blanket-stamp would have
+        // A household-mate (also a lead) with no check — a blanket stamp would
         // hit them; the subject-scoped clear must NOT.
         const mate = await makePerson('mate', hh.id, { dateOfBirth: ADULT_DOB });
         await prisma.person.update({ where: { id: mate.id }, data: { isHouseholdLead: true } });

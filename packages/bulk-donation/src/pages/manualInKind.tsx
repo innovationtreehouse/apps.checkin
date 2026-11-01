@@ -56,7 +56,7 @@ function useCatalogSearch(q: string): CatalogItem[] {
 export default function ManualInKindPage() {
   const canRecord = useCanRecord();
   const [page, setPage] = useState(1);
-  const rows = useLoad<DonationRow[]>(paged("/in-kind/manual", page));
+  const rows = useLoad<DonationRow[]>(paged("/in-kind/manual", page), { keepPrevious: true });
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");

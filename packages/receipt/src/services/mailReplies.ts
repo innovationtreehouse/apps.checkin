@@ -5,6 +5,7 @@
 import { db } from "../db";
 import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
+import { withLivePeople } from "../lib/livePeople";
 import { getOrgId, replies } from "../runtime";
 
 /** Messages acknowledged per run; the rest wait for the next run. */
@@ -67,7 +68,7 @@ async function owedSends(out: ReceiptReplies, id: number, receiptId: string | nu
 
   if (receiptId) {
     // ponytail: a message whose files finance credits to different people acknowledges only the first; add a reply per receipt if that happens.
-    const receipt = await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } });
+    const [receipt] = await withLivePeople([await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } })]);
     const credited = await out.contactOf(receipt.uploadedByUserId);
     const sameAsSender = row.replyToSender && credited !== null && credited.email.toLowerCase() === row.senderAddress;
     const ack = { ...base, receiptId, refused: [] };
