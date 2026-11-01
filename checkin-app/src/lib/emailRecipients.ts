@@ -94,7 +94,7 @@ export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: Temp
 /** Email every sysadmin and board member with an address on file. Returns whether anyone was reached; a failed query throws. */
 export async function emailSysadminsAndBoard<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
     const people = await prisma.person.findMany({
-        where: { OR: [{ isSysadmin: true }, { isBoardMember: true }], email: { not: null }, ...LIVE_PERSON },
+        where: { OR: [{ isSysadmin: true }, { isBoardMember: true }], email: { not: null } },
         select: { email: true },
     });
     const sent = await fanOutEmails(people.map((p) => p.email).filter((e): e is string => !!e), key, ctx);
