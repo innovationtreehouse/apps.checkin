@@ -30,6 +30,7 @@ import { recordEvent } from "../repositories/audit";
 import { readDonationSettings, type DonationSettings } from "../services/settingsService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
+import { checkInKindQbDrift, type InKindDriftCounts } from "./in-kind-drift";
 import { QB_MATCH_STATE } from "./qb-match";
 
 /** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. */
@@ -74,6 +75,8 @@ export interface Entry {
   side: "journal" | "revenue" | "expense";
   entity: "JournalEntry" | "Deposit" | "Purchase";
   id: string;
+  /** The entry's date as booked, the baseline the drift check compares. */
+  txnDate: string;
 }
 
 /** What a post settles to. */
@@ -160,7 +163,7 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
   if (keyed.length > 1 || appKeyOf(keyed[0]) !== key) return needsFinance(`The app may already have booked this gift: JournalEntries ${keyed.map((j) => j.Id).join(", ")} carry its key`);
   const own = keyed[0];
   if ((await heldIds(run.orgId, "JournalEntry")).has(own.Id)) return needsFinance(`The app's QuickBooks JournalEntry ${own.Id} is held by another gift`);
-  return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: own.Id }], booked: { totalCents: dollarsToCents(own.TotalAmt), txnDate: own.TxnDate } };
+  return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: own.Id, txnDate: own.TxnDate }], booked: { totalCents: dollarsToCents(own.TotalAmt), txnDate: own.TxnDate } };
 }
 
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
@@ -201,8 +204,8 @@ async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): P
     state: QB_MATCH_STATE.MATCHED,
     note: null,
     entries: [
-      { side: "revenue", entity: "Deposit", id: d[0].Id },
-      { side: "expense", entity: "Purchase", id: p[0].Id },
+      { side: "revenue", entity: "Deposit", id: d[0].Id, txnDate: d[0].TxnDate },
+      { side: "expense", entity: "Purchase", id: p[0].Id, txnDate: p[0].TxnDate },
     ],
     booked: { totalCents: gift.totalCents, txnDate: d[0].TxnDate },
   };
@@ -227,8 +230,10 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
 function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): Settlement {
   switch (r.kind) {
     case "found":
-    case "created":
-      return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: r.id }], booked: { totalCents: gift.totalCents, txnDate: r.kind === "found" ? r.txnDate : txnDate }, createdNow: r.kind === "created" };
+    case "created": {
+      const booked = r.kind === "found" ? r.txnDate : txnDate;
+      return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: r.id, txnDate: booked }], booked: { totalCents: gift.totalCents, txnDate: booked }, createdNow: r.kind === "created" };
+    }
     case "ambiguous":
       return needsFinance(`The app may already have booked this gift: JournalEntries ${r.ids.join(", ")} carry its key`);
     case "closed":
@@ -317,7 +322,7 @@ export async function writeSettlement(
   payload: Record<string, unknown>,
 ): Promise<void> {
   for (const e of s.entries) {
-    await tx.inKindBooking.create({ data: { orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id } });
+    await tx.inKindBooking.create({ data: { orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id, bookedTxnDate: e.txnDate } });
   }
   await tx.inKindPosting.update({
     where: { id: postingId },
@@ -459,13 +464,15 @@ export interface InKindDrainCounts {
   stoppedAfterFailures: boolean;
   closeDateRead: boolean;
   sweep: InKindSweepCounts;
+  drift: InKindDriftCounts;
 }
 
 /**
  * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
  * date once for the run. Each gift waiting on nothing but booking posts, oldest first, until the
- * per-run create limit or the failure streak, which alerts finance; the orphan sweep runs last.
+ * per-run create limit or the failure streak, which alerts finance; the orphan sweep and the drift
+ * check run last.
  */
 export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | "unconfigured"> {
   const posting = getInKindQbPosting();
@@ -483,7 +490,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
 
   const counts: InKindDrainCounts = {
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, exhausted: 0, failed: 0, waiting: 0,
-    capped: false, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
+    capped: false, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 },
   };
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,
@@ -506,5 +513,6 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   }
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
   counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
+  counts.drift = await checkInKindQbDrift(orgId, client, now);
   return counts;
 }

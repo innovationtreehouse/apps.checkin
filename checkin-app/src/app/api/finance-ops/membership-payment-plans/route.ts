@@ -66,36 +66,10 @@ export const POST = withAuth(
                 return apiError("Unauthorized", 401);
             }
 
-            // Only act on a genuinely-requested, still-awaiting-payment process, so
-            // approving a stale/nonexistent request is a no-op error, mirroring the
-            // GET queue's filter.
-            const process = await prisma.orgMembershipProcess.findFirst({
-                // Approve probe: from-state status from the definition; isPaymentPlanRequested stays literal.
-                where: { id: processId, isPaymentPlanRequested: true, ...fromWhere('PENDING_PAYMENT') },
-                select: { id: true },
-            });
-            if (!process) {
-                return apiError("No pending payment-plan request", 409);
-            }
-
-            // Reuse the membership activation path: certifies the plan and activates
-            // without a Shopify payment (holding for background clearance if not yet
-            // cleared). Then clear the request flag so it drops off the queue.
-            await certifyPaymentPlan(processId, auth.user.id, { reason });
-            await prisma.orgMembershipProcess.update({
-                where: { id: processId },
-                data: { isPaymentPlanRequested: false },
-            });
-
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "OrgMembershipProcess",
-                    affectedEntityId: processId,
-                    newData: { paymentPlanApproved: true, isPaymentPlanRequested: false },
-                },
-            });
+            // Certifies the plan and activates without a Shopify payment (holding for
+            // background clearance if not yet cleared). Under the row lock it refuses a
+            // request no longer open, and closes this one with its audit row.
+            await certifyPaymentPlan(processId, auth.user.id, { reason, requireRequested: true });
 
             return NextResponse.json({ success: true });
         } catch (error) {

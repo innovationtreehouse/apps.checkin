@@ -69,6 +69,8 @@ defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 // A receipt's duplicate group: org-wide, since its members may be anyone's receipts.
 defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+// Finance review's Duplicates tab: one row per group, across anyone's receipts.
+defineRoute({ endpoint: 'GET /api/receipts/duplicate-queue', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateQueueRow'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
 
 // FINANCE actions.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });

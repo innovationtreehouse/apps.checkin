@@ -70,7 +70,18 @@
  * state, or a rejection with its reason) and, for a member rejected as a copy,
  * the id of the receipt kept in its place (`copyOfId`). Members may be other
  * submitters' receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is;
- * the label carries a rejection reason, `personal` like `validationNotes`.
+ * the label carries a rejection reason, `personal` like `validationNotes`; the
+ * uploader's name (`uploaderName`) is `pii`, for finance and the Board only.
+ *
+ * ReceiptDuplicateQueueRow — one group in Finance review's Duplicates tab: its
+ * oldest held member's id, vendor, date and total, how many live members it has,
+ * whether one is rejected, and when the oldest was held. The id and the rejected
+ * marker describe other submitters' receipts, so they are `pii`, as on ReceiptView.
+ *
+ * On ReceiptView, `duplicateNotice` names the viewer's own other copy of the
+ * receipt and never another person's, so its uploader reads it (`internal`).
+ * `copyOfId` and `copyOfLabel` name the receipt kept in place of one rejected as
+ * a copy, which may be another person's, so they are `pii`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
@@ -122,6 +133,9 @@ export const classifications = {
     lastPushFailure: "personal",
     purchaseOutcome: "personal",
     rejectionUnacknowledged: "internal",
+    duplicateNotice: "internal",
+    copyOfId: "pii",
+    copyOfLabel: "pii",
   },
   ReceiptLineView: {
     id: "internal",
@@ -205,6 +219,16 @@ export const classifications = {
     state: "internal",
     label: "personal",
     copyOfId: "pii",
+    uploaderName: "pii",
+  },
+  ReceiptDuplicateQueueRow: {
+    id: "pii",
+    retailer: "internal",
+    receiptDate: "internal",
+    receiptTotalCents: "internal",
+    memberCount: "internal",
+    includesRejected: "pii",
+    oldestHeldAt: "internal",
   },
   ReceiptIgnoredFileView: {
     id: "internal",

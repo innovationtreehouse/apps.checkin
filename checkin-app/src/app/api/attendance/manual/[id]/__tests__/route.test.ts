@@ -43,12 +43,12 @@ const tx = {
     $executeRaw: jest.fn(),
     visit: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     facilityClose: { findFirst: jest.fn() },
+    auditLog: { create: jest.fn() },
 };
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         visit: { findUnique: jest.fn(), update: jest.fn() },
-        auditLog: { create: jest.fn() },
         // buildCallerContext reads the led-household roster (the route's only
         // ctxNeeds prefetch) to resolve led_households.
         person: { findUnique: jest.fn(), findMany: jest.fn() },
@@ -58,7 +58,7 @@ jest.mock("@/lib/prisma", () => ({
 
 const mockSession = getServerSession as jest.Mock;
 const visitFindUnique = prisma.visit.findUnique as jest.Mock;
-const auditCreate = prisma.auditLog.create as jest.Mock;
+const auditCreate = tx.auditLog.create;
 const personFindUnique = prisma.person.findUnique as jest.Mock;
 const personFindMany = prisma.person.findMany as jest.Mock;
 

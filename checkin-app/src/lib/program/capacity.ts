@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { changeProgramStockWith, type StockWriteOptions } from "@/lib/shopify/stock";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
-import { STATES as ENROLLMENT_STATES, fromWhere } from "@/lib/programs/enrollmentState";
+import { ENROLLMENT_WRITES, STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
 
 /** Seats Shopify counts as taken out of public stock: every ACTIVE seat and every held PENDING seat. */
 export function countStockTakenSeats(programId: number, db: TxClient = prisma): Promise<number> {
@@ -123,13 +123,13 @@ export async function withdrawParticipant(
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean } | null> {
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
         const { count: won } = await tx.programParticipant.updateMany({
-            where: { programId, personId, AND: [{ status: { not: "WITHDRAWN" } }, onlyWhere(only)] },
-            data: { status: "WITHDRAWN", endedAt: new Date() },
+            where: { programId, personId, AND: [ENROLLMENT_WRITES.withdraw.where, onlyWhere(only)] },
+            data: { ...ENROLLMENT_WRITES.withdraw.data(), endedAt: new Date() },
         });
         if (won === 0) return { result: null, delta: 0 };
         const { count: heldReleased } = await tx.programParticipant.updateMany({
-            where: { programId, personId, ...fromWhere("WITHDRAWN"), inventoryHeldAt: { not: null } },
-            data: { inventoryHeldAt: null },
+            where: { programId, personId, ...ENROLLMENT_WRITES.releaseWithdrawnHold.where },
+            data: ENROLLMENT_WRITES.releaseWithdrawnHold.data(),
         });
         const enrollment = await tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId } } });
         const released = heldReleased === 1 || enrollment.seatTakenWithoutSaleAt !== null;

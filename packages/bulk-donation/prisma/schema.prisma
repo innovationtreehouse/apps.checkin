@@ -500,6 +500,8 @@ model InKindBooking {
   /// @sensitivity:internal
   qbTxnId    String?  @map("qb_txn_id")
   /// @sensitivity:internal
+  bookedTxnDate String? @map("booked_txn_date")
+  /// @sensitivity:internal
   createdAt  DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
   updatedAt  DateTime @updatedAt @map("updated_at")

@@ -580,6 +580,44 @@ The policy is safe to ship before the reader changes for the same reason: no row
 can be archived until the archive route exists, so nothing the policy hides, and
 nothing a reader has yet to tolerate, exists until then.
 
+**Infra goes first.** [infra.aws #201](https://github.com/innovationtreehouse/infra.aws/pull/201)
+must be applied, and one staging copy run while row security is still off, before
+this migration reaches production. Without it, the first staging copy afterwards
+fails, even with no household archived.
+
+### The staging copy
+
+Production's `Household` carries one SELECT policy this migration does not create:
+
+```sql
+CREATE POLICY stg_copy_read_all ON "Household"
+    FOR SELECT TO checkin_prod_ro USING (true);
+```
+
+Infra bootstrap adds it (infra.aws #201), so the contract tests never see it: their
+database is built from migrations alone. Their "no other permissive `SELECT` policy"
+check is about migrations, and does not describe production.
+
+The policy widens one read. `checkin_prod_ro`, whose only member is the staging copy
+role `checkin_stg`, can read archived households in production. The app's DML role
+cannot, because the policy names only `checkin_prod_ro`.
+
+The copy runs differently from a plain dump, for three reasons:
+
+- **The dump uses `--enable-row-security`, behind a guard.** `pg_dump` otherwise runs
+  with `row_security=off`, which errors on any table row security binds. The flag
+  stops the error, but on its own it silently leaves out any row a policy hides. So
+  the copy first refuses to run unless every row-security table in production has an
+  always-true `SELECT` policy for `checkin_prod_ro` and no restrictive policy. A
+  future row-security table stops the copy until someone decides how to copy it.
+- **The copy drops `stg_copy_read_all` after the restore.** Left in place, `checkin_stg`
+  would see archived rows in staging that production's migrate role cannot.
+- **The scrub runs with `FORCE` lifted.** The scrub runs as the loading database's
+  owner, and `FORCE` binds that owner. A bound `UPDATE` skips the rows a policy hides
+  and still exits 0, so an archived household's `intakeNotes` would stay in clear text
+  in staging. The scrub also sets `row_security=off`, which turns any table still bound
+  into an error. `FORCE` is restored before the database is renamed live.
+
 ### Build order
 
 Five PRs, in this order. Each deploys safely on its own.
@@ -587,7 +625,9 @@ Five PRs, in this order. Each deploys safely on its own.
 1. **Expand.** The nullable column and the test DML role. No policy, no reader
    changes.
 2. **Policy.** The policy migration, `withArchivedHouseholds`, the enforcement
-   contract tests and the opt-in guard.
+   contract tests and the opt-in guard. Reaches production only after infra.aws
+   #201 is applied and a staging copy has run on it
+   (see [The staging copy](#the-staging-copy)).
 3. **Readers.** The opt-in sites, null tolerance on the 24 includes, the explicit
    scan and people-search exclusion, and the audit of person queries with no
    household join.

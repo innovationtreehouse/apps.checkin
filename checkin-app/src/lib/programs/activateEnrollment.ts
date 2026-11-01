@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
-import { fromWhere } from "@/lib/programs/enrollmentState";
+import { ENROLLMENT_WRITES, fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
@@ -98,13 +98,15 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
             // Guarded PENDING → ACTIVE: status flip and hold release in one write (invariant I1),
             // idempotent for a redelivery (the row is already ACTIVE → 0 rows). Whether a hold
             // was released is read off which guarded write matched, never off a pre-read.
-            const flip = (held: boolean) => tx.programParticipant.updateMany({
-                // T4 activate CAS from-state (any PENDING; sourced from the definition).
-                where: { programId, personId, ...fromWhere("PENDING_UNPAID"), inventoryHeldAt: held ? { not: null } : null },
-                data: { status: "ACTIVE", pendingSince: null, shopifyOrderId, inventoryHeldAt: null },
-            });
-            const released = (await flip(true)).count;
-            const unheld = released ? 0 : (await flip(false)).count;
+            const paid = { pendingSince: null, shopifyOrderId };
+            const released = (await tx.programParticipant.updateMany({
+                where: { programId, personId, ...ENROLLMENT_WRITES.activateHeld.where },
+                data: { ...ENROLLMENT_WRITES.activateHeld.data(), ...paid },
+            })).count;
+            const unheld = released ? 0 : (await tx.programParticipant.updateMany({
+                where: { programId, personId, ...ENROLLMENT_WRITES.activateUnheld.where },
+                data: { ...ENROLLMENT_WRITES.activateUnheld.data(), ...paid },
+            })).count;
             if (!released && !unheld) {
                 logger.warn(`[enroll] Participant ${personId} not pending in program ${programId} — ignoring payment.`);
                 continue;

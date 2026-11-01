@@ -18,6 +18,8 @@ import {
 import { QB_MATCH_STATE } from "./qb-match";
 
 const qbId = z.string().trim().min(1).max(64);
+/** The states finance may match or skip; a drifted gift is never booked. */
+const RESOLVABLE_STATES: readonly string[] = [...IN_KIND_HELD_STATES, QB_MATCH_STATE.DRIFT];
 
 export const InKindQbResolveInputSchema = z.union([
   z.object({ action: z.literal("book") }).strict(),
@@ -44,9 +46,9 @@ async function giftRef(orgId: string, source: InKindSource, id: number): Promise
 type HeldPosting = Awaited<ReturnType<typeof heldPosting>>;
 
 /** The gift's posting, refused unless the drain handed it to finance. */
-async function heldPosting(orgId: string, source: InKindSource, id: number) {
+async function heldPosting(orgId: string, source: InKindSource, id: number, states = RESOLVABLE_STATES) {
   const posting = await db.inKindPosting.findUnique({ where: { orgId_source_giftId: { orgId, source, giftId: id } } });
-  if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) {
+  if (!posting || !states.includes(posting.matchState)) {
     throw new ServiceError(409, "Only a gift the QuickBooks drain handed to finance can be booked, skipped or matched");
   }
   return posting;
@@ -80,8 +82,12 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
   try {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
-      if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) throw new ServiceError(409, "Already resolved");
+      if (!posting || !RESOLVABLE_STATES.includes(posting.matchState)) throw new ServiceError(409, "Already resolved");
       if (posting.updatedAt.getTime() !== read.updatedAt.getTime()) throw new ServiceError(409, "The app may have tried to book this gift meanwhile; reload and try again");
+      // A drifted gift's new entries replace the ones it held; a skip keeps them on record.
+      if (posting.matchState === QB_MATCH_STATE.DRIFT && s.entries.length > 0) {
+        await tx.inKindBooking.deleteMany({ where: { orgId, source: gift.source, giftId: gift.id } });
+      }
       await writeSettlement(tx, orgId, gift, posting.id, s, actor, { from: posting.matchState, manual: true, ...payload });
     });
   } catch (err) {
@@ -93,9 +99,10 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
 /**
  * Before finance skips or matches a gift whose create may have landed, look for the app's own
  * JournalEntry. Found: the gift is linked to it as CREATED in place of the action. Unsure: refused.
+ * A drifted gift already settled its create, so finance's pick stands.
  */
 async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, actor: Actor): Promise<boolean> {
-  if (!read.qbCreateAttemptedAt) return false;
+  if (!read.qbCreateAttemptedAt || read.matchState === QB_MATCH_STATE.DRIFT) return false;
   const client = await getInKindQbPosting()?.client();
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
@@ -122,7 +129,7 @@ async function readMatch(run: Run, gift: GiftToBook, input: Extract<InKindQbReso
     return {
       state: appKey === key ? QB_MATCH_STATE.CREATED : QB_MATCH_STATE.MATCHED,
       note: null,
-      entries: [{ side: "journal", entity: "JournalEntry", id: je.Id }],
+      entries: [{ side: "journal", entity: "JournalEntry", id: je.Id, txnDate: je.TxnDate }],
       booked: { totalCents: gift.totalCents, txnDate: je.TxnDate },
     };
   }
@@ -139,13 +146,14 @@ async function readMatch(run: Run, gift: GiftToBook, input: Extract<InKindQbReso
   }
   if (dollarsToCents(deposit.TotalAmt) !== gift.totalCents || dollarsToCents(purchase.TotalAmt) !== gift.totalCents) throw new ServiceError(422, "The Deposit and the Purchase must each be for the gift's value");
   if (appKeyOf(deposit) !== undefined || appKeyOf(purchase) !== undefined) throw new ServiceError(409, "That entry was created by the app for another record");
-  if (claimed.has(deposit.Id)) throw new ServiceError(409, `Deposit ${deposit.Id} is already held by another record`);
+  const own = await db.inKindBooking.findFirst({ where: { orgId: run.orgId, source: gift.source, giftId: gift.id, qbEntity: "Deposit", qbTxnId: deposit.Id }, select: { id: true } });
+  if (claimed.has(deposit.Id) && !own) throw new ServiceError(409, `Deposit ${deposit.Id} is already held by another record`);
   return {
     state: QB_MATCH_STATE.MATCHED,
     note: null,
     entries: [
-      { side: "revenue", entity: "Deposit", id: deposit.Id },
-      { side: "expense", entity: "Purchase", id: purchase.Id },
+      { side: "revenue", entity: "Deposit", id: deposit.Id, txnDate: deposit.TxnDate },
+      { side: "expense", entity: "Purchase", id: purchase.Id, txnDate: purchase.TxnDate },
     ],
     booked: { totalCents: gift.totalCents, txnDate: deposit.TxnDate },
   };
@@ -176,7 +184,7 @@ async function skip(orgId: string, source: InKindSource, id: number, reason: str
  */
 async function book(orgId: string, source: InKindSource, id: number, actor: Actor): Promise<void> {
   const ref = await giftRef(orgId, source, id);
-  await heldPosting(orgId, source, id);
+  await heldPosting(orgId, source, id, IN_KIND_HELD_STATES);
   const run = await openRun(orgId, actor);
   if (!run.close.ok) throw new ServiceError(503, "The QuickBooks books closing date could not be read");
   if (run.close.date === null && run.onAt === null) {

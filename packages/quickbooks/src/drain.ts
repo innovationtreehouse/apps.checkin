@@ -16,6 +16,18 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 export const STALE_CLAIM_MS = 10 * 60_000;
 /** How far back the daily sweep looks for create attempts. */
 export const SWEEP_DAYS = 30;
+/** Records a drift check reads per run; the slice moves each UTC day. */
+export const MAX_DRIFT_CHECKS_PER_RUN = 25;
+
+/**
+ * The slice of `ids` to check today. The start moves by the cap each UTC day, so every entry
+ * is checked within ceil(n / cap) days without storing a cursor.
+ */
+export function todaysSlice<T>(ids: T[], cap: number, now = new Date()): T[] {
+  if (ids.length <= cap) return ids;
+  const start = (Math.floor(now.getTime() / 86_400_000) * cap) % ids.length;
+  return [...ids, ...ids].slice(start, start + cap);
+}
 
 /** The books closing date as read for a run or an action: the date (null when none is set), or a failed read. */
 export type CloseRead = { ok: true; date: string | null } | { ok: false; error: string };
