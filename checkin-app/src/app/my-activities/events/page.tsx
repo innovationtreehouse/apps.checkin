@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { useOrgTime } from '@/components/TimezoneProvider';
+import { useLoad } from "@/lib/api";
+import { useSeedForm } from "@/hooks/useSeedForm";
 import type { RSVPStatus } from '@/types/rsvp';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -49,38 +52,24 @@ export default function ParticipantEventsDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [events, setEvents] = useState<EventData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
-
-  const fetchEvents = useCallback(() => fetch('/api/events/mine')
-    .then(async (res) => {
-      if (res.ok) {
-        setEvents(await res.json());
-      } else {
-        setMessage("Failed to load your events.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  // Counts RSVPs still saving; a refetch landing meanwhile must not undo them.
+  const [saving, setSaving] = useState(0);
+  const { data, error, reload } = useLoad<EventData[]>(status === "authenticated" ? '/api/events/mine' : null);
+  useSeedForm(data, saving > 0, setEvents);
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push('/');
-    } else if (status === "authenticated") {
-      fetchEvents();
-    }
-  }, [status, router, fetchEvents]);
+    if (status === "unauthenticated") router.push('/');
+  }, [status, router]);
 
   const handleRSVP = async (eventId: number, participantId: number, newStatus: RsvpStatus) => {
-    // Optimistic update — only the targeted member's card.
-    setEvents(prev => prev.map(ev =>
-      ev.id === eventId && ev.participant.id === participantId ? { ...ev, rsvp: newStatus } : ev
+    const setRsvp = (rsvp: RsvpStatus | null) => setEvents(prev => prev.map(ev =>
+      ev.id === eventId && ev.participant.id === participantId ? { ...ev, rsvp } : ev
     ));
+    const previous = events.find(ev => ev.id === eventId && ev.participant.id === participantId)?.rsvp ?? null;
+
+    // Optimistic update — only the targeted member's card.
+    setRsvp(newStatus);
+    setSaving((n) => n + 1);
 
     try {
       const res = await fetch(`/api/events/${eventId}/rsvp`, {
@@ -90,20 +79,22 @@ export default function ParticipantEventsDashboard() {
       });
       if (!res.ok) {
         // Non-OK doesn't throw — revert the optimistic update and surface the error.
-        const data = await res.json().catch(() => ({}));
-        fetchEvents();
-        notifications.show({ color: "red", message: data.error || "Failed to update RSVP.", autoClose: false });
+        const body = await res.json().catch(() => ({}));
+        setRsvp(previous);
+        notifications.show({ color: "red", message: body.error || "Failed to update RSVP.", autoClose: false });
       }
     } catch {
-      // Revert on failure by refetching
-      fetchEvents();
+      setRsvp(previous);
+    } finally {
+      setSaving((n) => n - 1);
+      reload();
     }
   };
 
   // A household lead sees every member's events, so label whose each card is.
   const showMembers = !!session?.user.householdLead;
 
-  if (loading || status === "loading") {
+  if (status === "loading" || (!data && !error)) {
     return <PageLoader />;
   }
 
@@ -111,9 +102,9 @@ export default function ParticipantEventsDashboard() {
     <Stack>
       <Title order={1}>My Upcoming Events</Title>
 
-      {message && <Alert color="red">{message}</Alert>}
-
-      {events.length === 0 ? (
+      {error ? (
+        <LoadError what="your events" message={error} onRetry={reload} />
+      ) : events.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Title order={3}>No Upcoming Events</Title>
           <Text c="dimmed" mt="sm">

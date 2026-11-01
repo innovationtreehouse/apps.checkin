@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Alert, Card, Checkbox, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { notifications } from '@mantine/notifications';
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
+import { useSeedForm } from "@/hooks/useSeedForm";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const OPTIONS = [
@@ -15,12 +17,21 @@ const OPTIONS = [
   { key: 'emailPurchaseOutcomes', label: 'Email me about my receipts and reimbursements' },
 ] as const;
 
+interface Profile {
+  notificationSettings?: {
+    emailCheckinReceipts?: boolean;
+    emailDependentCheckins?: boolean;
+    notifyNewPrograms?: boolean;
+    emailPurchaseOutcomes?: boolean;
+  } | null;
+  emailSuppressed?: boolean;
+}
+
 export default function CommunicationPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const hasEmail = !!session?.user?.email;
 
-  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   const [settings, setSettings] = useState({
@@ -31,37 +42,23 @@ export default function CommunicationPage() {
   });
   const [emailSuppressed, setEmailSuppressed] = useState(false);
 
-  const fetchSettings = useCallback(() => fetch('/api/profile')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        const s = data.profile.notificationSettings || {};
-        setSettings({
-          emailCheckinReceipts: s.emailCheckinReceipts || false,
-          emailDependentCheckins: s.emailDependentCheckins || false,
-          notifyNewPrograms: s.notifyNewPrograms !== undefined ? s.notifyNewPrograms : true,
-          emailPurchaseOutcomes: s.emailPurchaseOutcomes !== false,
-        });
-        setEmailSuppressed(!!data.profile.emailSuppressed);
-      } else {
-        setMessage("Failed to load settings.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading settings.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  // Counts toggles still saving; a refetch landing meanwhile must not flip them back.
+  const [saving, setSaving] = useState(0);
+  const { data, error, reload } = useLoad<{ profile: Profile }>(status === "authenticated" ? '/api/profile' : null);
+  useSeedForm(data, saving > 0, ({ profile }) => {
+    const s = profile.notificationSettings || {};
+    setSettings({
+      emailCheckinReceipts: s.emailCheckinReceipts || false,
+      emailDependentCheckins: s.emailDependentCheckins || false,
+      notifyNewPrograms: s.notifyNewPrograms !== undefined ? s.notifyNewPrograms : true,
+      emailPurchaseOutcomes: s.emailPurchaseOutcomes !== false,
+    });
+    setEmailSuppressed(!!profile.emailSuppressed);
+  });
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push('/');
-    } else if (status === "authenticated") {
-      fetchSettings();
-    }
-  }, [status, router, fetchSettings]);
+    if (status === "unauthenticated") router.push('/');
+  }, [status, router]);
 
   // Each toggle persists immediately — no save button. Optimistic flip,
   // revert on failure so a checkbox never lies about what's in the DB.
@@ -70,6 +67,7 @@ export default function CommunicationPage() {
     const next = { ...settings, ...patch };
     setSettings(next);
     setMessage("");
+    setSaving((n) => n + 1);
     try {
       const res = await fetch('/api/profile', {
         method: 'PATCH',
@@ -77,9 +75,12 @@ export default function CommunicationPage() {
         body: JSON.stringify({ notificationSettings: next })
       });
       if (!res.ok) throw new Error();
+      reload();
     } catch {
       setSettings(prev);
       setMessage("Failed to update settings.");
+    } finally {
+      setSaving((n) => n - 1);
     }
   };
 
@@ -89,6 +90,7 @@ export default function CommunicationPage() {
     const prev = emailSuppressed;
     setEmailSuppressed(value);
     setMessage("");
+    setSaving((n) => n + 1);
     try {
       const res = await fetch('/api/profile', {
         method: 'PATCH',
@@ -96,13 +98,16 @@ export default function CommunicationPage() {
         body: JSON.stringify({ emailSuppressed: value })
       });
       if (!res.ok) throw new Error();
+      reload();
     } catch {
       setEmailSuppressed(prev);
       setMessage("Failed to update settings.");
+    } finally {
+      setSaving((n) => n - 1);
     }
   };
 
-  if (loading || status === "loading") {
+  if (status === "loading" || (!data && !error)) {
     return <PageLoader />;
   }
 
@@ -114,6 +119,9 @@ export default function CommunicationPage() {
         <Title order={1}>Communication</Title>
         <Text c="dimmed" mb="lg">Manage your email and notification preferences.</Text>
 
+        {error && <LoadError what="your settings" message={error} onRetry={reload} />}
+
+        {data && (<>
         <Stack>
           {/* Every preference is delivered by email, so all are disabled without one. */}
           {OPTIONS.map((opt) => (
@@ -139,6 +147,7 @@ export default function CommunicationPage() {
             label="Don't email me membership join/renewal invitations"
           />
         </Stack>
+        </>)}
 
         {message && <Alert color="red" mt="md">{message}</Alert>}
       </Card>

@@ -4,7 +4,8 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
 import EmailSettingsPage from "../page";
@@ -167,5 +168,43 @@ describe("EmailSettingsPage", () => {
 
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
     expect(screen.queryByLabelText(/From address/i)).not.toBeInTheDocument();
+  });
+
+  describe("a refetch", () => {
+    const answer = (emailFromAddress: string) => ({ settings: { emailFromAddress, emailReplyToAddress: null } });
+    const refetch = async (fetchMock: jest.Mock) => {
+      const reads = fetchMock.mock.calls.length;
+      act(() => { void invalidateLoads(); });
+      await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(reads));
+    };
+
+    it("keeps unsaved input when the answer changes", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      let current = answer("first@example.com");
+      const fetchMock = mockFetchJson({ "/api/settings/email": () => current });
+      renderWithProviders(<EmailSettingsPage />);
+      await screen.findByDisplayValue("first@example.com");
+      fireEvent.click(screen.getByRole("checkbox"));
+      fireEvent.change(screen.getByLabelText("From address"), { target: { value: "typing@example.com" } });
+
+      current = answer("second@example.com");
+      await refetch(fetchMock);
+
+      await act(async () => {});
+      expect(screen.getByLabelText("From address")).toHaveValue("typing@example.com");
+    });
+
+    it("updates a clean form with the new answer", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      let current = answer("first@example.com");
+      const fetchMock = mockFetchJson({ "/api/settings/email": () => current });
+      renderWithProviders(<EmailSettingsPage />);
+      await screen.findByDisplayValue("first@example.com");
+
+      current = answer("second@example.com");
+      await refetch(fetchMock);
+
+      expect(await screen.findByDisplayValue("second@example.com")).toBeInTheDocument();
+    });
   });
 });

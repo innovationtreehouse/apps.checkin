@@ -88,4 +88,13 @@ describe("CommunicationPage", () => {
         await waitFor(() => expect(suppress).not.toBeChecked()); // reverted
         expect(await screen.findByText("Failed to update settings.")).toBeInTheDocument();
     });
+
+    it("shows the failure, not default toggles, when the load fails", async () => {
+        setSession({ id: 1, email: "a@example.com" });
+        mockFetchJson({});
+        renderWithProviders(<CommunicationPage />);
+
+        expect(await screen.findByText("Couldn't load your settings")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Email me when I check in or out")).not.toBeInTheDocument();
+    });
 });

@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { ActionIcon, Alert, Badge, Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconPencil, IconTrash, IconX } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -19,8 +21,13 @@ type Visit = { id: number; person?: { name: string }; event?: { name: string }; 
 export default function HouseholdCheckins() {
   const { formatVisitRange, formatDateTime } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);
-  const [visits, setVisits] = useState<Visit[]>([]);
   const [filterDate, setFilterDate] = useState("");
+  // Keeps the rows on screen while another date loads; each row acts on its own id.
+  const { data, error: loadError, loading, retrying, reload } = useLoad<{ visits?: Visit[] }>(
+    ready ? `/api/household/visits?date=${filterDate}` : null,
+    { keepPrevious: true },
+  );
+  const visits = data?.visits ?? [];
   const [editing, setEditing] = useState<number | null>(null);
   const [arrivedAt, setArrived] = useState("");
   const [departedAt, setDeparted] = useState("");
@@ -28,21 +35,6 @@ export default function HouseholdCheckins() {
   const [error, setError] = useState("");
 
   const isLead = !!user?.householdLead;
-
-  const load = useCallback(async () => {
-    const res = await fetch(`/api/household/visits?date=${filterDate}`);
-    if (res.ok) {
-      const data = await res.json();
-      setVisits(data.visits || []);
-    }
-  }, [filterDate]);
-
-  useEffect(() => {
-    if (!ready) return;
-    let active = true;
-    (async () => { if (active) await load(); })();
-    return () => { active = false; };
-  }, [ready, load]);
 
   const startEdit = (v: Visit) => {
     setEditing(v.id);
@@ -61,7 +53,7 @@ export default function HouseholdCheckins() {
       } else {
         notifications.show({ message: okMessage });
         setEditing(null);
-        await load();
+        reload();
         notifyNavRefresh();
       }
     } catch {
@@ -114,7 +106,11 @@ export default function HouseholdCheckins() {
 
       {error && <Alert color="red" mb="md">{error}</Alert>}
 
-      {visits.length === 0 ? (
+      {loadError ? (
+        <LoadError what="your household's visits" message={loadError} onRetry={reload} />
+      ) : !data || ((loading || retrying) && visits.length === 0) ? (
+        <PageLoader minHeight="20vh" />
+      ) : visits.length === 0 ? (
         <Text c="dimmed">No historical visits found for your household.</Text>
       ) : (
         <Table striped highlightOnHover>
